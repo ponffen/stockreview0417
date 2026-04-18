@@ -114,14 +114,25 @@
 
       <section id="route-trade" class="route-pane">
         <article class="panel">
-          <div class="panel-head">
-            <h2>交易记录</h2>
-            <div class="actions">
-              <button id="setCapitalBtn" class="btn btn-ghost">设置本金</button>
-              <button id="recordTradeBtn" class="btn btn-primary">新建交易</button>
-            </div>
+          <div class="trade-filter-row">
+            <button class="plain-btn trade-filter-btn">全部账户 <span class="arrow">▼</span></button>
+            <button class="plain-btn trade-filter-btn">所有交易 <span class="arrow">▼</span></button>
           </div>
-          <div id="recordList" class="record-list"></div>
+          <div class="trade-table-wrap">
+            <table class="trade-table">
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>价格</th>
+                  <th>数量</th>
+                  <th>发生金额</th>
+                </tr>
+              </thead>
+              <tbody id="tradeTableBody"></tbody>
+            </table>
+          </div>
         </article>
       </section>
 
@@ -197,7 +208,7 @@
     <dialog id="tradeDialog" class="dialog">
       <form id="tradeForm" method="dialog">
         <div class="panel-head">
-          <h2>新建交易</h2>
+          <h2 id="tradeDialogTitle">新建交易</h2>
           <button type="button" id="closeTradeDialogBtn" class="btn btn-ghost">关闭</button>
         </div>
         <div class="form-row">
@@ -245,7 +256,7 @@
           <label for="tradeNote">备注</label>
           <input id="tradeNote" name="note" placeholder="可选" />
         </div>
-        <button type="submit" class="btn btn-primary full">保存交易</button>
+        <button id="tradeSubmitBtn" type="submit" class="btn btn-primary full">保存交易</button>
       </form>
     </dialog>
 
@@ -262,6 +273,11 @@
         <button type="submit" class="btn btn-primary full">保存</button>
       </form>
     </dialog>
+
+    <div id="recordActionPopover" class="record-action-popover">
+      <button type="button" data-action="edit">修改</button>
+      <button type="button" data-action="delete">删除</button>
+    </div>
 
     <dialog id="stockRecordDialog" class="dialog stock-record-dialog">
       <div class="stock-record-wrap">

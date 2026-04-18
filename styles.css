@@ -392,6 +392,96 @@ h2 {
   gap: 8px;
 }
 
+.trade-filter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.trade-filter-btn {
+  font-size: 14px;
+  color: #8a94a7;
+}
+
+.trade-table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid var(--line);
+}
+
+.trade-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 700px;
+}
+
+.trade-table thead th {
+  background: #f6f8fb;
+  color: #8f99a9;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.trade-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.trade-table tbody tr {
+  cursor: pointer;
+}
+
+.trade-table tbody tr:hover {
+  background: #fafbfd;
+}
+
+.trade-table .num {
+  text-align: right;
+}
+
+.trade-table .type-cell {
+  font-weight: 500;
+}
+
+.record-action-popover {
+  position: fixed;
+  display: none;
+  z-index: 40;
+  background: #fff;
+  border: 1px solid #dbe2ee;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgb(23 34 58 / 16%);
+  overflow: hidden;
+}
+
+.record-action-popover.show {
+  display: block;
+}
+
+.record-action-popover button {
+  display: block;
+  width: 100%;
+  border: none;
+  background: #fff;
+  padding: 10px 16px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.record-action-popover button + button {
+  border-top: 1px solid var(--line);
+}
+
+.record-action-popover button:hover {
+  background: #f7f9fc;
+}
+
 .record-item {
   border: 1px solid var(--line);
   border-radius: 8px;

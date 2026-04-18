@@ -12,54 +12,28 @@ const demoTrades = [
   {
     id: crypto.randomUUID(),
     type: "trade",
-    symbol: "sh600519",
-    name: "贵州茅台",
+    symbol: "sh600750",
+    name: "宁德时代",
     side: "buy",
-    price: 1480,
+    price: 443.27,
     quantity: 100,
-    amount: 148000,
-    date: "2026-01-10",
-    note: "长线配置",
-    createdAt: Date.now() - 5,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "sz000858",
-    name: "五粮液",
-    side: "buy",
-    price: 129.5,
-    quantity: 500,
-    amount: 64750,
-    date: "2026-02-14",
+    amount: 44327,
+    date: "2026-04-17",
     note: "",
-    createdAt: Date.now() - 4,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "hk00700",
-    name: "腾讯控股",
-    side: "buy",
-    price: 310,
-    quantity: 200,
-    amount: 62000,
-    date: "2026-03-02",
-    note: "",
-    createdAt: Date.now() - 3,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "hk00700",
-    name: "腾讯控股",
-    side: "sell",
-    price: 336,
-    quantity: 60,
-    amount: 20160,
-    date: "2026-04-03",
-    note: "减仓",
     createdAt: Date.now() - 2,
+  },
+  {
+    id: crypto.randomUUID(),
+    type: "trade",
+    symbol: "sh601899",
+    name: "紫金矿业",
+    side: "buy",
+    price: 34.68,
+    quantity: 300,
+    amount: 10404,
+    date: "2026-04-17",
+    note: "",
+    createdAt: Date.now() - 1,
   },
 ];
 
@@ -76,6 +50,8 @@ const state = {
   klineMap: {},
   quoteTime: "--",
   marketLoading: false,
+  editingTradeId: null,
+  activeRecordId: null,
 };
 
 const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
@@ -96,6 +72,7 @@ const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelect = document.getElementById("algoMode");
 const benchmarkSelect = document.getElementById("benchmark");
 const rangeChips = [...document.querySelectorAll(".range-chip")];
+const tradeTableBody = document.getElementById("tradeTableBody");
 const tradeDialog = document.getElementById("tradeDialog");
 const tradeForm = document.getElementById("tradeForm");
 const closeTradeDialogBtn = document.getElementById("closeTradeDialogBtn");
@@ -104,6 +81,8 @@ const tradePriceInput = document.getElementById("tradePrice");
 const tradeQuantityInput = document.getElementById("tradeQuantity");
 const tradeSideInput = document.getElementById("tradeSide");
 const tradeAmountInput = document.getElementById("tradeAmount");
+const tradeDialogTitle = document.getElementById("tradeDialogTitle");
+const tradeSubmitBtn = document.getElementById("tradeSubmitBtn");
 const capitalDialog = document.getElementById("capitalDialog");
 const capitalForm = document.getElementById("capitalForm");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
@@ -118,6 +97,11 @@ const stockRecordChart = document.getElementById("stockRecordChart");
 const stockRecordMarket = document.getElementById("stockRecordMarket");
 const stockRecordRegret = document.getElementById("stockRecordRegret");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
+const recordActionPopover = document.getElementById("recordActionPopover");
+const tradeSymbolInput = document.getElementById("tradeSymbol");
+const tradeNameInput = document.getElementById("tradeName");
+const tradeDateInput = document.getElementById("tradeDate");
+const tradeNoteInput = document.getElementById("tradeNote");
 
 initialize();
 
@@ -227,15 +211,19 @@ function bindEvents() {
 
   [quickTradeBtn, recordTradeBtn].filter(Boolean).forEach((button) => {
     button.addEventListener("click", () => {
+      clearEditState();
       tradeForm.reset();
       tradeTypeInput.value = "trade";
       applyTradeTypePreset();
-      document.getElementById("tradeDate").value = toDateKey(new Date());
+      tradeDateInput.value = toDateKey(new Date());
       tradeDialog.showModal();
     });
   });
 
-  closeTradeDialogBtn.addEventListener("click", () => tradeDialog.close());
+  closeTradeDialogBtn.addEventListener("click", () => {
+    clearEditState();
+    tradeDialog.close();
+  });
   tradeTypeInput.addEventListener("change", applyTradeTypePreset);
 
   tradeForm.addEventListener("submit", (event) => {
@@ -258,7 +246,7 @@ function bindEvents() {
     }
 
     const trade = normalizeTrade({
-      id: crypto.randomUUID(),
+      id: state.editingTradeId || crypto.randomUUID(),
       type,
       symbol,
       name: String(formData.get("name") || symbol).trim(),
@@ -272,9 +260,13 @@ function bindEvents() {
     });
 
     state.useDemoData = false;
+    if (state.editingTradeId) {
+      state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
+    }
     state.trades.push(trade);
     state.trades.sort(sortTradeAsc);
     persistState();
+    clearEditState();
     tradeDialog.close();
     renderAll();
     refreshMarketData();
@@ -298,19 +290,49 @@ function bindEvents() {
     });
   }
 
-  recordList.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-remove-id]");
-    if (!button) {
+  tradeTableBody?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-record-id]");
+    if (!row) {
       return;
     }
-    state.trades = state.trades.filter((item) => item.id !== button.dataset.removeId);
-    if (state.trades.length === 0) {
-      state.useDemoData = true;
-      state.trades = demoTrades.map((item) => ({ ...item }));
+    const id = row.dataset.recordId;
+    if (!id) {
+      return;
     }
-    persistState();
-    renderAll();
-    refreshMarketData();
+    showRecordActionPopover(row, id);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!recordActionPopover) {
+      return;
+    }
+    if (recordActionPopover.contains(event.target)) {
+      return;
+    }
+    if (event.target.closest("tr[data-record-id]")) {
+      return;
+    }
+    hideRecordActionPopover();
+  });
+
+  recordActionPopover?.addEventListener("click", (event) => {
+    const actionBtn = event.target.closest("button[data-action]");
+    if (!actionBtn) {
+      return;
+    }
+    const action = actionBtn.dataset.action;
+    const tradeId = recordActionPopover.dataset.tradeId;
+    hideRecordActionPopover();
+    if (!tradeId) {
+      return;
+    }
+    if (action === "edit") {
+      openEditTradeDialog(tradeId);
+      return;
+    }
+    if (action === "delete") {
+      removeTradeById(tradeId);
+    }
   });
 
   stockTableBody?.addEventListener("click", (event) => {
@@ -351,7 +373,7 @@ function renderAll() {
   renderControls();
   renderRoute();
   renderOverviewAndStockTable();
-  renderRecords();
+  renderTradeTable();
   renderAnalysis();
 }
 
@@ -541,31 +563,100 @@ function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
   );
 }
 
-function renderRecords() {
+function renderTradeTable() {
+  if (!tradeTableBody) {
+    return;
+  }
   if (!state.trades.length) {
-    recordList.innerHTML = '<p class="empty">暂无交易记录，点击右上角“新建交易”。</p>';
+    tradeTableBody.innerHTML = `
+      <tr>
+        <td colspan="6"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
+      </tr>
+    `;
     return;
   }
   const sorted = [...state.trades].sort(sortTradeDesc);
-  recordList.innerHTML = sorted
+  tradeTableBody.innerHTML = sorted
     .map((trade) => {
-      const amountText = `${trade.side === "buy" ? "+" : "-"}${formatCurrency(trade.amount)}`;
       return `
-        <article class="record-item">
-          <div class="record-main">
-            <h3>${escapeHtml(trade.name)} <span class="caption">${trade.symbol}</span></h3>
-            <p>${trade.date} · ${typeLabel(trade.type)} · ${trade.note || "无备注"}</p>
-          </div>
-          <div class="record-side">
-            <p class="${trade.side === "buy" ? "up" : "down"}">${trade.side === "buy" ? "买入(B)" : "卖出(S)"}</p>
-            <p>价格 ${formatNumber(trade.price, 3)} × 数量 ${formatNumber(trade.quantity, 0)}</p>
-            <p>${amountText}</p>
-            <button class="delete-btn" data-remove-id="${trade.id}">删除</button>
-          </div>
-        </article>
+        <tr class="trade-row" data-record-id="${trade.id}">
+          <td>${trade.date.replace(/-/g, "/")}</td>
+          <td>${escapeHtml(trade.name)}</td>
+          <td class="type-cell">${trade.side === "buy" ? "买入" : "卖出"}</td>
+          <td class="num">${formatNumber(trade.price, 2)}</td>
+          <td class="num">${formatNumber(trade.quantity, 2)}</td>
+          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
+            trade.side === "buy" ? "-" : "+"
+          }${formatNumber(trade.amount, 2)}</td>
+        </tr>
       `;
     })
     .join("");
+}
+
+function showRecordActionPopover(row, tradeId) {
+  if (!recordActionPopover) {
+    return;
+  }
+  const rect = row.getBoundingClientRect();
+  recordActionPopover.dataset.tradeId = tradeId;
+  recordActionPopover.style.top = `${window.scrollY + rect.bottom - 2}px`;
+  recordActionPopover.style.left = `${window.scrollX + rect.right - 118}px`;
+  recordActionPopover.classList.add("show");
+}
+
+function hideRecordActionPopover() {
+  if (!recordActionPopover) {
+    return;
+  }
+  recordActionPopover.classList.remove("show");
+  recordActionPopover.dataset.tradeId = "";
+}
+
+function openEditTradeDialog(tradeId) {
+  const trade = state.trades.find((item) => item.id === tradeId);
+  if (!trade) {
+    return;
+  }
+  state.editingTradeId = tradeId;
+  if (tradeDialogTitle) {
+    tradeDialogTitle.textContent = "修改交易";
+  }
+  if (tradeSubmitBtn) {
+    tradeSubmitBtn.textContent = "保存修改";
+  }
+  tradeTypeInput.value = trade.type;
+  tradeSymbolInput.value = trade.symbol;
+  tradeNameInput.value = trade.name;
+  tradeSideInput.value = trade.side;
+  tradePriceInput.value = trade.price;
+  tradeQuantityInput.value = trade.quantity;
+  tradeAmountInput.value = trade.amount;
+  tradeDateInput.value = trade.date;
+  tradeNoteInput.value = trade.note || "";
+  applyTradeTypePreset();
+  tradeDialog.showModal();
+}
+
+function clearEditState() {
+  state.editingTradeId = null;
+  if (tradeDialogTitle) {
+    tradeDialogTitle.textContent = "新建交易";
+  }
+  if (tradeSubmitBtn) {
+    tradeSubmitBtn.textContent = "保存交易";
+  }
+}
+
+function removeTradeById(tradeId) {
+  state.trades = state.trades.filter((item) => item.id !== tradeId);
+  if (state.trades.length === 0) {
+    state.useDemoData = true;
+    state.trades = demoTrades.map((item) => ({ ...item }));
+  }
+  persistState();
+  renderAll();
+  refreshMarketData();
 }
 
 function renderAnalysis() {
