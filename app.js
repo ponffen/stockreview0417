@@ -700,6 +700,7 @@ async function openStockRecordDialog(symbol) {
   state.previousRoute = state.route;
   state.route = "stock-record";
   renderAll();
+  window.scrollTo(0, 0);
   persistState();
 
   await ensureSymbolData(symbol);
@@ -760,6 +761,13 @@ async function ensureSymbolData(symbol) {
     }
   } catch (error) {
     console.error("加载个股实时行情失败", error);
+  }
+  if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+    const latest = await fetchLatestQuoteFromMinuteK(symbol);
+    if (latest) {
+      state.quoteMap[symbol] = latest;
+      state.quoteTime = latest.time || state.quoteTime;
+    }
   }
 
   if (!supportsKline(symbol)) {
@@ -1342,7 +1350,13 @@ async function refreshMarketData() {
       return;
     }
 
-    const quoteMap = await fetchRealtimeQuotes(symbols);
+    let quoteMap = {};
+    try {
+      quoteMap = await fetchRealtimeQuotes(symbols);
+    } catch (error) {
+      // hq.sinajs.cn may be blocked by anti-hotlink on third-party domains.
+      quoteMap = {};
+    }
     if (Object.keys(quoteMap).length) {
       state.quoteMap = { ...state.quoteMap, ...quoteMap };
       const times = Object.values(quoteMap)
@@ -1351,12 +1365,22 @@ async function refreshMarketData() {
       state.quoteTime = times[0] || state.quoteTime;
     }
 
-    const klineSymbols = symbols.filter(supportsKline).filter((symbol) => !state.klineMap[symbol]);
+    const klineSymbols = symbols.filter(supportsKline);
     await Promise.all(
       klineSymbols.map(async (symbol) => {
-        const list = await fetchKlineData(symbol);
-        if (list.length) {
-          state.klineMap[symbol] = list;
+        const needDaily = !state.klineMap[symbol] || !state.klineMap[symbol].length;
+        if (needDaily) {
+          const list = await fetchKlineData(symbol);
+          if (list.length) {
+            state.klineMap[symbol] = list;
+          }
+        }
+        // Fallback "realtime": use minute-kline last point when realtime endpoint is blocked.
+        if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+          const latest = await fetchLatestQuoteFromMinuteK(symbol);
+          if (latest) {
+            state.quoteMap[symbol] = latest;
+          }
         }
       })
     );
@@ -1365,6 +1389,25 @@ async function refreshMarketData() {
   } finally {
     state.marketLoading = false;
     renderAll();
+  }
+}
+
+async function fetchLatestQuoteFromMinuteK(symbol) {
+  try {
+    const list = await fetchMinuteKData(symbol, 5, 2);
+    if (!list.length) {
+      return null;
+    }
+    const last = list[list.length - 1];
+    const prev = list.length > 1 ? list[list.length - 2] : last;
+    return {
+      name: symbol,
+      current: Number(last.close),
+      prevClose: Number(prev.close || last.open || last.close),
+      time: String(last.day || "--"),
+    };
+  } catch (error) {
+    return null;
   }
 }
 
@@ -1389,6 +1432,29 @@ async function fetchKlineData(symbol) {
   const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
     symbol
   )}&scale=240&ma=no&datalen=${KLINE_DATALEN}`;
+  await loadScript(query, "utf-8");
+  const data = window[variableName];
+  delete window[variableName];
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  return data
+    .map((item) => ({
+      day: item.day,
+      open: Number(item.open),
+      high: Number(item.high),
+      low: Number(item.low),
+      close: Number(item.close),
+      volume: Number(item.volume),
+    }))
+    .filter((item) => item.day && Number.isFinite(item.close));
+}
+
+async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
+  const variableName = `__minute_${symbol.replace(/[^a-zA-Z0-9_]/g, "_")}_${Date.now()}`;
+  const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
+    symbol
+  )}&scale=${scale}&ma=no&datalen=${datalen}`;
   await loadScript(query, "utf-8");
   const data = window[variableName];
   delete window[variableName];
