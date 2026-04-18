@@ -46,6 +46,10 @@ const state = {
   benchmark: "none",
   stageRange: "month",
   rangeDays: 7,
+  analysisRangeMode: "preset",
+  customRangeStart: "",
+  customRangeEnd: "",
+  capitalTrendMode: "both",
   capitalAmount: 0,
   trades: [],
   quoteMap: {},
@@ -66,15 +70,24 @@ const monthProfitMain = document.getElementById("monthProfitMain");
 const stageRangeSelect = document.getElementById("stageRangeSelect");
 const stockTableBody = document.getElementById("stockTableBody");
 const recordList = document.getElementById("recordList");
-const analysisSummary = document.getElementById("analysisSummary");
-const analysisChart = document.getElementById("analysisChart");
+const analysisRateSummary = document.getElementById("analysisRateSummary");
+const analysisProfitSummary = document.getElementById("analysisProfitSummary");
+const analysisRateChart = document.getElementById("analysisRateChart");
+const analysisProfitChart = document.getElementById("analysisProfitChart");
+const analysisAssetChart = document.getElementById("analysisAssetChart");
 const demoToggleBtn = document.getElementById("demoToggleBtn");
 const quickTradeBtn = document.getElementById("quickTradeBtn");
 const recordTradeBtn = document.getElementById("recordTradeBtn");
+const tradeAddBtn = document.getElementById("tradeAddBtn");
 const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelect = document.getElementById("algoMode");
 const benchmarkSelect = document.getElementById("benchmark");
 const rangeChips = [...document.querySelectorAll(".range-chip")];
+const customRangeRow = document.getElementById("customRangeRow");
+const customRangeStartInput = document.getElementById("customRangeStart");
+const customRangeEndInput = document.getElementById("customRangeEnd");
+const applyCustomRangeBtn = document.getElementById("applyCustomRangeBtn");
+const assetCurveModeSelect = document.getElementById("assetCurveMode");
 const tradeTableBody = document.getElementById("tradeTableBody");
 const tradeDialog = document.getElementById("tradeDialog");
 const tradeForm = document.getElementById("tradeForm");
@@ -132,11 +145,24 @@ function hydrateState() {
       state.benchmark = parsed.benchmark ?? state.benchmark;
       state.stageRange = parsed.stageRange ?? state.stageRange;
       state.rangeDays = parsed.rangeDays ?? state.rangeDays;
+      state.analysisRangeMode = parsed.analysisRangeMode ?? state.analysisRangeMode;
+      state.customRangeStart = parsed.customRangeStart ?? state.customRangeStart;
+      state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
+      state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
       state.capitalAmount = Number(parsed.capitalAmount ?? 0);
       state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
     } catch (error) {
       console.error("读取本地数据失败，已使用默认配置", error);
     }
+  }
+  if (!["month", "ytd", "total"].includes(state.stageRange)) {
+    state.stageRange = "month";
+  }
+  if (!["preset", "custom"].includes(state.analysisRangeMode)) {
+    state.analysisRangeMode = "preset";
+  }
+  if (!["both", "principal", "market"].includes(state.capitalTrendMode)) {
+    state.capitalTrendMode = "both";
   }
   if (state.useDemoData && state.trades.length === 0) {
     state.trades = demoTrades.map((item) => ({ ...item }));
@@ -144,6 +170,9 @@ function hydrateState() {
   if (state.trades.length === 0) {
     state.useDemoData = true;
     state.trades = demoTrades.map((item) => ({ ...item }));
+  }
+  if (![7, 30, 90, 365].includes(Number(state.rangeDays))) {
+    state.rangeDays = 7;
   }
 }
 
@@ -155,6 +184,10 @@ function persistState() {
     benchmark: state.benchmark,
     stageRange: state.stageRange,
     rangeDays: state.rangeDays,
+    analysisRangeMode: state.analysisRangeMode,
+    customRangeStart: state.customRangeStart,
+    customRangeEnd: state.customRangeEnd,
+    capitalTrendMode: state.capitalTrendMode,
     capitalAmount: state.capitalAmount,
     trades: state.trades,
   };
@@ -207,22 +240,50 @@ function bindEvents() {
 
   rangeChips.forEach((chip) => {
     chip.addEventListener("click", () => {
-      state.rangeDays = Number(chip.dataset.range);
+      const value = chip.dataset.range;
+      if (value === "custom") {
+        state.analysisRangeMode = "custom";
+      } else {
+        state.analysisRangeMode = "preset";
+        state.rangeDays = Number(value);
+      }
       persistState();
       renderAnalysis();
       renderControls();
     });
   });
 
-  [quickTradeBtn, recordTradeBtn].filter(Boolean).forEach((button) => {
-    button.addEventListener("click", () => {
-      clearEditState();
-      tradeForm.reset();
-      tradeTypeInput.value = "trade";
-      applyTradeTypePreset();
-      tradeDateInput.value = toDateKey(new Date());
-      tradeDialog.showModal();
-    });
+  applyCustomRangeBtn?.addEventListener("click", () => {
+    let start = customRangeStartInput?.value || "";
+    let end = customRangeEndInput?.value || "";
+    if (!start && !end) {
+      return;
+    }
+    if (!start) {
+      start = getDefaultAnalysisStartDate();
+    }
+    if (!end) {
+      end = toDateKey(new Date());
+    }
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    state.customRangeStart = start;
+    state.customRangeEnd = end;
+    state.analysisRangeMode = "custom";
+    persistState();
+    renderControls();
+    renderAnalysis();
+  });
+
+  assetCurveModeSelect?.addEventListener("change", () => {
+    state.capitalTrendMode = assetCurveModeSelect.value || "both";
+    persistState();
+    renderAnalysis();
+  });
+
+  [quickTradeBtn, recordTradeBtn, tradeAddBtn].filter(Boolean).forEach((button) => {
+    button.addEventListener("click", openNewTradeDialog);
   });
 
   closeTradeDialogBtn.addEventListener("click", () => {
@@ -378,6 +439,16 @@ function applyTradeTypePreset() {
   }
 }
 
+function openNewTradeDialog() {
+  clearEditState();
+  tradeForm.reset();
+  tradeTypeInput.value = "trade";
+  applyTradeTypePreset();
+  tradeDateInput.value = toDateKey(new Date());
+  tradeDialog.showModal();
+}
+
+
 function renderAll() {
   renderControls();
   renderRoute();
@@ -402,8 +473,25 @@ function renderControls() {
     stageRangeSelect.value = state.stageRange;
   }
   rangeChips.forEach((chip) => {
-    chip.classList.toggle("active", Number(chip.dataset.range) === state.rangeDays);
+    const value = chip.dataset.range;
+    const active =
+      value === "custom"
+        ? state.analysisRangeMode === "custom"
+        : state.analysisRangeMode !== "custom" && Number(value) === state.rangeDays;
+    chip.classList.toggle("active", active);
   });
+  if (customRangeRow) {
+    customRangeRow.classList.toggle("hidden", state.analysisRangeMode !== "custom");
+  }
+  if (customRangeStartInput) {
+    customRangeStartInput.value = state.customRangeStart || "";
+  }
+  if (customRangeEndInput) {
+    customRangeEndInput.value = state.customRangeEnd || "";
+  }
+  if (assetCurveModeSelect) {
+    assetCurveModeSelect.value = state.capitalTrendMode;
+  }
 }
 
 function renderRoute() {
@@ -536,6 +624,12 @@ function getStageStartKey(stageRange, firstDate) {
     return firstDate;
   }
   return toDateKey(start);
+}
+
+function getDefaultAnalysisStartDate() {
+  const dt = new Date();
+  dt.setDate(dt.getDate() - Math.max(state.rangeDays - 1, 0));
+  return toDateKey(dt);
 }
 
 function computePositionStageProfit(position, stageRange) {
@@ -681,18 +775,78 @@ function removeTradeById(tradeId) {
 function renderAnalysis() {
   const portfolio = computePortfolio();
   const history = buildPortfolioHistory(portfolio.positions);
-  const selected = history.slice(-Math.min(Math.max(state.rangeDays, 2), history.length));
+  const selected = resolveAnalysisRange(history);
   const mySeries = computeModeSeries(selected, state.algoMode);
   const benchSeries = buildBenchmarkSeries(selected);
+  const profitSeries = buildProfitSeries(selected);
+  const assetSeries = buildAssetSeries(selected, portfolio.principal);
+
   drawLineChart(mySeries, benchSeries);
+  drawDualLineChart(analysisProfitChart, profitSeries, null, "#f45a68", null);
+  drawAssetChart(assetSeries);
 
   const lastMy = mySeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
+  const lastProfit = profitSeries.at(-1)?.value ?? 0;
   const excess = lastMy - lastBench;
-  analysisSummary.textContent =
-    state.benchmark === "none"
-      ? `我的收益 ${formatPercent(lastMy)}`
-      : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+  if (analysisRateSummary) {
+    analysisRateSummary.textContent =
+      state.benchmark === "none"
+        ? `我的收益率 ${formatPercent(lastMy)}`
+        : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+  }
+  if (analysisProfitSummary) {
+    analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
+  }
+}
+
+function resolveAnalysisRange(history) {
+  if (!history.length) {
+    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  if (state.analysisRangeMode === "custom") {
+    let start = state.customRangeStart || history[0].date;
+    let end = state.customRangeEnd || history[history.length - 1].date;
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    const picked = history.filter((point) => point.date >= start && point.date <= end);
+    if (picked.length) {
+      return picked;
+    }
+  }
+  return history.slice(-Math.min(Math.max(state.rangeDays, 2), history.length));
+}
+
+function buildProfitSeries(points) {
+  if (!points.length) {
+    return [{ date: toDateKey(new Date()), value: 0 }];
+  }
+  const startClose = points[0].value - points[0].flow;
+  let sumFlow = 0;
+  return points.map((point) => {
+    sumFlow += point.flow;
+    return {
+      date: point.date,
+      value: point.value - startClose - sumFlow,
+    };
+  });
+}
+
+function buildAssetSeries(points, principalFallback) {
+  if (!points.length) {
+    return [{ date: toDateKey(new Date()), principal: principalFallback || 0, market: 0 }];
+  }
+  let sigmaFlow = 0;
+  return points.map((point) => {
+    sigmaFlow += point.flow;
+    const principal = Math.max(principalFallback, sigmaFlow, 0);
+    return {
+      date: point.date,
+      principal,
+      market: point.value,
+    };
+  });
 }
 
 async function openStockRecordDialog(symbol) {
@@ -1287,39 +1441,74 @@ function buildBenchmarkSeries(selectedPoints) {
 }
 
 function drawLineChart(mySeries, benchmarkSeries) {
-  const ctx = analysisChart.getContext("2d");
-  const width = analysisChart.width;
-  const height = analysisChart.height;
-  ctx.clearRect(0, 0, width, height);
+  drawDualLineChart(
+    analysisRateChart,
+    mySeries.map((item) => ({ date: item.date, value: item.rate })),
+    state.benchmark === "none" ? null : benchmarkSeries.map((item) => ({ date: item.date, value: item.rate })),
+    "#f24957",
+    "#2f80f6"
+  );
+}
 
+function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB) {
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  drawChartGrid(ctx, width, height);
+
+  const values = [...seriesA.map((item) => item.value)];
+  if (seriesB) {
+    values.push(...seriesB.map((item) => item.value));
+  }
+  const minValue = Math.min(...values, 0);
+  const maxValue = Math.max(...values, 0);
+  const range = Math.max(maxValue - minValue, 0.001);
+  const count = Math.max(seriesA.length, seriesB?.length || 0, 2);
+  const mapX = (idx) => 20 + (idx / (count - 1)) * (width - 40);
+  const mapY = (value) => 20 + ((maxValue - value) / range) * (height - 40);
+
+  drawSeries(ctx, seriesA, mapX, mapY, colorA);
+  if (seriesB && seriesB.length) {
+    drawSeries(ctx, seriesB, mapX, mapY, colorB || "#2f80f6");
+  }
+}
+
+function drawSingleLineChart(canvas, series, color) {
+  drawDualLineChart(canvas, series, null, color, null);
+}
+
+function drawAssetChart(assetSeries) {
+  const principalSeries = assetSeries.map((item) => ({ date: item.date, value: item.principal }));
+  const marketSeries = assetSeries.map((item) => ({ date: item.date, value: item.market }));
+  if (state.capitalTrendMode === "principal") {
+    drawSingleLineChart(analysisAssetChart, principalSeries, "#5f6c82");
+    return;
+  }
+  if (state.capitalTrendMode === "market") {
+    drawSingleLineChart(analysisAssetChart, marketSeries, "#4f83f1");
+    return;
+  }
+  drawDualLineChart(analysisAssetChart, principalSeries, marketSeries, "#5f6c82", "#4f83f1");
+}
+
+function drawChartGrid(ctx, width, height) {
   ctx.strokeStyle = "#e6ebf2";
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
-    const y = (height / 4) * i;
+    const y = 20 + ((height - 40) / 4) * i;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
+    ctx.moveTo(8, y);
+    ctx.lineTo(width - 8, y);
     ctx.stroke();
-  }
-
-  const mergedRates = [
-    ...mySeries.map((point) => Math.abs(point.rate)),
-    ...benchmarkSeries.map((point) => Math.abs(point.rate)),
-    0.02,
-  ];
-  const maxAbs = Math.max(...mergedRates);
-  const count = Math.max(mySeries.length, 2);
-  const mapX = (idx) => (idx / (count - 1)) * (width - 40) + 20;
-  const mapY = (rate) => height / 2 - (rate / maxAbs) * (height * 0.35);
-
-  drawSeries(ctx, mySeries, mapX, mapY, "#f24957");
-  if (state.benchmark !== "none") {
-    drawSeries(ctx, benchmarkSeries, mapX, mapY, "#2f80f6");
   }
 }
 
 function drawSeries(ctx, series, mapX, mapY, color) {
-  if (!series.length) {
+  if (!series || !series.length) {
     return;
   }
   ctx.strokeStyle = color;
@@ -1327,7 +1516,7 @@ function drawSeries(ctx, series, mapX, mapY, color) {
   ctx.beginPath();
   series.forEach((point, index) => {
     const x = mapX(index);
-    const y = mapY(point.rate);
+    const y = mapY(point.value);
     if (index === 0) {
       ctx.moveTo(x, y);
     } else {

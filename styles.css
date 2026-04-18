@@ -174,7 +174,7 @@ body {
   min-height: 50px;
   padding: 0 14px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
 }
 
@@ -343,6 +343,7 @@ h2 {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .range-chip {
@@ -360,12 +361,51 @@ h2 {
   color: var(--blue);
 }
 
-#analysisChart {
+.custom-range-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.custom-range-row input {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #5d6a82;
+  background: #fff;
+}
+
+.custom-range-row.hidden {
+  display: none;
+}
+
+#analysisRateChart,
+#analysisProfitChart,
+#analysisAssetChart {
   width: 100%;
   height: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(180deg, rgb(79 131 241 / 8%), transparent);
+}
+
+.asset-mode-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asset-mode-select {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #5d6a82;
+  background: #fff;
 }
 
 .btn {
@@ -402,6 +442,16 @@ h2 {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.trade-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trade-add-btn {
+  min-height: 30px;
 }
 
 .trade-filter-btn {
