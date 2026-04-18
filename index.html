@@ -279,14 +279,14 @@
       <button type="button" data-action="delete">删除</button>
     </div>
 
-    <dialog id="stockRecordDialog" class="dialog stock-record-dialog">
+    <section id="route-stock-record" class="route-pane stock-record-page">
       <div class="stock-record-wrap">
         <div class="stock-record-head">
           <div>
             <h3 id="stockRecordTitle" class="stock-record-title">--</h3>
             <p id="stockRecordTime" class="stock-record-time">--</p>
           </div>
-          <button type="button" id="closeStockRecordDialogBtn" class="btn btn-ghost">关闭</button>
+          <button type="button" id="closeStockRecordDialogBtn" class="btn btn-ghost">返回</button>
         </div>
         <div class="stock-record-quote">
           <div id="stockRecordPrice" class="stock-record-price">--</div>
@@ -319,7 +319,7 @@
           <tbody id="stockRecordListBody"></tbody>
         </table>
       </div>
-    </dialog>
+    </section>
 
     <script src="./app.js"></script>
   </body>

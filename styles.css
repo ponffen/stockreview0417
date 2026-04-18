@@ -210,7 +210,7 @@ body {
   border-right: 1px solid var(--line);
   white-space: nowrap;
   padding: 7px 9px;
-  text-align: center;
+  text-align: right;
 }
 
 .stock-table tbody td {
@@ -218,7 +218,7 @@ body {
   border-right: 1px solid var(--line);
   white-space: nowrap;
   padding: 8px 9px;
-  text-align: center;
+  text-align: right;
   font-size: 12px;
   vertical-align: middle;
 }
@@ -234,6 +234,11 @@ body {
 .stock-table thead th:first-child {
   background: #f6f8fb;
   z-index: 3;
+}
+
+.stock-table thead th:last-child,
+.stock-table td:last-child {
+  text-align: left;
 }
 
 .stock-name {
@@ -431,6 +436,7 @@ h2 {
   padding: 10px;
   font-size: 14px;
   white-space: nowrap;
+  text-align: left;
 }
 
 .trade-table tbody tr {
@@ -447,6 +453,18 @@ h2 {
 
 .trade-table .type-cell {
   font-weight: 500;
+}
+
+.trade-table thead th:nth-child(4),
+.trade-table thead th:nth-child(5),
+.trade-table thead th:nth-child(6) {
+  text-align: right;
+}
+
+.trade-table td:nth-child(4),
+.trade-table td:nth-child(5),
+.trade-table td:nth-child(6) {
+  text-align: right;
 }
 
 .record-action-popover {
@@ -650,8 +668,36 @@ h2 {
 .stock-record-table td {
   border-top: 1px solid var(--line);
   padding: 8px 6px;
-  text-align: center;
+  text-align: left;
   font-size: 13px;
+}
+
+.stock-record-table th:nth-child(3),
+.stock-record-table th:nth-child(4),
+.stock-record-table th:nth-child(5),
+.stock-record-table td:nth-child(3),
+.stock-record-table td:nth-child(4),
+.stock-record-table td:nth-child(5) {
+  text-align: right;
+}
+
+.stock-detail-page {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #f1f3f7;
+  overflow-y: auto;
+  display: none;
+}
+
+.stock-detail-page.active {
+  display: block;
+}
+
+.stock-detail-page .stock-record-wrap {
+  max-width: 420px;
+  margin: 0 auto;
+  padding-bottom: 80px;
 }
 
 .full {

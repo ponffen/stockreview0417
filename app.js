@@ -1,6 +1,7 @@
 const STORAGE_KEY = "earning-clone-state-v2";
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 420;
+const CHART_FALLBACK_DAYS = 90;
 const DEFAULT_BENCHMARK_PRICE = {
   sh000001: 0,
   sz399001: 0,
@@ -39,6 +40,7 @@ const demoTrades = [
 
 const state = {
   route: "earning",
+  previousRoute: "earning",
   useDemoData: true,
   algoMode: "cost",
   benchmark: "none",
@@ -52,6 +54,7 @@ const state = {
   marketLoading: false,
   editingTradeId: null,
   activeRecordId: null,
+  activeRecordSymbol: null,
 };
 
 const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
@@ -87,7 +90,6 @@ const capitalDialog = document.getElementById("capitalDialog");
 const capitalForm = document.getElementById("capitalForm");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
 const capitalAmountInput = document.getElementById("capitalAmount");
-const stockRecordDialog = document.getElementById("stockRecordDialog");
 const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
 const stockRecordTitle = document.getElementById("stockRecordTitle");
 const stockRecordTime = document.getElementById("stockRecordTime");
@@ -162,6 +164,9 @@ function persistState() {
 function bindEvents() {
   routeButtons.forEach((button) => {
     button.addEventListener("click", () => {
+      if (state.route !== "stock-record") {
+        state.previousRoute = state.route;
+      }
       state.route = button.dataset.route;
       persistState();
       renderRoute();
@@ -344,7 +349,11 @@ function bindEvents() {
     openStockRecordDialog(symbol);
   });
 
-  closeStockRecordDialogBtn?.addEventListener("click", () => stockRecordDialog.close());
+  closeStockRecordDialogBtn?.addEventListener("click", () => {
+    state.route = state.previousRoute || "earning";
+    persistState();
+    renderRoute();
+  });
 }
 
 function applyTradeTypePreset() {
@@ -375,6 +384,9 @@ function renderAll() {
   renderOverviewAndStockTable();
   renderTradeTable();
   renderAnalysis();
+  if (state.route === "stock-record" && state.activeRecordSymbol) {
+    renderStockRecordPage(state.activeRecordSymbol);
+  }
 }
 
 function renderControls() {
@@ -584,7 +596,7 @@ function renderTradeTable() {
           <td>${escapeHtml(trade.name)}</td>
           <td class="type-cell">${trade.side === "buy" ? "买入" : "卖出"}</td>
           <td class="num">${formatNumber(trade.price, 2)}</td>
-          <td class="num">${formatNumber(trade.quantity, 2)}</td>
+          <td class="num">${formatNumber(trade.quantity, 0)}</td>
           <td class="num ${trade.side === "buy" ? "down" : "up"}">${
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>
@@ -677,9 +689,16 @@ function renderAnalysis() {
 }
 
 function openStockRecordDialog(symbol) {
-  if (!stockRecordDialog) {
-    return;
-  }
+  state.activeRecordSymbol = symbol;
+  state.previousRoute = state.route;
+  state.route = "stock-record";
+  renderRoute();
+  persistState();
+
+  ensureSymbolData(symbol).then(() => renderStockRecordPage(symbol));
+}
+
+function renderStockRecordPage(symbol) {
   const position = computePortfolio().positions.find((item) => item.symbol === symbol);
   if (!position) {
     return;
@@ -709,7 +728,7 @@ function openStockRecordDialog(symbol) {
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
         <td>${formatNumber(trade.price, 2)}</td>
-        <td>${formatNumber(trade.quantity, 2)}</td>
+        <td>${formatNumber(trade.quantity, 0)}</td>
         <td class="${trade.side === "buy" ? "down" : "up"}">${trade.side === "buy" ? "-" : "+"}${formatNumber(
           trade.amount,
           2
@@ -720,7 +739,69 @@ function openStockRecordDialog(symbol) {
     .join("");
 
   drawStockRecordChart(symbol, symbolTrades);
-  stockRecordDialog.showModal();
+}
+
+async function ensureSymbolData(symbol) {
+  try {
+    const quoteMap = await fetchRealtimeQuotes([symbol]);
+    if (quoteMap[symbol]) {
+      state.quoteMap[symbol] = quoteMap[symbol];
+      state.quoteTime = quoteMap[symbol].time || state.quoteTime;
+    }
+  } catch (error) {
+    console.error("加载个股实时行情失败", error);
+  }
+
+  if (!supportsKline(symbol)) {
+    return;
+  }
+  if (state.klineMap[symbol] && state.klineMap[symbol].length) {
+    return;
+  }
+  try {
+    const list = await fetchKlineData(symbol);
+    if (list.length) {
+      state.klineMap[symbol] = list;
+    } else {
+      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+    }
+  } catch (error) {
+    console.error("加载个股K线失败", error);
+    if (!state.klineMap[symbol] || !state.klineMap[symbol].length) {
+      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+    }
+  }
+}
+
+function buildFallbackKlineFromTrades(symbol) {
+  const symbolTrades = state.trades
+    .filter((item) => item.symbol === symbol)
+    .sort(sortTradeAsc);
+  if (!symbolTrades.length) {
+    return [];
+  }
+  const start = new Date(symbolTrades[0].date);
+  const end = new Date();
+  const closeSeed = validNumber(symbolTrades[symbolTrades.length - 1].price, 1);
+  const rows = [];
+  let cursor = new Date(start);
+  let prev = closeSeed;
+  while (cursor <= end && rows.length < CHART_FALLBACK_DAYS) {
+    const day = toDateKey(cursor);
+    const trade = symbolTrades.find((item) => item.date === day);
+    const close = validNumber(trade?.price, prev);
+    rows.push({
+      day,
+      open: close,
+      high: close,
+      low: close,
+      close,
+      volume: 0,
+    });
+    prev = close;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rows;
 }
 
 function marketLabel(market) {
@@ -749,6 +830,7 @@ function drawStockRecordChart(symbol, symbolTrades) {
   const kline = state.klineMap[symbol] || [];
   const points = kline.slice(-60);
   if (!points.length) {
+    drawFallbackStockRecordChart(symbolTrades, ctx, width, height);
     return;
   }
   const closes = points.map((item) => Number(item.close));
@@ -836,6 +918,69 @@ function drawStockRecordChart(symbol, symbolTrades) {
     }
     const x = mapX(idx);
     const y = mapYPrice(validNumber(trade.price, points[idx].close));
+    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
+    ctx.strokeStyle = "#3b7bf6";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+}
+
+function drawFallbackStockRecordChart(symbolTrades, ctx, width, height) {
+  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
+  if (!sortedTrades.length) {
+    return;
+  }
+  const count = sortedTrades.length;
+  const prices = sortedTrades.map((t) => validNumber(t.price, 0));
+  const maxP = Math.max(...prices, 1);
+  const minP = Math.min(...prices, 0);
+  let q = 0;
+  const qty = sortedTrades.map((t) => {
+    q += t.side === "buy" ? t.quantity : -t.quantity;
+    return q;
+  });
+  const maxQ = Math.max(...qty.map((v) => Math.abs(v)), 1);
+  const mapX = (idx) => 20 + (idx / Math.max(count - 1, 1)) * (width - 40);
+  const mapYPrice = (value) => 20 + ((maxP - value) / Math.max(maxP - minP, 0.001)) * (height - 60);
+  const mapYQty = (value) => height - 20 - (value / maxQ) * (height - 60);
+
+  ctx.strokeStyle = "#e8edf5";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = 20 + ((height - 40) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(10, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#4091e0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  sortedTrades.forEach((trade, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(validNumber(trade.price, 0));
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ff4d4f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  qty.forEach((value, index) => {
+    const x = mapX(index);
+    const y = mapYQty(value);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  sortedTrades.forEach((trade, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(validNumber(trade.price, 0));
     ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
     ctx.strokeStyle = "#3b7bf6";
     ctx.beginPath();
