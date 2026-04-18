@@ -169,7 +169,7 @@ function bindEvents() {
       }
       state.route = button.dataset.route;
       persistState();
-      renderRoute();
+      renderAll();
     });
   });
 
@@ -416,6 +416,10 @@ function renderRoute() {
   routePanes.forEach((pane) => {
     pane.classList.toggle("active", pane.id === `route-${state.route}`);
   });
+  const bottomTabs = document.querySelector(".bottom-tabs");
+  if (bottomTabs) {
+    bottomTabs.style.display = state.route === "stock-record" ? "none" : "grid";
+  }
   if (state.route === "stock-record" && state.activeRecordSymbol) {
     renderStockRecordPage(state.activeRecordSymbol);
   }
@@ -691,14 +695,17 @@ function renderAnalysis() {
       : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
 }
 
-function openStockRecordDialog(symbol) {
+async function openStockRecordDialog(symbol) {
   state.activeRecordSymbol = symbol;
   state.previousRoute = state.route;
   state.route = "stock-record";
-  renderRoute();
+  renderAll();
   persistState();
 
-  ensureSymbolData(symbol).then(() => renderStockRecordPage(symbol));
+  await ensureSymbolData(symbol);
+  renderStockRecordPage(symbol);
+  // wait for layout settle on mobile after route switch
+  window.setTimeout(() => renderStockRecordPage(symbol), 40);
 }
 
 function renderStockRecordPage(symbol) {
@@ -1474,7 +1481,7 @@ function collectSymbolsForMarket() {
     fromTrades.push(state.benchmark);
   }
   if (!fromTrades.length) {
-    fromTrades.push("sh600519", "sz000858", "hk00700", "sh000001", "sz399001");
+    fromTrades.push("sz300750", "sh601899", "sh000001", "sz399001");
   }
   return [...new Set(fromTrades)];
 }
