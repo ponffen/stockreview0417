@@ -374,7 +374,7 @@ function renderOverviewAndStockTable() {
   if (!portfolio.positions.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="11"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+        <td colspan="13"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -402,12 +402,15 @@ function renderOverviewAndStockTable() {
             <div class="cell-main">${formatPlainMoney(row.marketValue)}</div>
             <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
           </td>
-          <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
-          <td class="${totalClass}">${formatPercent(row.profitRate)}</td>
-          <td>${formatPercent(row.weight)}</td>
-          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
-          <td>${formatNumber(row.lastTradePrice, 3)}</td>
           <td>${formatNumber(row.cost, 3)}</td>
+          <td class="${row.monthProfit >= 0 ? "up" : "down"}">${formatSignedMoney(row.monthProfit, 2)}</td>
+          <td>${formatPercent(row.monthWeight)}</td>
+          <td class="${row.yearProfit >= 0 ? "up" : "down"}">${formatSignedMoney(row.yearProfit, 2)}</td>
+          <td>${formatPercent(row.yearWeight)}</td>
+          <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
+          <td class="${totalClass}">${formatPercent(row.totalRate)}</td>
+          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
+          <td>${formatPercent(row.weight)}</td>
           <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
         </tr>
       `;
@@ -426,6 +429,19 @@ function computeStagePerformance(history, stageRange, algoMode, portfolio) {
     };
   }
 
+  const startKey = getStageStartKey(stageRange, history[0].date);
+  const points = history.filter((point) => point.date >= startKey);
+  if (!points.length) {
+    return { profit: 0, rate: 0 };
+  }
+  const startClose = points[0].value - points[0].flow;
+  const stageFlow = points.reduce((sum, point) => sum + point.flow, 0);
+  const profit = points[points.length - 1].value - startClose - stageFlow;
+  const rate = computeModeSeries(points, algoMode).at(-1)?.rate ?? 0;
+  return { profit, rate };
+}
+
+function getStageStartKey(stageRange, firstDate) {
   const today = new Date();
   const start = new Date(today);
   if (stageRange === "week") {
@@ -436,19 +452,54 @@ function computeStagePerformance(history, stageRange, algoMode, portfolio) {
     start.setDate(today.getDate() - 89);
   } else if (stageRange === "ytd") {
     start.setMonth(0, 1);
-  } else if (stageRange === "total") {
-    start.setTime(new Date(history[0].date).getTime());
+  } else if (stageRange === "total" && firstDate) {
+    return firstDate;
   }
-  const startKey = toDateKey(start);
-  const points = history.filter((point) => point.date >= startKey);
-  if (!points.length) {
-    return { profit: 0, rate: 0 };
+  return toDateKey(start);
+}
+
+function computePositionStageProfit(position, stageRange) {
+  const firstTradeDate = state.trades.length
+    ? [...state.trades].sort(sortTradeAsc)[0].date
+    : toDateKey(new Date());
+  const startKey = getStageStartKey(stageRange, firstTradeDate);
+  const symbolTrades = state.trades
+    .filter((trade) => trade.symbol === position.symbol)
+    .sort(sortTradeAsc);
+  if (!symbolTrades.length) {
+    return 0;
   }
-  const startClose = points[0].value - points[0].flow;
-  const stageFlow = points.reduce((sum, point) => sum + point.flow, 0);
-  const profit = points[points.length - 1].value - startClose - stageFlow;
-  const rate = computeModeSeries(points, algoMode).at(-1)?.rate ?? 0;
-  return { profit, rate };
+
+  let startQuantity = 0;
+  let stageFlow = 0;
+  symbolTrades.forEach((trade) => {
+    const deltaQty = trade.side === "buy" ? trade.quantity : -trade.quantity;
+    if (trade.date < startKey) {
+      startQuantity += deltaQty;
+    } else {
+      stageFlow += signedAmount(trade);
+    }
+  });
+
+  const startClose = getSymbolCloseBeforeDate(position.symbol, startKey, position.prevClose);
+  const startMarketValue = startQuantity * startClose;
+  return position.marketValue - startMarketValue - stageFlow;
+}
+
+function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
+  const kline = state.klineMap[symbol] || [];
+  for (let i = kline.length - 1; i >= 0; i -= 1) {
+    const item = kline[i];
+    if (item.day < dateKey && Number.isFinite(Number(item.close))) {
+      return Number(item.close);
+    }
+  }
+  return validNumber(
+    fallbackPrice,
+    state.quoteMap[symbol]?.prevClose,
+    state.quoteMap[symbol]?.current,
+    0
+  );
 }
 
 function renderRecords() {
@@ -553,7 +604,19 @@ function computePortfolio() {
       todayProfit,
       dayChangeRate,
       regretRate,
+      totalRate: profitRate,
     };
+  });
+
+  positions.forEach((item) => {
+    item.monthProfit = computePositionStageProfit(item, "month");
+    item.yearProfit = computePositionStageProfit(item, "ytd");
+  });
+  const monthTotalProfit = positions.reduce((sum, item) => sum + item.monthProfit, 0);
+  const yearTotalProfit = positions.reduce((sum, item) => sum + item.yearProfit, 0);
+  positions.forEach((item) => {
+    item.monthWeight = monthTotalProfit !== 0 ? item.monthProfit / monthTotalProfit : 0;
+    item.yearWeight = yearTotalProfit !== 0 ? item.yearProfit / yearTotalProfit : 0;
   });
 
   const sigmaAmountAll = state.trades.reduce((sum, trade) => sum + signedAmount(trade), 0);
