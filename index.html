@@ -24,7 +24,17 @@
               <p id="todayProfitMain" class="profit-main">--</p>
             </div>
             <div class="profit-block">
-              <p class="profit-label">本月收益 <span class="arrow">▼</span></p>
+              <label class="profit-label stage-select-wrap">
+                <select id="stageRangeSelect" class="stage-select">
+                  <option value="day">今日收益</option>
+                  <option value="week">本周收益</option>
+                  <option value="month" selected>本月收益</option>
+                  <option value="quarter">最近三月</option>
+                  <option value="ytd">本年收益</option>
+                  <option value="total">总收益</option>
+                </select>
+                <span class="arrow">▼</span>
+              </label>
               <p id="monthProfitMain" class="profit-main">--</p>
             </div>
           </div>
@@ -34,35 +44,23 @@
 
         <article class="stock-card">
           <div class="stock-head">
-            <div class="stock-title-wrap">
-              <h2 class="stock-title">个股收益</h2>
-              <span class="grid-icon">◫</span>
-            </div>
-            <div class="stock-actions">
-              <button id="demoToggleBtn" class="icon-btn">演示</button>
-              <button id="quickTradeBtn" class="icon-btn">记一笔</button>
-            </div>
-          </div>
-          <div class="quote-meta">
-            <span id="quoteTime" class="caption">行情更新时间：--</span>
-            <span class="swipe-hint">左右滑动可查看完整字段</span>
+            <h2 class="stock-title">个股收益</h2>
           </div>
           <div class="table-scroll">
             <table class="stock-table">
               <thead>
                 <tr>
-                  <th>股票</th>
+                  <th>名称</th>
                   <th>今日收益</th>
                   <th>现价/涨跌</th>
                   <th>市值/数量</th>
-                  <th>Σ发生金额</th>
-                  <th>成本</th>
                   <th>总收益</th>
                   <th>收益率</th>
                   <th>权重</th>
                   <th>后悔率</th>
                   <th>最近成交</th>
-                  <th>最近方向</th>
+                  <th>成本</th>
+                  <th>Σ发生金额</th>
                 </tr>
               </thead>
               <tbody id="stockTableBody"></tbody>

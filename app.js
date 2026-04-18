@@ -68,6 +68,7 @@ const state = {
   useDemoData: true,
   algoMode: "cost",
   benchmark: "none",
+  stageRange: "month",
   rangeDays: 7,
   capitalAmount: 0,
   trades: [],
@@ -83,6 +84,7 @@ const overviewGrid = document.getElementById("overviewGrid");
 const quoteTime = document.getElementById("quoteTime");
 const todayProfitMain = document.getElementById("todayProfitMain");
 const monthProfitMain = document.getElementById("monthProfitMain");
+const stageRangeSelect = document.getElementById("stageRangeSelect");
 const stockTableBody = document.getElementById("stockTableBody");
 const recordList = document.getElementById("recordList");
 const analysisSummary = document.getElementById("analysisSummary");
@@ -132,6 +134,7 @@ function hydrateState() {
       state.useDemoData = parsed.useDemoData ?? state.useDemoData;
       state.algoMode = parsed.algoMode ?? state.algoMode;
       state.benchmark = parsed.benchmark ?? state.benchmark;
+      state.stageRange = parsed.stageRange ?? state.stageRange;
       state.rangeDays = parsed.rangeDays ?? state.rangeDays;
       state.capitalAmount = Number(parsed.capitalAmount ?? 0);
       state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
@@ -150,6 +153,7 @@ function persistState() {
     useDemoData: state.useDemoData,
     algoMode: state.algoMode,
     benchmark: state.benchmark,
+    stageRange: state.stageRange,
     rangeDays: state.rangeDays,
     capitalAmount: state.capitalAmount,
     trades: state.trades,
@@ -186,6 +190,12 @@ function bindEvents() {
     persistState();
     renderAnalysis();
     refreshMarketData();
+  });
+
+  stageRangeSelect?.addEventListener("change", () => {
+    state.stageRange = stageRangeSelect.value;
+    persistState();
+    renderOverviewAndStockTable();
   });
 
   rangeChips.forEach((chip) => {
@@ -312,7 +322,12 @@ function renderControls() {
   demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
   algoModeSelect.value = state.algoMode;
   benchmarkSelect.value = state.benchmark;
-  quoteTime.textContent = `行情更新时间：${state.quoteTime}`;
+  if (quoteTime) {
+    quoteTime.textContent = `行情更新时间：${state.quoteTime}`;
+  }
+  if (stageRangeSelect) {
+    stageRangeSelect.value = state.stageRange;
+  }
   rangeChips.forEach((chip) => {
     chip.classList.toggle("active", Number(chip.dataset.range) === state.rangeDays);
   });
@@ -333,16 +348,7 @@ function renderRoute() {
 function renderOverviewAndStockTable() {
   const portfolio = computePortfolio();
   const history = buildPortfolioHistory(portfolio.positions);
-  const monthStartKey = `${toDateKey(new Date()).slice(0, 8)}01`;
-  const monthPoints = history.filter((point) => point.date >= monthStartKey);
-  let monthProfit = 0;
-  let monthRate = 0;
-  if (monthPoints.length) {
-    const monthStartClose = monthPoints[0].value - monthPoints[0].flow;
-    const monthFlow = monthPoints.reduce((sum, point) => sum + point.flow, 0);
-    monthProfit = monthPoints[monthPoints.length - 1].value - monthStartClose - monthFlow;
-    monthRate = computeModeSeries(monthPoints, state.algoMode).at(-1)?.rate ?? 0;
-  }
+  const stagePerf = computeStagePerformance(history, state.stageRange, state.algoMode, portfolio);
   const cards = [
     { label: "总市值", value: formatPlainMoney(portfolio.totalMarketValue) },
     { label: "本金", value: formatPlainMoney(portfolio.principal) },
@@ -351,8 +357,8 @@ function renderOverviewAndStockTable() {
   ];
   todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
   todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
-  monthProfitMain.innerHTML = metricValueWithRate(monthProfit, monthRate);
-  monthProfitMain.className = `profit-main ${monthProfit >= 0 ? "up" : "down"}`;
+  monthProfitMain.innerHTML = metricValueWithRate(stagePerf.profit, stagePerf.rate);
+  monthProfitMain.className = `profit-main ${stagePerf.profit >= 0 ? "up" : "down"}`;
 
   overviewGrid.innerHTML = cards
     .map(
@@ -368,7 +374,7 @@ function renderOverviewAndStockTable() {
   if (!portfolio.positions.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="12"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+        <td colspan="11"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -396,18 +402,53 @@ function renderOverviewAndStockTable() {
             <div class="cell-main">${formatPlainMoney(row.marketValue)}</div>
             <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
           </td>
-          <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
-          <td>${formatNumber(row.cost, 3)}</td>
           <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
           <td class="${totalClass}">${formatPercent(row.profitRate)}</td>
           <td>${formatPercent(row.weight)}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
           <td>${formatNumber(row.lastTradePrice, 3)}</td>
-          <td>${row.lastTradeSide === "buy" ? "B" : "S"}</td>
+          <td>${formatNumber(row.cost, 3)}</td>
+          <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
         </tr>
       `;
     })
     .join("");
+}
+
+function computeStagePerformance(history, stageRange, algoMode, portfolio) {
+  if (!history.length) {
+    return { profit: 0, rate: 0 };
+  }
+  if (stageRange === "day") {
+    return {
+      profit: portfolio.todayProfit,
+      rate: portfolio.todayRate,
+    };
+  }
+
+  const today = new Date();
+  const start = new Date(today);
+  if (stageRange === "week") {
+    start.setDate(today.getDate() - 6);
+  } else if (stageRange === "month") {
+    start.setDate(1);
+  } else if (stageRange === "quarter") {
+    start.setDate(today.getDate() - 89);
+  } else if (stageRange === "ytd") {
+    start.setMonth(0, 1);
+  } else if (stageRange === "total") {
+    start.setTime(new Date(history[0].date).getTime());
+  }
+  const startKey = toDateKey(start);
+  const points = history.filter((point) => point.date >= startKey);
+  if (!points.length) {
+    return { profit: 0, rate: 0 };
+  }
+  const startClose = points[0].value - points[0].flow;
+  const stageFlow = points.reduce((sum, point) => sum + point.flow, 0);
+  const profit = points[points.length - 1].value - startClose - stageFlow;
+  const rate = computeModeSeries(points, algoMode).at(-1)?.rate ?? 0;
+  return { profit, rate };
 }
 
 function renderRecords() {
