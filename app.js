@@ -13,7 +13,7 @@ const demoTrades = [
   {
     id: crypto.randomUUID(),
     type: "trade",
-    symbol: "sh600750",
+    symbol: "sz300750",
     name: "宁德时代",
     side: "buy",
     price: 443.27,
@@ -416,6 +416,9 @@ function renderRoute() {
   routePanes.forEach((pane) => {
     pane.classList.toggle("active", pane.id === `route-${state.route}`);
   });
+  if (state.route === "stock-record" && state.activeRecordSymbol) {
+    renderStockRecordPage(state.activeRecordSymbol);
+  }
 }
 
 function renderOverviewAndStockTable() {
@@ -771,6 +774,13 @@ async function ensureSymbolData(symbol) {
       state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
     }
   }
+}
+
+function ensureSymbolPrefixForQuote(symbol) {
+  if (/^sh600750$/i.test(symbol)) {
+    return "sz300750";
+  }
+  return symbol;
 }
 
 function buildFallbackKlineFromTrades(symbol) {
@@ -1459,7 +1469,7 @@ function loadScript(src, charset = "utf-8") {
 }
 
 function collectSymbolsForMarket() {
-  const fromTrades = state.trades.map((item) => item.symbol);
+  const fromTrades = state.trades.map((item) => ensureSymbolPrefixForQuote(item.symbol));
   if (state.benchmark !== "none") {
     fromTrades.push(state.benchmark);
   }
@@ -1525,6 +1535,9 @@ function normalizeSymbol(rawSymbol) {
     return value;
   }
   if (/^\d{6}$/.test(value)) {
+    if (["3"].includes(value[0])) {
+      return `sz${value}`;
+    }
     if (["5", "6", "9"].includes(value[0])) {
       return `sh${value}`;
     }
