@@ -77,10 +77,12 @@ const state = {
   marketLoading: false,
 };
 
-const routeButtons = [...document.querySelectorAll(".route-btn")];
+const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
 const quoteTime = document.getElementById("quoteTime");
+const todayProfitMain = document.getElementById("todayProfitMain");
+const monthProfitMain = document.getElementById("monthProfitMain");
 const stockTableBody = document.getElementById("stockTableBody");
 const recordList = document.getElementById("recordList");
 const analysisSummary = document.getElementById("analysisSummary");
@@ -121,6 +123,12 @@ function hydrateState() {
     try {
       const parsed = JSON.parse(raw);
       state.route = parsed.route ?? state.route;
+      if (state.route === "records") {
+        state.route = "trade";
+      }
+      if (state.route === "introduction") {
+        state.route = "account";
+      }
       state.useDemoData = parsed.useDemoData ?? state.useDemoData;
       state.algoMode = parsed.algoMode ?? state.algoMode;
       state.benchmark = parsed.benchmark ?? state.benchmark;
@@ -301,7 +309,7 @@ function renderAll() {
 }
 
 function renderControls() {
-  demoToggleBtn.textContent = state.useDemoData ? "开始使用" : "查看演示数据";
+  demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
   algoModeSelect.value = state.algoMode;
   benchmarkSelect.value = state.benchmark;
   quoteTime.textContent = `行情更新时间：${state.quoteTime}`;
@@ -311,6 +319,9 @@ function renderControls() {
 }
 
 function renderRoute() {
+  if (!routePanes.some((pane) => pane.id === `route-${state.route}`)) {
+    state.route = "earning";
+  }
   routeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.route === state.route);
   });
@@ -322,30 +333,33 @@ function renderRoute() {
 function renderOverviewAndStockTable() {
   const portfolio = computePortfolio();
   const history = buildPortfolioHistory(portfolio.positions);
-  const totalRate = computeModeSeries(history, state.algoMode).at(-1)?.rate ?? 0;
+  const monthStartKey = `${toDateKey(new Date()).slice(0, 8)}01`;
+  const monthPoints = history.filter((point) => point.date >= monthStartKey);
+  let monthProfit = 0;
+  let monthRate = 0;
+  if (monthPoints.length) {
+    const monthStartClose = monthPoints[0].value - monthPoints[0].flow;
+    const monthFlow = monthPoints.reduce((sum, point) => sum + point.flow, 0);
+    monthProfit = monthPoints[monthPoints.length - 1].value - monthStartClose - monthFlow;
+    monthRate = computeModeSeries(monthPoints, state.algoMode).at(-1)?.rate ?? 0;
+  }
   const cards = [
-    { label: "总资产", value: formatCurrency(portfolio.totalAssets) },
-    { label: "总市值", value: formatCurrency(portfolio.totalMarketValue) },
-    { label: "现金", value: formatCurrency(portfolio.cash) },
-    { label: "本金", value: formatCurrency(portfolio.principal) },
-    {
-      label: "总收益",
-      value: `${formatCurrency(portfolio.totalProfit)} (${formatPercent(totalRate)})`,
-      className: portfolio.totalProfit >= 0 ? "up" : "down",
-    },
-    {
-      label: "今日收益",
-      value: `${formatCurrency(portfolio.todayProfit)} (${formatPercent(portfolio.todayRate)})`,
-      className: portfolio.todayProfit >= 0 ? "up" : "down",
-    },
+    { label: "总市值", value: formatPlainMoney(portfolio.totalMarketValue) },
+    { label: "本金", value: formatPlainMoney(portfolio.principal) },
+    { label: "总资产", value: formatPlainMoney(portfolio.totalAssets) },
+    { label: "现金", value: formatPlainMoney(portfolio.cash) },
   ];
+  todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
+  todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
+  monthProfitMain.innerHTML = metricValueWithRate(monthProfit, monthRate);
+  monthProfitMain.className = `profit-main ${monthProfit >= 0 ? "up" : "down"}`;
 
   overviewGrid.innerHTML = cards
     .map(
       (item) => `
       <article class="kpi-item">
         <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value ${item.className || ""}">${item.value}</p>
+        <p class="kpi-value">${item.value}</p>
       </article>
     `
     )
@@ -354,7 +368,7 @@ function renderOverviewAndStockTable() {
   if (!portfolio.positions.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="14"><p class="empty">暂无持仓，点击“新建交易”开始记录。</p></td>
+        <td colspan="12"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -362,19 +376,30 @@ function renderOverviewAndStockTable() {
 
   stockTableBody.innerHTML = portfolio.positions
     .map((row) => {
-      const profitClass = row.totalProfit >= 0 ? "up" : "down";
+      const stockCode = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
+      const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
+      const dayClass = row.todayProfit >= 0 ? "up" : "down";
+      const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
+      const totalClass = row.totalProfit >= 0 ? "up" : "down";
       return `
         <tr>
-          <td class="stock-name"><strong>${escapeHtml(row.name)}</strong><span>${row.symbol}</span></td>
-          <td>${row.market}</td>
-          <td>${formatNumber(row.quantity, 0)}</td>
-          <td>${formatNumber(row.currentPrice, 3)}</td>
-          <td>${formatNumber(row.prevClose, 3)}</td>
-          <td>${formatCurrency(row.marketValue)}</td>
-          <td>${formatCurrency(row.sigmaAmount)}</td>
+          <td class="stock-name">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span><i class="market-tag">${tag}</i> ${stockCode}</span>
+          </td>
+          <td class="${dayClass}">${formatSignedMoney(row.todayProfit, 2)}</td>
+          <td>
+            <div class="cell-main">${formatNumber(row.currentPrice, 3)}</div>
+            <div class="cell-sub ${changeClass}">${formatPercent(row.dayChangeRate)}</div>
+          </td>
+          <td>
+            <div class="cell-main">${formatPlainMoney(row.marketValue)}</div>
+            <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
+          </td>
+          <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
           <td>${formatNumber(row.cost, 3)}</td>
-          <td class="${profitClass}">${formatCurrency(row.totalProfit)}</td>
-          <td class="${profitClass}">${formatPercent(row.profitRate)}</td>
+          <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
+          <td class="${totalClass}">${formatPercent(row.profitRate)}</td>
           <td>${formatPercent(row.weight)}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
           <td>${formatNumber(row.lastTradePrice, 3)}</td>
@@ -468,6 +493,11 @@ function computePortfolio() {
     const totalProfit = marketValue - item.sigmaAmount;
     const profitRate =
       Math.abs(item.sigmaAmount) > 0 ? totalProfit / Math.abs(item.sigmaAmount) : 0;
+    const todayFlowForSymbol = state.trades
+      .filter((trade) => trade.symbol === item.symbol && trade.date === toDateKey(new Date()))
+      .reduce((sum, trade) => sum + signedAmount(trade), 0);
+    const todayProfit = marketValue - yesterdayValue - todayFlowForSymbol;
+    const dayChangeRate = prevClose > 0 ? (currentPrice - prevClose) / prevClose : 0;
     const regretRate =
       item.lastTradePrice > 0 ? (currentPrice - item.lastTradePrice) / item.lastTradePrice : 0;
     return {
@@ -479,6 +509,8 @@ function computePortfolio() {
       cost,
       totalProfit,
       profitRate,
+      todayProfit,
+      dayChangeRate,
       regretRate,
     };
   });
@@ -1015,6 +1047,18 @@ function formatCurrency(value) {
   })}`;
 }
 
+function formatPlainMoney(value) {
+  const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return safe.toFixed(2);
+}
+
+function formatSignedMoney(value, fraction = 2) {
+  const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const abs = Math.abs(safe).toFixed(fraction);
+  const sign = safe > 0 ? "+" : safe < 0 ? "-" : "";
+  return `${sign}${abs}`;
+}
+
 function formatNumber(value, fraction = 2) {
   const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
   return safe.toLocaleString("zh-CN", {
@@ -1027,6 +1071,12 @@ function formatPercent(value) {
   const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
   const num = (safe * 100).toFixed(2);
   return `${safe >= 0 ? "+" : ""}${num}%`;
+}
+
+function metricValueWithRate(amount, rate) {
+  const amountText = formatSignedMoney(amount, 2);
+  const rateText = formatPercent(rate);
+  return `${amountText}<span class="profit-rate-inline">${rateText}</span>`;
 }
 
 function escapeHtml(value) {

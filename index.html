@@ -10,47 +10,51 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="phone-shell">
-      <header class="top-bar">
-        <div>
-          <p class="sub-title">新浪财经客户端专享</p>
-          <h1>持仓收益</h1>
-        </div>
-        <button id="demoToggleBtn" class="btn btn-ghost">查看演示数据</button>
-      </header>
-
-      <nav class="route-nav">
-        <button class="route-btn active" data-route="earning">收益</button>
-        <button class="route-btn" data-route="analysis">分析</button>
-        <button class="route-btn" data-route="records">交易记录</button>
-        <button class="route-btn" data-route="introduction">说明</button>
-      </nav>
-
+    <main class="app-shell">
       <section id="route-earning" class="route-pane active">
-        <article class="panel">
-          <div class="panel-head">
-            <h2>账户总览区</h2>
-            <span id="quoteTime" class="caption">行情更新时间：--</span>
+        <article class="overview-card">
+          <div class="overview-head">
+            <button class="plain-btn">全部账户 <span class="arrow">▼</span></button>
+            <div class="currency-tip">币种：人民币 <span class="help">?</span></div>
           </div>
+
+          <div class="profit-row">
+            <div class="profit-block">
+              <p class="profit-label">今日收益</p>
+              <p id="todayProfitMain" class="profit-main">--</p>
+            </div>
+            <div class="profit-block">
+              <p class="profit-label">本月收益 <span class="arrow">▼</span></p>
+              <p id="monthProfitMain" class="profit-main">--</p>
+            </div>
+          </div>
+
           <div id="overviewGrid" class="overview-grid"></div>
         </article>
 
-        <article class="panel">
-          <div class="panel-head">
-            <h2>个股列表区</h2>
-            <button id="quickTradeBtn" class="btn btn-primary">新建交易</button>
+        <article class="stock-card">
+          <div class="stock-head">
+            <div class="stock-title-wrap">
+              <h2 class="stock-title">个股收益</h2>
+              <span class="grid-icon">◫</span>
+            </div>
+            <div class="stock-actions">
+              <button id="demoToggleBtn" class="icon-btn">演示</button>
+              <button id="quickTradeBtn" class="icon-btn">记一笔</button>
+            </div>
           </div>
-          <p class="swipe-hint">提示：表格支持左右滑动，可查看全部字段。</p>
-          <div class="stock-table-scroller">
+          <div class="quote-meta">
+            <span id="quoteTime" class="caption">行情更新时间：--</span>
+            <span class="swipe-hint">左右滑动可查看完整字段</span>
+          </div>
+          <div class="table-scroll">
             <table class="stock-table">
               <thead>
                 <tr>
                   <th>股票</th>
-                  <th>市场</th>
-                  <th>持有股数</th>
-                  <th>当前价</th>
-                  <th>昨收价</th>
-                  <th>总市值</th>
+                  <th>今日收益</th>
+                  <th>现价/涨跌</th>
+                  <th>市值/数量</th>
                   <th>Σ发生金额</th>
                   <th>成本</th>
                   <th>总收益</th>
@@ -107,7 +111,7 @@
         </article>
       </section>
 
-      <section id="route-records" class="route-pane">
+      <section id="route-trade" class="route-pane">
         <article class="panel">
           <div class="panel-head">
             <h2>交易记录</h2>
@@ -120,7 +124,13 @@
         </article>
       </section>
 
-      <section id="route-introduction" class="route-pane">
+      <section id="route-account" class="route-pane">
+        <article class="panel intro-panel">
+          <h2>账户</h2>
+          <p>当前页面按新浪持仓收益样式重构，支持本地持仓记录、算法切换和行情刷新。</p>
+          <p>若要接入正式账户体系，可在这里增加登录、账户管理和多币种汇率配置。</p>
+        </article>
+
         <article class="panel intro-panel">
           <h2>一、账户总览区</h2>
           <p>1、今日收益=当前总市值-昨收总市值-Σ发生金额。</p>
@@ -166,6 +176,21 @@
           <p>4、合股：卖出方向，价格0，数量=减少股数，发生金额0。</p>
         </article>
       </section>
+
+      <nav class="bottom-tabs">
+        <button class="bottom-tab-btn active" data-route="earning">
+          <span class="tab-ico">▦</span><span>收益</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="analysis">
+          <span class="tab-ico">◔</span><span>分析</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="trade">
+          <span class="tab-ico">¥</span><span>交易</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="account">
+          <span class="tab-ico">◉</span><span>账户</span>
+        </button>
+      </nav>
     </main>
 
     <dialog id="tradeDialog" class="dialog">
