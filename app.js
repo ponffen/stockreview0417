@@ -184,15 +184,17 @@ function bindEvents() {
     });
   });
 
-  demoToggleBtn.addEventListener("click", () => {
-    state.useDemoData = !state.useDemoData;
-    if (state.useDemoData) {
-      state.trades = demoTrades.map((item) => ({ ...item }));
-    }
-    persistState();
-    renderAll();
-    refreshMarketData();
-  });
+  if (demoToggleBtn) {
+    demoToggleBtn.addEventListener("click", () => {
+      state.useDemoData = !state.useDemoData;
+      if (state.useDemoData) {
+        state.trades = demoTrades.map((item) => ({ ...item }));
+      }
+      persistState();
+      renderAll();
+      refreshMarketData();
+    });
+  }
 
   algoModeSelect.addEventListener("change", () => {
     state.algoMode = algoModeSelect.value;
@@ -223,7 +225,7 @@ function bindEvents() {
     });
   });
 
-  [quickTradeBtn, recordTradeBtn].forEach((button) => {
+  [quickTradeBtn, recordTradeBtn].filter(Boolean).forEach((button) => {
     button.addEventListener("click", () => {
       tradeForm.reset();
       tradeTypeInput.value = "trade";
@@ -278,19 +280,23 @@ function bindEvents() {
     refreshMarketData();
   });
 
-  setCapitalBtn.addEventListener("click", () => {
-    capitalAmountInput.value = state.capitalAmount ? String(state.capitalAmount) : "";
-    capitalDialog.showModal();
-  });
-  closeCapitalDialogBtn.addEventListener("click", () => capitalDialog.close());
-  capitalForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(capitalForm);
-    state.capitalAmount = Math.max(0, Number(formData.get("capitalAmount") || 0));
-    persistState();
-    capitalDialog.close();
-    renderOverviewAndStockTable();
-  });
+  if (setCapitalBtn) {
+    setCapitalBtn.addEventListener("click", () => {
+      capitalAmountInput.value = state.capitalAmount ? String(state.capitalAmount) : "";
+      capitalDialog.showModal();
+    });
+  }
+  closeCapitalDialogBtn?.addEventListener("click", () => capitalDialog.close());
+  if (capitalForm) {
+    capitalForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const formData = new FormData(capitalForm);
+      state.capitalAmount = Math.max(0, Number(formData.get("capitalAmount") || 0));
+      persistState();
+      capitalDialog.close();
+      renderOverviewAndStockTable();
+    });
+  }
 
   recordList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-remove-id]");
@@ -307,7 +313,7 @@ function bindEvents() {
     refreshMarketData();
   });
 
-  stockTableBody.addEventListener("click", (event) => {
+  stockTableBody?.addEventListener("click", (event) => {
     const link = event.target.closest("[data-stock-record]");
     if (!link) {
       return;
@@ -350,7 +356,9 @@ function renderAll() {
 }
 
 function renderControls() {
-  demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
+  if (demoToggleBtn) {
+    demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
+  }
   algoModeSelect.value = state.algoMode;
   benchmarkSelect.value = state.benchmark;
   if (quoteTime) {
@@ -405,7 +413,7 @@ function renderOverviewAndStockTable() {
   if (!portfolio.positions.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="13"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+        <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -433,6 +441,7 @@ function renderOverviewAndStockTable() {
             <div class="cell-main">${formatPlainMoney(row.marketValue)}</div>
             <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
           </td>
+          <td>${formatPercent(row.weight)}</td>
           <td>${formatNumber(row.cost, 3)}</td>
           <td class="${row.monthProfit >= 0 ? "up" : "down"}">${formatSignedMoney(row.monthProfit, 2)}</td>
           <td>${formatPercent(row.monthWeight)}</td>
@@ -441,8 +450,7 @@ function renderOverviewAndStockTable() {
           <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
           <td class="${totalClass}">${formatPercent(row.totalRate)}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
-          <td>${formatPercent(row.weight)}</td>
-          <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
+          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${row.symbol}">记录</a></td>
         </tr>
       `;
     })
