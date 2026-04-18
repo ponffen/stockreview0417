@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>持仓收益</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="route-earning" class="route-pane active">
+        <article class="overview-card">
+          <div class="overview-head">
+            <button class="plain-btn">全部账户 <span class="arrow">▼</span></button>
+            <div class="currency-tip">币种：人民币 <span class="help">?</span></div>
+          </div>
+
+          <div class="profit-row">
+            <div class="profit-block">
+              <p class="profit-label">今日收益</p>
+              <p id="todayProfitMain" class="profit-main">--</p>
+            </div>
+            <div class="profit-block">
+              <label class="profit-label stage-select-wrap">
+                <select id="stageRangeSelect" class="stage-select">
+                  <option value="day">今日收益</option>
+                  <option value="week">本周收益</option>
+                  <option value="month" selected>本月收益</option>
+                  <option value="quarter">最近三月</option>
+                  <option value="ytd">本年收益</option>
+                  <option value="total">总收益</option>
+                </select>
+                <span class="arrow">▼</span>
+              </label>
+              <p id="monthProfitMain" class="profit-main">--</p>
+            </div>
+          </div>
+
+          <div id="overviewGrid" class="overview-grid"></div>
+        </article>
+
+        <article class="stock-card">
+          <div class="stock-head">
+            <h2 class="stock-title">个股收益</h2>
+          </div>
+          <div class="table-scroll">
+            <table class="stock-table">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>今日收益</th>
+                  <th>现价/涨跌</th>
+                  <th>市值/数量</th>
+                  <th>成本</th>
+                  <th>月收益</th>
+                  <th>月收益占比</th>
+                  <th>年收益</th>
+                  <th>年收益占比</th>
+                  <th>总收益</th>
+                  <th>总收益率</th>
+                  <th>后悔率</th>
+                  <th>仓位</th>
+                </tr>
+              </thead>
+              <tbody id="stockTableBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section id="route-analysis" class="route-pane">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>收益率算法</h2>
+          </div>
+          <div class="form-row">
+            <label for="algoMode">计算方式</label>
+            <select id="algoMode">
+              <option value="cost">成本算法</option>
+              <option value="money">资金加权（Modified Dietz）</option>
+              <option value="time">时间加权（TWR）</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="benchmark">指数对比</label>
+            <select id="benchmark">
+              <option value="none">不对比</option>
+              <option value="sh000001">上证指数</option>
+              <option value="sz399001">深证成指</option>
+              <option value="rt_hkHSI">恒生指数</option>
+              <option value="gb_inx">标普500</option>
+            </select>
+          </div>
+          <div class="range-row">
+            <button class="range-chip active" data-range="7">最近一周</button>
+            <button class="range-chip" data-range="30">最近一月</button>
+            <button class="range-chip" data-range="90">最近三月</button>
+            <button class="range-chip" data-range="365">年初至今</button>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>收益走势</h2>
+            <span id="analysisSummary" class="caption"></span>
+          </div>
+          <canvas id="analysisChart" width="700" height="320"></canvas>
+        </article>
+      </section>
+
+      <section id="route-trade" class="route-pane">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>交易记录</h2>
+            <div class="actions">
+              <button id="setCapitalBtn" class="btn btn-ghost">设置本金</button>
+              <button id="recordTradeBtn" class="btn btn-primary">新建交易</button>
+            </div>
+          </div>
+          <div id="recordList" class="record-list"></div>
+        </article>
+      </section>
+
+      <section id="route-account" class="route-pane">
+        <article class="panel intro-panel">
+          <h2>账户</h2>
+          <p>当前页面按新浪持仓收益样式重构，支持本地持仓记录、算法切换和行情刷新。</p>
+          <p>若要接入正式账户体系，可在这里增加登录、账户管理和多币种汇率配置。</p>
+        </article>
+
+        <article class="panel intro-panel">
+          <h2>一、账户总览区</h2>
+          <p>1、今日收益=当前总市值-昨收总市值-Σ发生金额。</p>
+          <p>2、总资产=总市值+现金。</p>
+          <p>
+            3、各阶段收益（示例：本月收益）=当前总市值-月初收盘总市值-本阶段Σ发生金额。
+          </p>
+          <p>
+            4、各阶段收益率支持“成本算法”“资金加权”“时间加权”三种方式，均按交易记录发生金额计算。
+          </p>
+          <p>5、总市值=Σ（数量*当前价）。</p>
+          <p>6、现金=本金-Σ发生金额。</p>
+          <p>7、本金=max(Σ发生金额, 资金金额)。</p>
+        </article>
+
+        <article class="panel intro-panel">
+          <h2>二、个股列表区</h2>
+          <p>1、权重=持仓市值/总资产*100%。</p>
+          <p>2、成本=Σ发生金额/数量。</p>
+          <p>3、总收益=当前总市值-Σ发生金额。</p>
+          <p>
+            4、后悔率=(当前价-最近一笔成交价)/最近一笔成交价*100%，B表示买入，S表示卖出。
+          </p>
+        </article>
+
+        <article class="panel intro-panel">
+          <h2>三、分析</h2>
+          <p>从账户第一天开始计算，保留近一年的记录。</p>
+          <p>1、总收益（率）：从账户第一天累计到该日。</p>
+          <p>2、每日收益（率）对比：所选日期一天内产生的收益（率）。</p>
+          <p>3、与指数对比：对比值=我的-基准。</p>
+          <p>如果最近6个月没有新增交易，历史走势将暂停更新，新增后会补算。</p>
+        </article>
+
+        <article class="panel intro-panel">
+          <h2>四、交易记录</h2>
+          <p>1、发生金额默认=价格*数量，可手动覆盖。</p>
+          <p>2、Σ发生金额：买入为正，卖出为负。</p>
+          <h2>五、分红送股、拆股合股</h2>
+          <p>1、分红：卖出方向，价格0，数量0，发生金额=分红金额。</p>
+          <p>2、送股：买入方向，价格0，数量=送股数量，发生金额0。</p>
+          <p>3、拆股：买入方向，价格0，数量=新增股数，发生金额0。</p>
+          <p>4、合股：卖出方向，价格0，数量=减少股数，发生金额0。</p>
+        </article>
+      </section>
+
+      <nav class="bottom-tabs">
+        <button class="bottom-tab-btn active" data-route="earning">
+          <span class="tab-ico">▦</span><span>收益</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="analysis">
+          <span class="tab-ico">◔</span><span>分析</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="trade">
+          <span class="tab-ico">¥</span><span>交易</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="account">
+          <span class="tab-ico">◉</span><span>账户</span>
+        </button>
+      </nav>
+    </main>
+
+    <dialog id="tradeDialog" class="dialog">
+      <form id="tradeForm" method="dialog">
+        <div class="panel-head">
+          <h2>新建交易</h2>
+          <button type="button" id="closeTradeDialogBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <div class="form-row">
+          <label for="tradeType">类型</label>
+          <select id="tradeType" name="type">
+            <option value="trade">买入卖出</option>
+            <option value="dividend">分红</option>
+            <option value="bonus">送股</option>
+            <option value="split">拆股</option>
+            <option value="merge">合股</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="tradeSymbol">代码</label>
+          <input id="tradeSymbol" name="symbol" required placeholder="如 600519 / hk00700 / gb_inx" />
+        </div>
+        <div class="form-row">
+          <label for="tradeName">名称</label>
+          <input id="tradeName" name="name" required placeholder="如 贵州茅台" />
+        </div>
+        <div class="form-row">
+          <label for="tradeSide">方向</label>
+          <select id="tradeSide" name="side">
+            <option value="buy">买入(B)</option>
+            <option value="sell">卖出(S)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="tradePrice">价格</label>
+          <input id="tradePrice" name="price" type="number" step="0.001" required />
+        </div>
+        <div class="form-row">
+          <label for="tradeQuantity">数量</label>
+          <input id="tradeQuantity" name="quantity" type="number" step="1" required />
+        </div>
+        <div class="form-row">
+          <label for="tradeAmount">发生金额</label>
+          <input id="tradeAmount" name="amount" type="number" step="0.01" placeholder="不填则默认价格*数量" />
+        </div>
+        <div class="form-row">
+          <label for="tradeDate">成交日期</label>
+          <input id="tradeDate" name="date" type="date" required />
+        </div>
+        <div class="form-row">
+          <label for="tradeNote">备注</label>
+          <input id="tradeNote" name="note" placeholder="可选" />
+        </div>
+        <button type="submit" class="btn btn-primary full">保存交易</button>
+      </form>
+    </dialog>
+
+    <dialog id="capitalDialog" class="dialog">
+      <form id="capitalForm" method="dialog">
+        <div class="panel-head">
+          <h2>设置本金</h2>
+          <button type="button" id="closeCapitalDialogBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <div class="form-row">
+          <label for="capitalAmount">资金金额</label>
+          <input id="capitalAmount" name="capitalAmount" type="number" step="0.01" required />
+        </div>
+        <button type="submit" class="btn btn-primary full">保存</button>
+      </form>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
