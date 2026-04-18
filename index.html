@@ -54,6 +54,7 @@
                   <th>今日收益</th>
                   <th>现价/涨跌</th>
                   <th>市值/数量</th>
+                  <th>仓位</th>
                   <th>成本</th>
                   <th>月收益</th>
                   <th>月收益占比</th>
@@ -62,7 +63,7 @@
                   <th>总收益</th>
                   <th>总收益率</th>
                   <th>后悔率</th>
-                  <th>仓位</th>
+                  <th>记录</th>
                 </tr>
               </thead>
               <tbody id="stockTableBody"></tbody>
@@ -260,6 +261,48 @@
         </div>
         <button type="submit" class="btn btn-primary full">保存</button>
       </form>
+    </dialog>
+
+    <dialog id="stockRecordDialog" class="dialog stock-record-dialog">
+      <div class="stock-record-wrap">
+        <div class="stock-record-head">
+          <div>
+            <h3 id="stockRecordTitle" class="stock-record-title">--</h3>
+            <p id="stockRecordTime" class="stock-record-time">--</p>
+          </div>
+          <button type="button" id="closeStockRecordDialogBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <div class="stock-record-quote">
+          <div id="stockRecordPrice" class="stock-record-price">--</div>
+          <div id="stockRecordChange" class="stock-record-change">--</div>
+        </div>
+        <div class="stock-record-legend">
+          <span><i class="legend-dot legend-blue"></i>收盘价</span>
+          <span><i class="legend-dot legend-red"></i>持仓股数</span>
+          <span><i class="legend-dot legend-buy"></i>买入</span>
+          <span><i class="legend-dot legend-sell"></i>卖出</span>
+        </div>
+        <canvas id="stockRecordChart" width="700" height="320"></canvas>
+        <p class="stock-record-note">注：交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</p>
+
+        <div class="stock-record-subhead">
+          <strong id="stockRecordMarket">--</strong>
+          <span id="stockRecordRegret">后悔率 --</span>
+        </div>
+
+        <table class="stock-record-table">
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>类型</th>
+              <th>价格</th>
+              <th>数量</th>
+              <th>发生金额</th>
+            </tr>
+          </thead>
+          <tbody id="stockRecordListBody"></tbody>
+        </table>
+      </div>
     </dialog>
 
     <script src="./app.js"></script>

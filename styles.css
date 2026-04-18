@@ -278,6 +278,12 @@ body {
   font-size: 11px;
 }
 
+.record-link {
+  color: #4f83f1;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .panel {
   margin-top: 8px;
   background: #fff;
@@ -443,6 +449,119 @@ h2 {
 
 .dialog form {
   padding: 12px;
+}
+
+.stock-record-dialog {
+  width: min(100% - 10px, 410px);
+  max-height: 92vh;
+}
+
+.stock-record-wrap {
+  padding: 12px;
+  overflow-y: auto;
+  max-height: 92vh;
+}
+
+.stock-record-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.stock-record-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.stock-record-time {
+  margin: 4px 0 0;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.stock-record-quote {
+  margin-top: 8px;
+}
+
+.stock-record-price {
+  font-size: 46px;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.stock-record-change {
+  margin-top: 4px;
+  font-size: 20px;
+}
+
+.stock-record-legend {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #79869a;
+  font-size: 13px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.legend-blue {
+  background: #4091e0;
+}
+
+.legend-red {
+  background: #ff4d4f;
+}
+
+.legend-buy {
+  background: #3b7bf6;
+}
+
+.legend-sell {
+  border: 1px solid #3b7bf6;
+  background: #fff;
+}
+
+#stockRecordChart {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.stock-record-note {
+  color: #8f9aad;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.stock-record-subhead {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stock-record-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.stock-record-table th,
+.stock-record-table td {
+  border-top: 1px solid var(--line);
+  padding: 8px 6px;
+  text-align: center;
+  font-size: 13px;
 }
 
 .full {

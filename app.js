@@ -108,6 +108,16 @@ const capitalDialog = document.getElementById("capitalDialog");
 const capitalForm = document.getElementById("capitalForm");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
 const capitalAmountInput = document.getElementById("capitalAmount");
+const stockRecordDialog = document.getElementById("stockRecordDialog");
+const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
+const stockRecordTitle = document.getElementById("stockRecordTitle");
+const stockRecordTime = document.getElementById("stockRecordTime");
+const stockRecordPrice = document.getElementById("stockRecordPrice");
+const stockRecordChange = document.getElementById("stockRecordChange");
+const stockRecordChart = document.getElementById("stockRecordChart");
+const stockRecordMarket = document.getElementById("stockRecordMarket");
+const stockRecordRegret = document.getElementById("stockRecordRegret");
+const stockRecordListBody = document.getElementById("stockRecordListBody");
 
 initialize();
 
@@ -145,6 +155,10 @@ function hydrateState() {
   if (state.useDemoData && state.trades.length === 0) {
     state.trades = demoTrades.map((item) => ({ ...item }));
   }
+  if (state.trades.length === 0) {
+    state.useDemoData = true;
+    state.trades = demoTrades.map((item) => ({ ...item }));
+  }
 }
 
 function persistState() {
@@ -172,7 +186,9 @@ function bindEvents() {
 
   demoToggleBtn.addEventListener("click", () => {
     state.useDemoData = !state.useDemoData;
-    state.trades = state.useDemoData ? demoTrades.map((item) => ({ ...item })) : [];
+    if (state.useDemoData) {
+      state.trades = demoTrades.map((item) => ({ ...item }));
+    }
     persistState();
     renderAll();
     refreshMarketData();
@@ -282,10 +298,25 @@ function bindEvents() {
       return;
     }
     state.trades = state.trades.filter((item) => item.id !== button.dataset.removeId);
+    if (state.trades.length === 0) {
+      state.useDemoData = true;
+      state.trades = demoTrades.map((item) => ({ ...item }));
+    }
     persistState();
     renderAll();
     refreshMarketData();
   });
+
+  stockTableBody.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-stock-record]");
+    if (!link) {
+      return;
+    }
+    const symbol = link.dataset.stockRecord;
+    openStockRecordDialog(symbol);
+  });
+
+  closeStockRecordDialogBtn?.addEventListener("click", () => stockRecordDialog.close());
 }
 
 function applyTradeTypePreset() {
@@ -544,6 +575,175 @@ function renderAnalysis() {
     state.benchmark === "none"
       ? `我的收益 ${formatPercent(lastMy)}`
       : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+}
+
+function openStockRecordDialog(symbol) {
+  if (!stockRecordDialog) {
+    return;
+  }
+  const position = computePortfolio().positions.find((item) => item.symbol === symbol);
+  if (!position) {
+    return;
+  }
+  const symbolTrades = state.trades
+    .filter((item) => item.symbol === symbol)
+    .sort(sortTradeDesc);
+  const quote = state.quoteMap[symbol] || {};
+  const current = validNumber(quote.current, position.currentPrice);
+  const prev = validNumber(quote.prevClose, position.prevClose, current);
+  const change = prev > 0 ? (current - prev) / prev : 0;
+
+  stockRecordTitle.textContent = `${position.name}(${symbol.toUpperCase()})`;
+  stockRecordTime.textContent = quote.time || state.quoteTime || "--";
+  stockRecordPrice.textContent = formatNumber(current, 3);
+  stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
+  stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
+  stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
+  stockRecordMarket.textContent = marketLabel(position.market);
+  stockRecordRegret.textContent = `后悔率 ${formatPercent(position.regretRate)}`;
+  stockRecordRegret.className = `${position.regretRate >= 0 ? "up" : "down"}`;
+
+  stockRecordListBody.innerHTML = symbolTrades
+    .map(
+      (trade) => `
+      <tr>
+        <td>${trade.date.replace(/-/g, "/")}</td>
+        <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
+        <td>${formatNumber(trade.price, 2)}</td>
+        <td>${formatNumber(trade.quantity, 2)}</td>
+        <td class="${trade.side === "buy" ? "down" : "up"}">${trade.side === "buy" ? "-" : "+"}${formatNumber(
+          trade.amount,
+          2
+        )}</td>
+      </tr>
+    `
+    )
+    .join("");
+
+  drawStockRecordChart(symbol, symbolTrades);
+  stockRecordDialog.showModal();
+}
+
+function marketLabel(market) {
+  if (market === "A股") {
+    return "CN 沪深默认";
+  }
+  if (market === "港股") {
+    return "HK 港股默认";
+  }
+  if (market === "美股") {
+    return "US 美股默认";
+  }
+  return "OT 其他市场";
+}
+
+function drawStockRecordChart(symbol, symbolTrades) {
+  const canvas = stockRecordChart;
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+
+  const kline = state.klineMap[symbol] || [];
+  const points = kline.slice(-60);
+  if (!points.length) {
+    return;
+  }
+  const closes = points.map((item) => Number(item.close));
+  const maxClose = Math.max(...closes);
+  const minClose = Math.min(...closes);
+  const qtyByDay = {};
+  let qty = 0;
+  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
+  sortedTrades.forEach((trade) => {
+    qty += trade.side === "buy" ? trade.quantity : -trade.quantity;
+    qtyByDay[trade.date] = qty;
+  });
+  let rollingQty = 0;
+  const qtySeries = points.map((item) => {
+    if (qtyByDay[item.day] != null) {
+      rollingQty = qtyByDay[item.day];
+    }
+    return rollingQty;
+  });
+  const maxQty = Math.max(1, ...qtySeries.map((v) => Math.abs(v)));
+  const mapX = (idx) => 20 + (idx / Math.max(points.length - 1, 1)) * (width - 40);
+  const mapYPrice = (value) =>
+    20 + ((maxClose - value) / Math.max(maxClose - minClose, 0.0001)) * (height - 60);
+  const mapYQty = (value) => height - 20 - (value / maxQty) * (height - 60);
+
+  ctx.strokeStyle = "#e8edf5";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = 20 + ((height - 40) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(10, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "rgba(64, 145, 224, 0.20)";
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, height - 20);
+      ctx.lineTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.lineTo(mapX(points.length - 1), height - 20);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = "#4091e0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ff4d4f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  qtySeries.forEach((value, index) => {
+    const x = mapX(index);
+    const y = mapYQty(value);
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+
+  const pointByDate = Object.fromEntries(points.map((item, idx) => [item.day, idx]));
+  sortedTrades.forEach((trade) => {
+    const idx = pointByDate[trade.date];
+    if (idx == null) {
+      return;
+    }
+    const x = mapX(idx);
+    const y = mapYPrice(validNumber(trade.price, points[idx].close));
+    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
+    ctx.strokeStyle = "#3b7bf6";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
 }
 
 function computePortfolio() {
