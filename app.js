@@ -81,6 +81,9 @@ const state = {
   editingTradeId: null,
   activeRecordId: null,
   activeRecordSymbol: null,
+  fxRatesToCnyByDate: {},
+  fxLoaded: false,
+  fxLoading: false,
 };
 let apiReady = false;
 
@@ -145,9 +148,9 @@ initialize();
 
 async function initialize() {
   await hydrateState();
-  await initializeFxRates();
   bindEvents();
   renderAll();
+  void initializeFxRates();
   refreshMarketData();
   window.setInterval(refreshMarketData, QUOTE_REFRESH_MS);
 }
@@ -176,6 +179,7 @@ async function initializeFxRates() {
     });
     state.fxRatesToCnyByDate = map;
     state.fxLoaded = true;
+    renderAll();
   } catch (error) {
     console.error("加载历史汇率失败，已回退固定汇率", error);
   } finally {
@@ -2105,7 +2109,7 @@ function getFxRateForDate(currency, dateKey) {
   if (currency === "CNY") {
     return 1;
   }
-  const map = state.fxRatesToCnyByDate[currency];
+  const map = state.fxRatesToCnyByDate?.[currency];
   if (!map) {
     return getFxRateToCny(currency);
   }
