@@ -22,6 +22,11 @@ const DEFAULT_BENCHMARK_PRICE = {
   rt_hkHSI: 0,
   gb_inx: 0,
 };
+const FX_RATE_TO_CNY = {
+  CNY: 1,
+  HKD: 0.92,
+  USD: 7.2,
+};
 
 const demoTrades = [
   {
@@ -676,7 +681,7 @@ function renderOverviewAndStockTable() {
     )
     .join("");
 
-  if (!portfolio.positions.length) {
+  if (!portfolio.visiblePositions.length) {
     stockTableBody.innerHTML = `
       <tr>
         <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
@@ -685,7 +690,7 @@ function renderOverviewAndStockTable() {
     return;
   }
 
-  stockTableBody.innerHTML = portfolio.positions
+  stockTableBody.innerHTML = portfolio.visiblePositions
     .map((row) => {
       const stockCode = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
       const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
@@ -783,17 +788,18 @@ function computePositionStageProfit(position, stageRange) {
 
   let startQuantity = 0;
   let stageFlow = 0;
+  const fxRate = position.fxRate || getFxRateForSymbol(position.symbol, position.market);
   symbolTrades.forEach((trade) => {
     const deltaQty = trade.side === "buy" ? trade.quantity : -trade.quantity;
     if (trade.date < startKey) {
       startQuantity += deltaQty;
     } else {
-      stageFlow += signedAmount(trade);
+      stageFlow += signedAmount(trade) * fxRate;
     }
   });
 
   const startClose = getSymbolCloseBeforeDate(position.symbol, startKey, position.prevClose);
-  const startMarketValue = startQuantity * startClose;
+  const startMarketValue = startQuantity * startClose * fxRate;
   return position.marketValue - startMarketValue - stageFlow;
 }
 
@@ -1349,27 +1355,35 @@ function computePortfolio() {
 
   const positions = [...grouped.values()].map((item) => {
     const quote = state.quoteMap[item.symbol] || {};
+    const market = inferMarket(item.symbol);
+    const currency = getSymbolCurrency(item.symbol, market);
+    const fxRate = getFxRateToCny(currency);
     const currentPrice = validNumber(quote.current, item.lastTradePrice);
     const prevClose = validNumber(quote.prevClose, currentPrice);
-    const marketValue = item.quantity * currentPrice;
-    const yesterdayValue = item.quantity * prevClose;
+    const marketValue = item.quantity * currentPrice * fxRate;
+    const yesterdayValue = item.quantity * prevClose * fxRate;
+    const sigmaAmountCny = item.sigmaAmount * fxRate;
     const cost = item.quantity !== 0 ? item.sigmaAmount / item.quantity : 0;
-    const totalProfit = marketValue - item.sigmaAmount;
+    const totalProfit = marketValue - sigmaAmountCny;
     const profitRate =
-      Math.abs(item.sigmaAmount) > 0 ? totalProfit / Math.abs(item.sigmaAmount) : 0;
+      Math.abs(sigmaAmountCny) > 0 ? totalProfit / Math.abs(sigmaAmountCny) : 0;
     const todayFlowForSymbol = state.trades
       .filter((trade) => trade.symbol === item.symbol && trade.date === toDateKey(new Date()))
-      .reduce((sum, trade) => sum + signedAmount(trade), 0);
+      .reduce((sum, trade) => sum + signedAmount(trade) * fxRate, 0);
     const todayProfit = marketValue - yesterdayValue - todayFlowForSymbol;
     const dayChangeRate = prevClose > 0 ? (currentPrice - prevClose) / prevClose : 0;
     const regretRate =
       item.lastTradePrice > 0 ? (currentPrice - item.lastTradePrice) / item.lastTradePrice : 0;
     return {
       ...item,
+      market,
+      currency,
+      fxRate,
       currentPrice,
       prevClose,
       marketValue,
       yesterdayValue,
+      sigmaAmountCny,
       cost,
       totalProfit,
       profitRate,
@@ -1384,14 +1398,18 @@ function computePortfolio() {
     item.monthProfit = computePositionStageProfit(item, "month");
     item.yearProfit = computePositionStageProfit(item, "ytd");
   });
-  const monthTotalProfit = positions.reduce((sum, item) => sum + item.monthProfit, 0);
-  const yearTotalProfit = positions.reduce((sum, item) => sum + item.yearProfit, 0);
-  positions.forEach((item) => {
+  const visiblePositions = positions.filter((item) => item.quantity > 0);
+  const monthTotalProfit = visiblePositions.reduce((sum, item) => sum + item.monthProfit, 0);
+  const yearTotalProfit = visiblePositions.reduce((sum, item) => sum + item.yearProfit, 0);
+  visiblePositions.forEach((item) => {
     item.monthWeight = monthTotalProfit !== 0 ? item.monthProfit / monthTotalProfit : 0;
     item.yearWeight = yearTotalProfit !== 0 ? item.yearProfit / yearTotalProfit : 0;
   });
 
-  const sigmaAmountAll = state.trades.reduce((sum, trade) => sum + signedAmount(trade), 0);
+  const sigmaAmountAll = state.trades.reduce(
+    (sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade),
+    0
+  );
   const principal = Math.max(state.capitalAmount, sigmaAmountAll, 0);
   const totalMarketValue = positions.reduce((sum, item) => sum + item.marketValue, 0);
   const yesterdayMarketValue = positions.reduce((sum, item) => sum + item.yesterdayValue, 0);
@@ -1399,7 +1417,7 @@ function computePortfolio() {
   const totalAssets = totalMarketValue + cash;
   const todayFlow = state.trades
     .filter((trade) => trade.date === toDateKey(new Date()))
-    .reduce((sum, trade) => sum + signedAmount(trade), 0);
+    .reduce((sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade), 0);
   const todayProfit = totalMarketValue - yesterdayMarketValue - todayFlow;
   const todayRateDen = yesterdayMarketValue + Math.max(todayFlow, 0);
   const todayRate = todayRateDen !== 0 ? todayProfit / todayRateDen : 0;
@@ -1412,6 +1430,7 @@ function computePortfolio() {
 
   return {
     positions,
+    visiblePositions,
     sigmaAmountAll,
     principal,
     totalMarketValue,
@@ -1440,12 +1459,14 @@ function buildPortfolioHistory(positions) {
   const symbolSet = new Set(positions.map((item) => item.symbol));
   const klineMap = {};
   const lastPriceMap = {};
+  const fxRateMap = {};
 
   symbolSet.forEach((symbol) => {
     const list = state.klineMap[symbol] || [];
     klineMap[symbol] = Object.fromEntries(list.map((item) => [item.day, Number(item.close)]));
     const fallbackTrade = state.trades.find((item) => item.symbol === symbol);
     lastPriceMap[symbol] = validNumber(state.quoteMap[symbol]?.prevClose, fallbackTrade?.price, 0);
+    fxRateMap[symbol] = getFxRateForSymbol(symbol, inferMarket(symbol));
   });
 
   const tradesByDate = {};
@@ -1473,7 +1494,7 @@ function buildPortfolioHistory(positions) {
     let value = 0;
     let flow = 0;
     for (const trade of dailyTrades) {
-      flow += signedAmount(trade);
+      flow += signedAmount(trade) * getTradeFxRate(trade);
     }
     for (const symbol of symbolSet) {
       const dayClose = klineMap[symbol][dateKey];
@@ -1482,7 +1503,7 @@ function buildPortfolioHistory(positions) {
       } else if (dateKey === todayKey && validNumber(state.quoteMap[symbol]?.current, 0) > 0) {
         lastPriceMap[symbol] = Number(state.quoteMap[symbol].current);
       }
-      value += (holdings[symbol] || 0) * (lastPriceMap[symbol] || 0);
+      value += (holdings[symbol] || 0) * (lastPriceMap[symbol] || 0) * (fxRateMap[symbol] || 1);
     }
     points.push({ date: dateKey, value, flow });
   }
@@ -1967,10 +1988,36 @@ function inferMarket(symbol) {
   if (symbol.startsWith("hk") || symbol.startsWith("rt_hk")) {
     return "港股";
   }
-  if (symbol.startsWith("gb_")) {
+  if (symbol.startsWith("gb_") || /^[a-z]/i.test(symbol)) {
     return "美股";
   }
   return "其他";
+}
+
+function getSymbolCurrency(symbol, market = inferMarket(symbol)) {
+  if (market === "港股") {
+    return "HKD";
+  }
+  if (market === "美股") {
+    return "USD";
+  }
+  return "CNY";
+}
+
+function getFxRateToCny(currency) {
+  return FX_RATE_TO_CNY[currency] || 1;
+}
+
+function getFxRateForSymbol(symbol, market = inferMarket(symbol)) {
+  return getFxRateToCny(getSymbolCurrency(symbol, market));
+}
+
+function getTradeFxRate(trade) {
+  return getFxRateForSymbol(trade.symbol, inferMarket(trade.symbol));
+}
+
+function signedAmountCny(trade) {
+  return signedAmount(trade) * getTradeFxRate(trade);
 }
 
 function typeLabel(type) {
