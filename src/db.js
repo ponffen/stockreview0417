@@ -189,10 +189,23 @@ function normalizeTrade(input) {
   const name = String(
     raw.name || raw.stockName || raw.securityName || raw["证券名称"] || raw["名称"] || symbol || "unknown"
   ).trim();
-  const side = parseSide(raw.side || raw.direction || raw.action || raw["方向"] || raw["买卖"], type);
-  const price = validNumber(raw.price, raw.tradePrice, raw.dealPrice, raw["成交价"], raw["价格"], 0);
+  const side = parseSide(
+    raw.side || raw.direction || raw.action || raw["方向"] || raw["买卖"] || raw.type,
+    type
+  );
+  const price = validNumber(
+    raw.price,
+    raw.cost,
+    raw.tradePrice,
+    raw.dealPrice,
+    raw.avgPrice,
+    raw["成交价"],
+    raw["价格"],
+    0
+  );
   const quantity = validNumber(
     raw.quantity,
+    raw.share,
     raw.qty,
     raw.volume,
     raw.shares,
@@ -203,6 +216,7 @@ function normalizeTrade(input) {
   const amount = Math.abs(
     validNumber(
       raw.amount,
+      raw.payment,
       raw.tradeAmount,
       raw.turnover,
       raw["发生金额"],
@@ -210,12 +224,14 @@ function normalizeTrade(input) {
       price * quantity
     )
   );
-  const date = toDateKey(raw.date || raw.tradeDate || raw.dealDate || raw["日期"] || raw["成交日期"]);
+  const date = toDateKey(
+    raw.date || raw.trade_date || raw.tradeDate || raw.dealDate || raw["日期"] || raw["成交日期"]
+  );
   const note = String(raw.note || raw.remark || raw["备注"] || "").trim();
-  const createdAt = validNumber(raw.createdAt, raw.created_at, raw.timestamp, nowMs());
+  const createdAt = validNumber(raw.createdAt, raw.created_at, raw.timestamp, Date.parse(date), nowMs());
 
   return {
-    id: String(raw.id || raw.tradeId || randomUUID()),
+    id: String(raw.id || raw.tradeId || raw.ts_id || randomUUID()),
     type,
     symbol,
     name,
