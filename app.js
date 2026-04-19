@@ -1,7 +1,21 @@
 const STORAGE_KEY = "earning-clone-state-v2";
+const API_BASE = "/api";
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 420;
 const CHART_FALLBACK_DAYS = 90;
+const STATE_SYNC_KEYS = [
+  "route",
+  "useDemoData",
+  "algoMode",
+  "benchmark",
+  "stageRange",
+  "rangeDays",
+  "analysisRangeMode",
+  "customRangeStart",
+  "customRangeEnd",
+  "capitalTrendMode",
+  "capitalAmount",
+];
 const DEFAULT_BENCHMARK_PRICE = {
   sh000001: 0,
   sz399001: 0,
@@ -60,6 +74,7 @@ const state = {
   activeRecordId: null,
   activeRecordSymbol: null,
 };
+let apiReady = false;
 
 const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
 const routePanes = [...document.querySelectorAll(".route-pane")];
@@ -120,40 +135,64 @@ const tradeNoteInput = document.getElementById("tradeNote");
 
 initialize();
 
-function initialize() {
-  hydrateState();
+async function initialize() {
+  await hydrateState();
   bindEvents();
   renderAll();
   refreshMarketData();
   window.setInterval(refreshMarketData, QUOTE_REFRESH_MS);
 }
 
-function hydrateState() {
+async function hydrateState() {
+  let parsed = null;
+  let remoteParsed = null;
+  let localParsed = null;
+  apiReady = await checkApiHealth();
+  if (apiReady) {
+    remoteParsed = await fetchRemoteState();
+  }
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
     try {
-      const parsed = JSON.parse(raw);
-      state.route = parsed.route ?? state.route;
-      if (state.route === "records") {
-        state.route = "trade";
-      }
-      if (state.route === "introduction") {
-        state.route = "account";
-      }
-      state.useDemoData = parsed.useDemoData ?? state.useDemoData;
-      state.algoMode = parsed.algoMode ?? state.algoMode;
-      state.benchmark = parsed.benchmark ?? state.benchmark;
-      state.stageRange = parsed.stageRange ?? state.stageRange;
-      state.rangeDays = parsed.rangeDays ?? state.rangeDays;
-      state.analysisRangeMode = parsed.analysisRangeMode ?? state.analysisRangeMode;
-      state.customRangeStart = parsed.customRangeStart ?? state.customRangeStart;
-      state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
-      state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
-      state.capitalAmount = Number(parsed.capitalAmount ?? 0);
-      state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
+      localParsed = JSON.parse(raw);
     } catch (error) {
       console.error("读取本地数据失败，已使用默认配置", error);
     }
+  }
+  if (remoteParsed && Array.isArray(remoteParsed.trades) && remoteParsed.trades.length) {
+    parsed = remoteParsed;
+  } else if (localParsed) {
+    parsed = localParsed;
+    // Auto-migrate local state to DB-backed API when backend is available.
+    if (apiReady) {
+      const localTrades = Array.isArray(localParsed.trades) ? localParsed.trades : [];
+      if (localTrades.length) {
+        void importTradesToApi(localTrades, "replace");
+      }
+      void pushSettingsToApi(localParsed);
+    }
+  } else if (remoteParsed) {
+    parsed = remoteParsed;
+  }
+  if (parsed && typeof parsed === "object") {
+    state.route = parsed.route ?? state.route;
+    if (state.route === "records") {
+      state.route = "trade";
+    }
+    if (state.route === "introduction") {
+      state.route = "account";
+    }
+    state.useDemoData = parsed.useDemoData ?? state.useDemoData;
+    state.algoMode = parsed.algoMode ?? state.algoMode;
+    state.benchmark = parsed.benchmark ?? state.benchmark;
+    state.stageRange = parsed.stageRange ?? state.stageRange;
+    state.rangeDays = parsed.rangeDays ?? state.rangeDays;
+    state.analysisRangeMode = parsed.analysisRangeMode ?? state.analysisRangeMode;
+    state.customRangeStart = parsed.customRangeStart ?? state.customRangeStart;
+    state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
+    state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
+    state.capitalAmount = Number(parsed.capitalAmount ?? 0);
+    state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
@@ -192,6 +231,95 @@ function persistState() {
     trades: state.trades,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  if (apiReady) {
+    void pushSettingsToApi(payload);
+  }
+}
+
+async function checkApiHealth() {
+  try {
+    const response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function fetchRemoteState() {
+  try {
+    const response = await fetch(`${API_BASE}/state`, { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const result = await response.json();
+    if (!result?.ok || !result.data) {
+      return null;
+    }
+    return result.data;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function pushSettingsToApi(payload) {
+  try {
+    const body = STATE_SYNC_KEYS.reduce((acc, key) => {
+      acc[key] = payload[key];
+      return acc;
+    }, {});
+    await fetch(`${API_BASE}/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    // keep localStorage as fallback when backend is unavailable
+  }
+}
+
+async function saveTradeToApi(trade) {
+  if (!apiReady) {
+    return trade;
+  }
+  const response = await fetch(`${API_BASE}/trades`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(trade),
+  });
+  if (!response.ok) {
+    throw new Error("保存交易失败");
+  }
+  const result = await response.json();
+  return result?.data ? normalizeTrade(result.data) : trade;
+}
+
+async function importTradesToApi(trades, mode = "append") {
+  if (!apiReady) {
+    return Array.isArray(trades) ? trades.map(normalizeTrade) : [];
+  }
+  const response = await fetch(`${API_BASE}/trades/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: mode === "replace" ? "replace" : "append",
+      trades,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error("批量导入失败");
+  }
+  const result = await response.json();
+  return Array.isArray(result?.data) ? result.data.map(normalizeTrade) : [];
+}
+
+async function deleteTradeFromApi(tradeId) {
+  if (!apiReady) {
+    return true;
+  }
+  const response = await fetch(`${API_BASE}/trades/${encodeURIComponent(String(tradeId || ""))}`, {
+    method: "DELETE",
+  });
+  return response.ok;
 }
 
 function bindEvents() {
@@ -211,6 +339,9 @@ function bindEvents() {
       state.useDemoData = !state.useDemoData;
       if (state.useDemoData) {
         state.trades = demoTrades.map((item) => ({ ...item }));
+        if (apiReady) {
+          void importTradesToApi(state.trades, "replace").catch(() => {});
+        }
       }
       persistState();
       renderAll();
@@ -292,7 +423,7 @@ function bindEvents() {
   });
   tradeTypeInput.addEventListener("change", applyTradeTypePreset);
 
-  tradeForm.addEventListener("submit", (event) => {
+  tradeForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(tradeForm);
     const type = String(formData.get("type"));
@@ -326,10 +457,16 @@ function bindEvents() {
     });
 
     state.useDemoData = false;
+    let savedTrade = trade;
+    try {
+      savedTrade = await saveTradeToApi(trade);
+    } catch (error) {
+      console.error("保存交易到数据库失败，已回退本地保存", error);
+    }
     if (state.editingTradeId) {
       state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
     }
-    state.trades.push(trade);
+    state.trades.push(savedTrade);
     state.trades.sort(sortTradeAsc);
     persistState();
     clearEditState();
@@ -397,7 +534,7 @@ function bindEvents() {
       return;
     }
     if (action === "delete") {
-      removeTradeById(tradeId);
+      void removeTradeById(tradeId);
     }
   });
 
@@ -761,11 +898,23 @@ function clearEditState() {
   }
 }
 
-function removeTradeById(tradeId) {
+async function removeTradeById(tradeId) {
+  try {
+    await deleteTradeFromApi(tradeId);
+  } catch (error) {
+    console.error("删除数据库交易失败，继续执行本地删除", error);
+  }
   state.trades = state.trades.filter((item) => item.id !== tradeId);
   if (state.trades.length === 0) {
     state.useDemoData = true;
     state.trades = demoTrades.map((item) => ({ ...item }));
+    if (apiReady) {
+      try {
+        await importTradesToApi(state.trades, "replace");
+      } catch (error) {
+        console.error("同步演示交易到数据库失败", error);
+      }
+    }
   }
   persistState();
   renderAll();
