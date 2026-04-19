@@ -4,8 +4,10 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "dev": "node server.js",
-    "import:trades": "node scripts/import-trades.js"
+    "import:trades": "node scripts/import-trades.js",
+    "test": "echo \"No tests configured\""
   },
   "repository": {
     "type": "git",
