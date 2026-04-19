@@ -24,7 +24,7 @@
   "stockSortOrder": "default",
   "trades": [
     {
-      "id": "2498fe56-2cdd-462f-b9c2-7d3900a424f9",
+      "id": "fe5b1408-910b-4686-b285-13d61618f87e",
       "accountId": "default",
       "type": "trade",
       "symbol": "sz300750",
@@ -38,7 +38,7 @@
       "createdAt": 1776384000000
     },
     {
-      "id": "bc5f5d75-c0f5-4414-906c-7a2d4400e0c4",
+      "id": "d82a7fdb-465c-44c6-82ed-a60ca931f046",
       "accountId": "default",
       "type": "trade",
       "symbol": "sh601899",
