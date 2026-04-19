@@ -580,7 +580,9 @@ async function hydrateState() {
   if (apiReady) {
     remoteParsed = await fetchRemoteState();
   }
-  if (!apiReady || !(remoteParsed && Array.isArray(remoteParsed.trades) && remoteParsed.trades.length)) {
+  // Only use the baked-in snapshot on static hosts (GitHub Pages). When the API is up,
+  // trust /api/state even if the DB is empty — otherwise site-state.json would mask a real empty database.
+  if (!apiReady) {
     staticParsed = await fetchStaticSiteState();
   }
   const raw = localStorage.getItem(STORAGE_KEY);
