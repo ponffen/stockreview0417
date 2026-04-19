@@ -1,6 +1,7 @@
 const STORAGE_KEY = "earning-clone-state-v2";
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 420;
+const CHART_FALLBACK_DAYS = 90;
 const DEFAULT_BENCHMARK_PRICE = {
   sh000001: 0,
   sz399001: 0,
@@ -12,70 +13,52 @@ const demoTrades = [
   {
     id: crypto.randomUUID(),
     type: "trade",
-    symbol: "sh600519",
-    name: "贵州茅台",
+    symbol: "sz300750",
+    name: "宁德时代",
     side: "buy",
-    price: 1480,
+    price: 443.27,
     quantity: 100,
-    amount: 148000,
-    date: "2026-01-10",
-    note: "长线配置",
-    createdAt: Date.now() - 5,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "sz000858",
-    name: "五粮液",
-    side: "buy",
-    price: 129.5,
-    quantity: 500,
-    amount: 64750,
-    date: "2026-02-14",
+    amount: 44327,
+    date: "2026-04-17",
     note: "",
-    createdAt: Date.now() - 4,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "hk00700",
-    name: "腾讯控股",
-    side: "buy",
-    price: 310,
-    quantity: 200,
-    amount: 62000,
-    date: "2026-03-02",
-    note: "",
-    createdAt: Date.now() - 3,
-  },
-  {
-    id: crypto.randomUUID(),
-    type: "trade",
-    symbol: "hk00700",
-    name: "腾讯控股",
-    side: "sell",
-    price: 336,
-    quantity: 60,
-    amount: 20160,
-    date: "2026-04-03",
-    note: "减仓",
     createdAt: Date.now() - 2,
+  },
+  {
+    id: crypto.randomUUID(),
+    type: "trade",
+    symbol: "sh601899",
+    name: "紫金矿业",
+    side: "buy",
+    price: 34.68,
+    quantity: 300,
+    amount: 10404,
+    date: "2026-04-17",
+    note: "",
+    createdAt: Date.now() - 1,
   },
 ];
 
 const state = {
   route: "earning",
+  previousRoute: "earning",
   useDemoData: true,
   algoMode: "cost",
   benchmark: "none",
   stageRange: "month",
   rangeDays: 7,
+  analysisRangeMode: "preset",
+  customRangeStart: "",
+  customRangeEnd: "",
+  capitalTrendMode: "both",
   capitalAmount: 0,
   trades: [],
   quoteMap: {},
   klineMap: {},
   quoteTime: "--",
   marketLoading: false,
+  editingTradeId: null,
+  activeRecordId: null,
+  activeRecordSymbol: null,
 };
 
 const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
@@ -87,15 +70,25 @@ const monthProfitMain = document.getElementById("monthProfitMain");
 const stageRangeSelect = document.getElementById("stageRangeSelect");
 const stockTableBody = document.getElementById("stockTableBody");
 const recordList = document.getElementById("recordList");
-const analysisSummary = document.getElementById("analysisSummary");
-const analysisChart = document.getElementById("analysisChart");
+const analysisRateSummary = document.getElementById("analysisRateSummary");
+const analysisProfitSummary = document.getElementById("analysisProfitSummary");
+const analysisRateChart = document.getElementById("analysisRateChart");
+const analysisProfitChart = document.getElementById("analysisProfitChart");
+const analysisAssetChart = document.getElementById("analysisAssetChart");
 const demoToggleBtn = document.getElementById("demoToggleBtn");
 const quickTradeBtn = document.getElementById("quickTradeBtn");
 const recordTradeBtn = document.getElementById("recordTradeBtn");
+const tradeAddBtn = document.getElementById("tradeAddBtn");
 const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelect = document.getElementById("algoMode");
 const benchmarkSelect = document.getElementById("benchmark");
 const rangeChips = [...document.querySelectorAll(".range-chip")];
+const customRangeRow = document.getElementById("customRangeRow");
+const customRangeStartInput = document.getElementById("customRangeStart");
+const customRangeEndInput = document.getElementById("customRangeEnd");
+const applyCustomRangeBtn = document.getElementById("applyCustomRangeBtn");
+const assetCurveModeSelect = document.getElementById("assetCurveMode");
+const tradeTableBody = document.getElementById("tradeTableBody");
 const tradeDialog = document.getElementById("tradeDialog");
 const tradeForm = document.getElementById("tradeForm");
 const closeTradeDialogBtn = document.getElementById("closeTradeDialogBtn");
@@ -104,10 +97,26 @@ const tradePriceInput = document.getElementById("tradePrice");
 const tradeQuantityInput = document.getElementById("tradeQuantity");
 const tradeSideInput = document.getElementById("tradeSide");
 const tradeAmountInput = document.getElementById("tradeAmount");
+const tradeDialogTitle = document.getElementById("tradeDialogTitle");
+const tradeSubmitBtn = document.getElementById("tradeSubmitBtn");
 const capitalDialog = document.getElementById("capitalDialog");
 const capitalForm = document.getElementById("capitalForm");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
 const capitalAmountInput = document.getElementById("capitalAmount");
+const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
+const stockRecordTitle = document.getElementById("stockRecordTitle");
+const stockRecordTime = document.getElementById("stockRecordTime");
+const stockRecordPrice = document.getElementById("stockRecordPrice");
+const stockRecordChange = document.getElementById("stockRecordChange");
+const stockRecordChart = document.getElementById("stockRecordChart");
+const stockRecordMarket = document.getElementById("stockRecordMarket");
+const stockRecordRegret = document.getElementById("stockRecordRegret");
+const stockRecordListBody = document.getElementById("stockRecordListBody");
+const recordActionPopover = document.getElementById("recordActionPopover");
+const tradeSymbolInput = document.getElementById("tradeSymbol");
+const tradeNameInput = document.getElementById("tradeName");
+const tradeDateInput = document.getElementById("tradeDate");
+const tradeNoteInput = document.getElementById("tradeNote");
 
 initialize();
 
@@ -136,14 +145,34 @@ function hydrateState() {
       state.benchmark = parsed.benchmark ?? state.benchmark;
       state.stageRange = parsed.stageRange ?? state.stageRange;
       state.rangeDays = parsed.rangeDays ?? state.rangeDays;
+      state.analysisRangeMode = parsed.analysisRangeMode ?? state.analysisRangeMode;
+      state.customRangeStart = parsed.customRangeStart ?? state.customRangeStart;
+      state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
+      state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
       state.capitalAmount = Number(parsed.capitalAmount ?? 0);
       state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
     } catch (error) {
       console.error("读取本地数据失败，已使用默认配置", error);
     }
   }
+  if (!["month", "ytd", "total"].includes(state.stageRange)) {
+    state.stageRange = "month";
+  }
+  if (!["preset", "custom"].includes(state.analysisRangeMode)) {
+    state.analysisRangeMode = "preset";
+  }
+  if (!["both", "principal", "market"].includes(state.capitalTrendMode)) {
+    state.capitalTrendMode = "both";
+  }
   if (state.useDemoData && state.trades.length === 0) {
     state.trades = demoTrades.map((item) => ({ ...item }));
+  }
+  if (state.trades.length === 0) {
+    state.useDemoData = true;
+    state.trades = demoTrades.map((item) => ({ ...item }));
+  }
+  if (![7, 30, 90, 365].includes(Number(state.rangeDays))) {
+    state.rangeDays = 7;
   }
 }
 
@@ -155,6 +184,10 @@ function persistState() {
     benchmark: state.benchmark,
     stageRange: state.stageRange,
     rangeDays: state.rangeDays,
+    analysisRangeMode: state.analysisRangeMode,
+    customRangeStart: state.customRangeStart,
+    customRangeEnd: state.customRangeEnd,
+    capitalTrendMode: state.capitalTrendMode,
     capitalAmount: state.capitalAmount,
     trades: state.trades,
   };
@@ -164,19 +197,26 @@ function persistState() {
 function bindEvents() {
   routeButtons.forEach((button) => {
     button.addEventListener("click", () => {
+      if (state.route !== "stock-record") {
+        state.previousRoute = state.route;
+      }
       state.route = button.dataset.route;
       persistState();
-      renderRoute();
+      renderAll();
     });
   });
 
-  demoToggleBtn.addEventListener("click", () => {
-    state.useDemoData = !state.useDemoData;
-    state.trades = state.useDemoData ? demoTrades.map((item) => ({ ...item })) : [];
-    persistState();
-    renderAll();
-    refreshMarketData();
-  });
+  if (demoToggleBtn) {
+    demoToggleBtn.addEventListener("click", () => {
+      state.useDemoData = !state.useDemoData;
+      if (state.useDemoData) {
+        state.trades = demoTrades.map((item) => ({ ...item }));
+      }
+      persistState();
+      renderAll();
+      refreshMarketData();
+    });
+  }
 
   algoModeSelect.addEventListener("change", () => {
     state.algoMode = algoModeSelect.value;
@@ -200,24 +240,56 @@ function bindEvents() {
 
   rangeChips.forEach((chip) => {
     chip.addEventListener("click", () => {
-      state.rangeDays = Number(chip.dataset.range);
+      const value = chip.dataset.range;
+      if (value === "custom") {
+        state.analysisRangeMode = "custom";
+      } else {
+        state.analysisRangeMode = "preset";
+        state.rangeDays = Number(value);
+      }
       persistState();
       renderAnalysis();
       renderControls();
     });
   });
 
-  [quickTradeBtn, recordTradeBtn].forEach((button) => {
-    button.addEventListener("click", () => {
-      tradeForm.reset();
-      tradeTypeInput.value = "trade";
-      applyTradeTypePreset();
-      document.getElementById("tradeDate").value = toDateKey(new Date());
-      tradeDialog.showModal();
-    });
+  applyCustomRangeBtn?.addEventListener("click", () => {
+    let start = customRangeStartInput?.value || "";
+    let end = customRangeEndInput?.value || "";
+    if (!start && !end) {
+      return;
+    }
+    if (!start) {
+      start = getDefaultAnalysisStartDate();
+    }
+    if (!end) {
+      end = toDateKey(new Date());
+    }
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    state.customRangeStart = start;
+    state.customRangeEnd = end;
+    state.analysisRangeMode = "custom";
+    persistState();
+    renderControls();
+    renderAnalysis();
   });
 
-  closeTradeDialogBtn.addEventListener("click", () => tradeDialog.close());
+  assetCurveModeSelect?.addEventListener("change", () => {
+    state.capitalTrendMode = assetCurveModeSelect.value || "both";
+    persistState();
+    renderAnalysis();
+  });
+
+  [quickTradeBtn, recordTradeBtn, tradeAddBtn].filter(Boolean).forEach((button) => {
+    button.addEventListener("click", openNewTradeDialog);
+  });
+
+  closeTradeDialogBtn.addEventListener("click", () => {
+    clearEditState();
+    tradeDialog.close();
+  });
   tradeTypeInput.addEventListener("change", applyTradeTypePreset);
 
   tradeForm.addEventListener("submit", (event) => {
@@ -240,7 +312,7 @@ function bindEvents() {
     }
 
     const trade = normalizeTrade({
-      id: crypto.randomUUID(),
+      id: state.editingTradeId || crypto.randomUUID(),
       type,
       symbol,
       name: String(formData.get("name") || symbol).trim(),
@@ -254,37 +326,94 @@ function bindEvents() {
     });
 
     state.useDemoData = false;
+    if (state.editingTradeId) {
+      state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
+    }
     state.trades.push(trade);
     state.trades.sort(sortTradeAsc);
     persistState();
+    clearEditState();
     tradeDialog.close();
     renderAll();
     refreshMarketData();
   });
 
-  setCapitalBtn.addEventListener("click", () => {
-    capitalAmountInput.value = state.capitalAmount ? String(state.capitalAmount) : "";
-    capitalDialog.showModal();
-  });
-  closeCapitalDialogBtn.addEventListener("click", () => capitalDialog.close());
-  capitalForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(capitalForm);
-    state.capitalAmount = Math.max(0, Number(formData.get("capitalAmount") || 0));
-    persistState();
-    capitalDialog.close();
-    renderOverviewAndStockTable();
-  });
+  if (setCapitalBtn) {
+    setCapitalBtn.addEventListener("click", () => {
+      capitalAmountInput.value = state.capitalAmount ? String(state.capitalAmount) : "";
+      capitalDialog.showModal();
+    });
+  }
+  closeCapitalDialogBtn?.addEventListener("click", () => capitalDialog.close());
+  if (capitalForm) {
+    capitalForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const formData = new FormData(capitalForm);
+      state.capitalAmount = Math.max(0, Number(formData.get("capitalAmount") || 0));
+      persistState();
+      capitalDialog.close();
+      renderOverviewAndStockTable();
+    });
+  }
 
-  recordList.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-remove-id]");
-    if (!button) {
+  tradeTableBody?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-record-id]");
+    if (!row) {
       return;
     }
-    state.trades = state.trades.filter((item) => item.id !== button.dataset.removeId);
+    const id = row.dataset.recordId;
+    if (!id) {
+      return;
+    }
+    showRecordActionPopover(row, id);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!recordActionPopover) {
+      return;
+    }
+    if (recordActionPopover.contains(event.target)) {
+      return;
+    }
+    if (event.target.closest("tr[data-record-id]")) {
+      return;
+    }
+    hideRecordActionPopover();
+  });
+
+  recordActionPopover?.addEventListener("click", (event) => {
+    const actionBtn = event.target.closest("button[data-action]");
+    if (!actionBtn) {
+      return;
+    }
+    const action = actionBtn.dataset.action;
+    const tradeId = recordActionPopover.dataset.tradeId;
+    hideRecordActionPopover();
+    if (!tradeId) {
+      return;
+    }
+    if (action === "edit") {
+      openEditTradeDialog(tradeId);
+      return;
+    }
+    if (action === "delete") {
+      removeTradeById(tradeId);
+    }
+  });
+
+  stockTableBody?.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-stock-record]");
+    if (!link) {
+      return;
+    }
+    const symbol = link.dataset.stockRecord;
+    openStockRecordDialog(symbol);
+  });
+
+  closeStockRecordDialogBtn?.addEventListener("click", () => {
+    state.route = state.previousRoute || "earning";
     persistState();
-    renderAll();
-    refreshMarketData();
+    renderRoute();
   });
 }
 
@@ -310,16 +439,31 @@ function applyTradeTypePreset() {
   }
 }
 
+function openNewTradeDialog() {
+  clearEditState();
+  tradeForm.reset();
+  tradeTypeInput.value = "trade";
+  applyTradeTypePreset();
+  tradeDateInput.value = toDateKey(new Date());
+  tradeDialog.showModal();
+}
+
+
 function renderAll() {
   renderControls();
   renderRoute();
   renderOverviewAndStockTable();
-  renderRecords();
+  renderTradeTable();
   renderAnalysis();
+  if (state.route === "stock-record" && state.activeRecordSymbol) {
+    renderStockRecordPage(state.activeRecordSymbol);
+  }
 }
 
 function renderControls() {
-  demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
+  if (demoToggleBtn) {
+    demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
+  }
   algoModeSelect.value = state.algoMode;
   benchmarkSelect.value = state.benchmark;
   if (quoteTime) {
@@ -329,8 +473,25 @@ function renderControls() {
     stageRangeSelect.value = state.stageRange;
   }
   rangeChips.forEach((chip) => {
-    chip.classList.toggle("active", Number(chip.dataset.range) === state.rangeDays);
+    const value = chip.dataset.range;
+    const active =
+      value === "custom"
+        ? state.analysisRangeMode === "custom"
+        : state.analysisRangeMode !== "custom" && Number(value) === state.rangeDays;
+    chip.classList.toggle("active", active);
   });
+  if (customRangeRow) {
+    customRangeRow.classList.toggle("hidden", state.analysisRangeMode !== "custom");
+  }
+  if (customRangeStartInput) {
+    customRangeStartInput.value = state.customRangeStart || "";
+  }
+  if (customRangeEndInput) {
+    customRangeEndInput.value = state.customRangeEnd || "";
+  }
+  if (assetCurveModeSelect) {
+    assetCurveModeSelect.value = state.capitalTrendMode;
+  }
 }
 
 function renderRoute() {
@@ -343,6 +504,13 @@ function renderRoute() {
   routePanes.forEach((pane) => {
     pane.classList.toggle("active", pane.id === `route-${state.route}`);
   });
+  const bottomTabs = document.querySelector(".bottom-tabs");
+  if (bottomTabs) {
+    bottomTabs.style.display = state.route === "stock-record" ? "none" : "grid";
+  }
+  if (state.route === "stock-record" && state.activeRecordSymbol) {
+    renderStockRecordPage(state.activeRecordSymbol);
+  }
 }
 
 function renderOverviewAndStockTable() {
@@ -374,7 +542,7 @@ function renderOverviewAndStockTable() {
   if (!portfolio.positions.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="13"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+        <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -402,6 +570,7 @@ function renderOverviewAndStockTable() {
             <div class="cell-main">${formatPlainMoney(row.marketValue)}</div>
             <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
           </td>
+          <td>${formatPercent(row.weight)}</td>
           <td>${formatNumber(row.cost, 3)}</td>
           <td class="${row.monthProfit >= 0 ? "up" : "down"}">${formatSignedMoney(row.monthProfit, 2)}</td>
           <td>${formatPercent(row.monthWeight)}</td>
@@ -410,8 +579,7 @@ function renderOverviewAndStockTable() {
           <td class="${totalClass}">${formatSignedMoney(row.totalProfit, 2)}</td>
           <td class="${totalClass}">${formatPercent(row.totalRate)}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
-          <td>${formatPercent(row.weight)}</td>
-          <td>${formatSignedMoney(row.sigmaAmount, 2)}</td>
+          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${row.symbol}">记录</a></td>
         </tr>
       `;
     })
@@ -458,6 +626,12 @@ function getStageStartKey(stageRange, firstDate) {
   return toDateKey(start);
 }
 
+function getDefaultAnalysisStartDate() {
+  const dt = new Date();
+  dt.setDate(dt.getDate() - Math.max(state.rangeDays - 1, 0));
+  return toDateKey(dt);
+}
+
 function computePositionStageProfit(position, stageRange) {
   const firstTradeDate = state.trades.length
     ? [...state.trades].sort(sortTradeAsc)[0].date
@@ -502,48 +676,497 @@ function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
   );
 }
 
-function renderRecords() {
+function renderTradeTable() {
+  if (!tradeTableBody) {
+    return;
+  }
   if (!state.trades.length) {
-    recordList.innerHTML = '<p class="empty">暂无交易记录，点击右上角“新建交易”。</p>';
+    tradeTableBody.innerHTML = `
+      <tr>
+        <td colspan="6"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
+      </tr>
+    `;
     return;
   }
   const sorted = [...state.trades].sort(sortTradeDesc);
-  recordList.innerHTML = sorted
+  tradeTableBody.innerHTML = sorted
     .map((trade) => {
-      const amountText = `${trade.side === "buy" ? "+" : "-"}${formatCurrency(trade.amount)}`;
       return `
-        <article class="record-item">
-          <div class="record-main">
-            <h3>${escapeHtml(trade.name)} <span class="caption">${trade.symbol}</span></h3>
-            <p>${trade.date} · ${typeLabel(trade.type)} · ${trade.note || "无备注"}</p>
-          </div>
-          <div class="record-side">
-            <p class="${trade.side === "buy" ? "up" : "down"}">${trade.side === "buy" ? "买入(B)" : "卖出(S)"}</p>
-            <p>价格 ${formatNumber(trade.price, 3)} × 数量 ${formatNumber(trade.quantity, 0)}</p>
-            <p>${amountText}</p>
-            <button class="delete-btn" data-remove-id="${trade.id}">删除</button>
-          </div>
-        </article>
+        <tr class="trade-row" data-record-id="${trade.id}">
+          <td>${trade.date.replace(/-/g, "/")}</td>
+          <td>${escapeHtml(trade.name)}</td>
+          <td class="type-cell">${trade.side === "buy" ? "买入" : "卖出"}</td>
+          <td class="num">${formatNumber(trade.price, 2)}</td>
+          <td class="num">${formatNumber(trade.quantity, 0)}</td>
+          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
+            trade.side === "buy" ? "-" : "+"
+          }${formatNumber(trade.amount, 2)}</td>
+        </tr>
       `;
     })
     .join("");
 }
 
+function showRecordActionPopover(row, tradeId) {
+  if (!recordActionPopover) {
+    return;
+  }
+  const rect = row.getBoundingClientRect();
+  recordActionPopover.dataset.tradeId = tradeId;
+  recordActionPopover.style.top = `${window.scrollY + rect.bottom - 2}px`;
+  recordActionPopover.style.left = `${window.scrollX + rect.right - 118}px`;
+  recordActionPopover.classList.add("show");
+}
+
+function hideRecordActionPopover() {
+  if (!recordActionPopover) {
+    return;
+  }
+  recordActionPopover.classList.remove("show");
+  recordActionPopover.dataset.tradeId = "";
+}
+
+function openEditTradeDialog(tradeId) {
+  const trade = state.trades.find((item) => item.id === tradeId);
+  if (!trade) {
+    return;
+  }
+  state.editingTradeId = tradeId;
+  if (tradeDialogTitle) {
+    tradeDialogTitle.textContent = "修改交易";
+  }
+  if (tradeSubmitBtn) {
+    tradeSubmitBtn.textContent = "保存修改";
+  }
+  tradeTypeInput.value = trade.type;
+  tradeSymbolInput.value = trade.symbol;
+  tradeNameInput.value = trade.name;
+  tradeSideInput.value = trade.side;
+  tradePriceInput.value = trade.price;
+  tradeQuantityInput.value = trade.quantity;
+  tradeAmountInput.value = trade.amount;
+  tradeDateInput.value = trade.date;
+  tradeNoteInput.value = trade.note || "";
+  applyTradeTypePreset();
+  tradeDialog.showModal();
+}
+
+function clearEditState() {
+  state.editingTradeId = null;
+  if (tradeDialogTitle) {
+    tradeDialogTitle.textContent = "新建交易";
+  }
+  if (tradeSubmitBtn) {
+    tradeSubmitBtn.textContent = "保存交易";
+  }
+}
+
+function removeTradeById(tradeId) {
+  state.trades = state.trades.filter((item) => item.id !== tradeId);
+  if (state.trades.length === 0) {
+    state.useDemoData = true;
+    state.trades = demoTrades.map((item) => ({ ...item }));
+  }
+  persistState();
+  renderAll();
+  refreshMarketData();
+}
+
 function renderAnalysis() {
   const portfolio = computePortfolio();
   const history = buildPortfolioHistory(portfolio.positions);
-  const selected = history.slice(-Math.min(Math.max(state.rangeDays, 2), history.length));
+  const selected = resolveAnalysisRange(history);
   const mySeries = computeModeSeries(selected, state.algoMode);
   const benchSeries = buildBenchmarkSeries(selected);
+  const profitSeries = buildProfitSeries(selected);
+  const assetSeries = buildAssetSeries(selected, portfolio.principal);
+
   drawLineChart(mySeries, benchSeries);
+  drawDualLineChart(analysisProfitChart, profitSeries, null, "#f45a68", null);
+  drawAssetChart(assetSeries);
 
   const lastMy = mySeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
+  const lastProfit = profitSeries.at(-1)?.value ?? 0;
   const excess = lastMy - lastBench;
-  analysisSummary.textContent =
-    state.benchmark === "none"
-      ? `我的收益 ${formatPercent(lastMy)}`
-      : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+  if (analysisRateSummary) {
+    analysisRateSummary.textContent =
+      state.benchmark === "none"
+        ? `我的收益率 ${formatPercent(lastMy)}`
+        : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+  }
+  if (analysisProfitSummary) {
+    analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
+  }
+}
+
+function resolveAnalysisRange(history) {
+  if (!history.length) {
+    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  if (state.analysisRangeMode === "custom") {
+    let start = state.customRangeStart || history[0].date;
+    let end = state.customRangeEnd || history[history.length - 1].date;
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    const picked = history.filter((point) => point.date >= start && point.date <= end);
+    if (picked.length) {
+      return picked;
+    }
+  }
+  return history.slice(-Math.min(Math.max(state.rangeDays, 2), history.length));
+}
+
+function buildProfitSeries(points) {
+  if (!points.length) {
+    return [{ date: toDateKey(new Date()), value: 0 }];
+  }
+  const startClose = points[0].value - points[0].flow;
+  let sumFlow = 0;
+  return points.map((point) => {
+    sumFlow += point.flow;
+    return {
+      date: point.date,
+      value: point.value - startClose - sumFlow,
+    };
+  });
+}
+
+function buildAssetSeries(points, principalFallback) {
+  if (!points.length) {
+    return [{ date: toDateKey(new Date()), principal: principalFallback || 0, market: 0 }];
+  }
+  let sigmaFlow = 0;
+  return points.map((point) => {
+    sigmaFlow += point.flow;
+    const principal = Math.max(principalFallback, sigmaFlow, 0);
+    return {
+      date: point.date,
+      principal,
+      market: point.value,
+    };
+  });
+}
+
+async function openStockRecordDialog(symbol) {
+  state.activeRecordSymbol = symbol;
+  state.previousRoute = state.route;
+  state.route = "stock-record";
+  renderAll();
+  window.scrollTo(0, 0);
+  persistState();
+
+  await ensureSymbolData(symbol);
+  renderStockRecordPage(symbol);
+  // wait for layout settle on mobile after route switch
+  window.setTimeout(() => renderStockRecordPage(symbol), 40);
+}
+
+function renderStockRecordPage(symbol) {
+  const position = computePortfolio().positions.find((item) => item.symbol === symbol);
+  if (!position) {
+    return;
+  }
+  const symbolTrades = state.trades
+    .filter((item) => item.symbol === symbol)
+    .sort(sortTradeDesc);
+  const quote = state.quoteMap[symbol] || {};
+  const current = validNumber(quote.current, position.currentPrice);
+  const prev = validNumber(quote.prevClose, position.prevClose, current);
+  const change = prev > 0 ? (current - prev) / prev : 0;
+
+  stockRecordTitle.textContent = `${position.name}(${symbol.toUpperCase()})`;
+  stockRecordTime.textContent = quote.time || state.quoteTime || "--";
+  stockRecordPrice.textContent = formatNumber(current, 3);
+  stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
+  stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
+  stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
+  stockRecordMarket.textContent = marketLabel(position.market);
+  stockRecordRegret.textContent = `后悔率 ${formatPercent(position.regretRate)}`;
+  stockRecordRegret.className = `${position.regretRate >= 0 ? "up" : "down"}`;
+
+  stockRecordListBody.innerHTML = symbolTrades
+    .map(
+      (trade) => `
+      <tr>
+        <td>${trade.date.replace(/-/g, "/")}</td>
+        <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
+        <td>${formatNumber(trade.price, 2)}</td>
+        <td>${formatNumber(trade.quantity, 0)}</td>
+        <td class="${trade.side === "buy" ? "down" : "up"}">${trade.side === "buy" ? "-" : "+"}${formatNumber(
+          trade.amount,
+          2
+        )}</td>
+      </tr>
+    `
+    )
+    .join("");
+
+  drawStockRecordChart(symbol, symbolTrades);
+}
+
+async function ensureSymbolData(symbol) {
+  try {
+    const quoteMap = await fetchRealtimeQuotes([symbol]);
+    if (quoteMap[symbol]) {
+      state.quoteMap[symbol] = quoteMap[symbol];
+      state.quoteTime = quoteMap[symbol].time || state.quoteTime;
+    }
+  } catch (error) {
+    console.error("加载个股实时行情失败", error);
+  }
+  if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+    const latest = await fetchLatestQuoteFromMinuteK(symbol);
+    if (latest) {
+      state.quoteMap[symbol] = latest;
+      state.quoteTime = latest.time || state.quoteTime;
+    }
+  }
+
+  if (!supportsKline(symbol)) {
+    return;
+  }
+  if (state.klineMap[symbol] && state.klineMap[symbol].length) {
+    return;
+  }
+  try {
+    const list = await fetchKlineData(symbol);
+    if (list.length) {
+      state.klineMap[symbol] = list;
+    } else {
+      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+    }
+  } catch (error) {
+    console.error("加载个股K线失败", error);
+    if (!state.klineMap[symbol] || !state.klineMap[symbol].length) {
+      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+    }
+  }
+}
+
+function ensureSymbolPrefixForQuote(symbol) {
+  if (/^sh600750$/i.test(symbol)) {
+    return "sz300750";
+  }
+  return symbol;
+}
+
+function buildFallbackKlineFromTrades(symbol) {
+  const symbolTrades = state.trades
+    .filter((item) => item.symbol === symbol)
+    .sort(sortTradeAsc);
+  if (!symbolTrades.length) {
+    return [];
+  }
+  const start = new Date(symbolTrades[0].date);
+  const end = new Date();
+  const closeSeed = validNumber(symbolTrades[symbolTrades.length - 1].price, 1);
+  const rows = [];
+  let cursor = new Date(start);
+  let prev = closeSeed;
+  while (cursor <= end && rows.length < CHART_FALLBACK_DAYS) {
+    const day = toDateKey(cursor);
+    const trade = symbolTrades.find((item) => item.date === day);
+    const close = validNumber(trade?.price, prev);
+    rows.push({
+      day,
+      open: close,
+      high: close,
+      low: close,
+      close,
+      volume: 0,
+    });
+    prev = close;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rows;
+}
+
+function marketLabel(market) {
+  if (market === "A股") {
+    return "CN 沪深默认";
+  }
+  if (market === "港股") {
+    return "HK 港股默认";
+  }
+  if (market === "美股") {
+    return "US 美股默认";
+  }
+  return "OT 其他市场";
+}
+
+function drawStockRecordChart(symbol, symbolTrades) {
+  const canvas = stockRecordChart;
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+
+  const kline = state.klineMap[symbol] || [];
+  const points = kline.slice(-60);
+  if (!points.length) {
+    drawFallbackStockRecordChart(symbolTrades, ctx, width, height);
+    return;
+  }
+  const closes = points.map((item) => Number(item.close));
+  const maxClose = Math.max(...closes);
+  const minClose = Math.min(...closes);
+  const qtyByDay = {};
+  let qty = 0;
+  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
+  sortedTrades.forEach((trade) => {
+    qty += trade.side === "buy" ? trade.quantity : -trade.quantity;
+    qtyByDay[trade.date] = qty;
+  });
+  let rollingQty = 0;
+  const qtySeries = points.map((item) => {
+    if (qtyByDay[item.day] != null) {
+      rollingQty = qtyByDay[item.day];
+    }
+    return rollingQty;
+  });
+  const maxQty = Math.max(1, ...qtySeries.map((v) => Math.abs(v)));
+  const mapX = (idx) => 20 + (idx / Math.max(points.length - 1, 1)) * (width - 40);
+  const mapYPrice = (value) =>
+    20 + ((maxClose - value) / Math.max(maxClose - minClose, 0.0001)) * (height - 60);
+  const mapYQty = (value) => height - 20 - (value / maxQty) * (height - 60);
+
+  ctx.strokeStyle = "#e8edf5";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = 20 + ((height - 40) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(10, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "rgba(64, 145, 224, 0.20)";
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, height - 20);
+      ctx.lineTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.lineTo(mapX(points.length - 1), height - 20);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = "#4091e0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ff4d4f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  qtySeries.forEach((value, index) => {
+    const x = mapX(index);
+    const y = mapYQty(value);
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+
+  const pointByDate = Object.fromEntries(points.map((item, idx) => [item.day, idx]));
+  sortedTrades.forEach((trade) => {
+    const idx = pointByDate[trade.date];
+    if (idx == null) {
+      return;
+    }
+    const x = mapX(idx);
+    const y = mapYPrice(validNumber(trade.price, points[idx].close));
+    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
+    ctx.strokeStyle = "#3b7bf6";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+}
+
+function drawFallbackStockRecordChart(symbolTrades, ctx, width, height) {
+  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
+  if (!sortedTrades.length) {
+    return;
+  }
+  const count = sortedTrades.length;
+  const prices = sortedTrades.map((t) => validNumber(t.price, 0));
+  const maxP = Math.max(...prices, 1);
+  const minP = Math.min(...prices, 0);
+  let q = 0;
+  const qty = sortedTrades.map((t) => {
+    q += t.side === "buy" ? t.quantity : -t.quantity;
+    return q;
+  });
+  const maxQ = Math.max(...qty.map((v) => Math.abs(v)), 1);
+  const mapX = (idx) => 20 + (idx / Math.max(count - 1, 1)) * (width - 40);
+  const mapYPrice = (value) => 20 + ((maxP - value) / Math.max(maxP - minP, 0.001)) * (height - 60);
+  const mapYQty = (value) => height - 20 - (value / maxQ) * (height - 60);
+
+  ctx.strokeStyle = "#e8edf5";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = 20 + ((height - 40) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(10, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#4091e0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  sortedTrades.forEach((trade, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(validNumber(trade.price, 0));
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ff4d4f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  qty.forEach((value, index) => {
+    const x = mapX(index);
+    const y = mapYQty(value);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  sortedTrades.forEach((trade, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(validNumber(trade.price, 0));
+    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
+    ctx.strokeStyle = "#3b7bf6";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
 }
 
 function computePortfolio() {
@@ -818,39 +1441,74 @@ function buildBenchmarkSeries(selectedPoints) {
 }
 
 function drawLineChart(mySeries, benchmarkSeries) {
-  const ctx = analysisChart.getContext("2d");
-  const width = analysisChart.width;
-  const height = analysisChart.height;
-  ctx.clearRect(0, 0, width, height);
+  drawDualLineChart(
+    analysisRateChart,
+    mySeries.map((item) => ({ date: item.date, value: item.rate })),
+    state.benchmark === "none" ? null : benchmarkSeries.map((item) => ({ date: item.date, value: item.rate })),
+    "#f24957",
+    "#2f80f6"
+  );
+}
 
+function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB) {
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  drawChartGrid(ctx, width, height);
+
+  const values = [...seriesA.map((item) => item.value)];
+  if (seriesB) {
+    values.push(...seriesB.map((item) => item.value));
+  }
+  const minValue = Math.min(...values, 0);
+  const maxValue = Math.max(...values, 0);
+  const range = Math.max(maxValue - minValue, 0.001);
+  const count = Math.max(seriesA.length, seriesB?.length || 0, 2);
+  const mapX = (idx) => 20 + (idx / (count - 1)) * (width - 40);
+  const mapY = (value) => 20 + ((maxValue - value) / range) * (height - 40);
+
+  drawSeries(ctx, seriesA, mapX, mapY, colorA);
+  if (seriesB && seriesB.length) {
+    drawSeries(ctx, seriesB, mapX, mapY, colorB || "#2f80f6");
+  }
+}
+
+function drawSingleLineChart(canvas, series, color) {
+  drawDualLineChart(canvas, series, null, color, null);
+}
+
+function drawAssetChart(assetSeries) {
+  const principalSeries = assetSeries.map((item) => ({ date: item.date, value: item.principal }));
+  const marketSeries = assetSeries.map((item) => ({ date: item.date, value: item.market }));
+  if (state.capitalTrendMode === "principal") {
+    drawSingleLineChart(analysisAssetChart, principalSeries, "#5f6c82");
+    return;
+  }
+  if (state.capitalTrendMode === "market") {
+    drawSingleLineChart(analysisAssetChart, marketSeries, "#4f83f1");
+    return;
+  }
+  drawDualLineChart(analysisAssetChart, principalSeries, marketSeries, "#5f6c82", "#4f83f1");
+}
+
+function drawChartGrid(ctx, width, height) {
   ctx.strokeStyle = "#e6ebf2";
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
-    const y = (height / 4) * i;
+    const y = 20 + ((height - 40) / 4) * i;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
+    ctx.moveTo(8, y);
+    ctx.lineTo(width - 8, y);
     ctx.stroke();
-  }
-
-  const mergedRates = [
-    ...mySeries.map((point) => Math.abs(point.rate)),
-    ...benchmarkSeries.map((point) => Math.abs(point.rate)),
-    0.02,
-  ];
-  const maxAbs = Math.max(...mergedRates);
-  const count = Math.max(mySeries.length, 2);
-  const mapX = (idx) => (idx / (count - 1)) * (width - 40) + 20;
-  const mapY = (rate) => height / 2 - (rate / maxAbs) * (height * 0.35);
-
-  drawSeries(ctx, mySeries, mapX, mapY, "#f24957");
-  if (state.benchmark !== "none") {
-    drawSeries(ctx, benchmarkSeries, mapX, mapY, "#2f80f6");
   }
 }
 
 function drawSeries(ctx, series, mapX, mapY, color) {
-  if (!series.length) {
+  if (!series || !series.length) {
     return;
   }
   ctx.strokeStyle = color;
@@ -858,7 +1516,7 @@ function drawSeries(ctx, series, mapX, mapY, color) {
   ctx.beginPath();
   series.forEach((point, index) => {
     const x = mapX(index);
-    const y = mapY(point.rate);
+    const y = mapY(point.value);
     if (index === 0) {
       ctx.moveTo(x, y);
     } else {
@@ -881,7 +1539,13 @@ async function refreshMarketData() {
       return;
     }
 
-    const quoteMap = await fetchRealtimeQuotes(symbols);
+    let quoteMap = {};
+    try {
+      quoteMap = await fetchRealtimeQuotes(symbols);
+    } catch (error) {
+      // hq.sinajs.cn may be blocked by anti-hotlink on third-party domains.
+      quoteMap = {};
+    }
     if (Object.keys(quoteMap).length) {
       state.quoteMap = { ...state.quoteMap, ...quoteMap };
       const times = Object.values(quoteMap)
@@ -890,12 +1554,22 @@ async function refreshMarketData() {
       state.quoteTime = times[0] || state.quoteTime;
     }
 
-    const klineSymbols = symbols.filter(supportsKline).filter((symbol) => !state.klineMap[symbol]);
+    const klineSymbols = symbols.filter(supportsKline);
     await Promise.all(
       klineSymbols.map(async (symbol) => {
-        const list = await fetchKlineData(symbol);
-        if (list.length) {
-          state.klineMap[symbol] = list;
+        const needDaily = !state.klineMap[symbol] || !state.klineMap[symbol].length;
+        if (needDaily) {
+          const list = await fetchKlineData(symbol);
+          if (list.length) {
+            state.klineMap[symbol] = list;
+          }
+        }
+        // Fallback "realtime": use minute-kline last point when realtime endpoint is blocked.
+        if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+          const latest = await fetchLatestQuoteFromMinuteK(symbol);
+          if (latest) {
+            state.quoteMap[symbol] = latest;
+          }
         }
       })
     );
@@ -904,6 +1578,25 @@ async function refreshMarketData() {
   } finally {
     state.marketLoading = false;
     renderAll();
+  }
+}
+
+async function fetchLatestQuoteFromMinuteK(symbol) {
+  try {
+    const list = await fetchMinuteKData(symbol, 5, 2);
+    if (!list.length) {
+      return null;
+    }
+    const last = list[list.length - 1];
+    const prev = list.length > 1 ? list[list.length - 2] : last;
+    return {
+      name: symbol,
+      current: Number(last.close),
+      prevClose: Number(prev.close || last.open || last.close),
+      time: String(last.day || "--"),
+    };
+  } catch (error) {
+    return null;
   }
 }
 
@@ -928,6 +1621,29 @@ async function fetchKlineData(symbol) {
   const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
     symbol
   )}&scale=240&ma=no&datalen=${KLINE_DATALEN}`;
+  await loadScript(query, "utf-8");
+  const data = window[variableName];
+  delete window[variableName];
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  return data
+    .map((item) => ({
+      day: item.day,
+      open: Number(item.open),
+      high: Number(item.high),
+      low: Number(item.low),
+      close: Number(item.close),
+      volume: Number(item.volume),
+    }))
+    .filter((item) => item.day && Number.isFinite(item.close));
+}
+
+async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
+  const variableName = `__minute_${symbol.replace(/[^a-zA-Z0-9_]/g, "_")}_${Date.now()}`;
+  const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
+    symbol
+  )}&scale=${scale}&ma=no&datalen=${datalen}`;
   await loadScript(query, "utf-8");
   const data = window[variableName];
   delete window[variableName];
@@ -1015,12 +1731,12 @@ function loadScript(src, charset = "utf-8") {
 }
 
 function collectSymbolsForMarket() {
-  const fromTrades = state.trades.map((item) => item.symbol);
+  const fromTrades = state.trades.map((item) => ensureSymbolPrefixForQuote(item.symbol));
   if (state.benchmark !== "none") {
     fromTrades.push(state.benchmark);
   }
   if (!fromTrades.length) {
-    fromTrades.push("sh600519", "sz000858", "hk00700", "sh000001", "sz399001");
+    fromTrades.push("sz300750", "sh601899", "sh000001", "sz399001");
   }
   return [...new Set(fromTrades)];
 }
@@ -1081,6 +1797,9 @@ function normalizeSymbol(rawSymbol) {
     return value;
   }
   if (/^\d{6}$/.test(value)) {
+    if (["3"].includes(value[0])) {
+      return `sz${value}`;
+    }
     if (["5", "6", "9"].includes(value[0])) {
       return `sh${value}`;
     }
