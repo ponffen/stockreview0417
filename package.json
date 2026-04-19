@@ -1,0 +1,30 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "import:trades": "node scripts/import-trades.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ponffen/stockreview0417.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "bugs": {
+    "url": "https://github.com/ponffen/stockreview0417/issues"
+  },
+  "homepage": "https://github.com/ponffen/stockreview0417#readme",
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}
