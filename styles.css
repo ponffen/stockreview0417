@@ -141,7 +141,7 @@ body {
 
 .profit-main {
   margin: 0;
-  font-size: 28px;
+  font-size: 26px;
   line-height: 1;
   font-weight: 600;
   letter-spacing: -0.4px;
@@ -186,7 +186,7 @@ body {
 .kpi-value {
   margin: 0;
   color: #565f70;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1;
   overflow-wrap: anywhere;
   word-break: break-all;
@@ -756,14 +756,14 @@ h2 {
 }
 
 .stock-record-price {
-  font-size: 46px;
+  font-size: 44px;
   line-height: 1;
   font-weight: 600;
 }
 
 .stock-record-change {
   margin-top: 4px;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .stock-record-legend {
