@@ -22,11 +22,14 @@ const DEFAULT_BENCHMARK_PRICE = {
   rt_hkHSI: 0,
   gb_inx: 0,
 };
-const FX_RATE_TO_CNY = {
+const FX_RATE_FALLBACK = {
   CNY: 1,
   HKD: 0.92,
   USD: 7.2,
 };
+const FX_HISTORY_DAYS = 420;
+const FX_API_BASE = "https://api.frankfurter.app";
+const FX_TIMEFRAME_DAYS = 120;
 
 const demoTrades = [
   {
@@ -142,10 +145,97 @@ initialize();
 
 async function initialize() {
   await hydrateState();
+  await initializeFxRates();
   bindEvents();
   renderAll();
   refreshMarketData();
   window.setInterval(refreshMarketData, QUOTE_REFRESH_MS);
+}
+
+async function initializeFxRates() {
+  if (state.fxLoaded || state.fxLoading) {
+    return;
+  }
+  state.fxLoading = true;
+  try {
+    const bounds = resolveFxRangeBounds();
+    state.fxRangeStart = bounds.start;
+    state.fxRangeEnd = bounds.end;
+    const [usdSeries, hkdSeries] = await Promise.all([
+      fetchFxSeriesForCurrency("USD", bounds.start, bounds.end),
+      fetchFxSeriesForCurrency("HKD", bounds.start, bounds.end),
+    ]);
+    const map = {};
+    Object.entries(usdSeries).forEach(([date, rate]) => {
+      map[date] = map[date] || {};
+      map[date].USD = rate;
+    });
+    Object.entries(hkdSeries).forEach(([date, rate]) => {
+      map[date] = map[date] || {};
+      map[date].HKD = rate;
+    });
+    state.fxRatesToCnyByDate = map;
+    state.fxLoaded = true;
+  } catch (error) {
+    console.error("加载历史汇率失败，已回退固定汇率", error);
+  } finally {
+    state.fxLoading = false;
+  }
+}
+
+function resolveFxRangeBounds() {
+  const today = new Date();
+  const defaultStart = new Date(today);
+  defaultStart.setDate(defaultStart.getDate() - FX_HISTORY_DAYS);
+  let minDate = toDateKey(defaultStart);
+  for (const trade of state.trades) {
+    if (trade?.date && trade.date < minDate) {
+      minDate = trade.date;
+    }
+  }
+  return { start: minDate, end: toDateKey(today) };
+}
+
+async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
+  const result = {};
+  if (currency === "CNY") {
+    result[startDate] = 1;
+    result[endDate] = 1;
+    return result;
+  }
+  let cursor = new Date(startDate);
+  const end = new Date(endDate);
+  while (cursor <= end) {
+    const chunkStart = toDateKey(cursor);
+    const chunkEndDate = new Date(cursor);
+    chunkEndDate.setDate(chunkEndDate.getDate() + (FX_TIMEFRAME_DAYS - 1));
+    if (chunkEndDate > end) {
+      chunkEndDate.setTime(end.getTime());
+    }
+    const chunkEnd = toDateKey(chunkEndDate);
+    const chunkRates = await fetchFxHistorySeries(currency, chunkStart, chunkEnd);
+    Object.assign(result, chunkRates);
+    cursor.setDate(cursor.getDate() + FX_TIMEFRAME_DAYS);
+  }
+  return result;
+}
+
+async function fetchFxHistorySeries(currency, startDate, endDate) {
+  const url = `${FX_API_BASE}/${startDate}..${endDate}?from=${encodeURIComponent(currency)}&to=CNY`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`FX请求失败: ${currency} ${startDate}..${endDate}`);
+  }
+  const payload = await response.json();
+  const rates = payload?.rates || {};
+  const result = {};
+  Object.entries(rates).forEach(([date, value]) => {
+    const parsed = Number(value?.CNY);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      result[date] = parsed;
+    }
+  });
+  return result;
 }
 
 async function hydrateState() {
@@ -657,7 +747,9 @@ function renderRoute() {
 
 function renderOverviewAndStockTable() {
   const portfolio = computePortfolio();
-  const history = buildPortfolioHistory(portfolio.positions);
+  const history = buildPortfolioHistory(portfolio.positions, {
+    getFxRate: (currency, dateKey) => getFxRateForDate(currency, dateKey),
+  });
   const stagePerf = computeStagePerformance(history, state.stageRange, state.algoMode, portfolio);
   const cards = [
     { label: "总市值", value: formatPlainMoney(portfolio.totalMarketValue) },
@@ -788,18 +880,19 @@ function computePositionStageProfit(position, stageRange) {
 
   let startQuantity = 0;
   let stageFlow = 0;
-  const fxRate = position.fxRate || getFxRateForSymbol(position.symbol, position.market);
+  const currency = position.currency || getSymbolCurrency(position.symbol, position.market);
   symbolTrades.forEach((trade) => {
     const deltaQty = trade.side === "buy" ? trade.quantity : -trade.quantity;
     if (trade.date < startKey) {
       startQuantity += deltaQty;
     } else {
-      stageFlow += signedAmount(trade) * fxRate;
+      stageFlow += signedAmount(trade) * getFxRateForDate(currency, trade.date);
     }
   });
 
   const startClose = getSymbolCloseBeforeDate(position.symbol, startKey, position.prevClose);
-  const startMarketValue = startQuantity * startClose * fxRate;
+  const startFxRate = getFxRateForDate(currency, startKey);
+  const startMarketValue = startQuantity * startClose * startFxRate;
   return position.marketValue - startMarketValue - stageFlow;
 }
 
@@ -2005,15 +2098,49 @@ function getSymbolCurrency(symbol, market = inferMarket(symbol)) {
 }
 
 function getFxRateToCny(currency) {
-  return FX_RATE_TO_CNY[currency] || 1;
+  return FX_RATE_FALLBACK[currency] || 1;
+}
+
+function getFxRateForDate(currency, dateKey) {
+  if (currency === "CNY") {
+    return 1;
+  }
+  const map = state.fxRatesToCnyByDate[currency];
+  if (!map) {
+    return getFxRateToCny(currency);
+  }
+  if (dateKey && map[dateKey]) {
+    return map[dateKey];
+  }
+  const keys = Object.keys(map).sort();
+  if (!keys.length) {
+    return getFxRateToCny(currency);
+  }
+  if (!dateKey) {
+    return map[keys[keys.length - 1]];
+  }
+  for (let i = keys.length - 1; i >= 0; i -= 1) {
+    if (keys[i] <= dateKey) {
+      return map[keys[i]];
+    }
+  }
+  return map[keys[0]] || getFxRateToCny(currency);
 }
 
 function getFxRateForSymbol(symbol, market = inferMarket(symbol)) {
-  return getFxRateToCny(getSymbolCurrency(symbol, market));
+  return getFxRateForDate(getSymbolCurrency(symbol, market), toDateKey(new Date()));
 }
 
 function getTradeFxRate(trade) {
-  return getFxRateForSymbol(trade.symbol, inferMarket(trade.symbol));
+  const market = inferMarket(trade.symbol);
+  const currency = getSymbolCurrency(trade.symbol, market);
+  return getFxRateForDate(currency, trade.date);
+}
+
+function getTradeFxRateForDate(trade, dateKey) {
+  const market = inferMarket(trade.symbol);
+  const currency = getSymbolCurrency(trade.symbol, market);
+  return getFxRateForDate(currency, dateKey || trade.date);
 }
 
 function signedAmountCny(trade) {
