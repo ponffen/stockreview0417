@@ -96,7 +96,7 @@ const state = {
   editingTradeId: null,
   activeRecordId: null,
   activeRecordSymbol: null,
-  stockRecordWindow: 60,
+  stockRecordWindow: 30,
   stockRecordOffset: 0,
   chartCrosshairMap: {},
   lastPinchDistanceMap: {},
@@ -182,6 +182,13 @@ async function initialize() {
   await hydrateState();
   bindEvents();
   renderAll();
+  void fetchQuoteNames(state.trades.map((trade) => trade.symbol)).then(() => {
+    renderOverviewAndStockTable();
+    renderTradeTable();
+    if (state.route === "stock-record" && state.activeRecordSymbol) {
+      renderStockRecordPage(state.activeRecordSymbol);
+    }
+  });
   void initializeFxRates();
   refreshMarketData();
   window.setInterval(refreshMarketData, QUOTE_REFRESH_MS);
@@ -310,6 +317,15 @@ function normalizeAccounts(rawAccounts) {
   return base;
 }
 
+function accountOptionLabel(account) {
+  if (!account || account.id === "all") {
+    return "全部账户";
+  }
+  const name = account.name || "未命名账户";
+  const currency = getCurrencyLabel(account.currency || "CNY");
+  return `${name} (${currency})`;
+}
+
 function resolveValidAccountFilter(accountId) {
   if (accountId === "all") {
     return "all";
@@ -403,7 +419,27 @@ function getFilteredTrades(accountId = "all") {
 }
 
 function getDisplayName(symbol, fallbackName = "") {
-  return state.nameMap[symbol] || fallbackName || symbol.toUpperCase();
+  const normalized = normalizeSymbol(symbol || "");
+  const alias = normalized.replace(/^gb_/i, "");
+  return state.nameMap[normalized] || state.nameMap[alias] || fallbackName || alias.toUpperCase();
+}
+
+function getQuoteBySymbol(symbol) {
+  const normalized = normalizeSymbol(symbol || "");
+  if (!normalized) {
+    return {};
+  }
+  const alias = normalized.replace(/^gb_/i, "");
+  return state.quoteMap[normalized] || state.quoteMap[alias] || {};
+}
+
+function getKlineBySymbol(symbol) {
+  const normalized = normalizeSymbol(symbol || "");
+  if (!normalized) {
+    return [];
+  }
+  const alias = normalized.replace(/^gb_/i, "");
+  return state.klineMap[normalized] || state.klineMap[alias] || [];
 }
 
 function getCurrencyLabel(currency) {
@@ -423,7 +459,10 @@ function getTradingDateKey(baseDate = new Date()) {
 }
 
 async function fetchQuoteNames(symbols) {
-  const targets = [...new Set(symbols.filter(Boolean))].filter((symbol) => !state.nameMap[symbol]);
+  const targets = [...new Set(symbols.filter(Boolean).map((symbol) => normalizeSymbol(symbol)))].filter((symbol) => {
+    const alias = symbol.replace(/^gb_/i, "");
+    return !state.nameMap[symbol] && !state.nameMap[alias];
+  });
   if (!targets.length) {
     return;
   }
@@ -437,15 +476,64 @@ async function fetchQuoteNames(symbols) {
   try {
     const quotes = await fetchRealtimeQuotes([...requestToSource.keys()]);
     Object.entries(quotes || {}).forEach(([requestSymbol, quote]) => {
-      const sourceSymbol = requestToSource.get(requestSymbol) || requestSymbol.replace(/^gb_/i, "");
+      const sourceSymbol = normalizeSymbol(requestToSource.get(requestSymbol) || requestSymbol.replace(/^gb_/i, ""));
       const name = String(quote?.name || "").trim();
       if (name) {
         state.nameMap[sourceSymbol] = name;
+        state.nameMap[sourceSymbol.replace(/^gb_/i, "")] = name;
       }
     });
   } catch {
     // ignore quote-name failures, keep existing display names
   }
+}
+
+function toTencentQuoteSymbol(symbol) {
+  if (!symbol) {
+    return "";
+  }
+  const raw = String(symbol).toLowerCase();
+  if (/^sh\d{6}$/.test(raw) || /^sz\d{6}$/.test(raw) || /^hk\d{5}$/.test(raw) || /^us[A-Z0-9._-]+$/i.test(raw)) {
+    return raw;
+  }
+  if (/^gb_/i.test(raw)) {
+    return `us${raw.slice(3).toUpperCase()}`;
+  }
+  if (/^rt_hk/i.test(raw)) {
+    const code = raw.replace(/^rt_hk/i, "").padStart(5, "0");
+    return `hk${code}`;
+  }
+  if (/^[a-z][a-z0-9._-]*$/i.test(raw)) {
+    return `us${raw.toUpperCase()}`;
+  }
+  return raw;
+}
+
+function toTencentKlineSymbol(symbol) {
+  return toTencentQuoteSymbol(symbol);
+}
+
+function parseTencentQuoteRecord(symbol, rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return null;
+  }
+  const parts = rawText.split("~");
+  if (parts.length < 6) {
+    return null;
+  }
+  const name = String(parts[1] || "").trim() || symbol;
+  const current = Number(parts[3]);
+  const prevClose = Number(parts[4]);
+  const time = String(parts[30] || parts[31] || "--").trim();
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    name,
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time: time || "--",
+  };
 }
 
 function toQuoteRequestSymbol(symbol) {
@@ -1044,16 +1132,17 @@ function renderControls() {
 }
 
 function syncAccountSelectOptions() {
-  const allLabel = "全部账户";
   const options = [
-    { id: "all", name: allLabel },
-    ...state.accounts.map((account) => ({ id: account.id, name: account.name })),
+    { id: "all", name: "全部账户" },
+    ...state.accounts.map((account) => ({ id: account.id, name: accountOptionLabel(account) })),
   ];
   const setSelect = (select, currentValue, includeAll = true) => {
     if (!select) {
       return;
     }
-    const list = includeAll ? options : state.accounts.map((account) => ({ id: account.id, name: account.name }));
+    const list = includeAll
+      ? options
+      : state.accounts.map((account) => ({ id: account.id, name: accountOptionLabel(account) }));
     select.innerHTML = list
       .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`)
       .join("");
@@ -1267,17 +1356,18 @@ function computePositionStageProfit(position, stageRange, trades) {
 }
 
 function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
-  const kline = state.klineMap[symbol] || [];
+  const kline = getKlineBySymbol(symbol);
   for (let i = kline.length - 1; i >= 0; i -= 1) {
     const item = kline[i];
     if (item.day < dateKey && Number.isFinite(Number(item.close))) {
       return Number(item.close);
     }
   }
+  const quote = getQuoteBySymbol(symbol);
   return validNumber(
     fallbackPrice,
-    state.quoteMap[symbol]?.prevClose,
-    state.quoteMap[symbol]?.current,
+    quote?.prevClose,
+    quote?.current,
     0
   );
 }
@@ -1523,6 +1613,8 @@ async function openStockRecordDialog(symbol) {
   state.activeRecordSymbol = symbol;
   state.previousRoute = state.route;
   state.route = "stock-record";
+  state.stockRecordWindow = 30;
+  state.stockRecordOffset = 0;
   renderAll();
   window.scrollTo(0, 0);
   persistState();
@@ -1542,7 +1634,7 @@ function renderStockRecordPage(symbol) {
   const symbolTrades = scope.trades
     .filter((item) => item.symbol === symbol)
     .sort(sortTradeDesc);
-  const quote = state.quoteMap[symbol] || {};
+  const quote = getQuoteBySymbol(symbol);
   const current = validNumber(quote.current, position.currentPrice);
   const prev = validNumber(quote.prevClose, position.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
@@ -1580,17 +1672,23 @@ function renderStockRecordPage(symbol) {
 async function ensureSymbolData(symbol) {
   try {
     const quoteMap = await fetchRealtimeQuotes([symbol]);
+    const normalizedSymbol = normalizeSymbol(symbol);
+    const alias = normalizedSymbol.replace(/^gb_/i, "");
     if (quoteMap[symbol]) {
-      state.quoteMap[symbol] = quoteMap[symbol];
+      state.quoteMap[normalizedSymbol] = quoteMap[symbol];
+      state.quoteMap[alias] = quoteMap[symbol];
       state.quoteTime = quoteMap[symbol].time || state.quoteTime;
     }
   } catch (error) {
     console.error("加载个股实时行情失败", error);
   }
-  if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+  if (!getQuoteBySymbol(symbol)?.current || !Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
     const latest = await fetchLatestQuoteFromMinuteK(symbol);
     if (latest) {
-      state.quoteMap[symbol] = latest;
+      const normalizedSymbol = normalizeSymbol(symbol);
+      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      state.quoteMap[normalizedSymbol] = latest;
+      state.quoteMap[alias] = latest;
       state.quoteTime = latest.time || state.quoteTime;
     }
   }
@@ -1598,29 +1696,41 @@ async function ensureSymbolData(symbol) {
   if (!supportsKline(symbol)) {
     return;
   }
-  if (state.klineMap[symbol] && state.klineMap[symbol].length) {
+  if (getKlineBySymbol(symbol).length) {
     return;
   }
   try {
     const list = await fetchKlineData(symbol);
     if (list.length) {
-      state.klineMap[symbol] = list;
+      const normalizedSymbol = normalizeSymbol(symbol);
+      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      state.klineMap[normalizedSymbol] = list;
+      state.klineMap[alias] = list;
     } else {
-      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+      const fallback = buildFallbackKlineFromTrades(symbol);
+      const normalizedSymbol = normalizeSymbol(symbol);
+      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      state.klineMap[normalizedSymbol] = fallback;
+      state.klineMap[alias] = fallback;
     }
   } catch (error) {
     console.error("加载个股K线失败", error);
-    if (!state.klineMap[symbol] || !state.klineMap[symbol].length) {
-      state.klineMap[symbol] = buildFallbackKlineFromTrades(symbol);
+    if (!getKlineBySymbol(symbol).length) {
+      const fallback = buildFallbackKlineFromTrades(symbol);
+      const normalizedSymbol = normalizeSymbol(symbol);
+      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      state.klineMap[normalizedSymbol] = fallback;
+      state.klineMap[alias] = fallback;
     }
   }
 }
 
 function ensureSymbolPrefixForQuote(symbol) {
-  if (/^sh600750$/i.test(symbol)) {
+  const normalized = normalizeSymbol(symbol || "");
+  if (/^sh600750$/i.test(normalized)) {
     return "sz300750";
   }
-  return symbol;
+  return normalized;
 }
 
 function buildFallbackKlineFromTrades(symbol) {
@@ -1673,7 +1783,7 @@ function drawStockRecordChart(symbol, symbolTrades) {
   if (!canvas) {
     return;
   }
-  const kline = state.klineMap[symbol] || [];
+  const kline = getKlineBySymbol(symbol);
   const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
   const source =
     kline.length > 1
@@ -1815,7 +1925,7 @@ function computePortfolio(trades = state.trades) {
   }
 
   const positions = [...grouped.values()].map((item) => {
-    const quote = state.quoteMap[item.symbol] || {};
+    const quote = getQuoteBySymbol(item.symbol);
     const market = inferMarket(item.symbol);
     const currency = getSymbolCurrency(item.symbol, market);
     const fxRate = getFxRateToCny(currency);
@@ -1924,10 +2034,11 @@ function buildPortfolioHistory(positions, trades = state.trades) {
   const fxRateMap = {};
 
   symbolSet.forEach((symbol) => {
-    const list = state.klineMap[symbol] || [];
+    const list = getKlineBySymbol(symbol);
     klineMap[symbol] = Object.fromEntries(list.map((item) => [item.day, Number(item.close)]));
     const fallbackTrade = tradeList.find((item) => item.symbol === symbol);
-    lastPriceMap[symbol] = validNumber(state.quoteMap[symbol]?.prevClose, fallbackTrade?.price, 0);
+    const quote = getQuoteBySymbol(symbol);
+    lastPriceMap[symbol] = validNumber(quote.prevClose, fallbackTrade?.price, 0);
     fxRateMap[symbol] = getFxRateForSymbol(symbol, inferMarket(symbol));
   });
 
@@ -1962,8 +2073,11 @@ function buildPortfolioHistory(positions, trades = state.trades) {
       const dayClose = klineMap[symbol][dateKey];
       if (Number.isFinite(dayClose) && dayClose > 0) {
         lastPriceMap[symbol] = dayClose;
-      } else if (dateKey === todayKey && validNumber(state.quoteMap[symbol]?.current, 0) > 0) {
-        lastPriceMap[symbol] = Number(state.quoteMap[symbol].current);
+      } else {
+        const quote = getQuoteBySymbol(symbol);
+        if (dateKey === todayKey && validNumber(quote.current, 0) > 0) {
+          lastPriceMap[symbol] = Number(quote.current);
+        }
       }
       value += (holdings[symbol] || 0) * (lastPriceMap[symbol] || 0) * (fxRateMap[symbol] || 1);
     }
@@ -2041,7 +2155,7 @@ function buildBenchmarkSeries(selectedPoints) {
   }
 
   const symbol = state.benchmark;
-  const kline = state.klineMap[symbol] || [];
+  const kline = getKlineBySymbol(symbol);
   if (kline.length) {
     const byDate = Object.fromEntries(kline.map((item) => [item.day, Number(item.close)]));
     let lastPrice = validNumber(kline[0]?.close, DEFAULT_BENCHMARK_PRICE[symbol], 1);
@@ -2049,8 +2163,11 @@ function buildBenchmarkSeries(selectedPoints) {
     return selectedPoints.map((point, idx) => {
       if (Number.isFinite(byDate[point.date])) {
         lastPrice = Number(byDate[point.date]);
-      } else if (idx === selectedPoints.length - 1 && validNumber(state.quoteMap[symbol]?.current, 0) > 0) {
-        lastPrice = Number(state.quoteMap[symbol].current);
+      } else {
+        const quote = getQuoteBySymbol(symbol);
+        if (idx === selectedPoints.length - 1 && validNumber(quote.current, 0) > 0) {
+          lastPrice = Number(quote.current);
+        }
       }
       if (idx === 0) {
         base = lastPrice || 1;
@@ -2060,7 +2177,7 @@ function buildBenchmarkSeries(selectedPoints) {
     });
   }
 
-  const quote = state.quoteMap[symbol];
+  const quote = getQuoteBySymbol(symbol);
   const fallbackRate =
     quote && validNumber(quote.prevClose, 0) > 0
       ? (validNumber(quote.current, quote.prevClose) - quote.prevClose) / quote.prevClose
@@ -2372,7 +2489,7 @@ function drawCrosshairOverlay(ctx, payload, canvasId, valueFormatter) {
     return;
   }
   const formatter = valueFormatter || ((value) => formatNumber(value, 2));
-  const yPrimary = cross.points[0]?.y ?? cross.y;
+  const yPrimary = Number.isFinite(cross.pointerY) ? cross.pointerY : cross.points[0]?.y ?? cross.y;
   ctx.save();
   ctx.strokeStyle = "rgba(80, 92, 112, 0.6)";
   ctx.lineWidth = 1;
@@ -2416,6 +2533,18 @@ function drawCrosshairOverlay(ctx, payload, canvasId, valueFormatter) {
     }
   });
   ctx.restore();
+}
+
+function positionChartTooltip(tooltip, canvas, pickedX) {
+  const canvasWidth = canvas.clientWidth || canvas.width || 0;
+  const pointerPx = (pickedX / canvas.width) * canvasWidth;
+  const showOnRight = pointerPx < canvasWidth / 2;
+  const sidePadding = 8;
+  const tooltipWidth = 136;
+  tooltip.style.left = showOnRight
+    ? `${Math.max(sidePadding, canvasWidth - tooltipWidth - sidePadding)}px`
+    : `${sidePadding}px`;
+  tooltip.style.top = "8px";
 }
 
 function drawStockRecordBase(ctx, width, height, points, qtySeries, sortedTrades) {
@@ -2522,7 +2651,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     }
   };
 
-  const updateCrosshair = (clientX) => {
+  const updateCrosshair = (clientX, clientY = null) => {
     const rect = canvas.getBoundingClientRect();
     const x = ((clientX - rect.left) / rect.width) * canvas.width;
     const payload = runtime.payloadBuilder?.();
@@ -2535,9 +2664,17 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       return;
     }
     crossVisible = true;
+    const pointerY = (() => {
+      if (!Number.isFinite(clientY)) {
+        return first.y;
+      }
+      const rectY = ((clientY - rect.top) / rect.height) * canvas.height;
+      return Math.max(payload.yMin, Math.min(payload.yMax, rectY));
+    })();
     state.chartCrosshairMap[canvas.id] = {
       x: picked.x,
       y: first.y,
+      pointerY,
       date: first.date,
       points: picked.points.map((point, idx) => ({
         label: payload.labels[payload.seriesList[idx]?.key] || payload.seriesList[idx]?.label || `曲线${idx + 1}`,
@@ -2553,8 +2690,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       .map((item) => `<div>${escapeHtml(item.label)}：${formatter(item.value, item.key, item.axis)}</div>`)
       .join("");
     tooltip.innerHTML = `<div>${escapeHtml(first.date)}</div>${rows}`;
-    tooltip.style.left = `${Math.max(6, Math.min(canvas.clientWidth - 130, (picked.x / canvas.width) * canvas.clientWidth + 10))}px`;
-    tooltip.style.top = `8px`;
+    positionChartTooltip(tooltip, canvas, picked.x);
     tooltip.classList.add("show");
   };
 
@@ -2565,7 +2701,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     }
     if (runtime.options.mode === "stock") {
       const total = payload?.seriesList?.[0]?.values?.length || 0;
-      const windowSize = Math.max(12, Number(state.stockRecordWindow || 60));
+      const windowSize = Math.max(12, Number(state.stockRecordWindow || 30));
       const maxOffset = Math.max(0, total - windowSize);
       state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0) - step));
     } else if (state.analysisRangeMode !== "custom") {
@@ -2577,6 +2713,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   };
 
   canvas.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, event);
     activePointerId = event.pointerId;
@@ -2589,11 +2726,12 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       if (!pressing || moved) {
         return;
       }
-      updateCrosshair(event.clientX);
+      updateCrosshair(event.clientX, event.clientY);
     }, 220);
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    event.preventDefault();
     const payload = runtime.payloadBuilder?.();
     if (pointers.has(event.pointerId)) {
       pointers.set(event.pointerId, event);
@@ -2618,11 +2756,11 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       return;
     }
     if (event.pointerType === "mouse" && !pressing) {
-      updateCrosshair(event.clientX);
+      updateCrosshair(event.clientX, event.clientY);
       return;
     }
     if (crossVisible) {
-      updateCrosshair(event.clientX);
+      updateCrosshair(event.clientX, event.clientY);
       return;
     }
     if (pressing && activePointerId === event.pointerId) {
@@ -2639,6 +2777,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   });
 
   const clearPointer = (event) => {
+    event.preventDefault();
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
@@ -2683,7 +2822,7 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   }
   const delta = scale > 1 ? -6 : 6;
   const maxWindow = Math.max(12, Math.min(240, totalPoints || 240));
-  state.stockRecordWindow = Math.max(12, Math.min(maxWindow, Number(state.stockRecordWindow || 60) + delta));
+  state.stockRecordWindow = Math.max(12, Math.min(maxWindow, Number(state.stockRecordWindow || 30) + delta));
   const maxOffset = Math.max(0, Math.max(0, totalPoints || 0) - state.stockRecordWindow);
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
 }
@@ -2700,6 +2839,7 @@ async function refreshMarketData() {
       state.marketLoading = false;
       return;
     }
+    void fetchQuoteNames(symbols);
 
     let quoteMap = {};
     try {
@@ -2709,7 +2849,12 @@ async function refreshMarketData() {
       quoteMap = {};
     }
     if (Object.keys(quoteMap).length) {
-      state.quoteMap = { ...state.quoteMap, ...quoteMap };
+      Object.entries(quoteMap).forEach(([symbol, quote]) => {
+        const normalized = normalizeSymbol(symbol);
+        const alias = normalized.replace(/^gb_/i, "");
+        state.quoteMap[normalized] = quote;
+        state.quoteMap[alias] = quote;
+      });
       const times = Object.values(quoteMap)
         .map((item) => item.time)
         .filter(Boolean);
@@ -2719,18 +2864,24 @@ async function refreshMarketData() {
     const klineSymbols = symbols.filter(supportsKline);
     await Promise.all(
       klineSymbols.map(async (symbol) => {
-        const needDaily = !state.klineMap[symbol] || !state.klineMap[symbol].length;
+        const needDaily = !getKlineBySymbol(symbol).length;
         if (needDaily) {
           const list = await fetchKlineData(symbol);
           if (list.length) {
-            state.klineMap[symbol] = list;
+            const normalized = normalizeSymbol(symbol);
+            const alias = normalized.replace(/^gb_/i, "");
+            state.klineMap[normalized] = list;
+            state.klineMap[alias] = list;
           }
         }
         // Fallback "realtime": use minute-kline last point when realtime endpoint is blocked.
-        if (!state.quoteMap[symbol] || !Number.isFinite(state.quoteMap[symbol].current)) {
+        if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
           const latest = await fetchLatestQuoteFromMinuteK(symbol);
           if (latest) {
-            state.quoteMap[symbol] = latest;
+            const normalized = normalizeSymbol(symbol);
+            const alias = normalized.replace(/^gb_/i, "");
+            state.quoteMap[normalized] = latest;
+            state.quoteMap[alias] = latest;
           }
         }
       })
@@ -2763,6 +2914,12 @@ async function fetchLatestQuoteFromMinuteK(symbol) {
 }
 
 async function fetchRealtimeQuotes(symbols) {
+  const fromSina = await fetchRealtimeQuotesSina(symbols).catch(() => ({}));
+  const fromTencent = await fetchRealtimeQuotesTencent(symbols).catch(() => ({}));
+  return { ...fromTencent, ...fromSina };
+}
+
+async function fetchRealtimeQuotesSina(symbols) {
   const uniqSymbols = [...new Set(symbols)];
   const url = `https://hq.sinajs.cn/rn=${Date.now()}&list=${uniqSymbols.join(",")}`;
   await loadScript(url, "gbk");
@@ -2779,6 +2936,14 @@ async function fetchRealtimeQuotes(symbols) {
 }
 
 async function fetchKlineData(symbol) {
+  const fromSina = await fetchKlineDataSina(symbol).catch(() => []);
+  if (fromSina.length) {
+    return fromSina;
+  }
+  return fetchKlineDataTencent(symbol);
+}
+
+async function fetchKlineDataSina(symbol) {
   const variableName = `__kline_${symbol.replace(/[^a-zA-Z0-9_]/g, "_")}_${Date.now()}`;
   const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
     symbol
@@ -2802,6 +2967,14 @@ async function fetchKlineData(symbol) {
 }
 
 async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
+  const fromSina = await fetchMinuteKDataSina(symbol, scale, datalen).catch(() => []);
+  if (fromSina.length) {
+    return fromSina;
+  }
+  return fetchKlineDataTencent(symbol, scale, datalen);
+}
+
+async function fetchMinuteKDataSina(symbol, scale = 5, datalen = 2) {
   const variableName = `__minute_${symbol.replace(/[^a-zA-Z0-9_]/g, "_")}_${Date.now()}`;
   const query = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20${variableName}=/CN_MarketDataService.getKLineData?symbol=${encodeURIComponent(
     symbol
@@ -2825,6 +2998,10 @@ async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
 }
 
 function parseQuoteRecord(symbol, rawText) {
+  return parseQuoteRecordSina(symbol, rawText);
+}
+
+function parseQuoteRecordSina(symbol, rawText) {
   if (!rawText || typeof rawText !== "string") {
     return null;
   }
@@ -2867,6 +3044,68 @@ function parseQuoteRecord(symbol, rawText) {
   };
 }
 
+async function fetchRealtimeQuotesTencent(symbols) {
+  const uniqSymbols = [...new Set(symbols)];
+  if (!uniqSymbols.length) {
+    return {};
+  }
+  const sourceToTarget = new Map();
+  uniqSymbols.forEach((symbol) => {
+    sourceToTarget.set(toTencentQuoteSymbol(symbol), symbol);
+  });
+  const url = `https://qt.gtimg.cn/q=${[...sourceToTarget.keys()].join(",")}&_=${Date.now()}`;
+  await loadScript(url, "gbk");
+  const parsed = {};
+  sourceToTarget.forEach((target, sourceSymbol) => {
+    const payload = window[`v_${sourceSymbol}`];
+    const record = parseTencentQuoteRecord(target, payload);
+    if (record) {
+      parsed[target] = record;
+    }
+    try {
+      delete window[`v_${sourceSymbol}`];
+    } catch {
+      // ignore cleanup failures on non-configurable globals
+    }
+  });
+  return parsed;
+}
+
+async function fetchKlineDataTencent(symbol, scale = 240, datalen = KLINE_DATALEN) {
+  const requestSymbol = toTencentKlineSymbol(symbol);
+  const cycle = Number(scale) <= 60 ? `${Math.max(1, Number(scale))}min` : "day";
+  const count = Math.max(2, Number(datalen) || KLINE_DATALEN);
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(
+    requestSymbol
+  )},${cycle},,,${count},qfq`;
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`腾讯K线失败: ${response.status}`);
+  }
+  const payload = await response.json();
+  const root = payload?.data?.[requestSymbol] || payload?.data?.[symbol] || {};
+  const source =
+    root.qfqday ||
+    root.day ||
+    root.qfqweek ||
+    root.week ||
+    root.qfqmonth ||
+    root.month ||
+    root.qfqmin ||
+    root.min ||
+    [];
+  return source
+    .map((item) => ({
+      day: String(item?.[0] || "").slice(0, 10).replace(/\//g, "-"),
+      open: Number(item?.[1]),
+      close: Number(item?.[2]),
+      high: Number(item?.[3]),
+      low: Number(item?.[4]),
+      volume: Number(item?.[5]),
+    }))
+    .filter((item) => item.day && Number.isFinite(item.close));
+}
+
 function loadScript(src, charset = "utf-8") {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
@@ -2904,7 +3143,7 @@ function collectSymbolsForMarket() {
 }
 
 function supportsKline(symbol) {
-  return /^(sh|sz)\d{6}$/i.test(symbol);
+  return /^(sh|sz)\d{6}$/i.test(symbol) || /^hk\d{5}$/i.test(symbol) || /^gb_[a-z0-9._-]+$/i.test(symbol) || /^[a-z][a-z0-9._-]*$/i.test(symbol);
 }
 
 function normalizeTrade(input) {

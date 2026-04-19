@@ -74,8 +74,12 @@
 
       <section id="route-analysis" class="route-pane">
         <article class="panel">
-          <div class="panel-head">
+          <div class="panel-head panel-head-account">
             <h2>收益率算法</h2>
+            <label class="head-select-wrap">
+              <select id="analysisAccountSelect" class="head-select"></select>
+              <span class="arrow">▼</span>
+            </label>
           </div>
           <div class="form-row">
             <label for="algoMode">计算方式</label>
@@ -94,10 +98,6 @@
               <option value="rt_hkHSI">恒生指数</option>
               <option value="gb_inx">标普500</option>
             </select>
-          </div>
-          <div class="form-row">
-            <label for="analysisAccountSelect">账户</label>
-            <select id="analysisAccountSelect"></select>
           </div>
           <div class="range-row">
             <button class="range-chip" data-range="7">最近一周</button>
