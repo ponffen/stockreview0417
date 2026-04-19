@@ -1,0 +1,24 @@
+[
+  {
+    "symbol": "sz300750",
+    "name": "宁德时代",
+    "type": "trade",
+    "side": "buy",
+    "price": 443.27,
+    "quantity": 100,
+    "amount": 44327,
+    "date": "2026-04-17",
+    "note": "sample import"
+  },
+  {
+    "symbol": "sh601899",
+    "name": "紫金矿业",
+    "type": "trade",
+    "side": "buy",
+    "price": 34.68,
+    "quantity": 300,
+    "amount": 10404,
+    "date": "2026-04-17",
+    "note": "sample import"
+  }
+]

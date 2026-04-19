@@ -1,79 +1,60 @@
-const fs = require("fs");
-const path = require("path");
-const Database = require("better-sqlite3");
+const fs = require("node:fs");
+const path = require("node:path");
+const { normalizeTrade, importTrades } = require("../src/db");
 
-const dataDir = path.join(__dirname, "..", "data");
-const dbPath = path.join(dataDir, "trades.db");
-
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+function printUsage() {
+  // eslint-disable-next-line no-console
+  console.log("Usage: npm run import:trades -- --file <json-path> [--mode append|replace]");
 }
 
-const db = new Database(dbPath);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    symbol TEXT NOT NULL,
-    name TEXT NOT NULL,
-    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
-    price REAL NOT NULL,
-    quantity REAL NOT NULL,
-    amount REAL NOT NULL,
-    trade_date TEXT NOT NULL,
-    note TEXT DEFAULT '',
-    created_at TEXT NOT NULL
-  );
-`);
-
-const hasRows = db.prepare("SELECT COUNT(1) AS count FROM trades").get().count > 0;
-
-if (!hasRows) {
-  const now = new Date().toISOString();
-  const insert = db.prepare(`
-    INSERT INTO trades (id, symbol, name, side, price, quantity, amount, trade_date, note, created_at)
-    VALUES (@id, @symbol, @name, @side, @price, @quantity, @amount, @trade_date, @note, @created_at)
-  `);
-
-  const sampleTrades = [
-    {
-      id: "sample-1",
-      symbol: "sz300750",
-      name: "宁德时代",
-      side: "buy",
-      price: 443.27,
-      quantity: 100,
-      amount: 44327,
-      trade_date: "2026-04-17",
-      note: "seed",
-      created_at: now,
-    },
-    {
-      id: "sample-2",
-      symbol: "sh601899",
-      name: "紫金矿业",
-      side: "buy",
-      price: 34.68,
-      quantity: 300,
-      amount: 10404,
-      trade_date: "2026-04-17",
-      note: "seed",
-      created_at: now,
-    },
-  ];
-
-  const tx = db.transaction((rows) => {
-    for (const row of rows) {
-      insert.run(row);
+function parseArgs(argv) {
+  const args = { file: "", mode: "append" };
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--file") {
+      args.file = argv[i + 1] || "";
+      i += 1;
+    } else if (token === "--mode") {
+      args.mode = argv[i + 1] || "append";
+      i += 1;
     }
-  });
-  tx(sampleTrades);
-  console.log(`Imported ${sampleTrades.length} trades into ${dbPath}`);
-} else {
-  console.log(`Trades table already has data in ${dbPath}; skipping seed import`);
+  }
+  return args;
 }
 
-const total = db.prepare("SELECT COUNT(1) AS count FROM trades").get().count;
-console.log(`Total trades in database: ${total}`);
+function loadTrades(filePath) {
+  const absPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+  const raw = fs.readFileSync(absPath, "utf-8");
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (parsed && Array.isArray(parsed.trades)) {
+    return parsed.trades;
+  }
+  if (parsed && Array.isArray(parsed.transaction)) {
+    return parsed.transaction;
+  }
+  if (parsed && Array.isArray(parsed.data?.transaction)) {
+    return parsed.data.transaction;
+  }
+  if (parsed && Array.isArray(parsed.result?.data?.data?.transaction)) {
+    return parsed.result.data.data.transaction;
+  }
+  throw new Error("JSON must be an array or an object containing trades array");
+}
 
-db.close();
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (!args.file) {
+    printUsage();
+    process.exit(1);
+  }
+  const mode = args.mode === "replace" ? "replace" : "append";
+  const inputTrades = loadTrades(args.file).map((item) => normalizeTrade(item));
+  const allTrades = importTrades(inputTrades, mode);
+  // eslint-disable-next-line no-console
+  console.log(`Imported ${inputTrades.length} trades (${mode}). Total trades in DB: ${allTrades.length}`);
+}
+
+main();

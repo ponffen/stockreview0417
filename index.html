@@ -14,8 +14,11 @@
       <section id="route-earning" class="route-pane active">
         <article class="overview-card">
           <div class="overview-head">
-            <button class="plain-btn">全部账户 <span class="arrow">▼</span></button>
-            <div class="currency-tip">币种：人民币 <span class="help">?</span></div>
+            <label class="head-select-wrap">
+              <select id="accountFilterSelect" class="head-select"></select>
+              <span class="arrow">▼</span>
+            </label>
+            <div id="currencyTip" class="currency-tip">币种：人民币</div>
           </div>
 
           <div class="profit-row">
@@ -47,20 +50,20 @@
             <table class="stock-table">
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>今日收益</th>
-                  <th>现价/涨跌</th>
-                  <th>市值/数量</th>
-                  <th>仓位</th>
-                  <th>成本</th>
-                  <th>月收益</th>
-                  <th>月收益占比</th>
-                  <th>年收益</th>
-                  <th>年收益占比</th>
-                  <th>总收益</th>
-                  <th>总收益率</th>
-                  <th>后悔率</th>
-                  <th>记录</th>
+                  <th class="name-head">名称</th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="todayProfit">今日收益<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="currentPrice">现价/涨跌<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="marketValue">市值/数量<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="weight">仓位<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="cost">成本<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="monthProfit">月收益<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="yearProfit">年收益<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="totalProfit">总收益<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="regretRate">后悔率<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="lastTradeDate">记录<span class="sort-icon"></span></button></th>
                 </tr>
               </thead>
               <tbody id="stockTableBody"></tbody>
@@ -71,8 +74,12 @@
 
       <section id="route-analysis" class="route-pane">
         <article class="panel">
-          <div class="panel-head">
+          <div class="panel-head panel-head-account">
             <h2>收益率算法</h2>
+            <label class="head-select-wrap">
+              <select id="analysisAccountSelect" class="head-select"></select>
+              <span class="arrow">▼</span>
+            </label>
           </div>
           <div class="form-row">
             <label for="algoMode">计算方式</label>
@@ -93,8 +100,8 @@
             </select>
           </div>
           <div class="range-row">
-            <button class="range-chip active" data-range="7">最近一周</button>
-            <button class="range-chip" data-range="30">最近一月</button>
+            <button class="range-chip" data-range="7">最近一周</button>
+            <button class="range-chip active" data-range="30">最近一月</button>
             <button class="range-chip" data-range="90">最近三月</button>
             <button class="range-chip" data-range="365">年初至今</button>
             <button class="range-chip" data-range="custom">自定义</button>
@@ -112,7 +119,10 @@
             <h2>收益率走势</h2>
             <span id="analysisRateSummary" class="caption"></span>
           </div>
-          <canvas id="analysisRateChart" width="700" height="320"></canvas>
+          <div class="chart-wrap">
+            <canvas id="analysisRateChart" width="700" height="320"></canvas>
+            <div id="analysisRateTooltip" class="chart-tooltip"></div>
+          </div>
         </article>
 
         <article class="panel">
@@ -120,7 +130,10 @@
             <h2>收益走势</h2>
             <span id="analysisProfitSummary" class="caption"></span>
           </div>
-          <canvas id="analysisProfitChart" width="700" height="320"></canvas>
+          <div class="chart-wrap">
+            <canvas id="analysisProfitChart" width="700" height="320"></canvas>
+            <div id="analysisProfitTooltip" class="chart-tooltip"></div>
+          </div>
         </article>
 
         <article class="panel">
@@ -135,14 +148,20 @@
               </select>
             </div>
           </div>
-          <canvas id="analysisAssetChart" width="700" height="320"></canvas>
+          <div class="chart-wrap">
+            <canvas id="analysisAssetChart" width="700" height="320"></canvas>
+            <div id="analysisAssetTooltip" class="chart-tooltip"></div>
+          </div>
         </article>
       </section>
 
       <section id="route-trade" class="route-pane">
         <article class="panel">
           <div class="trade-filter-row">
-            <button class="plain-btn trade-filter-btn">全部账户 <span class="arrow">▼</span></button>
+            <label class="head-select-wrap trade-account-wrap">
+              <select id="tradeAccountFilterSelect" class="head-select trade-filter-select"></select>
+              <span class="arrow">▼</span>
+            </label>
             <div class="trade-head-actions">
               <button class="plain-btn trade-filter-btn">所有交易 <span class="arrow">▼</span></button>
               <button id="tradeAddBtn" class="btn btn-primary trade-add-btn" type="button">新增交易</button>
@@ -167,55 +186,41 @@
       </section>
 
       <section id="route-account" class="route-pane">
-        <article class="panel intro-panel">
-          <h2>账户</h2>
-          <p>当前页面按新浪持仓收益样式重构，支持本地持仓记录、算法切换和行情刷新。</p>
-          <p>若要接入正式账户体系，可在这里增加登录、账户管理和多币种汇率配置。</p>
+        <article class="panel">
+          <div class="panel-head">
+            <h2>股票账户</h2>
+          </div>
+          <form id="accountForm">
+            <div class="form-row">
+              <label for="accountName">账户名称</label>
+              <input id="accountName" name="name" required placeholder="如：华泰主账户" />
+            </div>
+            <div class="form-row">
+              <label for="accountCurrency">默认币种</label>
+              <select id="accountCurrency" name="currency">
+                <option value="CNY">人民币</option>
+                <option value="USD">美元</option>
+                <option value="HKD">港币</option>
+              </select>
+            </div>
+            <button class="btn btn-primary full" type="submit">新增股票账户</button>
+          </form>
         </article>
 
-        <article class="panel intro-panel">
-          <h2>一、账户总览区</h2>
-          <p>1、今日收益=当前总市值-昨收总市值-Σ发生金额。</p>
-          <p>2、总资产=总市值+现金。</p>
-          <p>
-            3、各阶段收益（示例：本月收益）=当前总市值-月初收盘总市值-本阶段Σ发生金额。
-          </p>
-          <p>
-            4、各阶段收益率支持“成本算法”“资金加权”“时间加权”三种方式，均按交易记录发生金额计算。
-          </p>
-          <p>5、总市值=Σ（数量*当前价）。</p>
-          <p>6、现金=本金-Σ发生金额。</p>
-          <p>7、本金=max(Σ发生金额, 资金金额)。</p>
-        </article>
-
-        <article class="panel intro-panel">
-          <h2>二、个股列表区</h2>
-          <p>1、权重=持仓市值/总资产*100%。</p>
-          <p>2、成本=Σ发生金额/数量。</p>
-          <p>3、总收益=当前总市值-Σ发生金额。</p>
-          <p>
-            4、后悔率=(当前价-最近一笔成交价)/最近一笔成交价*100%，B表示买入，S表示卖出。
-          </p>
-        </article>
-
-        <article class="panel intro-panel">
-          <h2>三、分析</h2>
-          <p>从账户第一天开始计算，保留近一年的记录。</p>
-          <p>1、总收益（率）：从账户第一天累计到该日。</p>
-          <p>2、每日收益（率）对比：所选日期一天内产生的收益（率）。</p>
-          <p>3、与指数对比：对比值=我的-基准。</p>
-          <p>如果最近6个月没有新增交易，历史走势将暂停更新，新增后会补算。</p>
-        </article>
-
-        <article class="panel intro-panel">
-          <h2>四、交易记录</h2>
-          <p>1、发生金额默认=价格*数量，可手动覆盖。</p>
-          <p>2、Σ发生金额：买入为正，卖出为负。</p>
-          <h2>五、分红送股、拆股合股</h2>
-          <p>1、分红：卖出方向，价格0，数量0，发生金额=分红金额。</p>
-          <p>2、送股：买入方向，价格0，数量=送股数量，发生金额0。</p>
-          <p>3、拆股：买入方向，价格0，数量=新增股数，发生金额0。</p>
-          <p>4、合股：卖出方向，价格0，数量=减少股数，发生金额0。</p>
+        <article class="panel">
+          <div class="panel-head">
+            <h2>账户列表</h2>
+          </div>
+          <table class="account-table">
+            <thead>
+              <tr>
+                <th>账户名称</th>
+                <th>默认币种</th>
+                <th>交易数</th>
+              </tr>
+            </thead>
+            <tbody id="accountTableBody"></tbody>
+          </table>
         </article>
       </section>
 
@@ -250,6 +255,10 @@
             <option value="split">拆股</option>
             <option value="merge">合股</option>
           </select>
+        </div>
+        <div class="form-row">
+          <label for="tradeAccount">账户</label>
+          <select id="tradeAccount" name="accountId"></select>
         </div>
         <div class="form-row">
           <label for="tradeSymbol">代码</label>
@@ -328,7 +337,10 @@
           <span><i class="legend-dot legend-buy"></i>买入</span>
           <span><i class="legend-dot legend-sell"></i>卖出</span>
         </div>
-        <canvas id="stockRecordChart" width="700" height="320"></canvas>
+        <div class="chart-wrap">
+          <canvas id="stockRecordChart" width="700" height="320"></canvas>
+          <div id="stockRecordTooltip" class="chart-tooltip"></div>
+        </div>
         <p class="stock-record-note">注：交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</p>
 
         <div class="stock-record-subhead">
