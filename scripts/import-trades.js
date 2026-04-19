@@ -32,6 +32,15 @@ function loadTrades(filePath) {
   if (parsed && Array.isArray(parsed.trades)) {
     return parsed.trades;
   }
+  if (parsed && Array.isArray(parsed.transaction)) {
+    return parsed.transaction;
+  }
+  if (parsed && Array.isArray(parsed.data?.transaction)) {
+    return parsed.data.transaction;
+  }
+  if (parsed && Array.isArray(parsed.result?.data?.data?.transaction)) {
+    return parsed.result.data.data.transaction;
+  }
   throw new Error("JSON must be an array or an object containing trades array");
 }
 
