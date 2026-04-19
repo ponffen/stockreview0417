@@ -10,6 +10,7 @@ db.pragma("journal_mode = WAL");
 db.exec(`
 CREATE TABLE IF NOT EXISTS trades (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL DEFAULT 'default',
   type TEXT NOT NULL,
   symbol TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -33,27 +34,38 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 `);
 
+const tradeColumns = db.prepare("PRAGMA table_info(trades)").all();
+if (!tradeColumns.some((col) => col.name === "account_id")) {
+  db.exec("ALTER TABLE trades ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default'");
+}
+
 const DEFAULT_SETTINGS = {
   route: "earning",
   useDemoData: true,
   algoMode: "cost",
   benchmark: "none",
   stageRange: "month",
-  rangeDays: 7,
+  rangeDays: 30,
   analysisRangeMode: "preset",
   customRangeStart: "",
   customRangeEnd: "",
   capitalTrendMode: "both",
   capitalAmount: 0,
+  accounts: [{ id: "default", name: "默认账户", currency: "CNY", createdAt: 0 }],
+  selectedAccountId: "all",
+  tradeFilterAccountId: "all",
+  stockSortKey: "default",
+  stockSortOrder: "default",
 };
 
 const UPSERT_TRADE_STMT = db.prepare(`
 INSERT INTO trades (
-  id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
+  id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
 ) VALUES (
-  @id, @type, @symbol, @name, @side, @price, @quantity, @amount, @trade_date, @note, @created_at, @updated_at
+  @id, @account_id, @type, @symbol, @name, @side, @price, @quantity, @amount, @trade_date, @note, @created_at, @updated_at
 )
 ON CONFLICT(id) DO UPDATE SET
+  account_id = excluded.account_id,
   type = excluded.type,
   symbol = excluded.symbol,
   name = excluded.name,
@@ -69,7 +81,7 @@ ON CONFLICT(id) DO UPDATE SET
 const DELETE_ALL_TRADES_STMT = db.prepare("DELETE FROM trades");
 const DELETE_TRADE_STMT = db.prepare("DELETE FROM trades WHERE id = ?");
 const SELECT_ALL_TRADES_STMT = db.prepare(`
-SELECT id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
 FROM trades
 ORDER BY trade_date ASC, created_at ASC
 `);
@@ -232,6 +244,7 @@ function normalizeTrade(input) {
 
   return {
     id: String(raw.id || raw.tradeId || raw.ts_id || randomUUID()),
+    accountId: String(raw.accountId || raw.account_id || raw.account || "default").trim() || "default",
     type,
     symbol,
     name,
@@ -250,6 +263,7 @@ function tradeToRow(trade) {
   const updatedAt = nowMs();
   return {
     id: safe.id,
+    account_id: safe.accountId || "default",
     type: safe.type,
     symbol: safe.symbol,
     name: safe.name,
@@ -267,6 +281,7 @@ function tradeToRow(trade) {
 function rowToTrade(row) {
   return {
     id: row.id,
+    accountId: row.account_id || "default",
     type: row.type,
     symbol: row.symbol,
     name: row.name,

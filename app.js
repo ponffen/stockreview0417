@@ -15,6 +15,11 @@ const STATE_SYNC_KEYS = [
   "customRangeEnd",
   "capitalTrendMode",
   "capitalAmount",
+  "accounts",
+  "selectedAccountId",
+  "tradeFilterAccountId",
+  "stockSortKey",
+  "stockSortOrder",
 ];
 const DEFAULT_BENCHMARK_PRICE = {
   sh000001: 0,
@@ -30,6 +35,9 @@ const FX_RATE_FALLBACK = {
 const FX_HISTORY_DAYS = 420;
 const FX_API_BASE = "https://api.frankfurter.app";
 const FX_TIMEFRAME_DAYS = 120;
+const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
+const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
+const CHART_EDGE_SCROLL_PX = 22;
 
 const demoTrades = [
   {
@@ -67,20 +75,31 @@ const state = {
   algoMode: "cost",
   benchmark: "none",
   stageRange: "month",
-  rangeDays: 7,
+  rangeDays: 30,
   analysisRangeMode: "preset",
   customRangeStart: "",
   customRangeEnd: "",
   capitalTrendMode: "both",
   capitalAmount: 0,
+  accounts: [DEFAULT_ACCOUNT],
+  selectedAccountId: "all",
+  tradeFilterAccountId: "all",
+  stockSortKey: "default",
+  stockSortOrder: "default",
+  analysisPanOffset: 0,
   trades: [],
   quoteMap: {},
   klineMap: {},
+  nameMap: {},
   quoteTime: "--",
   marketLoading: false,
   editingTradeId: null,
   activeRecordId: null,
   activeRecordSymbol: null,
+  stockRecordWindow: 60,
+  stockRecordOffset: 0,
+  chartCrosshairMap: {},
+  lastPinchDistanceMap: {},
   fxRatesToCnyByDate: {},
   fxLoaded: false,
   fxLoading: false,
@@ -94,13 +113,22 @@ const quoteTime = document.getElementById("quoteTime");
 const todayProfitMain = document.getElementById("todayProfitMain");
 const monthProfitMain = document.getElementById("monthProfitMain");
 const stageRangeSelect = document.getElementById("stageRangeSelect");
+const accountFilterSelect = document.getElementById("accountFilterSelect");
+const analysisAccountSelect = document.getElementById("analysisAccountSelect");
+const tradeAccountFilterSelect = document.getElementById("tradeAccountFilterSelect");
+const currencyTip = document.getElementById("currencyTip");
 const stockTableBody = document.getElementById("stockTableBody");
-const recordList = document.getElementById("recordList");
+const stockSortButtons = [...document.querySelectorAll(".th-sort-btn")];
+const accountForm = document.getElementById("accountForm");
+const accountTableBody = document.getElementById("accountTableBody");
 const analysisRateSummary = document.getElementById("analysisRateSummary");
 const analysisProfitSummary = document.getElementById("analysisProfitSummary");
 const analysisRateChart = document.getElementById("analysisRateChart");
 const analysisProfitChart = document.getElementById("analysisProfitChart");
 const analysisAssetChart = document.getElementById("analysisAssetChart");
+const analysisRateTooltip = document.getElementById("analysisRateTooltip");
+const analysisProfitTooltip = document.getElementById("analysisProfitTooltip");
+const analysisAssetTooltip = document.getElementById("analysisAssetTooltip");
 const demoToggleBtn = document.getElementById("demoToggleBtn");
 const quickTradeBtn = document.getElementById("quickTradeBtn");
 const recordTradeBtn = document.getElementById("recordTradeBtn");
@@ -143,6 +171,10 @@ const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
 const tradeNoteInput = document.getElementById("tradeNote");
+const tradeAccountInput = document.getElementById("tradeAccount");
+const stockRecordTooltip = document.getElementById("stockRecordTooltip");
+
+const chartRuntimeMap = new Map();
 
 initialize();
 
@@ -242,6 +274,199 @@ async function fetchFxHistorySeries(currency, startDate, endDate) {
   return result;
 }
 
+function normalizeAccounts(rawAccounts) {
+  const seen = new Set();
+  const base = [];
+  const input = Array.isArray(rawAccounts) ? rawAccounts : [];
+  for (const raw of input) {
+    const id = String(raw?.id || "").trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    const name = String(raw?.name || "").trim() || "未命名账户";
+    const currency = ["CNY", "USD", "HKD"].includes(String(raw?.currency || "CNY").toUpperCase())
+      ? String(raw.currency).toUpperCase()
+      : "CNY";
+    const createdAt = Number(raw?.createdAt || Date.now());
+    base.push({ id, name, currency, createdAt });
+    seen.add(id);
+  }
+  if (!seen.has(DEFAULT_ACCOUNT.id)) {
+    base.unshift({ ...DEFAULT_ACCOUNT });
+  } else {
+    const idx = base.findIndex((item) => item.id === DEFAULT_ACCOUNT.id);
+    base[idx] = {
+      ...base[idx],
+      name: "默认账户",
+      currency: base[idx].currency || "CNY",
+      createdAt: base[idx].createdAt || 0,
+    };
+  }
+  base.sort((a, b) => {
+    if (a.id === DEFAULT_ACCOUNT.id) return -1;
+    if (b.id === DEFAULT_ACCOUNT.id) return 1;
+    return Number(a.createdAt) - Number(b.createdAt);
+  });
+  return base;
+}
+
+function resolveValidAccountFilter(accountId) {
+  if (accountId === "all") {
+    return "all";
+  }
+  return state.accounts.some((account) => account.id === accountId) ? accountId : "all";
+}
+
+function getPortfolioScope() {
+  const activeAccountId = resolveValidAccountFilter(state.selectedAccountId);
+  const trades = getFilteredTrades(activeAccountId);
+  return { accountId: activeAccountId, trades };
+}
+
+function resolveStockSortKeyValue(row, key) {
+  if (key === "currentPrice") {
+    return row.currentPrice;
+  }
+  if (key === "marketValue") {
+    return row.marketValue;
+  }
+  if (key === "weight") {
+    return row.weight;
+  }
+  if (key === "cost") {
+    return row.cost;
+  }
+  if (key === "monthProfit") {
+    return row.monthProfit;
+  }
+  if (key === "monthWeight") {
+    return row.monthWeight;
+  }
+  if (key === "yearProfit") {
+    return row.yearProfit;
+  }
+  if (key === "yearWeight") {
+    return row.yearWeight;
+  }
+  if (key === "totalProfit") {
+    return row.totalProfit;
+  }
+  if (key === "totalRate") {
+    return row.totalRate;
+  }
+  if (key === "todayProfit") {
+    return row.todayProfit;
+  }
+  if (key === "regretRate") {
+    return row.regretRate;
+  }
+  if (key === "lastTradeDate") {
+    return Date.parse(row.lastTradeDate || 0);
+  }
+  return 0;
+}
+
+function sortPositions(list) {
+  const rows = [...list];
+  if (!rows.length) {
+    return rows;
+  }
+  if (state.stockSortOrder === "default" || state.stockSortKey === "default") {
+    rows.sort((a, b) => {
+      const marketCmp = (MARKET_SORT_WEIGHT[a.market] || 99) - (MARKET_SORT_WEIGHT[b.market] || 99);
+      if (marketCmp !== 0) {
+        return marketCmp;
+      }
+      return Date.parse(b.lastTradeDate || 0) - Date.parse(a.lastTradeDate || 0);
+    });
+    return rows;
+  }
+  const key = state.stockSortKey;
+  const direction = state.stockSortOrder === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    const av = resolveStockSortKeyValue(a, key);
+    const bv = resolveStockSortKeyValue(b, key);
+    return (av - bv) * direction;
+  });
+  return rows;
+}
+
+function getAccountById(accountId) {
+  return state.accounts.find((item) => item.id === accountId) || DEFAULT_ACCOUNT;
+}
+
+function getFilteredTrades(accountId = "all") {
+  if (accountId === "all") {
+    return [...state.trades];
+  }
+  return state.trades.filter((trade) => trade.accountId === accountId);
+}
+
+function getDisplayName(symbol, fallbackName = "") {
+  return state.nameMap[symbol] || fallbackName || symbol.toUpperCase();
+}
+
+function getCurrencyLabel(currency) {
+  if (currency === "USD") return "美元";
+  if (currency === "HKD") return "港币";
+  return "人民币";
+}
+
+function getTradingDateKey(baseDate = new Date()) {
+  const dt = new Date(baseDate);
+  const hour = dt.getHours();
+  const minute = dt.getMinutes();
+  if (hour < 8 || (hour === 8 && minute < 30)) {
+    dt.setDate(dt.getDate() - 1);
+  }
+  return toDateKey(dt);
+}
+
+async function fetchQuoteNames(symbols) {
+  const targets = [...new Set(symbols.filter(Boolean))].filter((symbol) => !state.nameMap[symbol]);
+  if (!targets.length) {
+    return;
+  }
+  const requestToSource = new Map();
+  targets.forEach((symbol) => {
+    const requestSymbol = toQuoteRequestSymbol(symbol);
+    if (!requestToSource.has(requestSymbol)) {
+      requestToSource.set(requestSymbol, symbol);
+    }
+  });
+  try {
+    const quotes = await fetchRealtimeQuotes([...requestToSource.keys()]);
+    Object.entries(quotes || {}).forEach(([requestSymbol, quote]) => {
+      const sourceSymbol = requestToSource.get(requestSymbol) || requestSymbol.replace(/^gb_/i, "");
+      const name = String(quote?.name || "").trim();
+      if (name) {
+        state.nameMap[sourceSymbol] = name;
+      }
+    });
+  } catch {
+    // ignore quote-name failures, keep existing display names
+  }
+}
+
+function toQuoteRequestSymbol(symbol) {
+  if (!symbol) {
+    return symbol;
+  }
+  if (/^gb_/i.test(symbol) || /^rt_hk/i.test(symbol) || /^sh\d{6}$/i.test(symbol) || /^sz\d{6}$/i.test(symbol) || /^hk\d{5}$/i.test(symbol)) {
+    return symbol;
+  }
+  if (/^[a-z][a-z0-9._-]*$/i.test(symbol)) {
+    return `gb_${symbol.toLowerCase()}`;
+  }
+  return symbol;
+}
+
+function cycleSortOrder(current) {
+  if (current === "default") return "desc";
+  if (current === "desc") return "asc";
+  return "default";
+}
+
 async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
@@ -291,6 +516,11 @@ async function hydrateState() {
     state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
     state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
     state.capitalAmount = Number(parsed.capitalAmount ?? 0);
+    state.accounts = normalizeAccounts(parsed.accounts);
+    state.selectedAccountId = parsed.selectedAccountId ?? state.selectedAccountId;
+    state.tradeFilterAccountId = parsed.tradeFilterAccountId ?? state.tradeFilterAccountId;
+    state.stockSortKey = parsed.stockSortKey ?? state.stockSortKey;
+    state.stockSortOrder = parsed.stockSortOrder ?? state.stockSortOrder;
     state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
@@ -310,8 +540,16 @@ async function hydrateState() {
     state.trades = demoTrades.map((item) => ({ ...item }));
   }
   if (![7, 30, 90, 365].includes(Number(state.rangeDays))) {
-    state.rangeDays = 7;
+    state.rangeDays = 30;
   }
+  state.trades = state.trades.map((trade) => {
+    if (!state.accounts.some((account) => account.id === trade.accountId)) {
+      return { ...trade, accountId: DEFAULT_ACCOUNT.id };
+    }
+    return trade;
+  });
+  state.selectedAccountId = resolveValidAccountFilter(state.selectedAccountId);
+  state.tradeFilterAccountId = resolveValidAccountFilter(state.tradeFilterAccountId);
 }
 
 function persistState() {
@@ -327,6 +565,11 @@ function persistState() {
     customRangeEnd: state.customRangeEnd,
     capitalTrendMode: state.capitalTrendMode,
     capitalAmount: state.capitalAmount,
+    accounts: state.accounts,
+    selectedAccountId: state.selectedAccountId,
+    tradeFilterAccountId: state.tradeFilterAccountId,
+    stockSortKey: state.stockSortKey,
+    stockSortOrder: state.stockSortOrder,
     trades: state.trades,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -468,6 +711,42 @@ function bindEvents() {
     renderOverviewAndStockTable();
   });
 
+  accountFilterSelect?.addEventListener("change", () => {
+    state.selectedAccountId = resolveValidAccountFilter(accountFilterSelect.value);
+    persistState();
+    renderAll();
+    refreshMarketData();
+  });
+  analysisAccountSelect?.addEventListener("change", () => {
+    state.selectedAccountId = resolveValidAccountFilter(analysisAccountSelect.value);
+    persistState();
+    renderAll();
+    refreshMarketData();
+  });
+  tradeAccountFilterSelect?.addEventListener("change", () => {
+    state.tradeFilterAccountId = resolveValidAccountFilter(tradeAccountFilterSelect.value);
+    persistState();
+    renderTradeTable();
+    renderControls();
+  });
+  stockSortButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.sortKey || "default";
+      if (state.stockSortKey !== key) {
+        state.stockSortKey = key;
+        state.stockSortOrder = "desc";
+      } else {
+        state.stockSortOrder = cycleSortOrder(state.stockSortOrder);
+        if (state.stockSortOrder === "default") {
+          state.stockSortKey = "default";
+        }
+      }
+      persistState();
+      renderOverviewAndStockTable();
+      renderControls();
+    });
+  });
+
   rangeChips.forEach((chip) => {
     chip.addEventListener("click", () => {
       const value = chip.dataset.range;
@@ -476,6 +755,7 @@ function bindEvents() {
       } else {
         state.analysisRangeMode = "preset";
         state.rangeDays = Number(value);
+        state.analysisPanOffset = 0;
       }
       persistState();
       renderAnalysis();
@@ -501,6 +781,7 @@ function bindEvents() {
     state.customRangeStart = start;
     state.customRangeEnd = end;
     state.analysisRangeMode = "custom";
+    state.analysisPanOffset = 0;
     persistState();
     renderControls();
     renderAnalysis();
@@ -514,6 +795,26 @@ function bindEvents() {
 
   [quickTradeBtn, recordTradeBtn, tradeAddBtn].filter(Boolean).forEach((button) => {
     button.addEventListener("click", openNewTradeDialog);
+  });
+  accountForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(accountForm);
+    const name = String(formData.get("name") || "").trim();
+    const currency = String(formData.get("currency") || "CNY").toUpperCase();
+    if (!name) {
+      return;
+    }
+    const account = {
+      id: `acc_${Date.now()}_${Math.round(Math.random() * 1000)}`,
+      name,
+      currency: ["CNY", "USD", "HKD"].includes(currency) ? currency : "CNY",
+      createdAt: Date.now(),
+    };
+    state.accounts = normalizeAccounts([...state.accounts, account]);
+    accountForm.reset();
+    persistState();
+    renderControls();
+    renderAccountSection();
   });
 
   closeTradeDialogBtn.addEventListener("click", () => {
@@ -543,6 +844,7 @@ function bindEvents() {
 
     const trade = normalizeTrade({
       id: state.editingTradeId || crypto.randomUUID(),
+      accountId: String(formData.get("accountId") || DEFAULT_ACCOUNT.id),
       type,
       symbol,
       name: String(formData.get("name") || symbol).trim(),
@@ -680,6 +982,9 @@ function openNewTradeDialog() {
   tradeForm.reset();
   tradeTypeInput.value = "trade";
   applyTradeTypePreset();
+  if (tradeAccountInput) {
+    tradeAccountInput.value = DEFAULT_ACCOUNT.id;
+  }
   tradeDateInput.value = toDateKey(new Date());
   tradeDialog.showModal();
 }
@@ -697,13 +1002,13 @@ function renderAll() {
 }
 
 function renderControls() {
-  if (demoToggleBtn) {
-    demoToggleBtn.textContent = state.useDemoData ? "演示中" : "演示";
-  }
   algoModeSelect.value = state.algoMode;
   benchmarkSelect.value = state.benchmark;
-  if (quoteTime) {
-    quoteTime.textContent = `行情更新时间：${state.quoteTime}`;
+  syncAccountSelectOptions();
+  if (currencyTip) {
+    const activeId = state.selectedAccountId === "all" ? DEFAULT_ACCOUNT.id : state.selectedAccountId;
+    const account = getAccountById(activeId);
+    currencyTip.textContent = `币种：${getCurrencyLabel(account.currency)}`;
   }
   if (stageRangeSelect) {
     stageRangeSelect.value = state.stageRange;
@@ -728,6 +1033,66 @@ function renderControls() {
   if (assetCurveModeSelect) {
     assetCurveModeSelect.value = state.capitalTrendMode;
   }
+  stockSortButtons.forEach((button) => {
+    const key = button.dataset.sortKey || "";
+    button.classList.remove("asc", "desc", "active");
+    if (state.stockSortOrder !== "default" && key === state.stockSortKey) {
+      button.classList.add("active", state.stockSortOrder);
+    }
+  });
+  renderAccountSection();
+}
+
+function syncAccountSelectOptions() {
+  const allLabel = "全部账户";
+  const options = [
+    { id: "all", name: allLabel },
+    ...state.accounts.map((account) => ({ id: account.id, name: account.name })),
+  ];
+  const setSelect = (select, currentValue, includeAll = true) => {
+    if (!select) {
+      return;
+    }
+    const list = includeAll ? options : state.accounts.map((account) => ({ id: account.id, name: account.name }));
+    select.innerHTML = list
+      .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`)
+      .join("");
+    if (list.some((item) => item.id === currentValue)) {
+      select.value = currentValue;
+    } else if (list.length) {
+      select.value = list[0].id;
+    }
+  };
+  setSelect(accountFilterSelect, state.selectedAccountId, true);
+  setSelect(analysisAccountSelect, state.selectedAccountId, true);
+  setSelect(tradeAccountFilterSelect, state.tradeFilterAccountId, true);
+  const tradeDefault = state.accounts.some((item) => item.id === DEFAULT_ACCOUNT.id)
+    ? DEFAULT_ACCOUNT.id
+    : state.accounts[0]?.id || DEFAULT_ACCOUNT.id;
+  setSelect(tradeAccountInput, tradeDefault, false);
+}
+
+function renderAccountSection() {
+  if (!accountTableBody) {
+    return;
+  }
+  const tradeCountByAccount = state.trades.reduce((acc, trade) => {
+    const key = trade.accountId || DEFAULT_ACCOUNT.id;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  accountTableBody.innerHTML = state.accounts
+    .map((account) => {
+      const count = tradeCountByAccount[account.id] || 0;
+      return `
+        <tr>
+          <td>${escapeHtml(account.name)}</td>
+          <td>${getCurrencyLabel(account.currency)}</td>
+          <td>${count}</td>
+        </tr>
+      `;
+    })
+    .join("");
 }
 
 function renderRoute() {
@@ -750,10 +1115,9 @@ function renderRoute() {
 }
 
 function renderOverviewAndStockTable() {
-  const portfolio = computePortfolio();
-  const history = buildPortfolioHistory(portfolio.positions, {
-    getFxRate: (currency, dateKey) => getFxRateForDate(currency, dateKey),
-  });
+  const scope = getPortfolioScope(state.selectedAccountId);
+  const portfolio = computePortfolio(scope.trades);
+  const history = buildPortfolioHistory(portfolio.positions, scope.trades);
   const stagePerf = computeStagePerformance(history, state.stageRange, state.algoMode, portfolio);
   const cards = [
     { label: "总市值", value: formatPlainMoney(portfolio.totalMarketValue) },
@@ -777,7 +1141,8 @@ function renderOverviewAndStockTable() {
     )
     .join("");
 
-  if (!portfolio.visiblePositions.length) {
+  const rows = sortPositions(portfolio.visiblePositions);
+  if (!rows.length) {
     stockTableBody.innerHTML = `
       <tr>
         <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
@@ -786,7 +1151,7 @@ function renderOverviewAndStockTable() {
     return;
   }
 
-  stockTableBody.innerHTML = portfolio.visiblePositions
+  stockTableBody.innerHTML = rows
     .map((row) => {
       const stockCode = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
       const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
@@ -796,7 +1161,7 @@ function renderOverviewAndStockTable() {
       return `
         <tr>
           <td class="stock-name">
-            <strong>${escapeHtml(row.name)}</strong>
+            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
             <span><i class="market-tag">${tag}</i> ${stockCode}</span>
           </td>
           <td class="${dayClass}">${formatSignedMoney(row.todayProfit, 2)}</td>
@@ -870,12 +1235,13 @@ function getDefaultAnalysisStartDate() {
   return toDateKey(dt);
 }
 
-function computePositionStageProfit(position, stageRange) {
-  const firstTradeDate = state.trades.length
-    ? [...state.trades].sort(sortTradeAsc)[0].date
+function computePositionStageProfit(position, stageRange, trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const firstTradeDate = tradeList.length
+    ? [...tradeList].sort(sortTradeAsc)[0].date
     : toDateKey(new Date());
   const startKey = getStageStartKey(stageRange, firstTradeDate);
-  const symbolTrades = state.trades
+  const symbolTrades = tradeList
     .filter((trade) => trade.symbol === position.symbol)
     .sort(sortTradeAsc);
   if (!symbolTrades.length) {
@@ -920,7 +1286,8 @@ function renderTradeTable() {
   if (!tradeTableBody) {
     return;
   }
-  if (!state.trades.length) {
+  const trades = getFilteredTrades(state.tradeFilterAccountId);
+  if (!trades.length) {
     tradeTableBody.innerHTML = `
       <tr>
         <td colspan="6"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
@@ -928,14 +1295,14 @@ function renderTradeTable() {
     `;
     return;
   }
-  const sorted = [...state.trades].sort(sortTradeDesc);
+  const sorted = [...trades].sort(sortTradeDesc);
   tradeTableBody.innerHTML = sorted
     .map((trade) => {
       return `
         <tr class="trade-row" data-record-id="${trade.id}">
           <td>${trade.date.replace(/-/g, "/")}</td>
-          <td>${escapeHtml(trade.name)}</td>
-          <td class="type-cell">${trade.side === "buy" ? "买入" : "卖出"}</td>
+          <td>${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
+          <td class="type-cell">${typeLabel(trade.type)}</td>
           <td class="num">${formatNumber(trade.price, 2)}</td>
           <td class="num">${formatNumber(trade.quantity, 0)}</td>
           <td class="num ${trade.side === "buy" ? "down" : "up"}">${
@@ -987,6 +1354,9 @@ function openEditTradeDialog(tradeId) {
   tradeAmountInput.value = trade.amount;
   tradeDateInput.value = trade.date;
   tradeNoteInput.value = trade.note || "";
+  if (tradeAccountInput) {
+    tradeAccountInput.value = trade.accountId || DEFAULT_ACCOUNT.id;
+  }
   applyTradeTypePreset();
   tradeDialog.showModal();
 }
@@ -1025,17 +1395,59 @@ async function removeTradeById(tradeId) {
 }
 
 function renderAnalysis() {
-  const portfolio = computePortfolio();
-  const history = buildPortfolioHistory(portfolio.positions);
+  const scope = getPortfolioScope();
+  const portfolio = computePortfolio(scope.trades);
+  const history = buildPortfolioHistory(portfolio.positions, scope.trades);
   const selected = resolveAnalysisRange(history);
   const mySeries = computeModeSeries(selected, state.algoMode);
   const benchSeries = buildBenchmarkSeries(selected);
   const profitSeries = buildProfitSeries(selected);
   const assetSeries = buildAssetSeries(selected, portfolio.principal);
 
-  drawLineChart(mySeries, benchSeries);
-  drawDualLineChart(analysisProfitChart, profitSeries, null, "#f45a68", null);
-  drawAssetChart(assetSeries);
+  const ratePayload = drawLineChart(mySeries, benchSeries);
+  const profitPayload = drawDualLineChart(
+    analysisProfitChart,
+    profitSeries.map((item) => ({ date: item.date, value: item.value })),
+    null,
+    "#f45a68",
+    null,
+    {
+      keyA: "profit",
+      labelA: "收益",
+      yAxisMode: "left",
+      leftLabel: "收益",
+      valueFormatter: (value) => formatNumber(value, 2),
+      axisFormatter: (value) => formatNumber(value, 2),
+    }
+  );
+  const assetPayload = drawAssetChart(assetSeries);
+
+  const refreshAnalysisView = () => {
+    renderControls();
+    renderAnalysis();
+  };
+
+  const rateHasBenchmark = state.benchmark !== "none";
+  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, {
+    mode: "analysis",
+    onRefresh: refreshAnalysisView,
+    valueFormatter: (_value, key) => {
+      if (key === "benchmark" && !rateHasBenchmark) {
+        return "--";
+      }
+      return `${formatNumber(_value, 2)}%`;
+    },
+  });
+  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, {
+    mode: "analysis",
+    onRefresh: refreshAnalysisView,
+    valueFormatter: (value) => formatNumber(value, 2),
+  });
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, {
+    mode: "analysis",
+    onRefresh: refreshAnalysisView,
+    valueFormatter: (value) => formatNumber(value, 2),
+  });
 
   const lastMy = mySeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
@@ -1067,7 +1479,13 @@ function resolveAnalysisRange(history) {
       return picked;
     }
   }
-  return history.slice(-Math.min(Math.max(state.rangeDays, 2), history.length));
+  const windowSize = Math.min(Math.max(state.rangeDays, 2), history.length);
+  const maxOffset = Math.max(0, history.length - windowSize);
+  const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
+  state.analysisPanOffset = offset;
+  const end = history.length - offset;
+  const start = Math.max(0, end - windowSize);
+  return history.slice(start, end);
 }
 
 function buildProfitSeries(points) {
@@ -1116,11 +1534,12 @@ async function openStockRecordDialog(symbol) {
 }
 
 function renderStockRecordPage(symbol) {
-  const position = computePortfolio().positions.find((item) => item.symbol === symbol);
+  const scope = getPortfolioScope();
+  const position = computePortfolio(scope.trades).positions.find((item) => item.symbol === symbol);
   if (!position) {
     return;
   }
-  const symbolTrades = state.trades
+  const symbolTrades = scope.trades
     .filter((item) => item.symbol === symbol)
     .sort(sortTradeDesc);
   const quote = state.quoteMap[symbol] || {};
@@ -1128,7 +1547,7 @@ function renderStockRecordPage(symbol) {
   const prev = validNumber(quote.prevClose, position.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
 
-  stockRecordTitle.textContent = `${position.name}(${symbol.toUpperCase()})`;
+  stockRecordTitle.textContent = `${getDisplayName(symbol, position.name)}(${symbol.toUpperCase()})`;
   stockRecordTime.textContent = quote.time || state.quoteTime || "--";
   stockRecordPrice.textContent = formatNumber(current, 3);
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
@@ -1205,7 +1624,8 @@ function ensureSymbolPrefixForQuote(symbol) {
 }
 
 function buildFallbackKlineFromTrades(symbol) {
-  const symbolTrades = state.trades
+  const scope = getPortfolioScope();
+  const symbolTrades = scope.trades
     .filter((item) => item.symbol === symbol)
     .sort(sortTradeAsc);
   if (!symbolTrades.length) {
@@ -1253,177 +1673,121 @@ function drawStockRecordChart(symbol, symbolTrades) {
   if (!canvas) {
     return;
   }
-  const ctx = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
-
   const kline = state.klineMap[symbol] || [];
-  const points = kline.slice(-60);
-  if (!points.length) {
-    drawFallbackStockRecordChart(symbolTrades, ctx, width, height);
+  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
+  const source =
+    kline.length > 1
+      ? kline.map((item) => ({ date: item.day, price: Number(item.close) }))
+      : sortedTrades.map((item) => ({ date: item.date, price: validNumber(item.price, 0) }));
+  if (!source.length) {
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
-  const closes = points.map((item) => Number(item.close));
-  const maxClose = Math.max(...closes);
-  const minClose = Math.min(...closes);
-  const qtyByDay = {};
+  const totalCount = source.length;
+  const windowSize = Math.max(12, Math.min(totalCount, Number(state.stockRecordWindow || 60)));
+  const maxOffset = Math.max(0, totalCount - windowSize);
+  const offset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
+  state.stockRecordOffset = offset;
+  const end = totalCount - offset;
+  const start = Math.max(0, end - windowSize);
+  const visible = source.slice(start, end);
+  const qtyByDate = {};
   let qty = 0;
-  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
   sortedTrades.forEach((trade) => {
     qty += trade.side === "buy" ? trade.quantity : -trade.quantity;
-    qtyByDay[trade.date] = qty;
+    qtyByDate[trade.date] = qty;
   });
   let rollingQty = 0;
-  const qtySeries = points.map((item) => {
-    if (qtyByDay[item.day] != null) {
-      rollingQty = qtyByDay[item.day];
+  const values = visible.map((item) => {
+    if (qtyByDate[item.date] != null) {
+      rollingQty = qtyByDate[item.date];
     }
-    return rollingQty;
+    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty };
   });
-  const maxQty = Math.max(1, ...qtySeries.map((v) => Math.abs(v)));
-  const mapX = (idx) => 20 + (idx / Math.max(points.length - 1, 1)) * (width - 40);
-  const mapYPrice = (value) =>
-    20 + ((maxClose - value) / Math.max(maxClose - minClose, 0.0001)) * (height - 60);
-  const mapYQty = (value) => height - 20 - (value / maxQty) * (height - 60);
-
-  ctx.strokeStyle = "#e8edf5";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
-    const y = 20 + ((height - 40) / 4) * i;
-    ctx.beginPath();
-    ctx.moveTo(10, y);
-    ctx.lineTo(width - 10, y);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = "rgba(64, 145, 224, 0.20)";
-  ctx.beginPath();
-  points.forEach((item, index) => {
-    const x = mapX(index);
-    const y = mapYPrice(Number(item.close));
-    if (index === 0) {
-      ctx.moveTo(x, height - 20);
-      ctx.lineTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
+  const payload = buildChartPayload(
+    [
+      {
+        key: "price",
+        label: "股价",
+        color: "#4091e0",
+        axis: "left",
+        values: values.map((item) => ({ date: item.date, value: item.price })),
+      },
+      {
+        key: "qty",
+        label: "持仓股数",
+        color: "#ff4d4f",
+        axis: "right",
+        values: values.map((item) => ({ date: item.date, value: item.qty })),
+      },
+    ],
+    {
+      labels: { price: "股价", qty: "持仓股数" },
+      yAxisMode: "left-right",
+      xMin: 52,
+      xMax: canvas.width - 28,
+      yMin: 20,
+      yMax: canvas.height - 36,
     }
+  );
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawChartGrid(ctx, canvas.width, canvas.height, payload);
+  payload.seriesList.forEach((series) => {
+    drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
   });
-  ctx.lineTo(mapX(points.length - 1), height - 20);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.strokeStyle = "#4091e0";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((item, index) => {
-    const x = mapX(index);
-    const y = mapYPrice(Number(item.close));
-    if (index === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  });
-  ctx.stroke();
-
-  ctx.strokeStyle = "#ff4d4f";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  qtySeries.forEach((value, index) => {
-    const x = mapX(index);
-    const y = mapYQty(value);
-    if (index === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  });
-  ctx.stroke();
-
-  const pointByDate = Object.fromEntries(points.map((item, idx) => [item.day, idx]));
+  const pointByDate = Object.fromEntries(values.map((item, idx) => [item.date, idx]));
   sortedTrades.forEach((trade) => {
     const idx = pointByDate[trade.date];
     if (idx == null) {
       return;
     }
-    const x = mapX(idx);
-    const y = mapYPrice(validNumber(trade.price, points[idx].close));
+    const point = payload.seriesMap.price.values[idx];
+    if (!point) {
+      return;
+    }
     ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
     ctx.strokeStyle = "#3b7bf6";
     ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });
-}
-
-function drawFallbackStockRecordChart(symbolTrades, ctx, width, height) {
-  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
-  if (!sortedTrades.length) {
-    return;
-  }
-  const count = sortedTrades.length;
-  const prices = sortedTrades.map((t) => validNumber(t.price, 0));
-  const maxP = Math.max(...prices, 1);
-  const minP = Math.min(...prices, 0);
-  let q = 0;
-  const qty = sortedTrades.map((t) => {
-    q += t.side === "buy" ? t.quantity : -t.quantity;
-    return q;
+  drawAxisLabels(ctx, payload, {
+    leftLabel: "股价",
+    rightLabel: "股数",
+    xLabel: "日期",
+    valueFormatter: (value, axis, key) => {
+      if (key === "qty" || axis === "right") {
+        return formatNumber(value, 0);
+      }
+      return formatNumber(value, 2);
+    },
   });
-  const maxQ = Math.max(...qty.map((v) => Math.abs(v)), 1);
-  const mapX = (idx) => 20 + (idx / Math.max(count - 1, 1)) * (width - 40);
-  const mapYPrice = (value) => 20 + ((maxP - value) / Math.max(maxP - minP, 0.001)) * (height - 60);
-  const mapYQty = (value) => height - 20 - (value / maxQ) * (height - 60);
-
-  ctx.strokeStyle = "#e8edf5";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
-    const y = 20 + ((height - 40) / 4) * i;
-    ctx.beginPath();
-    ctx.moveTo(10, y);
-    ctx.lineTo(width - 10, y);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = "#4091e0";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  sortedTrades.forEach((trade, index) => {
-    const x = mapX(index);
-    const y = mapYPrice(validNumber(trade.price, 0));
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
+    if (key === "qty" || axis === "right") {
+      return formatNumber(value, 0);
+    }
+    return formatNumber(value, 2);
   });
-  ctx.stroke();
-
-  ctx.strokeStyle = "#ff4d4f";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  qty.forEach((value, index) => {
-    const x = mapX(index);
-    const y = mapYQty(value);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  sortedTrades.forEach((trade, index) => {
-    const x = mapX(index);
-    const y = mapYPrice(validNumber(trade.price, 0));
-    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
-    ctx.strokeStyle = "#3b7bf6";
-    ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+  bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
+    mode: "stock",
+    onRefresh: () => drawStockRecordChart(symbol, symbolTrades),
+    valueFormatter: (value, key, axis) => {
+      if (key === "qty" || axis === "right") {
+        return formatNumber(value, 0);
+      }
+      return formatNumber(value, 2);
+    },
   });
 }
 
-function computePortfolio() {
+function computePortfolio(trades = state.trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
   const grouped = new Map();
-  const sortedTrades = [...state.trades].sort(sortTradeAsc);
+  const sortedTrades = [...tradeList].sort(sortTradeAsc);
+  const tradingDateKey = getTradingDateKey(new Date());
 
   for (const trade of sortedTrades) {
     if (!grouped.has(trade.symbol)) {
@@ -1464,8 +1828,8 @@ function computePortfolio() {
     const totalProfit = marketValue - sigmaAmountCny;
     const profitRate =
       Math.abs(sigmaAmountCny) > 0 ? totalProfit / Math.abs(sigmaAmountCny) : 0;
-    const todayFlowForSymbol = state.trades
-      .filter((trade) => trade.symbol === item.symbol && trade.date === toDateKey(new Date()))
+    const todayFlowForSymbol = tradeList
+      .filter((trade) => trade.symbol === item.symbol && trade.date === tradingDateKey)
       .reduce((sum, trade) => sum + signedAmount(trade) * fxRate, 0);
     const todayProfit = marketValue - yesterdayValue - todayFlowForSymbol;
     const dayChangeRate = prevClose > 0 ? (currentPrice - prevClose) / prevClose : 0;
@@ -1492,8 +1856,8 @@ function computePortfolio() {
   });
 
   positions.forEach((item) => {
-    item.monthProfit = computePositionStageProfit(item, "month");
-    item.yearProfit = computePositionStageProfit(item, "ytd");
+    item.monthProfit = computePositionStageProfit(item, "month", tradeList);
+    item.yearProfit = computePositionStageProfit(item, "ytd", tradeList);
   });
   const visiblePositions = positions.filter((item) => item.quantity > 0);
   const monthTotalProfit = visiblePositions.reduce((sum, item) => sum + item.monthProfit, 0);
@@ -1503,7 +1867,7 @@ function computePortfolio() {
     item.yearWeight = yearTotalProfit !== 0 ? item.yearProfit / yearTotalProfit : 0;
   });
 
-  const sigmaAmountAll = state.trades.reduce(
+  const sigmaAmountAll = tradeList.reduce(
     (sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade),
     0
   );
@@ -1512,8 +1876,8 @@ function computePortfolio() {
   const yesterdayMarketValue = positions.reduce((sum, item) => sum + item.yesterdayValue, 0);
   const cash = principal - sigmaAmountAll;
   const totalAssets = totalMarketValue + cash;
-  const todayFlow = state.trades
-    .filter((trade) => trade.date === toDateKey(new Date()))
+  const todayFlow = tradeList
+    .filter((trade) => trade.date === tradingDateKey)
     .reduce((sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade), 0);
   const todayProfit = totalMarketValue - yesterdayMarketValue - todayFlow;
   const todayRateDen = yesterdayMarketValue + Math.max(todayFlow, 0);
@@ -1541,7 +1905,8 @@ function computePortfolio() {
   };
 }
 
-function buildPortfolioHistory(positions) {
+function buildPortfolioHistory(positions, trades = state.trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
   const end = new Date();
   const start = new Date(end);
   start.setDate(end.getDate() - 370);
@@ -1561,13 +1926,13 @@ function buildPortfolioHistory(positions) {
   symbolSet.forEach((symbol) => {
     const list = state.klineMap[symbol] || [];
     klineMap[symbol] = Object.fromEntries(list.map((item) => [item.day, Number(item.close)]));
-    const fallbackTrade = state.trades.find((item) => item.symbol === symbol);
+    const fallbackTrade = tradeList.find((item) => item.symbol === symbol);
     lastPriceMap[symbol] = validNumber(state.quoteMap[symbol]?.prevClose, fallbackTrade?.price, 0);
     fxRateMap[symbol] = getFxRateForSymbol(symbol, inferMarket(symbol));
   });
 
   const tradesByDate = {};
-  for (const trade of state.trades) {
+  for (const trade of tradeList) {
     if (!tradesByDate[trade.date]) {
       tradesByDate[trade.date] = [];
     }
@@ -1708,16 +2073,27 @@ function buildBenchmarkSeries(selectedPoints) {
 }
 
 function drawLineChart(mySeries, benchmarkSeries) {
-  drawDualLineChart(
+  return drawDualLineChart(
     analysisRateChart,
-    mySeries.map((item) => ({ date: item.date, value: item.rate })),
-    state.benchmark === "none" ? null : benchmarkSeries.map((item) => ({ date: item.date, value: item.rate })),
+    mySeries.map((item) => ({ date: item.date, value: item.rate * 100 })),
+    state.benchmark === "none" ? null : benchmarkSeries.map((item) => ({ date: item.date, value: item.rate * 100 })),
     "#f24957",
-    "#2f80f6"
+    "#2f80f6",
+    {
+      keyA: "mine",
+      keyB: "benchmark",
+      labelA: "收益率",
+      labelB: "基准",
+      yAxisMode: state.benchmark === "none" ? "left" : "left-right",
+      leftLabel: "收益率(%)",
+      rightLabel: state.benchmark === "none" ? "" : "基准(%)",
+      valueFormatter: (value) => `${formatNumber(value, 2)}%`,
+      axisFormatter: (value) => `${formatNumber(value, 2)}%`,
+    }
   );
 }
 
-function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB) {
+function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {}) {
   if (!canvas) {
     return;
   }
@@ -1725,51 +2101,109 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB) {
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
-  drawChartGrid(ctx, width, height);
-
-  const values = [...seriesA.map((item) => item.value)];
-  if (seriesB) {
-    values.push(...seriesB.map((item) => item.value));
-  }
-  const minValue = Math.min(...values, 0);
-  const maxValue = Math.max(...values, 0);
-  const range = Math.max(maxValue - minValue, 0.001);
-  const count = Math.max(seriesA.length, seriesB?.length || 0, 2);
-  const mapX = (idx) => 20 + (idx / (count - 1)) * (width - 40);
-  const mapY = (value) => 20 + ((maxValue - value) / range) * (height - 40);
-
-  drawSeries(ctx, seriesA, mapX, mapY, colorA);
-  if (seriesB && seriesB.length) {
-    drawSeries(ctx, seriesB, mapX, mapY, colorB || "#2f80f6");
-  }
+  const payload = buildChartPayload(
+    [
+      {
+        key: options.keyA || "seriesA",
+        label: options.labelA || "曲线A",
+        color: colorA,
+        axis: "left",
+        values: seriesA,
+      },
+      ...(seriesB && seriesB.length
+        ? [
+            {
+              key: options.keyB || "seriesB",
+              label: options.labelB || "曲线B",
+              color: colorB || "#2f80f6",
+              axis: options.yAxisMode === "left-right" ? "right" : "left",
+              values: seriesB,
+            },
+          ]
+        : []),
+    ],
+    {
+      xMin: 52,
+      xMax: width - 28,
+      yMin: 20,
+      yMax: height - 36,
+      yAxisMode: options.yAxisMode || (seriesB && seriesB.length ? "left-right" : "left"),
+      axisByKey: options.axisByKey || {},
+    }
+  );
+  drawChartGrid(ctx, width, height, payload);
+  payload.seriesList.forEach((series) => {
+    drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
+  });
+  drawAxisLabels(ctx, payload, {
+    leftLabel: options.leftLabel || "",
+    rightLabel: options.rightLabel || "",
+    xLabel: options.xLabel || "日期",
+    valueFormatter: options.axisFormatter,
+  });
+  drawCrosshairOverlay(ctx, payload, canvas.id, options.valueFormatter || options.axisFormatter);
+  return payload;
 }
 
 function drawSingleLineChart(canvas, series, color) {
-  drawDualLineChart(canvas, series, null, color, null);
+  return drawDualLineChart(canvas, series, null, color, null);
 }
 
 function drawAssetChart(assetSeries) {
   const principalSeries = assetSeries.map((item) => ({ date: item.date, value: item.principal }));
   const marketSeries = assetSeries.map((item) => ({ date: item.date, value: item.market }));
   if (state.capitalTrendMode === "principal") {
-    drawSingleLineChart(analysisAssetChart, principalSeries, "#5f6c82");
-    return;
+    return drawDualLineChart(analysisAssetChart, principalSeries, null, "#5f6c82", null, {
+      keyA: "principal",
+      labelA: "本金",
+      yAxisMode: "left",
+      leftLabel: "本金",
+      valueFormatter: (value) => formatNumber(value, 2),
+      axisFormatter: (value) => formatNumber(value, 2),
+    });
   }
   if (state.capitalTrendMode === "market") {
-    drawSingleLineChart(analysisAssetChart, marketSeries, "#4f83f1");
-    return;
+    return drawDualLineChart(analysisAssetChart, marketSeries, null, "#4f83f1", null, {
+      keyA: "market",
+      labelA: "总市值",
+      yAxisMode: "left",
+      leftLabel: "总市值",
+      valueFormatter: (value) => formatNumber(value, 2),
+      axisFormatter: (value) => formatNumber(value, 2),
+    });
   }
-  drawDualLineChart(analysisAssetChart, principalSeries, marketSeries, "#5f6c82", "#4f83f1");
+  return drawDualLineChart(analysisAssetChart, principalSeries, marketSeries, "#5f6c82", "#4f83f1", {
+    keyA: "principal",
+    keyB: "market",
+    labelA: "本金",
+    labelB: "总市值",
+    yAxisMode: "left-right",
+    leftLabel: "本金",
+    rightLabel: "总市值",
+    valueFormatter: (value) => formatNumber(value, 2),
+    axisFormatter: (value) => formatNumber(value, 2),
+  });
 }
 
-function drawChartGrid(ctx, width, height) {
+function drawChartGrid(ctx, width, height, payload = null) {
+  const xMin = payload?.xMin ?? 20;
+  const xMax = payload?.xMax ?? width - 20;
+  const yMin = payload?.yMin ?? 20;
+  const yMax = payload?.yMax ?? height - 20;
   ctx.strokeStyle = "#e6ebf2";
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
-    const y = 20 + ((height - 40) / 4) * i;
+    const y = yMin + ((yMax - yMin) / 4) * i;
     ctx.beginPath();
-    ctx.moveTo(8, y);
-    ctx.lineTo(width - 8, y);
+    ctx.moveTo(xMin, y);
+    ctx.lineTo(xMax, y);
+    ctx.stroke();
+  }
+  for (let i = 0; i <= 4; i += 1) {
+    const x = xMin + ((xMax - xMin) / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, yMin);
+    ctx.lineTo(x, yMax);
     ctx.stroke();
   }
 }
@@ -1782,8 +2216,8 @@ function drawSeries(ctx, series, mapX, mapY, color) {
   ctx.lineWidth = 2;
   ctx.beginPath();
   series.forEach((point, index) => {
-    const x = mapX(index);
-    const y = mapY(point.value);
+    const x = Number.isFinite(point.x) ? point.x : mapX(index);
+    const y = Number.isFinite(point.y) ? point.y : mapY(point.value);
     if (index === 0) {
       ctx.moveTo(x, y);
     } else {
@@ -1791,6 +2225,467 @@ function drawSeries(ctx, series, mapX, mapY, color) {
     }
   });
   ctx.stroke();
+}
+
+function buildChartPayload(seriesList, options = {}) {
+  const labels = options.labels || {};
+  const axisByKey = options.axisByKey || {};
+  const xMin = options.xMin ?? 20;
+  const xMax = options.xMax ?? 680;
+  const yMin = options.yMin ?? 20;
+  const yMax = options.yMax ?? 300;
+  const yAxisMode = options.yAxisMode || "left";
+  const maxCount = Math.max(
+    ...seriesList.map((item) => Math.max((item.values || []).length, 0)),
+    2
+  );
+  const mapX = (idx) => xMin + (idx / Math.max(maxCount - 1, 1)) * (xMax - xMin);
+  const leftValues = [];
+  const rightValues = [];
+  const withAxis = seriesList.map((item, idx) => {
+    const axis = axisByKey[item.key] || item.axis || (yAxisMode === "left-right" && idx > 0 ? "right" : "left");
+    const values = Array.isArray(item.values) ? item.values : [];
+    values.forEach((point) => {
+      const num = Number(point.value);
+      if (!Number.isFinite(num)) {
+        return;
+      }
+      if (axis === "right") {
+        rightValues.push(num);
+      } else {
+        leftValues.push(num);
+      }
+    });
+    return { ...item, axis, values };
+  });
+  const resolveRange = (values) => {
+    const min = Math.min(...values, 0);
+    const max = Math.max(...values, 0);
+    return { min, max, range: Math.max(max - min, 0.001) };
+  };
+  const leftRange = resolveRange(leftValues.length ? leftValues : [0]);
+  const rightRange =
+    yAxisMode === "left-right"
+      ? resolveRange(rightValues.length ? rightValues : leftValues.length ? leftValues : [0])
+      : leftRange;
+  const mapYByAxis = (value, axis) => {
+    const target = axis === "right" ? rightRange : leftRange;
+    return yMin + ((target.max - Number(value)) / target.range) * (yMax - yMin);
+  };
+  const indexed = withAxis.map((item) => ({
+    ...item,
+    values: item.values.map((point, index) => ({
+      ...point,
+      idx: index,
+      axis: item.axis,
+      x: mapX(index),
+      y: mapYByAxis(point.value, item.axis),
+    })),
+  }));
+  const seriesMap = indexed.reduce((acc, item) => {
+    acc[item.key] = item;
+    return acc;
+  }, {});
+  return {
+    seriesList: indexed,
+    seriesMap,
+    labels,
+    xMin,
+    xMax,
+    yMin,
+    yMax,
+    yAxisMode,
+    leftRange,
+    rightRange,
+    mapX,
+    mapY(value, axis = "left") {
+      return mapYByAxis(value, axis);
+    },
+    pickNearestByX(x) {
+      const firstSeries = indexed[0]?.values || [];
+      if (!firstSeries.length) {
+        return { index: 0, x: xMin, points: [] };
+      }
+      let nearest = 0;
+      let bestGap = Number.POSITIVE_INFINITY;
+      firstSeries.forEach((point, idx) => {
+        const gap = Math.abs(point.x - x);
+        if (gap < bestGap) {
+          bestGap = gap;
+          nearest = idx;
+        }
+      });
+      const points = indexed.map((series) => series.values[Math.min(nearest, series.values.length - 1)]).filter(Boolean);
+      return { index: nearest, x: firstSeries[nearest]?.x ?? xMin, points };
+    },
+  };
+}
+
+function drawAxisLabels(ctx, payload, options = {}) {
+  const valueFormatter = options.valueFormatter || ((value) => formatNumber(value, 2));
+  const firstSeries = payload.seriesList[0]?.values || [];
+  const xDates = firstSeries.map((item) => item.date).filter(Boolean);
+  const leftMax = valueFormatter(payload.leftRange.max, "left");
+  const leftMin = valueFormatter(payload.leftRange.min, "left");
+  const rightMax = valueFormatter(payload.rightRange.max, "right");
+  const rightMin = valueFormatter(payload.rightRange.min, "right");
+  ctx.save();
+  ctx.fillStyle = "#8f99a9";
+  ctx.font = "11px sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
+  ctx.fillText(leftMax, payload.xMin - 6, payload.yMin + 2);
+  ctx.fillText(leftMin, payload.xMin - 6, payload.yMax - 2);
+  if (payload.yAxisMode === "left-right") {
+    ctx.textAlign = "left";
+    ctx.fillText(rightMax, payload.xMax + 6, payload.yMin + 2);
+    ctx.fillText(rightMin, payload.xMax + 6, payload.yMax - 2);
+  }
+  if (options.leftLabel) {
+    ctx.textAlign = "left";
+    ctx.fillText(options.leftLabel, payload.xMin, payload.yMin - 10);
+  }
+  if (options.rightLabel && payload.yAxisMode === "left-right") {
+    ctx.textAlign = "right";
+    ctx.fillText(options.rightLabel, payload.xMax, payload.yMin - 10);
+  }
+  const startDate = xDates[0] || "--";
+  const midDate = xDates[Math.floor((xDates.length - 1) / 2)] || startDate;
+  const endDate = xDates[xDates.length - 1] || startDate;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillText(startDate, payload.xMin, payload.yMax + 8);
+  ctx.textAlign = "center";
+  ctx.fillText(midDate, (payload.xMin + payload.xMax) / 2, payload.yMax + 8);
+  ctx.textAlign = "right";
+  ctx.fillText(endDate, payload.xMax, payload.yMax + 8);
+  if (options.xLabel) {
+    ctx.textAlign = "right";
+    ctx.fillText(options.xLabel, payload.xMax, payload.yMax + 22);
+  }
+  ctx.restore();
+}
+
+function drawCrosshairOverlay(ctx, payload, canvasId, valueFormatter) {
+  const cross = state.chartCrosshairMap[canvasId];
+  if (!cross || !cross.points?.length) {
+    return;
+  }
+  const formatter = valueFormatter || ((value) => formatNumber(value, 2));
+  const yPrimary = cross.points[0]?.y ?? cross.y;
+  ctx.save();
+  ctx.strokeStyle = "rgba(80, 92, 112, 0.6)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cross.x, payload.yMin);
+  ctx.lineTo(cross.x, payload.yMax);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(payload.xMin, yPrimary);
+  ctx.lineTo(payload.xMax, yPrimary);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#4d5769";
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const dateText = cross.date || "--";
+  const dateWidth = Math.max(42, ctx.measureText(dateText).width + 10);
+  const dateX = Math.max(payload.xMin + dateWidth / 2, Math.min(payload.xMax - dateWidth / 2, cross.x));
+  const dateY = payload.yMax + 16;
+  ctx.fillRect(dateX - dateWidth / 2, dateY - 8, dateWidth, 16);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(dateText, dateX, dateY);
+  cross.points.forEach((point, index) => {
+    const y = point.y;
+    const side = point.axis === "right" ? "right" : "left";
+    const text = formatter(point.value, point.key, point.axis);
+    const w = Math.max(40, ctx.measureText(text).width + 10);
+    const x = side === "right" ? payload.xMax + 6 + w / 2 : payload.xMin - 6 - w / 2;
+    ctx.fillStyle = "#4d5769";
+    ctx.fillRect(x - w / 2, y - 8, w, 16);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.fillText(text, x, y);
+    if (index === 0) {
+      ctx.strokeStyle = "rgba(80, 92, 112, 0.8)";
+      ctx.beginPath();
+      ctx.arc(cross.x, y, 2.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+function drawStockRecordBase(ctx, width, height, points, qtySeries, sortedTrades) {
+  const closes = points.map((item) => Number(item.close));
+  const maxClose = Math.max(...closes);
+  const minClose = Math.min(...closes);
+  const maxQty = Math.max(1, ...qtySeries.map((v) => Math.abs(v)));
+  const mapX = (idx) => 52 + (idx / Math.max(points.length - 1, 1)) * (width - 84);
+  const mapYPrice = (value) =>
+    20 + ((maxClose - value) / Math.max(maxClose - minClose, 0.0001)) * (height - 56);
+  const mapYQty = (value) => height - 36 - (value / maxQty) * (height - 56);
+  ctx.fillStyle = "rgba(64, 145, 224, 0.16)";
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, height - 36);
+      ctx.lineTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.lineTo(mapX(points.length - 1), height - 36);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#4091e0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((item, index) => {
+    const x = mapX(index);
+    const y = mapYPrice(Number(item.close));
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+  ctx.strokeStyle = "#ff4d4f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  qtySeries.forEach((value, index) => {
+    const x = mapX(index);
+    const y = mapYQty(value);
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
+  const pointByDate = Object.fromEntries(points.map((item, idx) => [item.day, idx]));
+  sortedTrades.forEach((trade) => {
+    const idx = pointByDate[trade.date];
+    if (idx == null) {
+      return;
+    }
+    const x = mapX(idx);
+    const y = mapYPrice(validNumber(trade.price, points[idx].close));
+    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
+    ctx.strokeStyle = "#3b7bf6";
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+}
+
+function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
+  if (!canvas || !tooltip) {
+    return;
+  }
+  const existing = chartRuntimeMap.get(canvas.id);
+  if (existing) {
+    existing.payloadBuilder = payloadBuilder;
+    existing.options = { ...existing.options, ...options };
+    return existing;
+  }
+  let pressing = false;
+  let pressTimer = null;
+  let activePointerId = null;
+  let crossVisible = !!state.chartCrosshairMap[canvas.id];
+  let startX = 0;
+  let moved = false;
+  let panStarted = false;
+  const pointers = new Map();
+  const runtime = {
+    payloadBuilder,
+    options,
+    hideCrosshair() {
+      crossVisible = false;
+      tooltip.classList.remove("show");
+      delete state.chartCrosshairMap[canvas.id];
+      runtime.options.onRefresh?.();
+    },
+  };
+  chartRuntimeMap.set(canvas.id, runtime);
+
+  const clearPressTimer = () => {
+    if (pressTimer) {
+      window.clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  const updateCrosshair = (clientX) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * canvas.width;
+    const payload = runtime.payloadBuilder?.();
+    if (!payload) {
+      return;
+    }
+    const picked = payload.pickNearestByX(Math.max(payload.xMin, Math.min(payload.xMax, x)));
+    const first = picked.points[0];
+    if (!first) {
+      return;
+    }
+    crossVisible = true;
+    state.chartCrosshairMap[canvas.id] = {
+      x: picked.x,
+      y: first.y,
+      date: first.date,
+      points: picked.points.map((point, idx) => ({
+        label: payload.labels[payload.seriesList[idx]?.key] || payload.seriesList[idx]?.label || `曲线${idx + 1}`,
+        value: point.value,
+        key: payload.seriesList[idx]?.key,
+        axis: point.axis || payload.seriesList[idx]?.axis || "left",
+        y: point.y,
+      })),
+    };
+    runtime.options.onRefresh?.();
+    const formatter = runtime.options.valueFormatter || ((value) => formatNumber(value, 2));
+    const rows = state.chartCrosshairMap[canvas.id].points
+      .map((item) => `<div>${escapeHtml(item.label)}：${formatter(item.value, item.key, item.axis)}</div>`)
+      .join("");
+    tooltip.innerHTML = `<div>${escapeHtml(first.date)}</div>${rows}`;
+    tooltip.style.left = `${Math.max(6, Math.min(canvas.clientWidth - 130, (picked.x / canvas.width) * canvas.clientWidth + 10))}px`;
+    tooltip.style.top = `8px`;
+    tooltip.classList.add("show");
+  };
+
+  const handlePan = (deltaPx, payload) => {
+    const step = Math.round(deltaPx / CHART_EDGE_SCROLL_PX);
+    if (step === 0) {
+      return;
+    }
+    if (runtime.options.mode === "stock") {
+      const total = payload?.seriesList?.[0]?.values?.length || 0;
+      const windowSize = Math.max(12, Number(state.stockRecordWindow || 60));
+      const maxOffset = Math.max(0, total - windowSize);
+      state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0) - step));
+    } else if (state.analysisRangeMode !== "custom") {
+      const total = payload?.seriesList?.[0]?.values?.length || 0;
+      const maxOffset = Math.max(0, total - Math.max(2, Number(state.rangeDays || 30)));
+      state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
+    }
+    runtime.options.onRefresh?.();
+  };
+
+  canvas.addEventListener("pointerdown", (event) => {
+    canvas.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, event);
+    activePointerId = event.pointerId;
+    pressing = true;
+    moved = false;
+    panStarted = false;
+    startX = event.clientX;
+    clearPressTimer();
+    pressTimer = window.setTimeout(() => {
+      if (!pressing || moved) {
+        return;
+      }
+      updateCrosshair(event.clientX);
+    }, 220);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    const payload = runtime.payloadBuilder?.();
+    if (pointers.has(event.pointerId)) {
+      pointers.set(event.pointerId, event);
+    }
+    if (pointers.size >= 2) {
+      clearPressTimer();
+      const pair = [...pointers.values()];
+      const distance = Math.abs(pair[0].clientX - pair[1].clientX);
+      const prevDistance = state.lastPinchDistanceMap[canvas.id];
+      if (Number.isFinite(prevDistance) && Math.abs(distance - prevDistance) > 4) {
+        const scale = distance / Math.max(prevDistance, 1);
+        if (runtime.options.mode === "stock") {
+          const total = payload?.seriesList?.[0]?.values?.length || 0;
+          updateStockRecordWindowByScale(scale, total);
+        } else {
+          updateAnalysisWindowByScale(scale);
+          renderControls();
+        }
+        runtime.options.onRefresh?.();
+      }
+      state.lastPinchDistanceMap[canvas.id] = distance;
+      return;
+    }
+    if (event.pointerType === "mouse" && !pressing) {
+      updateCrosshair(event.clientX);
+      return;
+    }
+    if (crossVisible) {
+      updateCrosshair(event.clientX);
+      return;
+    }
+    if (pressing && activePointerId === event.pointerId) {
+      const deltaFromStart = Math.abs(event.clientX - startX);
+      if (deltaFromStart > 4) {
+        moved = true;
+      }
+      if (moved) {
+        clearPressTimer();
+        panStarted = true;
+        handlePan(event.movementX, payload);
+      }
+    }
+  });
+
+  const clearPointer = (event) => {
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) {
+      delete state.lastPinchDistanceMap[canvas.id];
+    }
+    if (panStarted && runtime.options.mode === "analysis") {
+      renderControls();
+    }
+    pressing = false;
+    moved = false;
+    panStarted = false;
+    clearPressTimer();
+    if (event.pointerType !== "mouse" && !crossVisible) {
+      tooltip.classList.remove("show");
+    }
+  };
+  canvas.addEventListener("pointerup", clearPointer);
+  canvas.addEventListener("pointercancel", clearPointer);
+  canvas.addEventListener("pointerleave", (event) => {
+    clearPointer(event);
+    if (event.pointerType === "mouse") {
+      runtime.hideCrosshair();
+    }
+  });
+  return runtime;
+}
+
+function updateAnalysisWindowByScale(scale) {
+  if (!Number.isFinite(scale) || scale === 1) {
+    return;
+  }
+  const delta = scale > 1 ? -6 : 6;
+  state.rangeDays = Math.max(7, Math.min(365, state.rangeDays + delta));
+  state.analysisRangeMode = "preset";
+}
+
+function updateStockRecordWindowByScale(scale, totalPoints) {
+  if (!Number.isFinite(scale) || scale === 1) {
+    return;
+  }
+  const delta = scale > 1 ? -6 : 6;
+  const maxWindow = Math.max(12, Math.min(240, totalPoints || 240));
+  state.stockRecordWindow = Math.max(12, Math.min(maxWindow, Number(state.stockRecordWindow || 60) + delta));
+  const maxOffset = Math.max(0, Math.max(0, totalPoints || 0) - state.stockRecordWindow);
+  state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
 }
 
 async function refreshMarketData() {
@@ -2109,26 +3004,30 @@ function getFxRateForDate(currency, dateKey) {
   if (currency === "CNY") {
     return 1;
   }
-  const map = state.fxRatesToCnyByDate?.[currency];
-  if (!map) {
-    return getFxRateToCny(currency);
-  }
-  if (dateKey && map[dateKey]) {
-    return map[dateKey];
-  }
-  const keys = Object.keys(map).sort();
+  const mapByDate = state.fxRatesToCnyByDate || {};
+  const keys = Object.keys(mapByDate).sort();
   if (!keys.length) {
     return getFxRateToCny(currency);
   }
   if (!dateKey) {
-    return map[keys[keys.length - 1]];
+    const latest = mapByDate[keys[keys.length - 1]];
+    return Number(latest?.[currency]) || getFxRateToCny(currency);
   }
   for (let i = keys.length - 1; i >= 0; i -= 1) {
     if (keys[i] <= dateKey) {
-      return map[keys[i]];
+      const hit = Number(mapByDate[keys[i]]?.[currency]);
+      if (Number.isFinite(hit) && hit > 0) {
+        return hit;
+      }
     }
   }
-  return map[keys[0]] || getFxRateToCny(currency);
+  for (const key of keys) {
+    const hit = Number(mapByDate[key]?.[currency]);
+    if (Number.isFinite(hit) && hit > 0) {
+      return hit;
+    }
+  }
+  return getFxRateToCny(currency);
 }
 
 function getFxRateForSymbol(symbol, market = inferMarket(symbol)) {
