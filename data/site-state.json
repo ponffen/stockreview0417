@@ -1,0 +1,55 @@
+{
+  "route": "earning",
+  "useDemoData": true,
+  "algoMode": "cost",
+  "benchmark": "none",
+  "stageRange": "month",
+  "rangeDays": 30,
+  "analysisRangeMode": "preset",
+  "customRangeStart": "",
+  "customRangeEnd": "",
+  "capitalTrendMode": "both",
+  "capitalAmount": 0,
+  "accounts": [
+    {
+      "id": "default",
+      "name": "默认账户",
+      "currency": "CNY",
+      "createdAt": 0
+    }
+  ],
+  "selectedAccountId": "all",
+  "tradeFilterAccountId": "all",
+  "stockSortKey": "default",
+  "stockSortOrder": "default",
+  "trades": [
+    {
+      "id": "2498fe56-2cdd-462f-b9c2-7d3900a424f9",
+      "accountId": "default",
+      "type": "trade",
+      "symbol": "sz300750",
+      "name": "宁德时代",
+      "side": "buy",
+      "price": 443.27,
+      "quantity": 100,
+      "amount": 44327,
+      "date": "2026-04-17",
+      "note": "sample import",
+      "createdAt": 1776384000000
+    },
+    {
+      "id": "bc5f5d75-c0f5-4414-906c-7a2d4400e0c4",
+      "accountId": "default",
+      "type": "trade",
+      "symbol": "sh601899",
+      "name": "紫金矿业",
+      "side": "buy",
+      "price": 34.68,
+      "quantity": 300,
+      "amount": 10404,
+      "date": "2026-04-17",
+      "note": "sample import",
+      "createdAt": 1776384000000
+    }
+  ]
+}

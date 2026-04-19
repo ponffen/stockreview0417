@@ -31,6 +31,17 @@ jobs:
         with:
           enablement: true
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build static site state snapshot
+        run: |
+          npm ci
+          npm run build:site-state
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
