@@ -26,7 +26,10 @@ Open: http://127.0.0.1:3030
 
 GitHub Pages cannot run the Node server or SQLite. The deploy workflow runs `npm run build:site-state`, which writes `data/site-state.json` (same shape as `GET /api/state`) from `scripts/seed-trades.sample.json`. The browser loads that file when the API is unavailable so the public site shows seeded trades instead of only demo data.
 
-To change what visitors see on Pages, edit `scripts/seed-trades.sample.json` (or point the export script at another JSON source), run `npm run build:site-state`, and commit the updated `data/site-state.json`.
+To change what visitors see on Pages:
+
+- If you only have sample data: edit `scripts/seed-trades.sample.json`, run `npm run build:site-state`, commit `data/site-state.json`.
+- If you already maintain a local SQLite DB at `data/app.db` (for example after `npm run import:trades`), run `npm run build:site-state` and it will export from that file automatically. Use `npm run build:site-state -- --seed` to force the sample seed instead, or `--db <path>` to export from another database file.
 
 ## Batch import trades
 
