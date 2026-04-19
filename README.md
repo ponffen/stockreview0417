@@ -22,6 +22,12 @@ Open: http://127.0.0.1:3030
 - Trades and app settings are persisted in SQLite: `data/app.db`
 - Frontend prefers `/api/*` for read/write; if the backend is unavailable, it falls back to `localStorage`.
 
+## GitHub Pages (static hosting)
+
+GitHub Pages cannot run the Node server or SQLite. The deploy workflow runs `npm run build:site-state`, which writes `data/site-state.json` (same shape as `GET /api/state`) from `scripts/seed-trades.sample.json`. The browser loads that file when the API is unavailable so the public site shows seeded trades instead of only demo data.
+
+To change what visitors see on Pages, edit `scripts/seed-trades.sample.json` (or point the export script at another JSON source), run `npm run build:site-state`, and commit the updated `data/site-state.json`.
+
 ## Batch import trades
 
 Prepare a JSON file as either:

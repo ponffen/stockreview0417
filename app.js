@@ -555,13 +555,33 @@ function cycleSortOrder(current) {
   return "default";
 }
 
+async function fetchStaticSiteState() {
+  try {
+    const response = await fetch("/site-state.json", { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    if (data && typeof data === "object" && Array.isArray(data.trades)) {
+      return data;
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
   let localParsed = null;
+  let staticParsed = null;
   apiReady = await checkApiHealth();
   if (apiReady) {
     remoteParsed = await fetchRemoteState();
+  }
+  if (!apiReady || !(remoteParsed && Array.isArray(remoteParsed.trades) && remoteParsed.trades.length)) {
+    staticParsed = await fetchStaticSiteState();
   }
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
@@ -583,6 +603,8 @@ async function hydrateState() {
       }
       void pushSettingsToApi(localParsed);
     }
+  } else if (staticParsed && Array.isArray(staticParsed.trades) && staticParsed.trades.length) {
+    parsed = staticParsed;
   } else if (remoteParsed) {
     parsed = remoteParsed;
   }

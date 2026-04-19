@@ -1,3 +1,4 @@
 node_modules/
-data/
+data/*
+!data/site-state.json
 npm-debug.log*

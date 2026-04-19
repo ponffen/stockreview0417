@@ -374,6 +374,10 @@ function getState() {
   };
 }
 
+function closeDatabase() {
+  db.close();
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
@@ -385,4 +389,5 @@ module.exports = {
   getSettings,
   setSettings,
   getState,
+  closeDatabase,
 };
