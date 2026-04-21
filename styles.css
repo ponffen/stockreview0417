@@ -86,11 +86,6 @@ body {
   font-size: 16px;
 }
 
-.currency-tip {
-  color: #8e98a8;
-  font-size: 14px;
-}
-
 .help {
   display: inline-block;
   width: 16px;
@@ -205,6 +200,39 @@ body {
   display: flex;
   justify-content: flex-start;
   align-items: center;
+}
+
+.stock-head-row {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stock-currency-toggle {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.stock-currency-toggle:hover {
+  background: #f3f5f9;
+}
+
+.stock-currency-toggle.active {
+  border-color: #2b6cff;
+  color: #2b6cff;
+  background: #eef3ff;
 }
 
 .stock-title-wrap {
@@ -913,6 +941,72 @@ h2 {
 
 .bottom-tab-btn.active {
   color: var(--blue);
+}
+
+.mine-panel {
+  margin: 12px;
+  background: var(--panel);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.mine-nav-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.mine-nav-row:last-child {
+  border-bottom: none;
+}
+
+.mine-nav-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mine-nav-title {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.mine-nav-value {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.mine-nav-chevron {
+  flex-shrink: 0;
+  color: #c5ccd6;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.mine-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mine-sub-head h2 {
+  margin: 0;
+  font-size: 17px;
 }
 
 .empty {

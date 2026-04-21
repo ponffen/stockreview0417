@@ -2,6 +2,8 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- 部署在子路径时改为实际前缀，例如 content="/myapp/api"（与服务器 BASE_PATH 一致） -->
+    <meta name="stockreview-api-base" content="/api" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
@@ -18,7 +20,6 @@
               <select id="accountFilterSelect" class="head-select"></select>
               <span class="arrow">▼</span>
             </label>
-            <div id="currencyTip" class="currency-tip">币种：人民币</div>
           </div>
 
           <div class="profit-row">
@@ -43,8 +44,18 @@
         </article>
 
         <article class="stock-card">
-          <div class="stock-head">
+          <div class="stock-head stock-head-row">
             <h2 class="stock-title">个股收益</h2>
+            <button
+              type="button"
+              id="stockCurrencyToggle"
+              class="stock-currency-toggle"
+              title="切换人民币/原币种展示金额"
+              aria-label="切换个股金额币种"
+              aria-pressed="false"
+            >
+              ￥
+            </button>
           </div>
           <div class="table-scroll">
             <table class="stock-table">
@@ -75,19 +86,11 @@
       <section id="route-analysis" class="route-pane">
         <article class="panel">
           <div class="panel-head panel-head-account">
-            <h2>收益率算法</h2>
+            <h2>分析范围</h2>
             <label class="head-select-wrap">
               <select id="analysisAccountSelect" class="head-select"></select>
               <span class="arrow">▼</span>
             </label>
-          </div>
-          <div class="form-row">
-            <label for="algoMode">计算方式</label>
-            <select id="algoMode">
-              <option value="cost">成本算法</option>
-              <option value="money">资金加权（Modified Dietz）</option>
-              <option value="time">时间加权（TWR）</option>
-            </select>
           </div>
           <div class="form-row">
             <label for="benchmark">指数对比</label>
@@ -185,9 +188,45 @@
         </article>
       </section>
 
-      <section id="route-account" class="route-pane">
+      <section id="route-mine" class="route-pane">
+        <article class="mine-panel">
+          <button type="button" class="mine-nav-row" data-mine-open="algo" aria-label="收益率算法">
+            <div class="mine-nav-main">
+              <span class="mine-nav-title">收益率算法</span>
+              <span id="mineAlgoSummary" class="mine-nav-value">成本算法</span>
+            </div>
+            <span class="mine-nav-chevron" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="mine-nav-row" data-mine-open="accounts" aria-label="股票账户">
+            <div class="mine-nav-main">
+              <span class="mine-nav-title">股票账户</span>
+            </div>
+            <span class="mine-nav-chevron" aria-hidden="true">›</span>
+          </button>
+        </article>
+      </section>
+
+      <section id="route-mine-algo" class="route-pane">
         <article class="panel">
-          <div class="panel-head">
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back>返回</button>
+            <h2>收益率算法</h2>
+          </div>
+          <div class="form-row">
+            <label for="algoModeSelectMine">计算方式</label>
+            <select id="algoModeSelectMine">
+              <option value="cost">成本算法</option>
+              <option value="money">资金加权（Modified Dietz）</option>
+              <option value="time">时间加权（TWR）</option>
+            </select>
+          </div>
+        </article>
+      </section>
+
+      <section id="route-mine-accounts" class="route-pane">
+        <article class="panel">
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back>返回</button>
             <h2>股票账户</h2>
           </div>
           <form id="accountForm">
@@ -234,8 +273,8 @@
         <button class="bottom-tab-btn" data-route="trade">
           <span class="tab-ico">¥</span><span>交易</span>
         </button>
-        <button class="bottom-tab-btn" data-route="account">
-          <span class="tab-ico">◉</span><span>账户</span>
+        <button class="bottom-tab-btn" data-route="mine">
+          <span class="tab-ico">◉</span><span>我的</span>
         </button>
       </nav>
     </main>
