@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS analysis_daily_snapshot (
 );
 
 CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC);
+
+CREATE TABLE IF NOT EXISTS symbol_daily_close (
+  symbol TEXT NOT NULL,
+  date TEXT NOT NULL,
+  close REAL NOT NULL,
+  source TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (symbol, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_daily_close_date ON symbol_daily_close (date ASC);
 `);
 
 const tradeColumns = db.prepare("PRAGMA table_info(trades)").all();
@@ -799,6 +810,102 @@ ON CONFLICT(account_id, date) DO UPDATE SET
   updated_at = excluded.updated_at
 `);
 
+const UPSERT_SYMBOL_DAILY_CLOSE_STMT = db.prepare(`
+INSERT INTO symbol_daily_close (symbol, date, close, source, updated_at)
+VALUES (@symbol, @date, @close, @source, @updated_at)
+ON CONFLICT(symbol, date) DO UPDATE SET
+  close = excluded.close,
+  source = excluded.source,
+  updated_at = excluded.updated_at
+`);
+
+const SELECT_SYMBOL_DAILY_CLOSE_RANGE_STMT = db.prepare(`
+SELECT date, close, source FROM symbol_daily_close
+WHERE symbol = ? AND date >= ? AND date <= ?
+ORDER BY date ASC
+`);
+
+function addCalendarDays(dateStr, delta) {
+  const base = String(dateStr || "").slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(base);
+  if (!m) {
+    return base;
+  }
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  d.setDate(d.getDate() + Number(delta) || 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function upsertSymbolDailyCloseBatch(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    return 0;
+  }
+  const now = nowMs();
+  const tx = db.transaction(() => {
+    for (const raw of list) {
+      const r = raw || {};
+      const sym = normalizeSymbol(r.symbol);
+      if (!sym || !Number.isFinite(Number(r.close))) {
+        continue;
+      }
+      UPSERT_SYMBOL_DAILY_CLOSE_STMT.run({
+        symbol: sym,
+        date: toDateKey(r.date),
+        close: validNumber(r.close, 0),
+        source: String(r.source || "").slice(0, 64),
+        updated_at: now,
+      });
+    }
+  });
+  tx();
+  return list.length;
+}
+
+function getSymbolDailyCloseRange(symbol, fromDate, toDate) {
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    return [];
+  }
+  const from = fromDate && String(fromDate).trim() ? String(fromDate).trim() : "1970-01-01";
+  const to = toDate && String(toDate).trim() ? String(toDate).trim() : "9999-12-31";
+  return SELECT_SYMBOL_DAILY_CLOSE_RANGE_STMT.all(sym, from, to).map((row) => ({
+    date: row.date,
+    close: Number(row.close),
+    source: row.source || "",
+  }));
+}
+
+/** 全部成交里出现过的标的：首日−1 ～ max(末次+1, 今天) */
+function getTradeWindowForDailyClose() {
+  const trades = getTrades();
+  if (!trades.length) {
+    return { symbols: [], from: null, to: null };
+  }
+  let minD = trades[0].date;
+  let maxD = trades[0].date;
+  const set = new Set();
+  for (const t of trades) {
+    if (t.date < minD) {
+      minD = t.date;
+    }
+    if (t.date > maxD) {
+      maxD = t.date;
+    }
+    const s = normalizeSymbol(t.symbol);
+    if (s) {
+      set.add(s);
+    }
+  }
+  const today = toDateKey(new Date());
+  const from = addCalendarDays(minD, -1);
+  let to = addCalendarDays(maxD, 1);
+  if (to < today) {
+    to = today;
+  }
+  return { symbols: [...set].sort(), from, to };
+}
+
 function getSymbolDailyPnl(query = {}) {
   const accountId = query.accountId != null ? String(query.accountId).trim() : "";
   const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
@@ -942,5 +1049,9 @@ module.exports = {
   upsertAnalysisDailySnapshot,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
+  upsertSymbolDailyCloseBatch,
+  getSymbolDailyCloseRange,
+  getTradeWindowForDailyClose,
+  addCalendarDays,
   closeDatabase,
 };

@@ -4,51 +4,8 @@ const express = require("express");
 const cors = require("cors");
 const iconv = require("iconv-lite");
 
-const SINA_CHROME_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const SINA_REFERER = "https://finance.sina.com.cn/";
-const SINA_KLINE_PATH = "/quotes_service/api/json_v2.php/CN_MarketData.getKLineData";
-
-/**
- * 从新浪拉日 K JSON（浏览器因 CORS 不能直连，经本机代理）。
- * 优先 HTTPS，回退 HTTP；响应 charset=gbk，须 iconv 再 JSON.parse（与浏览器「直接可用」一致）。
- */
-async function fetchSinaKlineJsonFromUpstream(paramsObj) {
-  const q = new URLSearchParams(paramsObj);
-  const qs = q.toString();
-  const bases = ["https://money.finance.sina.com.cn", "http://money.finance.sina.com.cn"];
-  let lastErr = "";
-  for (const base of bases) {
-    const url = `${base}${SINA_KLINE_PATH}?${qs}`;
-    try {
-      const r = await fetch(url, {
-        headers: { "User-Agent": SINA_CHROME_UA, Referer: SINA_REFERER },
-        signal: AbortSignal.timeout(25_000),
-      });
-      if (!r.ok) {
-        lastErr = `sina ${r.status}`;
-        continue;
-      }
-      const buf = Buffer.from(await r.arrayBuffer());
-      let text = iconv.decode(buf, "gbk");
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        try {
-          data = JSON.parse(buf.toString("utf8"));
-        } catch {
-          lastErr = "invalid json";
-          continue;
-        }
-      }
-      return { ok: true, data, error: "" };
-    } catch (e) {
-      lastErr = e.message || "fetch failed";
-    }
-  }
-  return { ok: false, data: null, error: lastErr || "sina failed" };
-}
+const { fetchSinaKlineJsonFromUpstream } = require("./src/sina-kline-upstream");
+const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill");
 
 /**
  * 新浪 CN_MarketData.getKLineData 代理。勿依赖单一字符串路径，避免部署/转发后落到 app.use('/api') 的 404。
@@ -107,6 +64,9 @@ const {
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
   upsertAnalysisDailySnapshot,
+  upsertSymbolDailyCloseBatch,
+  getSymbolDailyCloseRange,
+  getTradeWindowForDailyClose,
 } = require("./src/db");
 
 const app = express();
@@ -513,6 +473,68 @@ app.get("/api/us-historical-close", async (req, res) => {
     res.json({ ok: true, day: bestDay, close: bestClose });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "sina failed" });
+  }
+});
+
+/** 本地缓存的日收盘价（股票、日期、收盘），计算时优先进页前先 GET for-trades 灌入前端 */
+app.get("/api/daily-close", (req, res) => {
+  try {
+    const raw = req.query.symbol != null ? String(req.query.symbol) : "";
+    const symbol = normalizeSymbol(raw);
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "symbol required" });
+      return;
+    }
+    const from = req.query.from != null ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null ? String(req.query.to).trim() : "9999-12-31";
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: getSymbolDailyCloseRange(symbol, from, to) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
+  }
+});
+
+app.get("/api/daily-close/for-trades", (_req, res) => {
+  try {
+    const w = getTradeWindowForDailyClose();
+    if (!w.symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const data = {};
+    for (const sym of w.symbols) {
+      data[sym] = getSymbolDailyCloseRange(sym, w.from, w.to);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data, from: w.from, to: w.to, symbols: w.symbols });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
+  }
+});
+
+/** 从东财+新浪拉区间写入 symbol_daily_close（先跑回填再打开页面） */
+app.post("/api/daily-close/backfill", async (req, res) => {
+  try {
+    const w = getTradeWindowForDailyClose();
+    if (!w.symbols.length) {
+      res.json({ ok: true, message: "no trades", counts: {} });
+      return;
+    }
+    let symbols = w.symbols;
+    if (Array.isArray(req.body?.symbols) && req.body.symbols.length) {
+      const want = new Set(req.body.symbols.map((s) => normalizeSymbol(String(s))).filter(Boolean));
+      symbols = w.symbols.filter((s) => want.has(s));
+    }
+    const counts = {};
+    for (const sym of symbols) {
+      const rows = await fetchRemoteDailyClosesForSymbol(sym, w.from, w.to);
+      upsertSymbolDailyCloseBatch(rows);
+      counts[sym] = rows.length;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    res.json({ ok: true, from: w.from, to: w.to, counts });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message || "backfill failed" });
   }
 });
 

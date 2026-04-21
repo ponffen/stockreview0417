@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /**
- * 历史回填：按交易日历生成 symbol_daily_pnl、analysis_daily_snapshot。
- * 依赖：新浪日 K、新浪外汇日 K（需网络）。.trade 仅含日期不含时点，按自然日归属成交。
+ * 历史回填：清空后重算 symbol_daily_pnl、analysis_daily_snapshot。
+ *
+ * 1) symbol_daily_pnl：按账户、标的、自然日，用收盘价（优先 symbol_daily_close，缺省再合并新浪）
+ *    计算当日持仓与当日收益 day_pnl_native（原币，不乘汇率）。
+ * 2) analysis_daily_snapshot：将 (1) 中每日每标的收益 × 当日 USD/HKD 对人民币汇率，按账户、自然日汇总
+ *    得 profit_cny；再与按人民币计的总市值序列算成本/时间/资金加权收益率等，写入全字段。
+ * 3) 外汇中间价：新浪日 K（需网络）。
  */
 const path = require("node:path");
 
@@ -17,6 +22,7 @@ const {
   getTrades,
   getSettings,
   normalizeSymbol,
+  getSymbolDailyCloseRange,
   upsertSymbolDailyPnlBatch,
   upsertAnalysisDailySnapshot,
   deleteAllSymbolDailyPnl,
@@ -53,6 +59,13 @@ function fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey) {
   if (currency === "USD") return validNumber(fxUsdMap[dateKey], 7.2);
   if (currency === "HKD") return validNumber(fxHkdMap[dateKey], 0.92);
   return 1;
+}
+
+/** 汇总层：原币日收益 × 当日汇率 → 人民币，累加到 accountId|date */
+function addDailyProfitCnyFromNative(profitCnyByAccDate, accountId, dateKey, pnlNative, currency, fxUsdMap, fxHkdMap) {
+  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey);
+  const pk = `${accountId}|${dateKey}`;
+  profitCnyByAccDate.set(pk, (profitCnyByAccDate.get(pk) || 0) + pnlNative * fx);
 }
 
 /** max day <= dateKey 的收盘价 */
@@ -205,6 +218,24 @@ function filterTradesForAccount(allTrades, accountId) {
   return allTrades.filter((t) => t.accountId === accountId).sort(sortTradeAsc);
 }
 
+/** 优先采用 symbol_daily_close，再叠加新浪补缺；输出与 fetchKlineDataSina 相同 { day, close }[] */
+function mergeKlinePreferDb(dbRows, sinaRows) {
+  const map = new Map();
+  for (const r of sinaRows) {
+    if (r?.day && Number.isFinite(r.close) && r.close > 0) {
+      map.set(r.day, r.close);
+    }
+  }
+  for (const r of dbRows) {
+    const d = r?.date != null ? String(r.date).slice(0, 10) : "";
+    if (d && Number.isFinite(r.close) && r.close > 0) {
+      map.set(d, r.close);
+    }
+  }
+  const days = [...map.keys()].sort((a, b) => a.localeCompare(b));
+  return days.map((day) => ({ day, close: map.get(day) }));
+}
+
 async function main() {
   const now = Date.now();
   console.log("[backfill] 清空两张日表…");
@@ -227,24 +258,6 @@ async function main() {
   const fxUsdMap = await fetchSinaForexDayKSeries("usdcny", "USDCNY");
   const fxHkdMap = await fetchSinaForexDayKSeries("hkdcny", "HKDCNY");
 
-  const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
-  console.log(`[backfill] 拉取 ${symbols.length} 标的日 K…`);
-  const klineBySym = new Map();
-  for (let i = 0; i < symbols.length; i += 1) {
-    const sym = symbols[i];
-    try {
-      const rows = await fetchKlineDataSina(sym, 1023);
-      klineBySym.set(sym, rows);
-      if ((i + 1) % 5 === 0) {
-        console.log(`  … ${i + 1}/${symbols.length}`);
-      }
-    } catch (e) {
-      console.warn(`  [warn] K线失败 ${sym}:`, e.message || e);
-      klineBySym.set(sym, []);
-    }
-    await new Promise((r) => setTimeout(r, 120));
-  }
-
   let minD = allTrades[0].date;
   let maxD = allTrades[0].date;
   for (const t of allTrades) {
@@ -254,9 +267,31 @@ async function main() {
   const today = toDateKey(new Date());
   if (maxD < today) maxD = today;
 
+  const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
+  console.log(`[backfill] 合并日 K（优先 symbol_daily_close）+ 新浪，共 ${symbols.length} 标的…`);
+  const klineBySym = new Map();
+  for (let i = 0; i < symbols.length; i += 1) {
+    const sym = symbols[i];
+    const dbRows = getSymbolDailyCloseRange(sym, minD, maxD);
+    let sinaRows = [];
+    try {
+      sinaRows = await fetchKlineDataSina(sym, 1023);
+    } catch (e) {
+      console.warn(`  [warn] 新浪K线失败 ${sym}:`, e.message || e);
+    }
+    const merged = mergeKlinePreferDb(dbRows, sinaRows);
+    klineBySym.set(sym, merged);
+    if (dbRows.length) {
+      console.log(`  ${sym}: 本地 ${dbRows.length} 条 → 合并后 ${merged.length} 根`);
+    } else if ((i + 1) % 10 === 0) {
+      console.log(`  … ${i + 1}/${symbols.length}`);
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+
   const allDates = enumerateDays(minD, maxD);
   const accountIds = ["all", ...new Set(allTrades.map((t) => String(t.accountId || "default")))];
-  /** `${accountId}|${date}` -> 当日原币收益折算人民币（与需求第4条一致） */
+  /** `${accountId}|${date}` -> 当日各标的 (原币收益×汇率) 之和（人民币） */
   const profitCnyByAccDate = new Map();
 
   const symbolRowsBuffer = [];
@@ -308,12 +343,9 @@ async function main() {
           dayTurnoverQty += validNumber(u.quantity, 0);
         }
 
+        // 原币日收益（与汇率无关）
         const pnlNative = qEod * closeD - qBod * prevPx + dayFlow;
         const ccy = getSymbolCurrency(sym);
-        const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, D);
-        const pnlC = pnlNative * fx;
-        const pk = `${accountId}|${D}`;
-        profitCnyByAccDate.set(pk, (profitCnyByAccDate.get(pk) || 0) + pnlC);
 
         symbolRowsBuffer.push({
           accountId,
@@ -327,6 +359,9 @@ async function main() {
           currency: ccy,
           createdAt: now,
         });
+
+        // 汇总层：写入 analysis_daily_snapshot 用的「当日人民币收益」累加
+        addDailyProfitCnyFromNative(profitCnyByAccDate, accountId, D, pnlNative, ccy, fxUsdMap, fxHkdMap);
         if (symbolRowsBuffer.length >= 500) flushSym();
       }
     }

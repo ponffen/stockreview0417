@@ -590,6 +590,47 @@ function getKlineBySymbol(symbol) {
   return state.klineMap[normalized] || state.klineMap[alias] || [];
 }
 
+/** 从 SQLite 日收盘价表灌入 state.klineMap，优先于实时拉日 K */
+async function hydrateKlineFromLocalDb() {
+  if (!apiReady) {
+    return;
+  }
+  try {
+    const r = await fetch(`${API_BASE}/daily-close/for-trades`, { cache: "no-store" });
+    if (!r.ok) {
+      return;
+    }
+    const j = await r.json();
+    if (!j?.ok || !j.data || typeof j.data !== "object") {
+      return;
+    }
+    const toKlineRows = (arr) =>
+      (Array.isArray(arr) ? arr : [])
+        .map((row) => ({
+          day: String(row.date || "").slice(0, 10),
+          open: Number(row.close),
+          high: Number(row.close),
+          low: Number(row.close),
+          close: Number(row.close),
+          volume: 0,
+        }))
+        .filter((x) => x.day && Number.isFinite(x.close))
+        .sort((a, b) => a.day.localeCompare(b.day));
+    Object.entries(j.data).forEach(([sym, rows]) => {
+      const list = toKlineRows(rows);
+      if (!list.length) {
+        return;
+      }
+      const normalized = normalizeSymbol(sym);
+      const alias = normalized.replace(/^gb_/i, "");
+      state.klineMap[normalized] = list;
+      state.klineMap[alias] = list;
+    });
+  } catch {
+    // ignore
+  }
+}
+
 function getCurrencyLabel(currency) {
   if (currency === "USD") return "美元";
   if (currency === "HKD") return "港币";
@@ -2129,19 +2170,25 @@ async function removeTradeById(tradeId) {
   refreshMarketData();
 }
 
-function totalProfitCnyBookFromPositions(visiblePositions) {
-  return visiblePositions.reduce((s, p) => {
-    const fx = validNumber(p.fxRate, 1) || 1;
+/** 与 analysis_daily_snapshot.profit_cny 口径一致：今日各标的当日盈亏按即期汇率折算人民币 */
+function todayProfitCnyForAnalysisSnapshot(portfolio) {
+  return portfolio.visiblePositions.reduce((s, p) => {
+    const n = Number(p.todayProfitNative) || 0;
     if (p.currency === "CNY" || p.market === "A股") {
-      return s + p.totalProfitNative;
+      return s + n;
     }
-    return s + p.totalProfitNative * fx;
+    return s + n * (validNumber(p.fxRate, 1) || 1);
   }, 0);
 }
 
+/**
+ * 分析 Tab 最后一行对齐首页总览：总市值、累计收益、本金等与 computePortfolio 一致；
+ * 当日 profit_cny 与总览「今日」同为人民币折算口径。
+ */
 function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate) {
-  const mv = portfolio.visiblePositions.reduce((s, p) => s + p.marketValue, 0);
-  const totalP = totalProfitCnyBookFromPositions(portfolio.visiblePositions);
+  const mv = portfolio.totalMarketValue;
+  const totalP = portfolio.totalProfit;
+  const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
   const next = sliceRows.map((r) => ({ ...r }));
   const hit = next.findIndex((r) => r.date === todayKey);
   if (hit >= 0) {
@@ -2150,6 +2197,7 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
       marketValue: mv,
       principal: portfolio.principal,
       totalProfit: totalP,
+      profitCny: todayP,
       totalRateCost: state.algoMode === "cost" ? liveModeRate : next[hit].totalRateCost,
       totalRateTwr: state.algoMode === "time" ? liveModeRate : next[hit].totalRateTwr,
       totalRateDietz: state.algoMode === "money" ? liveModeRate : next[hit].totalRateDietz,
@@ -2158,7 +2206,6 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
   }
   const last = next[next.length - 1];
   if (last && last.date < todayKey) {
-    const todayP = portfolio.visiblePositions.reduce((s, p) => s + applyFxForOverview(p, p.todayProfitNative), 0);
     next.push({
       ...last,
       date: todayKey,
@@ -3764,6 +3811,8 @@ async function refreshMarketData() {
   state.marketLoading = true;
 
   try {
+    await hydrateKlineFromLocalDb();
+
     const fxSpot = await fetchRealtimeForexSpot().catch(() => ({}));
     if (fxSpot && typeof fxSpot === "object") {
       Object.assign(state.fxSpot, fxSpot);

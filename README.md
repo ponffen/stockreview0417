@@ -22,6 +22,14 @@ Open: http://127.0.0.1:3030
 - Trades and app settings are persisted in SQLite: `data/app.db`
 - Frontend prefers `/api/*` for read/write; if the backend is unavailable, it falls back to `localStorage`.
 
+### Daily close cache (日 K 收盘价本地表)
+
+Table `symbol_daily_close` stores `(symbol, date, close)` so the UI can hydrate K-line from SQLite instead of calling live APIs when offline or blocked.
+
+1. Backfill once (uses Eastmoney long history plus Sina as merge): `npm run backfill:daily-close`
+2. Or with the server running: `POST /api/daily-close/backfill` (optional body `{ "symbols": ["sz300750"] }`)
+3. On refresh, the app calls `GET /api/daily-close/for-trades` before fetching missing K-lines.
+
 ## GitHub Pages (static hosting)
 
 GitHub Pages cannot run the Node server or SQLite. The deploy workflow runs `npm run build:site-state`, which writes `data/site-state.json` (same shape as `GET /api/state`) from `scripts/seed-trades.sample.json`. The browser loads that file when the API is unavailable so the public site shows seeded trades instead of only demo data.
