@@ -1896,7 +1896,20 @@ function getStageStartKey(stageRange, firstDate) {
   return toDateKey(start);
 }
 
+/** 分析页「年初至今」chip 用 rangeDays=365，语义为当年 1 月 1 日起，非滚动 365 日。 */
+function isAnalysisYtdPreset() {
+  return state.analysisRangeMode === "preset" && Number(state.rangeDays) === 365;
+}
+
+function ytdStartDateKey() {
+  const y = new Date();
+  return toDateKey(new Date(y.getFullYear(), 0, 1));
+}
+
 function getDefaultAnalysisStartDate() {
+  if (isAnalysisYtdPreset()) {
+    return ytdStartDateKey();
+  }
   const dt = new Date();
   dt.setDate(dt.getDate() - Math.max(state.rangeDays - 1, 0));
   return toDateKey(dt);
@@ -2480,6 +2493,20 @@ function resolveAnalysisRange(history) {
     if (picked.length) {
       return picked;
     }
+  }
+  if (isAnalysisYtdPreset()) {
+    const ytdKey = ytdStartDateKey();
+    const filtered = history.filter((point) => point.date >= ytdKey);
+    if (!filtered.length) {
+      return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+    }
+    const windowSize = Math.min(Math.max(Math.min(filtered.length, 365), 2), filtered.length);
+    const maxOffset = Math.max(0, filtered.length - windowSize);
+    const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
+    state.analysisPanOffset = offset;
+    const end = filtered.length - offset;
+    const start = Math.max(0, end - windowSize);
+    return filtered.slice(start, end);
   }
   const windowSize = Math.min(Math.max(state.rangeDays, 2), history.length);
   const maxOffset = Math.max(0, history.length - windowSize);
