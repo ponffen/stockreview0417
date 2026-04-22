@@ -109,6 +109,9 @@ const state = {
   analysisRangeMode: "preset",
   customRangeStart: "",
   customRangeEnd: "",
+  /** 自定义区间输入框草稿，仅点「应用」后写入 customRangeStart/End 并刷新图表 */
+  customRangeDraftStart: "",
+  customRangeDraftEnd: "",
   capitalTrendMode: "both",
   capitalAmount: 0,
   accounts: [DEFAULT_ACCOUNT],
@@ -1098,6 +1101,8 @@ async function hydrateState() {
   });
   state.selectedAccountId = resolveValidAccountFilter(state.selectedAccountId);
   state.tradeFilterAccountId = resolveValidAccountFilter(state.tradeFilterAccountId);
+  state.customRangeDraftStart = state.customRangeStart;
+  state.customRangeDraftEnd = state.customRangeEnd;
 }
 
 function persistState() {
@@ -1364,6 +1369,8 @@ function bindEvents() {
       const value = chip.dataset.range;
       if (value === "custom") {
         state.analysisRangeMode = "custom";
+        state.customRangeDraftStart = state.customRangeStart;
+        state.customRangeDraftEnd = state.customRangeEnd;
       } else if (value === "all") {
         state.analysisRangeMode = "all";
         state.analysisPanOffset = 0;
@@ -1378,28 +1385,23 @@ function bindEvents() {
     });
   });
 
-  const syncCustomRangeInputsToState = () => {
+  const syncCustomRangeDraftFromInputs = () => {
     if (customRangeStartInput) {
-      state.customRangeStart = customRangeStartInput.value || "";
+      state.customRangeDraftStart = customRangeStartInput.value || "";
     }
     if (customRangeEndInput) {
-      state.customRangeEnd = customRangeEndInput.value || "";
+      state.customRangeDraftEnd = customRangeEndInput.value || "";
     }
   };
-  customRangeStartInput?.addEventListener("change", () => {
-    syncCustomRangeInputsToState();
-    persistState();
-  });
-  customRangeStartInput?.addEventListener("input", syncCustomRangeInputsToState);
-  customRangeEndInput?.addEventListener("change", () => {
-    syncCustomRangeInputsToState();
-    persistState();
-  });
-  customRangeEndInput?.addEventListener("input", syncCustomRangeInputsToState);
+  customRangeStartInput?.addEventListener("input", syncCustomRangeDraftFromInputs);
+  customRangeStartInput?.addEventListener("change", syncCustomRangeDraftFromInputs);
+  customRangeEndInput?.addEventListener("input", syncCustomRangeDraftFromInputs);
+  customRangeEndInput?.addEventListener("change", syncCustomRangeDraftFromInputs);
 
   applyCustomRangeBtn?.addEventListener("click", () => {
-    let start = customRangeStartInput?.value || "";
-    let end = customRangeEndInput?.value || "";
+    syncCustomRangeDraftFromInputs();
+    let start = state.customRangeDraftStart || "";
+    let end = state.customRangeDraftEnd || "";
     if (!start && !end) {
       return;
     }
@@ -1414,6 +1416,8 @@ function bindEvents() {
     }
     state.customRangeStart = start;
     state.customRangeEnd = end;
+    state.customRangeDraftStart = start;
+    state.customRangeDraftEnd = end;
     state.analysisRangeMode = "custom";
     state.analysisPanOffset = 0;
     persistState();
@@ -1666,10 +1670,16 @@ function renderControls() {
     customRangeRow.classList.toggle("hidden", state.analysisRangeMode !== "custom");
   }
   if (customRangeStartInput) {
-    customRangeStartInput.value = state.customRangeStart || "";
+    customRangeStartInput.value =
+      state.analysisRangeMode === "custom"
+        ? state.customRangeDraftStart || ""
+        : state.customRangeStart || "";
   }
   if (customRangeEndInput) {
-    customRangeEndInput.value = state.customRangeEnd || "";
+    customRangeEndInput.value =
+      state.analysisRangeMode === "custom"
+        ? state.customRangeDraftEnd || ""
+        : state.customRangeEnd || "";
   }
   if (assetCurveModeSelect) {
     assetCurveModeSelect.value = state.capitalTrendMode;
