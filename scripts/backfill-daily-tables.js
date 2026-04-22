@@ -4,8 +4,8 @@
  *
  * 1) symbol_daily_pnl：按账户、标的、自然日，用收盘价（优先 symbol_daily_close，缺省再合并新浪）
  *    计算当日持仓与当日收益 day_pnl_native（原币，不乘汇率）。
- * 2) analysis_daily_snapshot：将 (1) 中每日每标的收益 × 当日 USD/HKD 对人民币汇率，按账户、自然日汇总
- *    得 profit_cny；再与按人民币计的总市值序列算成本/时间/资金加权收益率等，写入全字段。
+ * 2) analysis_daily_snapshot：每个账户、每个自然日先在原币侧按币种（CNY/HKD/USD）汇总各标的日收益，
+ *    再对各币种合计 × 当日对人民币汇率，加总得到 profit_cny；再与人民币总市值序列算收益率等。
  * 3) 外汇中间价：新浪日 K（需网络）。
  */
 const path = require("node:path");
@@ -61,11 +61,25 @@ function fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey) {
   return 1;
 }
 
-/** 汇总层：原币日收益 × 当日汇率 → 人民币，累加到 accountId|date */
-function addDailyProfitCnyFromNative(profitCnyByAccDate, accountId, dateKey, pnlNative, currency, fxUsdMap, fxHkdMap) {
-  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey);
+/** 汇总层：同一账户、同一自然日、同一币种下累加各标的原币日收益（先不加汇率） */
+function addDailyProfitNativeByCurrency(accDateNative, accountId, dateKey, pnlNative, currency) {
   const pk = `${accountId}|${dateKey}`;
-  profitCnyByAccDate.set(pk, (profitCnyByAccDate.get(pk) || 0) + pnlNative * fx);
+  let byCcy = accDateNative.get(pk);
+  if (!byCcy) {
+    byCcy = {};
+    accDateNative.set(pk, byCcy);
+  }
+  byCcy[currency] = (byCcy[currency] || 0) + pnlNative;
+}
+
+/** 将「按币种汇总后的原币日收益」乘以当日汇率，得到当日人民币收益合计 */
+function profitCnyFromAccDateNative(byCcy, dateKey, fxUsdMap, fxHkdMap) {
+  if (!byCcy) return 0;
+  let sum = 0;
+  for (const [ccy, amt] of Object.entries(byCcy)) {
+    sum += amt * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dateKey);
+  }
+  return sum;
 }
 
 /** max day <= dateKey 的收盘价 */
@@ -291,8 +305,8 @@ async function main() {
 
   const allDates = enumerateDays(minD, maxD);
   const accountIds = ["all", ...new Set(allTrades.map((t) => String(t.accountId || "default")))];
-  /** `${accountId}|${date}` -> 当日各标的 (原币收益×汇率) 之和（人民币） */
-  const profitCnyByAccDate = new Map();
+  /** `${accountId}|${date}` -> { CNY?: number, HKD?: number, USD?: number } 原币日收益按币种已加总 */
+  const accDateNative = new Map();
 
   const symbolRowsBuffer = [];
   const flushSym = () => {
@@ -327,7 +341,7 @@ async function main() {
           pi += 1;
         }
         const qEod = qty;
-        if (qBod <= 0) continue;
+        if (qBod <= 0 && qEod <= 0) continue;
 
         const closeD = closeOnOrBefore(kl, D);
         const closePrev = closeBefore(kl, D);
@@ -343,8 +357,9 @@ async function main() {
           dayTurnoverQty += validNumber(u.quantity, 0);
         }
 
-        // 原币日收益（与汇率无关）
-        const pnlNative = qEod * closeD - qBod * prevPx + dayFlow;
+        // 原币日收益：Δ持仓市值 − 当日净流入持仓的现金（signedAmount：买 +amount、卖 −amount）。
+        // 须用「− dayFlow」，与开仓日 qEod*closeD−买款 一致；用 + dayFlow 会把累计 profit_cny 与总市值走势算反。
+        const pnlNative = qEod * closeD - qBod * prevPx - dayFlow;
         const ccy = getSymbolCurrency(sym);
 
         symbolRowsBuffer.push({
@@ -360,14 +375,22 @@ async function main() {
           createdAt: now,
         });
 
-        // 汇总层：写入 analysis_daily_snapshot 用的「当日人民币收益」累加
-        addDailyProfitCnyFromNative(profitCnyByAccDate, accountId, D, pnlNative, ccy, fxUsdMap, fxHkdMap);
+        // 汇总层：先按账户+日+币种累加原币收益，回填结束后再统一乘当日汇率得人民币
+        addDailyProfitNativeByCurrency(accDateNative, accountId, D, pnlNative, ccy);
         if (symbolRowsBuffer.length >= 500) flushSym();
       }
     }
   }
   flushSym();
   console.log(`[backfill] symbol_daily_pnl 写入完成。`);
+
+  /** `${accountId}|${date}` -> 当日 profit_cny（各币种原币合计后再换算） */
+  const profitCnyByAccDate = new Map();
+  for (const [pk, byCcy] of accDateNative) {
+    const sep = pk.indexOf("|");
+    const dateKey = pk.slice(sep + 1);
+    profitCnyByAccDate.set(pk, profitCnyFromAccDateNative(byCcy, dateKey, fxUsdMap, fxHkdMap));
+  }
 
   for (const accountId of accountIds) {
     const accTrades = filterTradesForAccount(allTrades, accountId);

@@ -458,6 +458,17 @@ function resolveValidAccountFilter(accountId) {
   return state.accounts.some((account) => account.id === accountId) ? accountId : "all";
 }
 
+/** 记一笔默认账户：与首页/分析当前筛选一致（非「全部账户」时用当前选中账户） */
+function resolveTradeFormDefaultAccountId() {
+  const hasDefault = state.accounts.some((item) => item.id === DEFAULT_ACCOUNT.id);
+  const fallback = hasDefault ? DEFAULT_ACCOUNT.id : state.accounts[0]?.id || DEFAULT_ACCOUNT.id;
+  const sel = state.selectedAccountId;
+  if (sel && sel !== "all" && state.accounts.some((a) => a.id === sel)) {
+    return sel;
+  }
+  return fallback;
+}
+
 function getPortfolioScope() {
   const activeAccountId = resolveValidAccountFilter(state.selectedAccountId);
   const trades = getFilteredTrades(activeAccountId);
@@ -1060,7 +1071,7 @@ async function hydrateState() {
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
   }
-  if (!["preset", "custom"].includes(state.analysisRangeMode)) {
+  if (!["preset", "custom", "all"].includes(state.analysisRangeMode)) {
     state.analysisRangeMode = "preset";
   }
   if (!["both", "principal", "market"].includes(state.capitalTrendMode)) {
@@ -1353,6 +1364,9 @@ function bindEvents() {
       const value = chip.dataset.range;
       if (value === "custom") {
         state.analysisRangeMode = "custom";
+      } else if (value === "all") {
+        state.analysisRangeMode = "all";
+        state.analysisPanOffset = 0;
       } else {
         state.analysisRangeMode = "preset";
         state.rangeDays = Number(value);
@@ -1363,6 +1377,25 @@ function bindEvents() {
       renderControls();
     });
   });
+
+  const syncCustomRangeInputsToState = () => {
+    if (customRangeStartInput) {
+      state.customRangeStart = customRangeStartInput.value || "";
+    }
+    if (customRangeEndInput) {
+      state.customRangeEnd = customRangeEndInput.value || "";
+    }
+  };
+  customRangeStartInput?.addEventListener("change", () => {
+    syncCustomRangeInputsToState();
+    persistState();
+  });
+  customRangeStartInput?.addEventListener("input", syncCustomRangeInputsToState);
+  customRangeEndInput?.addEventListener("change", () => {
+    syncCustomRangeInputsToState();
+    persistState();
+  });
+  customRangeEndInput?.addEventListener("input", syncCustomRangeInputsToState);
 
   applyCustomRangeBtn?.addEventListener("click", () => {
     let start = customRangeStartInput?.value || "";
@@ -1584,7 +1617,7 @@ function openNewTradeDialog() {
   tradeTypeInput.value = "trade";
   applyTradeTypePreset();
   if (tradeAccountInput) {
-    tradeAccountInput.value = DEFAULT_ACCOUNT.id;
+    tradeAccountInput.value = resolveTradeFormDefaultAccountId();
   }
   tradeDateInput.value = toDateKey(new Date());
   tradeDialog.showModal();
@@ -1624,7 +1657,9 @@ function renderControls() {
     const active =
       value === "custom"
         ? state.analysisRangeMode === "custom"
-        : state.analysisRangeMode !== "custom" && Number(value) === state.rangeDays;
+        : value === "all"
+          ? state.analysisRangeMode === "all"
+          : state.analysisRangeMode === "preset" && Number(value) === state.rangeDays;
     chip.classList.toggle("active", active);
   });
   if (customRangeRow) {
@@ -1679,10 +1714,7 @@ function syncAccountSelectOptions() {
   setSelect(accountFilterSelect, state.selectedAccountId, true);
   setSelect(analysisAccountSelect, state.selectedAccountId, true);
   setSelect(tradeAccountFilterSelect, state.tradeFilterAccountId, true);
-  const tradeDefault = state.accounts.some((item) => item.id === DEFAULT_ACCOUNT.id)
-    ? DEFAULT_ACCOUNT.id
-    : state.accounts[0]?.id || DEFAULT_ACCOUNT.id;
-  setSelect(tradeAccountInput, tradeDefault, false);
+  setSelect(tradeAccountInput, resolveTradeFormDefaultAccountId(), false);
 }
 
 function renderAccountSection() {
@@ -2182,21 +2214,26 @@ function todayProfitCnyForAnalysisSnapshot(portfolio) {
 }
 
 /**
- * 分析 Tab 最后一行对齐首页总览：总市值、累计收益、本金等与 computePortfolio 一致；
- * 当日 profit_cny 与总览「今日」同为人民币折算口径。
+ * 分析 Tab 最后一行对齐首页总览：总市值、本金、当日 profit_cny（与总览「今日」同口径）。
+ * total_profit 仍按库里「日收益累加」延伸：昨日累计 + 今日 profit_cny，避免与历史点混用「持仓成本法 totalProfit」导致曲线断层。
  */
 function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate) {
   const mv = portfolio.totalMarketValue;
-  const totalP = portfolio.totalProfit;
   const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
   const next = sliceRows.map((r) => ({ ...r }));
   const hit = next.findIndex((r) => r.date === todayKey);
+  const cumFromPrev = (idx) => {
+    if (idx <= 0) {
+      return 0;
+    }
+    return Number(next[idx - 1].totalProfit) || 0;
+  };
   if (hit >= 0) {
     next[hit] = {
       ...next[hit],
       marketValue: mv,
       principal: portfolio.principal,
-      totalProfit: totalP,
+      totalProfit: cumFromPrev(hit) + todayP,
       profitCny: todayP,
       totalRateCost: state.algoMode === "cost" ? liveModeRate : next[hit].totalRateCost,
       totalRateTwr: state.algoMode === "time" ? liveModeRate : next[hit].totalRateTwr,
@@ -2206,13 +2243,14 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
   }
   const last = next[next.length - 1];
   if (last && last.date < todayKey) {
+    const lastCum = Number(last.totalProfit) || 0;
     next.push({
       ...last,
       date: todayKey,
       profitCny: todayP,
       marketValue: mv,
       principal: portfolio.principal,
-      totalProfit: totalP,
+      totalProfit: lastCum + todayP,
       totalRateCost: state.algoMode === "cost" ? liveModeRate : last.totalRateCost,
       totalRateTwr: state.algoMode === "time" ? liveModeRate : last.totalRateTwr,
       totalRateDietz: state.algoMode === "money" ? liveModeRate : last.totalRateDietz,
@@ -2418,6 +2456,9 @@ async function renderAnalysis() {
 function resolveAnalysisRange(history) {
   if (!history.length) {
     return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  if (state.analysisRangeMode === "all") {
+    return history.slice();
   }
   if (state.analysisRangeMode === "custom") {
     let start = state.customRangeStart || history[0].date;
@@ -2898,14 +2939,31 @@ function computePortfolio(trades = state.trades) {
   const overviewBookCurrency = getOverviewBookCurrency();
   const toBook = (row, nativeVal) => nativeToOverviewBook(row, nativeVal, overviewBookCurrency);
 
+  /** 同一币种下先汇总原币金额，再按该币种汇率换算（与回填 profit_cny 口径一致） */
+  const sumBookByCurrency = (getNative) => {
+    const byCcy = Object.create(null);
+    for (const item of visiblePositions) {
+      const ccy = item.currency || "CNY";
+      const v = getNative(item);
+      if (!Number.isFinite(v) || v === 0) continue;
+      byCcy[ccy] = (byCcy[ccy] || 0) + v;
+    }
+    let sum = 0;
+    for (const ccy of Object.keys(byCcy)) {
+      const row = visiblePositions.find((p) => (p.currency || "CNY") === ccy);
+      if (row) sum += toBook(row, byCcy[ccy]);
+    }
+    return sum;
+  };
+
   const totalMarketValue = visiblePositions.reduce((sum, item) => sum + toBook(item, item.marketValueNative), 0);
-  const todayProfit = visiblePositions.reduce((sum, item) => sum + toBook(item, item.todayProfitNative), 0);
+  const todayProfit = sumBookByCurrency((item) => item.todayProfitNative);
   const yesterdayMarketValueForRate = visiblePositions.reduce(
     (sum, item) => sum + toBook(item, item.quantity * item.prevClose),
     0
   );
   const todayRate = yesterdayMarketValueForRate !== 0 ? todayProfit / yesterdayMarketValueForRate : 0;
-  const totalProfit = visiblePositions.reduce((sum, item) => sum + toBook(item, item.totalProfitNative), 0);
+  const totalProfit = sumBookByCurrency((item) => item.totalProfitNative);
   const overviewPrincipal = amountBookFromCny(principal, overviewBookCurrency);
   const overviewCash = amountBookFromCny(cash, overviewBookCurrency);
   const totalAssets = totalMarketValue + overviewCash;
@@ -2995,12 +3053,27 @@ function dumpMonthlyReturnAudit() {
 function buildPortfolioHistory(positions, trades = state.trades) {
   const tradeList = Array.isArray(trades) ? trades : state.trades;
   const end = new Date();
-  const start = new Date(end);
-  start.setDate(end.getDate() - 370);
+  const endMid = new Date(toDateKey(end) + "T12:00:00");
+  let startMid;
+  if (tradeList.length) {
+    const firstD = [...tradeList].sort(sortTradeAsc)[0].date;
+    const parsed = new Date(String(firstD).slice(0, 10) + "T12:00:00");
+    startMid = Number.isNaN(parsed.getTime()) ? new Date(endMid) : parsed;
+  } else {
+    startMid = new Date(endMid);
+    startMid.setDate(startMid.getDate() - 370);
+  }
+  const maxSpanDays = 4000;
+  if ((endMid - startMid) / 86400000 > maxSpanDays) {
+    startMid = new Date(endMid.getTime() - maxSpanDays * 86400000);
+  }
+  if (startMid > endMid) {
+    startMid = new Date(endMid);
+  }
 
   const dateKeys = [];
-  const cursor = new Date(start);
-  while (cursor <= end) {
+  const cursor = new Date(startMid);
+  while (cursor <= endMid) {
     dateKeys.push(toDateKey(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
@@ -3681,7 +3754,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const windowSize = Math.max(12, Number(state.stockRecordWindow || 30));
       const maxOffset = Math.max(0, total - windowSize);
       state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0) - step));
-    } else if (state.analysisRangeMode !== "custom") {
+    } else if (state.analysisRangeMode === "preset") {
       const total = payload?.seriesList?.[0]?.values?.length || 0;
       const maxOffset = Math.max(0, total - Math.max(2, Number(state.rangeDays || 30)));
       state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
@@ -3788,9 +3861,11 @@ function updateAnalysisWindowByScale(scale) {
   if (!Number.isFinite(scale) || scale === 1) {
     return;
   }
+  if (state.analysisRangeMode !== "preset") {
+    return;
+  }
   const delta = scale > 1 ? -6 : 6;
   state.rangeDays = Math.max(7, Math.min(365, state.rangeDays + delta));
-  state.analysisRangeMode = "preset";
 }
 
 function updateStockRecordWindowByScale(scale, totalPoints) {
