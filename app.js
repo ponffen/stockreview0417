@@ -64,6 +64,18 @@ function getApiBaseForFetch() {
   }
   return API_BASE;
 }
+
+/** GitHub Pages 使用仓库子路径（/stockreview0417/）；静态资源必须用相对 URL，避免请求根路径 /data/... 404 */
+function getStaticSiteStateUrl() {
+  try {
+    if (typeof document !== "undefined" && document.baseURI) {
+      return new URL("./data/site-state.json", document.baseURI).toString();
+    }
+  } catch {
+    // ignore
+  }
+  return "./data/site-state.json";
+}
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 1023;
 const CHART_FALLBACK_DAYS = 90;
@@ -1346,7 +1358,7 @@ function cycleSortOrder(current) {
 
 async function fetchStaticSiteState() {
   try {
-    const response = await fetch("/site-state.json", { cache: "no-store" });
+    const response = await fetch(getStaticSiteStateUrl(), { cache: "no-store" });
     if (!response.ok) {
       return null;
     }
