@@ -6,9 +6,10 @@
   "stageRange": "month",
   "rangeDays": 30,
   "analysisRangeMode": "preset",
+  "analysisPreset": null,
   "customRangeStart": "",
   "customRangeEnd": "",
-  "capitalTrendMode": "both",
+  "capitalTrendMode": "principal",
   "capitalAmount": 0,
   "accounts": [
     {

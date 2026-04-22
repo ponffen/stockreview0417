@@ -8,11 +8,13 @@ const path = require("node:path");
 const {
   getTradeWindowForDailyClose,
   upsertSymbolDailyCloseBatch,
+  getCliUserId,
 } = require(path.join(__dirname, "..", "src", "db"));
 const { fetchRemoteDailyClosesForSymbol } = require(path.join(__dirname, "..", "src", "daily-close-backfill"));
 
 async function main() {
-  const w = getTradeWindowForDailyClose();
+  const uid = getCliUserId();
+  const w = getTradeWindowForDailyClose(uid);
   if (!w.symbols.length) {
     console.log("[daily-close] 无成交，退出。");
     process.exit(0);

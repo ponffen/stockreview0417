@@ -67,16 +67,219 @@ const {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getTradeWindowForDailyClose,
+  verifyUserLogin,
+  createRegisteredUser,
+  updateUserPassword,
+  verifyUserPasswordById,
+  getUserPhone,
+  isValidPhone,
+  isValidPasswordDigits,
+  getUserCommunityRow,
+  updateUserCommunityProfile,
+  setCommunityFollow,
+  removeCommunityFollow,
+  isCommunityFollowing,
 } = require("./src/db");
+const {
+  maskPhone,
+  displayNameForUser,
+  getLeaderboard,
+  getPublicProfileDetail,
+  getFollowingCards,
+  getFeedTrades,
+} = require("./src/community-service");
+const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
+
+function requireAuth(req, res, next) {
+  const userId = readUserIdFromRequest(req);
+  if (!userId) {
+    res.status(401).json({ ok: false, error: "请先登录" });
+    return;
+  }
+  req.userId = userId;
+  next();
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, node: process.version });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const userId = readUserIdFromRequest(req);
+  if (!userId) {
+    res.status(401).json({ ok: false, error: "未登录" });
+    return;
+  }
+  const phone = getUserPhone(userId);
+  const row = getUserCommunityRow(userId);
+  res.json({
+    ok: true,
+    user: {
+      id: userId,
+      phone,
+      phoneMasked: maskPhone(phone),
+      nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
+      communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+      displayName: row ? displayNameForUser(row) : maskPhone(phone),
+    },
+  });
+});
+
+app.patch("/api/me/community-profile", requireAuth, (req, res) => {
+  try {
+    const body = req.body || {};
+    const u = updateUserCommunityProfile(req.userId, {
+      nickname: body.nickname,
+      communityPublic: body.communityPublic,
+    });
+    res.json({
+      ok: true,
+      profile: {
+        nickname: u.nickname != null && String(u.nickname).trim() ? String(u.nickname).trim() : null,
+        communityPublic: !!Number(u.community_public),
+        displayName: displayNameForUser(u),
+      },
+    });
+  } catch (error) {
+    const msg = error?.message || "更新失败";
+    if (msg.includes("nickname taken")) {
+      res.status(409).json({ ok: false, error: "昵称已被占用" });
+      return;
+    }
+    if (msg.includes("too long")) {
+      res.status(400).json({ ok: false, error: "昵称最长 20 个字符" });
+      return;
+    }
+    res.status(400).json({ ok: false, error: msg });
+  }
+});
+
+app.get("/api/community/leaderboard", requireAuth, (_req, res) => {
+  try {
+    const data = getLeaderboard();
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "leaderboard failed" });
+  }
+});
+
+app.get("/api/community/following", requireAuth, (req, res) => {
+  try {
+    const cards = getFollowingCards(req.userId);
+    res.json({ ok: true, data: cards });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "following failed" });
+  }
+});
+
+app.get("/api/community/feed", requireAuth, (req, res) => {
+  try {
+    const rows = getFeedTrades(req.userId);
+    res.json({ ok: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "feed failed" });
+  }
+});
+
+app.get("/api/community/users/:targetId/profile", requireAuth, (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const detail = getPublicProfileDetail(req.userId, targetId);
+    if (detail.error === "unauthorized") {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    if (detail.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.json({ ok: true, data: detail });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "profile failed" });
+  }
+});
+
+app.post("/api/community/follow/:targetId", requireAuth, (req, res) => {
+  const targetId = String(req.params.targetId || "").trim();
+  if (!targetId) {
+    res.status(400).json({ ok: false, error: "invalid target" });
+    return;
+  }
+  setCommunityFollow(req.userId, targetId);
+  res.json({ ok: true, following: isCommunityFollowing(req.userId, targetId) });
+});
+
+app.delete("/api/community/follow/:targetId", requireAuth, (req, res) => {
+  const targetId = String(req.params.targetId || "").trim();
+  removeCommunityFollow(req.userId, targetId);
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/register", (req, res) => {
+  try {
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
+    const password = req.body?.password != null ? String(req.body.password) : "";
+    if (!isValidPhone(phone)) {
+      res.status(400).json({ ok: false, error: "请输入 11 位手机号" });
+      return;
+    }
+    if (!isValidPasswordDigits(password)) {
+      res.status(400).json({ ok: false, error: "密码为不少于 6 位的数字" });
+      return;
+    }
+    const u = createRegisteredUser(phone, password);
+    setSessionCookie(res, u.id);
+    res.json({ ok: true, user: { phone: u.phone } });
+  } catch (error) {
+    const msg = error?.message || "注册失败";
+    if (msg.includes("already registered")) {
+      res.status(409).json({ ok: false, error: "该手机号已注册" });
+      return;
+    }
+    res.status(400).json({ ok: false, error: msg });
+  }
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
+  const password = req.body?.password != null ? String(req.body.password) : "";
+  const u = verifyUserLogin(phone, password);
+  if (!u) {
+    res.status(401).json({ ok: false, error: "手机号或密码错误" });
+    return;
+  }
+  setSessionCookie(res, u.id);
+  res.json({ ok: true, user: { phone: u.phone } });
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/password", requireAuth, (req, res) => {
+  try {
+    const oldPw = req.body?.oldPassword != null ? String(req.body.oldPassword) : "";
+    const newPw = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    if (!isValidPasswordDigits(newPw)) {
+      res.status(400).json({ ok: false, error: "新密码为不少于 6 位的数字" });
+      return;
+    }
+    if (!verifyUserPasswordById(req.userId, oldPw)) {
+      res.status(400).json({ ok: false, error: "原密码错误" });
+      return;
+    }
+    updateUserPassword(req.userId, newPw);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "修改失败" });
+  }
 });
 
 /** 可选子路径部署，如 BASE_PATH=myapp → /myapp/api/sina-kline */
@@ -171,51 +374,51 @@ app.get("/api/stock/name", async (req, res) => {
   }
 });
 
-app.get("/api/state", (_req, res) => {
-  res.json({ ok: true, data: getState() });
+app.get("/api/state", requireAuth, (req, res) => {
+  res.json({ ok: true, data: getState(req.userId) });
 });
 
-app.get("/api/trades", (_req, res) => {
-  res.json({ ok: true, data: getTrades() });
+app.get("/api/trades", requireAuth, (req, res) => {
+  res.json({ ok: true, data: getTrades(req.userId) });
 });
 
-app.post("/api/trades", (req, res) => {
+app.post("/api/trades", requireAuth, (req, res) => {
   try {
     const trade = normalizeTrade(req.body || {});
     if (!trade.symbol) {
       res.status(400).json({ ok: false, error: "symbol is required" });
       return;
     }
-    const saved = upsertTrade(trade);
+    const saved = upsertTrade(trade, req.userId);
     res.json({ ok: true, data: saved });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save trade failed" });
   }
 });
 
-app.delete("/api/trades/:id", (req, res) => {
-  const ok = deleteTradeById(req.params.id);
+app.delete("/api/trades/:id", requireAuth, (req, res) => {
+  const ok = deleteTradeById(req.params.id, req.userId);
   res.json({ ok: true, deleted: ok });
 });
 
-app.post("/api/trades/import", (req, res) => {
+app.post("/api/trades/import", requireAuth, (req, res) => {
   try {
     const payload = req.body || {};
     const mode = payload.mode === "replace" ? "replace" : "append";
     const trades = Array.isArray(payload.trades) ? payload.trades : [];
     const normalized = trades.map((item) => normalizeTrade(item));
-    const data = importTrades(normalized, mode);
+    const data = importTrades(normalized, mode, req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
   }
 });
 
-app.get("/api/settings", (_req, res) => {
-  res.json({ ok: true, data: getSettings() });
+app.get("/api/settings", requireAuth, (req, res) => {
+  res.json({ ok: true, data: getSettings(req.userId) });
 });
 
-app.patch("/api/settings", (req, res) => {
+app.patch("/api/settings", requireAuth, (req, res) => {
   try {
     const patch = req.body && typeof req.body === "object" ? req.body : {};
     const sanitized = {};
@@ -224,98 +427,107 @@ app.patch("/api/settings", (req, res) => {
         sanitized[key] = patch[key];
       }
     }
-    const data = setSettings(sanitized);
+    const data = setSettings(sanitized, req.userId);
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "update settings failed" });
   }
 });
 
-app.get("/api/accounts", (_req, res) => {
-  res.json({ ok: true, data: getAccounts() });
+app.get("/api/accounts", requireAuth, (req, res) => {
+  res.json({ ok: true, data: getAccounts(req.userId) });
 });
 
-app.get("/api/symbol-daily", (req, res) => {
+app.get("/api/symbol-daily", requireAuth, (req, res) => {
   try {
-    const data = getSymbolDailyPnl({
-      accountId: req.query.accountId,
-      from: req.query.from,
-      to: req.query.to,
-    });
+    const data = getSymbolDailyPnl(
+      {
+        accountId: req.query.accountId,
+        from: req.query.from,
+        to: req.query.to,
+      },
+      req.userId
+    );
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "symbol daily failed" });
   }
 });
 
-app.post("/api/symbol-daily/batch", (req, res) => {
+app.post("/api/symbol-daily/batch", requireAuth, (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    upsertSymbolDailyPnlBatch(rows);
+    upsertSymbolDailyPnlBatch(rows, req.userId);
     res.json({ ok: true, count: rows.length });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "symbol daily batch failed" });
   }
 });
 
-app.get("/api/analysis-daily", (req, res) => {
+app.get("/api/analysis-daily", requireAuth, (req, res) => {
   try {
-    const data = getAnalysisDailySnapshots({
-      accountId: req.query.accountId,
-      from: req.query.from,
-      to: req.query.to,
-    });
+    const data = getAnalysisDailySnapshots(
+      {
+        accountId: req.query.accountId,
+        from: req.query.from,
+        to: req.query.to,
+      },
+      req.userId
+    );
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily failed" });
   }
 });
 
-app.post("/api/analysis-daily", (req, res) => {
+app.post("/api/analysis-daily", requireAuth, (req, res) => {
   try {
-    const row = upsertAnalysisDailySnapshot(req.body || {});
+    const row = upsertAnalysisDailySnapshot(req.body || {}, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
   }
 });
 
-app.get("/api/daily-returns", (req, res) => {
+app.get("/api/daily-returns", requireAuth, (req, res) => {
   try {
     const { accountId, from, to } = req.query || {};
-    const data = getDailyReturns({
-      accountId: accountId != null ? String(accountId) : "",
-      from: from != null ? String(from) : "",
-      to: to != null ? String(to) : "",
-    });
+    const data = getDailyReturns(
+      {
+        accountId: accountId != null ? String(accountId) : "",
+        from: from != null ? String(from) : "",
+        to: to != null ? String(to) : "",
+      },
+      req.userId
+    );
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "list daily returns failed" });
   }
 });
 
-app.post("/api/daily-returns", (req, res) => {
+app.post("/api/daily-returns", requireAuth, (req, res) => {
   try {
-    const row = upsertDailyReturn(req.body || {});
+    const row = upsertDailyReturn(req.body || {}, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save daily return failed" });
   }
 });
 
-app.post("/api/daily-returns/import", (req, res) => {
+app.post("/api/daily-returns/import", requireAuth, (req, res) => {
   try {
     const payload = req.body || {};
     const mode = payload.mode === "replace" ? "replace" : "append";
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    const data = importDailyReturns(rows, mode);
+    const data = importDailyReturns(rows, mode, req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import daily returns failed" });
   }
 });
 
-app.delete("/api/daily-returns", (req, res) => {
+app.delete("/api/daily-returns", requireAuth, (req, res) => {
   try {
     const accountId = req.query.accountId != null ? String(req.query.accountId) : "";
     const date = req.query.date != null ? String(req.query.date) : "";
@@ -323,7 +535,7 @@ app.delete("/api/daily-returns", (req, res) => {
       res.status(400).json({ ok: false, error: "accountId and date are required" });
       return;
     }
-    const deleted = deleteDailyReturn(accountId, date);
+    const deleted = deleteDailyReturn(accountId, date, req.userId);
     res.json({ ok: true, deleted });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "delete daily return failed" });
@@ -494,9 +706,9 @@ app.get("/api/daily-close", (req, res) => {
   }
 });
 
-app.get("/api/daily-close/for-trades", (_req, res) => {
+app.get("/api/daily-close/for-trades", requireAuth, (req, res) => {
   try {
-    const w = getTradeWindowForDailyClose();
+    const w = getTradeWindowForDailyClose(req.userId);
     if (!w.symbols.length) {
       res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
       return;
@@ -513,9 +725,9 @@ app.get("/api/daily-close/for-trades", (_req, res) => {
 });
 
 /** 从东财+新浪拉区间写入 symbol_daily_close（先跑回填再打开页面） */
-app.post("/api/daily-close/backfill", async (req, res) => {
+app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
   try {
-    const w = getTradeWindowForDailyClose();
+    const w = getTradeWindowForDailyClose(req.userId);
     if (!w.symbols.length) {
       res.json({ ok: true, message: "no trades", counts: {} });
       return;

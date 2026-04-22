@@ -56,8 +56,8 @@ if (useExistingDb) {
     throw new Error(`Database not found: ${useExistingDb}`);
   }
   process.env.DB_PATH = useExistingDb;
-  const { getState, closeDatabase } = require("../src/db");
-  const state = getState();
+  const { getState, closeDatabase, getCliUserId } = require("../src/db");
+  const state = getState(getCliUserId());
   writeStateAndLog(state);
   closeDatabase();
   process.exit(0);
@@ -74,7 +74,7 @@ if (fs.existsSync(buildDbPath)) {
 fs.mkdirSync(dataDir, { recursive: true });
 process.env.DB_PATH = buildDbPath;
 
-const { importTrades, getState, normalizeTrade, closeDatabase } = require("../src/db");
+const { importTrades, getState, normalizeTrade, closeDatabase, getCliUserId } = require("../src/db");
 
 const seedRaw = fs.readFileSync(seedPath, "utf-8");
 const seedRows = JSON.parse(seedRaw);
@@ -85,7 +85,7 @@ if (!Array.isArray(seedRows)) {
 const trades = seedRows.map((row) => normalizeTrade(row));
 importTrades(trades, "replace");
 
-const state = getState();
+const state = getState(getCliUserId());
 writeStateAndLog(state);
 closeDatabase();
 

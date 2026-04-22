@@ -12,7 +12,97 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <div
+      id="appBootLoading"
+      class="app-boot-loading"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div class="app-boot-loading-inner">
+        <span class="app-boot-spinner" aria-hidden="true"></span>
+        <span>加载中…</span>
+      </div>
+    </div>
+
+    <div id="authGate" class="auth-gate hidden" aria-hidden="true">
+      <div class="auth-card">
+        <h1 class="auth-title">持仓收益</h1>
+        <form id="authLoginForm" class="auth-form">
+          <div class="form-row">
+            <label for="authLoginPhone">手机号</label>
+            <input
+              id="authLoginPhone"
+              name="phone"
+              type="tel"
+              inputmode="numeric"
+              maxlength="11"
+              autocomplete="username"
+              placeholder="11 位手机号"
+              required
+            />
+          </div>
+          <div class="form-row">
+            <label for="authLoginPassword">密码</label>
+            <input
+              id="authLoginPassword"
+              name="password"
+              type="password"
+              inputmode="numeric"
+              minlength="6"
+              autocomplete="current-password"
+              placeholder="至少 6 位数字"
+              required
+            />
+          </div>
+          <p id="authLoginError" class="auth-error hidden" role="alert"></p>
+          <button type="submit" class="btn btn-primary full">登录</button>
+          <p class="auth-switch">没有账号？<button type="button" class="btn-link" id="authShowRegister">注册</button></p>
+        </form>
+        <form id="authRegisterForm" class="auth-form hidden">
+          <div class="form-row">
+            <label for="authRegPhone">手机号</label>
+            <input
+              id="authRegPhone"
+              name="phone"
+              type="tel"
+              inputmode="numeric"
+              maxlength="11"
+              autocomplete="off"
+              placeholder="11 位手机号"
+              required
+            />
+          </div>
+          <div class="form-row">
+            <label for="authRegPassword">密码</label>
+            <input
+              id="authRegPassword"
+              name="password"
+              type="password"
+              inputmode="numeric"
+              minlength="6"
+              autocomplete="new-password"
+              placeholder="至少 6 位数字"
+              required
+            />
+          </div>
+          <p id="authRegisterError" class="auth-error hidden" role="alert"></p>
+          <button type="submit" class="btn btn-primary full">注册</button>
+          <p class="auth-switch">已有账号？<button type="button" class="btn-link" id="authShowLogin">登录</button></p>
+        </form>
+      </div>
+    </div>
+
+    <main id="appShell" class="app-shell">
+      <header class="app-top-bar">
+        <button type="button" id="appMenuBtn" class="app-menu-btn" aria-label="打开菜单" aria-expanded="false">
+          <span class="app-menu-icon" aria-hidden="true"></span>
+        </button>
+        <h1 id="appHeaderTitle" class="app-header-title">持仓收益</h1>
+        <span class="app-top-bar-spacer" aria-hidden="true"></span>
+      </header>
+
+      <div class="app-shell-inner">
       <section id="route-earning" class="route-pane active">
         <article class="overview-card">
           <div class="overview-head">
@@ -54,7 +144,24 @@
               aria-label="切换个股金额币种"
               aria-pressed="false"
             >
-              ￥
+              <svg
+                class="stock-currency-toggle-icon"
+                width="15"
+                height="15"
+                viewBox="0 0 12 12"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  vector-effect="non-scaling-stroke"
+                  stroke="currentColor"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M3 1.5 L6 5.5 L9 1.5 M6 5.5 L6 10.5 M2 4.5 H10 M2 6.5 H10"
+                />
+              </svg>
             </button>
           </div>
           <div class="table-scroll">
@@ -106,6 +213,7 @@
             <button class="range-chip" data-range="7">最近一周</button>
             <button class="range-chip active" data-range="30">最近一月</button>
             <button class="range-chip" data-range="90">最近三月</button>
+            <button class="range-chip" data-range="mtd">月初至今</button>
             <button class="range-chip" data-range="365">年初至今</button>
             <button class="range-chip" data-range="all">历史以来</button>
             <button class="range-chip" data-range="custom">自定义</button>
@@ -146,9 +254,8 @@
             <div class="asset-mode-wrap">
               <label for="assetCurveMode" class="caption">显示</label>
               <select id="assetCurveMode" class="asset-mode-select">
-                <option value="both">本金+总市值</option>
-                <option value="principal">仅本金</option>
-                <option value="market">仅总市值</option>
+                <option value="principal">本金</option>
+                <option value="market">总市值</option>
               </select>
             </div>
           </div>
@@ -156,6 +263,13 @@
             <canvas id="analysisAssetChart" width="700" height="320"></canvas>
             <div id="analysisAssetTooltip" class="chart-tooltip"></div>
           </div>
+        </article>
+
+        <article class="panel analysis-stock-rank-panel">
+          <div class="panel-head">
+            <h2>个股收益排行</h2>
+          </div>
+          <div id="analysisStockRankBody" class="analysis-stock-rank-body"></div>
         </article>
       </section>
 
@@ -190,19 +304,83 @@
       </section>
 
       <section id="route-mine" class="route-pane">
-        <article class="mine-panel">
-          <button type="button" class="mine-nav-row" data-mine-open="algo" aria-label="收益率算法">
-            <div class="mine-nav-main">
-              <span class="mine-nav-title">收益率算法</span>
-              <span id="mineAlgoSummary" class="mine-nav-value">成本算法</span>
+        <div class="mine-stack">
+          <article class="mine-panel mine-panel--prefs">
+            <button type="button" class="mine-nav-row" data-mine-open="community" aria-label="编辑昵称">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">昵称</span>
+                <span id="mineNicknameDisplay" class="mine-nav-value">—</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
+            <div class="mine-switch-row mine-switch-row--home mine-public-community-row">
+              <div class="mine-public-community-copy">
+                <span class="mine-switch-label">公开到社区</span>
+                <p class="mine-community-hint">
+                  开启后，社区中可以看到您的持仓收益情况。注意不会公开持仓金额，只会公开持仓占比。
+                </p>
+              </div>
+              <label class="mine-switch">
+                <input type="checkbox" id="mineCommunityPublicToggle" checked />
+                <span class="mine-switch-slider" aria-hidden="true"></span>
+              </label>
             </div>
-            <span class="mine-nav-chevron" aria-hidden="true">›</span>
-          </button>
-          <button type="button" class="mine-nav-row" data-mine-open="accounts" aria-label="股票账户">
-            <div class="mine-nav-main">
-              <span class="mine-nav-title">股票账户</span>
+            <p id="mineCommunityHomeMsg" class="mine-community-msg mine-community-msg--home hidden" role="status"></p>
+          </article>
+          <article class="mine-panel mine-panel--prefs">
+            <button type="button" class="mine-nav-row" data-mine-open="algo" aria-label="收益率算法">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">收益率算法</span>
+                <span id="mineAlgoSummary" class="mine-nav-value">成本算法</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="mine-nav-row" data-mine-open="accounts" aria-label="股票账户">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">股票账户</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
+          </article>
+          <article class="mine-panel mine-panel--account">
+            <div class="mine-user-block">
+              <p id="mineUserPhone" class="mine-user-phone"></p>
             </div>
-            <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            <button type="button" class="mine-nav-row" id="mineChangePasswordBtn" aria-label="修改密码">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">修改密码</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
+            <button type="button" class="mine-nav-row mine-nav-danger" id="mineLogoutBtn" aria-label="退出登录">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">退出登录</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
+          </article>
+        </div>
+      </section>
+
+      <section id="route-mine-community" class="route-pane">
+        <article class="panel">
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back-community>返回</button>
+            <h2>社区资料</h2>
+          </div>
+          <div class="form-row mine-nickname-row">
+            <label for="mineNicknameInput">昵称</label>
+            <input
+              id="mineNicknameInput"
+              name="nickname"
+              maxlength="20"
+              placeholder="选填，最多 20 字"
+              autocomplete="nickname"
+            />
+          </div>
+          <p id="mineCommunityProfileMsg" class="mine-community-msg hidden" role="status"></p>
+          <button type="button" id="mineCommunitySaveBtn" class="btn btn-primary full mine-community-save">
+            保存
           </button>
         </article>
       </section>
@@ -264,21 +442,85 @@
         </article>
       </section>
 
-      <nav class="bottom-tabs">
-        <button class="bottom-tab-btn active" data-route="earning">
+      <section id="route-holdings-ai" class="route-pane">
+        <article class="panel community-empty-panel">
+          <p class="community-empty-title">AI</p>
+          <p class="community-empty-desc">功能即将上线</p>
+        </article>
+      </section>
+
+      <section id="route-community-feed" class="route-pane">
+        <div id="communityFeedList" class="community-list"></div>
+      </section>
+
+      <section id="route-community-following" class="route-pane">
+        <div id="communityFollowingList" class="community-list"></div>
+      </section>
+
+      <section id="route-community-rank" class="route-pane">
+        <div id="communityLeaderboardList" class="community-list"></div>
+      </section>
+
+      <section id="route-community-ai" class="route-pane">
+        <article class="panel community-empty-panel">
+          <p class="community-empty-title">AI</p>
+          <p class="community-empty-desc">功能即将上线</p>
+        </article>
+      </section>
+
+      <section id="route-community-profile" class="route-pane community-profile-route">
+        <article class="panel community-profile-head-panel">
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" id="communityProfileBackBtn">返回</button>
+            <h2 id="communityProfileTitle">社区资料</h2>
+          </div>
+          <div id="communityProfileToolbar" class="community-profile-toolbar hidden"></div>
+        </article>
+        <div id="communityProfileBody" class="community-profile-body"></div>
+      </section>
+
+      </div>
+
+      <nav class="bottom-tabs bottom-tabs--holdings" aria-label="持仓收益导航">
+        <button class="bottom-tab-btn active" data-route="earning" data-module="holdings">
           <span class="tab-ico">▦</span><span>收益</span>
         </button>
-        <button class="bottom-tab-btn" data-route="analysis">
+        <button class="bottom-tab-btn" data-route="analysis" data-module="holdings">
           <span class="tab-ico">◔</span><span>分析</span>
         </button>
-        <button class="bottom-tab-btn" data-route="trade">
+        <button class="bottom-tab-btn" data-route="trade" data-module="holdings">
           <span class="tab-ico">¥</span><span>交易</span>
         </button>
-        <button class="bottom-tab-btn" data-route="mine">
-          <span class="tab-ico">◉</span><span>我的</span>
+        <button class="bottom-tab-btn" data-route="holdings-ai" data-module="holdings">
+          <span class="tab-ico">◇</span><span>AI</span>
+        </button>
+      </nav>
+
+      <nav class="bottom-tabs bottom-tabs--community" aria-label="社区广场导航">
+        <button class="bottom-tab-btn" data-route="community-feed" data-module="community">
+          <span class="tab-ico">≋</span><span>最新交易</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="community-following" data-module="community">
+          <span class="tab-ico">◎</span><span>关注的人</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="community-rank" data-module="community">
+          <span class="tab-ico">▤</span><span>排行</span>
+        </button>
+        <button class="bottom-tab-btn" data-route="community-ai" data-module="community">
+          <span class="tab-ico">◇</span><span>AI</span>
         </button>
       </nav>
     </main>
+
+    <div id="appDrawerBackdrop" class="app-drawer-backdrop hidden" aria-hidden="true"></div>
+    <aside id="appDrawer" class="app-drawer" aria-hidden="true" aria-label="主导航">
+      <div class="app-drawer-head">导航</div>
+      <nav class="app-drawer-nav">
+        <button type="button" class="app-drawer-item" data-drawer-action="holdings">持仓收益</button>
+        <button type="button" class="app-drawer-item" data-drawer-action="community">社区广场</button>
+        <button type="button" class="app-drawer-item" data-drawer-action="mine">我的</button>
+      </nav>
+    </aside>
 
     <dialog id="tradeDialog" class="dialog">
       <form id="tradeForm" method="dialog">
@@ -353,10 +595,39 @@
       </form>
     </dialog>
 
-    <div id="recordActionPopover" class="record-action-popover">
-      <button type="button" data-action="edit">修改</button>
-      <button type="button" data-action="delete">删除</button>
-    </div>
+    <dialog id="recordTradeActionsDialog" class="dialog record-trade-actions-dialog">
+      <div class="panel-head">
+        <h2>交易记录</h2>
+        <button type="button" id="closeRecordTradeActionsBtn" class="btn btn-ghost">关闭</button>
+      </div>
+      <p class="form-hint record-trade-actions-hint">修改或删除本条交易</p>
+      <div class="record-trade-actions-btns">
+        <button type="button" class="btn btn-primary full" data-action="edit">修改</button>
+        <button type="button" class="btn btn-ghost full record-trade-delete-btn" data-action="delete">删除</button>
+      </div>
+    </dialog>
+
+    <dialog id="accountManageDialog" class="dialog">
+      <div class="panel-head">
+        <h2>管理股票账户</h2>
+        <button type="button" id="closeAccountManageBtn" class="btn btn-ghost">关闭</button>
+      </div>
+      <p id="accountManageDefaultHint" class="form-hint hidden">默认账户不可修改或删除。</p>
+      <div class="form-row">
+        <label for="accountManageName">账户名称</label>
+        <input id="accountManageName" name="accountManageName" maxlength="40" autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <label for="accountManageCurrency">默认币种</label>
+        <select id="accountManageCurrency" name="accountManageCurrency">
+          <option value="CNY">人民币</option>
+          <option value="USD">美元</option>
+          <option value="HKD">港币</option>
+        </select>
+      </div>
+      <button type="button" id="accountManageSaveBtn" class="btn btn-primary full">保存</button>
+      <button type="button" id="accountManageDeleteBtn" class="btn btn-ghost full account-manage-delete">删除账户</button>
+    </dialog>
 
     <section id="route-stock-record" class="route-pane stock-detail-page">
       <div class="stock-record-wrap">
@@ -402,6 +673,25 @@
         </table>
       </div>
     </section>
+
+    <dialog id="changePasswordDialog" class="dialog">
+      <form id="changePasswordForm">
+        <div class="panel-head">
+          <h2>修改密码</h2>
+          <button type="button" id="closeChangePasswordBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <div class="form-row">
+          <label for="changePwOld">原密码</label>
+          <input id="changePwOld" type="password" inputmode="numeric" minlength="6" required />
+        </div>
+        <div class="form-row">
+          <label for="changePwNew">新密码</label>
+          <input id="changePwNew" type="password" inputmode="numeric" minlength="6" required />
+        </div>
+        <p id="changePwError" class="auth-error hidden" role="alert"></p>
+        <button type="submit" class="btn btn-primary full">保存</button>
+      </form>
+    </dialog>
 
     <script src="./app.js"></script>
   </body>

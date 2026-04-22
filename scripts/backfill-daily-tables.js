@@ -27,6 +27,7 @@ const {
   upsertAnalysisDailySnapshot,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
+  getCliUserId,
 } = require(path.join(__dirname, "..", "src", "db"));
 
 function inferMarket(symbol) {
@@ -251,12 +252,13 @@ function mergeKlinePreferDb(dbRows, sinaRows) {
 }
 
 async function main() {
+  const uid = getCliUserId();
   const now = Date.now();
   console.log("[backfill] 清空两张日表…");
-  deleteAllSymbolDailyPnl();
-  deleteAllAnalysisDailySnapshot();
+  deleteAllSymbolDailyPnl(uid);
+  deleteAllAnalysisDailySnapshot(uid);
 
-  const allTrades = getTrades().map((t) => ({
+  const allTrades = getTrades(uid).map((t) => ({
     ...t,
     symbol: normalizeSymbol(t.symbol),
   }));
@@ -265,7 +267,7 @@ async function main() {
     process.exit(0);
   }
 
-  const settings = getSettings();
+  const settings = getSettings(uid);
   const capitalAmount = validNumber(settings.capitalAmount, 0);
 
   console.log("[backfill] 拉取外汇日 K…");
@@ -311,7 +313,7 @@ async function main() {
   const symbolRowsBuffer = [];
   const flushSym = () => {
     if (!symbolRowsBuffer.length) return;
-    upsertSymbolDailyPnlBatch(symbolRowsBuffer.splice(0, symbolRowsBuffer.length));
+    upsertSymbolDailyPnlBatch(symbolRowsBuffer.splice(0, symbolRowsBuffer.length), uid);
   };
 
   for (const accountId of accountIds) {
@@ -432,23 +434,26 @@ async function main() {
 
       cumProfit += profitCny;
 
-      upsertAnalysisDailySnapshot({
-        accountId,
-        date: dk,
-        profitCny: profitCny,
-        rateCost: rateCostD,
-        rateTwr: twrDaily,
-        rateDietz: dietzDaily,
-        totalProfit: cumProfit,
-        totalRateCost: costS[i]?.rate ?? 0,
-        totalRateTwr: twrS[i]?.rate ?? 0,
-        totalRateDietz: dietzS[i]?.rate ?? 0,
-        principal,
-        marketValue: p.value,
-        fxHkdCny: fxHkdMap[dk] ?? null,
-        fxUsdCny: fxUsdMap[dk] ?? null,
-        createdAt: now,
-      });
+      upsertAnalysisDailySnapshot(
+        {
+          accountId,
+          date: dk,
+          profitCny: profitCny,
+          rateCost: rateCostD,
+          rateTwr: twrDaily,
+          rateDietz: dietzDaily,
+          totalProfit: cumProfit,
+          totalRateCost: costS[i]?.rate ?? 0,
+          totalRateTwr: twrS[i]?.rate ?? 0,
+          totalRateDietz: dietzS[i]?.rate ?? 0,
+          principal,
+          marketValue: p.value,
+          fxHkdCny: fxHkdMap[dk] ?? null,
+          fxUsdCny: fxUsdMap[dk] ?? null,
+          createdAt: now,
+        },
+        uid
+      );
 
       prevMv = p.value;
     }

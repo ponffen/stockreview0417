@@ -1,5 +1,52 @@
 const STORAGE_KEY = "earning-clone-state-v2";
+const SESSION_TAB_KEY = "stockreview_session_tabs_seeded";
 const API_BASE = "/api";
+
+function apiFetch(input, init = {}) {
+  return fetch(input, { ...init, credentials: "include" });
+}
+
+let sessionPhone = "";
+let sessionUserId = "";
+let sessionProfile = {
+  nickname: null,
+  communityPublic: true,
+  displayName: "",
+  phoneMasked: "",
+};
+let quoteIntervalStarted = false;
+let analysisStockRankHelpListenersBound = false;
+
+/** 登录后按手机号隔离本地缓存，避免切换账号仍读到上一账号的 localStorage */
+function getSessionStateStorageKey() {
+  const phone = String(sessionPhone || "").trim();
+  return phone ? `${STORAGE_KEY}::${phone}` : STORAGE_KEY;
+}
+
+/**
+ * 旧版未按用户区分的 localStorage 仅一份。
+ * 一次性写入 earning-clone-state-v2::18310270720（与当前登录谁无关，避免先登录别的号导致误绑）。
+ * 应用启动即执行；若 183 的 scoped 已有内容则跳过，不覆盖。
+ */
+const LEGACY_STATE_OWNER_PHONE = "18310270720";
+
+function migrateLegacyGlobalStateTo183ScopedOnce() {
+  const scopedKey = `${STORAGE_KEY}::${LEGACY_STATE_OWNER_PHONE}`;
+  if (localStorage.getItem(scopedKey)) {
+    return;
+  }
+  const legacyRaw = localStorage.getItem(STORAGE_KEY);
+  if (!legacyRaw) {
+    return;
+  }
+  try {
+    JSON.parse(legacyRaw);
+    localStorage.setItem(scopedKey, legacyRaw);
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // 损坏的全局缓存不迁移
+  }
+}
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
 function getApiBaseForFetch() {
@@ -28,6 +75,7 @@ const STATE_SYNC_KEYS = [
   "stageRange",
   "rangeDays",
   "analysisRangeMode",
+  "analysisPreset",
   "customRangeStart",
   "customRangeEnd",
   "capitalTrendMode",
@@ -100,6 +148,9 @@ const demoTrades = [
 
 const state = {
   route: "earning",
+  appModule: "holdings",
+  communityProfileUserId: null,
+  communityProfileReturnRoute: "community-feed",
   previousRoute: "earning",
   useDemoData: true,
   algoMode: "cost",
@@ -107,12 +158,14 @@ const state = {
   stageRange: "month",
   rangeDays: 30,
   analysisRangeMode: "preset",
+  /** 预设区间锚点：null=滚动最近 N 日；mtd=本月 1 日起；ytd=本年 1 月 1 日起 */
+  analysisPreset: null,
   customRangeStart: "",
   customRangeEnd: "",
   /** 自定义区间输入框草稿，仅点「应用」后写入 customRangeStart/End 并刷新图表 */
   customRangeDraftStart: "",
   customRangeDraftEnd: "",
-  capitalTrendMode: "both",
+  capitalTrendMode: "principal",
   capitalAmount: 0,
   accounts: [DEFAULT_ACCOUNT],
   selectedAccountId: "all",
@@ -129,6 +182,7 @@ const state = {
   quoteTime: "--",
   marketLoading: false,
   editingTradeId: null,
+  editingAccountId: null,
   activeRecordId: null,
   activeRecordSymbol: null,
   stockRecordWindow: 30,
@@ -140,10 +194,11 @@ const state = {
   fxSpot: {},
   fxLoaded: false,
   fxLoading: false,
+  communityProfileStage: "month",
+  lastPublicProfileDetail: null,
 };
 let apiReady = false;
 
-const routeButtons = [...document.querySelectorAll(".bottom-tab-btn")];
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
 const quoteTime = document.getElementById("quoteTime");
@@ -166,6 +221,7 @@ const analysisAssetChart = document.getElementById("analysisAssetChart");
 const analysisRateTooltip = document.getElementById("analysisRateTooltip");
 const analysisProfitTooltip = document.getElementById("analysisProfitTooltip");
 const analysisAssetTooltip = document.getElementById("analysisAssetTooltip");
+const analysisStockRankBody = document.getElementById("analysisStockRankBody");
 const demoToggleBtn = document.getElementById("demoToggleBtn");
 const quickTradeBtn = document.getElementById("quickTradeBtn");
 const recordTradeBtn = document.getElementById("recordTradeBtn");
@@ -173,6 +229,37 @@ const tradeAddBtn = document.getElementById("tradeAddBtn");
 const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelectMine = document.getElementById("algoModeSelectMine");
 const mineAlgoSummary = document.getElementById("mineAlgoSummary");
+const mineUserPhone = document.getElementById("mineUserPhone");
+const mineChangePasswordBtn = document.getElementById("mineChangePasswordBtn");
+const mineLogoutBtn = document.getElementById("mineLogoutBtn");
+const appMenuBtn = document.getElementById("appMenuBtn");
+const appDrawer = document.getElementById("appDrawer");
+const appDrawerBackdrop = document.getElementById("appDrawerBackdrop");
+const appHeaderTitle = document.getElementById("appHeaderTitle");
+const mineNicknameInput = document.getElementById("mineNicknameInput");
+const mineNicknameDisplay = document.getElementById("mineNicknameDisplay");
+const mineCommunityPublicToggle = document.getElementById("mineCommunityPublicToggle");
+const mineCommunitySaveBtn = document.getElementById("mineCommunitySaveBtn");
+const mineCommunityProfileMsg = document.getElementById("mineCommunityProfileMsg");
+const mineCommunityHomeMsg = document.getElementById("mineCommunityHomeMsg");
+const communityFeedList = document.getElementById("communityFeedList");
+const communityFollowingList = document.getElementById("communityFollowingList");
+const communityLeaderboardList = document.getElementById("communityLeaderboardList");
+const communityProfileBody = document.getElementById("communityProfileBody");
+const communityProfileBackBtn = document.getElementById("communityProfileBackBtn");
+const communityProfileTitle = document.getElementById("communityProfileTitle");
+const authGate = document.getElementById("authGate");
+const appShell = document.getElementById("appShell");
+const authLoginForm = document.getElementById("authLoginForm");
+const authRegisterForm = document.getElementById("authRegisterForm");
+const authLoginError = document.getElementById("authLoginError");
+const authRegisterError = document.getElementById("authRegisterError");
+const authShowRegister = document.getElementById("authShowRegister");
+const authShowLogin = document.getElementById("authShowLogin");
+const changePasswordDialog = document.getElementById("changePasswordDialog");
+const changePasswordForm = document.getElementById("changePasswordForm");
+const closeChangePasswordBtn = document.getElementById("closeChangePasswordBtn");
+const changePwError = document.getElementById("changePwError");
 const benchmarkSelect = document.getElementById("benchmark");
 const rangeChips = [...document.querySelectorAll(".range-chip")];
 const customRangeRow = document.getElementById("customRangeRow");
@@ -204,7 +291,15 @@ const stockRecordChart = document.getElementById("stockRecordChart");
 const stockRecordMarket = document.getElementById("stockRecordMarket");
 const stockRecordRegret = document.getElementById("stockRecordRegret");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
-const recordActionPopover = document.getElementById("recordActionPopover");
+const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
+const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
+const accountManageDialog = document.getElementById("accountManageDialog");
+const closeAccountManageBtn = document.getElementById("closeAccountManageBtn");
+const accountManageName = document.getElementById("accountManageName");
+const accountManageCurrency = document.getElementById("accountManageCurrency");
+const accountManageSaveBtn = document.getElementById("accountManageSaveBtn");
+const accountManageDeleteBtn = document.getElementById("accountManageDeleteBtn");
+const accountManageDefaultHint = document.getElementById("accountManageDefaultHint");
 const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
@@ -214,27 +309,271 @@ const stockRecordTooltip = document.getElementById("stockRecordTooltip");
 
 const chartRuntimeMap = new Map();
 
-initialize();
+function dismissAppBootLoading() {
+  const el = document.getElementById("appBootLoading");
+  if (!el) {
+    return;
+  }
+  el.classList.add("is-done");
+  el.setAttribute("aria-busy", "false");
+  window.setTimeout(() => {
+    el.remove();
+  }, 240);
+  document.body.classList.add("app-ready");
+}
 
-async function initialize() {
-  await hydrateState();
-  bindEvents();
-  renderAll();
-  void initializeFxRates();
-  await refreshMarketData();
-  void fetchQuoteNames(state.trades.map((trade) => trade.symbol)).then(() => {
-    renderOverviewAndStockTable();
-    renderTradeTable();
-    if (state.route === "stock-record" && state.activeRecordSymbol) {
-      void renderStockRecordPage(state.activeRecordSymbol);
+async function refreshSessionFromServer() {
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/auth/me`, { cache: "no-store" });
+    if (!r.ok) {
+      sessionUserId = "";
+      sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
+      return false;
+    }
+    const j = await r.json();
+    if (!j?.ok || !j.user?.phone) {
+      return false;
+    }
+    sessionPhone = String(j.user.phone);
+    sessionUserId = String(j.user.id || "");
+    sessionProfile = {
+      nickname: j.user.nickname != null ? j.user.nickname : null,
+      communityPublic: j.user.communityPublic !== false,
+      displayName: String(j.user.displayName || ""),
+      phoneMasked: String(j.user.phoneMasked || ""),
+    };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function tryRestoreSession() {
+  return refreshSessionFromServer();
+}
+
+function showAuthShell() {
+  document.body.classList.add("auth-mode");
+  if (authGate) {
+    authGate.classList.remove("hidden");
+    authGate.setAttribute("aria-hidden", "false");
+  }
+  if (appShell) {
+    appShell.classList.add("hidden");
+  }
+}
+
+function showAppShell() {
+  document.body.classList.remove("auth-mode");
+  if (authGate) {
+    authGate.classList.add("hidden");
+    authGate.setAttribute("aria-hidden", "true");
+  }
+  if (appShell) {
+    appShell.classList.remove("hidden");
+  }
+}
+
+function bindAuthUi() {
+  authShowRegister?.addEventListener("click", () => {
+    authLoginForm?.classList.add("hidden");
+    authRegisterForm?.classList.remove("hidden");
+    if (authLoginError) {
+      authLoginError.classList.add("hidden");
     }
   });
-  window.setInterval(refreshMarketData, QUOTE_REFRESH_MS);
+  authShowLogin?.addEventListener("click", () => {
+    authRegisterForm?.classList.add("hidden");
+    authLoginForm?.classList.remove("hidden");
+    if (authRegisterError) {
+      authRegisterError.classList.add("hidden");
+    }
+  });
+
+  authLoginForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const phone = document.getElementById("authLoginPhone")?.value?.trim() || "";
+    const password = document.getElementById("authLoginPassword")?.value || "";
+    if (authLoginError) {
+      authLoginError.classList.add("hidden");
+    }
+    try {
+      const r = await apiFetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, password }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        if (authLoginError) {
+          authLoginError.textContent = j?.error || "登录失败";
+          authLoginError.classList.remove("hidden");
+        }
+        return;
+      }
+      sessionPhone = String(j.user?.phone || phone);
+      showAppShell();
+      await startAppAfterAuth();
+    } catch {
+      if (authLoginError) {
+        authLoginError.textContent = "网络错误";
+        authLoginError.classList.remove("hidden");
+      }
+    }
+  });
+
+  authRegisterForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const phone = document.getElementById("authRegPhone")?.value?.trim() || "";
+    const password = document.getElementById("authRegPassword")?.value || "";
+    if (authRegisterError) {
+      authRegisterError.classList.add("hidden");
+    }
+    try {
+      const r = await apiFetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, password }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        if (authRegisterError) {
+          authRegisterError.textContent = j?.error || "注册失败";
+          authRegisterError.classList.remove("hidden");
+        }
+        return;
+      }
+      sessionPhone = String(j.user?.phone || phone);
+      showAppShell();
+      await startAppAfterAuth();
+    } catch {
+      if (authRegisterError) {
+        authRegisterError.textContent = "网络错误";
+        authRegisterError.classList.remove("hidden");
+      }
+    }
+  });
+
+  mineLogoutBtn?.addEventListener("click", async () => {
+    try {
+      await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" });
+    } catch {
+      // ignore
+    }
+    try {
+      window.sessionStorage.removeItem(SESSION_TAB_KEY);
+    } catch {
+      // ignore
+    }
+    window.location.reload();
+  });
+
+  mineChangePasswordBtn?.addEventListener("click", () => {
+    if (changePwError) {
+      changePwError.classList.add("hidden");
+    }
+    const o = document.getElementById("changePwOld");
+    const n = document.getElementById("changePwNew");
+    if (o) {
+      o.value = "";
+    }
+    if (n) {
+      n.value = "";
+    }
+    changePasswordDialog?.showModal();
+  });
+
+  closeChangePasswordBtn?.addEventListener("click", () => {
+    changePasswordDialog?.close();
+  });
+
+  changePasswordForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const oldPassword = document.getElementById("changePwOld")?.value || "";
+    const newPassword = document.getElementById("changePwNew")?.value || "";
+    if (changePwError) {
+      changePwError.classList.add("hidden");
+    }
+    try {
+      const r = await apiFetch(`${API_BASE}/auth/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldPassword, newPassword }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        if (changePwError) {
+          changePwError.textContent = j?.error || "修改失败";
+          changePwError.classList.remove("hidden");
+        }
+        return;
+      }
+      changePasswordDialog?.close();
+    } catch {
+      if (changePwError) {
+        changePwError.textContent = "网络错误";
+        changePwError.classList.remove("hidden");
+      }
+    }
+  });
+}
+
+async function startAppAfterAuth(options = {}) {
+  if (!options.sessionAlreadyFresh) {
+    await refreshSessionFromServer();
+  }
+  await hydrateState();
+  try {
+    if (!window.sessionStorage.getItem(SESSION_TAB_KEY)) {
+      state.route = state.appModule === "community" ? "community-feed" : "earning";
+      persistState();
+      window.sessionStorage.setItem(SESSION_TAB_KEY, "1");
+    }
+  } catch {
+    state.route = state.appModule === "community" ? "community-feed" : "earning";
+    persistState();
+  }
+  try {
+    await Promise.allSettled([
+      initializeFxRates({ skipFinalRender: true }),
+      refreshMarketData({ skipFinalRender: true }),
+    ]);
+  } catch {
+    // ignore
+  }
+  renderAll();
+  if (!quoteIntervalStarted) {
+    quoteIntervalStarted = true;
+    window.setInterval(() => {
+      void refreshMarketData();
+    }, QUOTE_REFRESH_MS);
+  }
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
 
-async function initializeFxRates() {
+initialize();
+
+async function initialize() {
+  migrateLegacyGlobalStateTo183ScopedOnce();
+  bindEvents();
+  bindAuthUi();
+  const authed = await tryRestoreSession();
+  if (!authed) {
+    showAuthShell();
+    dismissAppBootLoading();
+    return;
+  }
+  showAppShell();
+  try {
+    await startAppAfterAuth({ sessionAlreadyFresh: true });
+  } finally {
+    dismissAppBootLoading();
+  }
+}
+
+async function initializeFxRates(opts = {}) {
+  const skipFinalRender = opts.skipFinalRender === true;
   if (state.fxLoaded || state.fxLoading) {
     return;
   }
@@ -258,7 +597,9 @@ async function initializeFxRates() {
     });
     state.fxRatesToCnyByDate = map;
     state.fxLoaded = true;
-    renderAll();
+    if (!skipFinalRender) {
+      renderAll();
+    }
   } catch (error) {
     console.error("加载历史汇率失败（新浪日 K / Frankfurter），已回退固定汇率", error);
   } finally {
@@ -550,6 +891,27 @@ function getAccountById(accountId) {
   return state.accounts.find((item) => item.id === accountId) || DEFAULT_ACCOUNT;
 }
 
+/** 个股页副标题：当前筛选下的股票账户名称（多账户时用顿号拼接） */
+function stockRecordAccountCaption(scope, symbolTrades) {
+  const aid = scope.accountId;
+  if (aid && aid !== "all") {
+    const acc = getAccountById(aid);
+    return acc.name || "未命名账户";
+  }
+  const ids = [
+    ...new Set(symbolTrades.map((t) => String(t.accountId || DEFAULT_ACCOUNT.id).trim()).filter(Boolean)),
+  ];
+  if (ids.length === 0) {
+    return "—";
+  }
+  if (ids.length === 1) {
+    return getAccountById(ids[0]).name || "未命名账户";
+  }
+  return ids
+    .map((id) => getAccountById(id).name || id)
+    .join("、");
+}
+
 function getFilteredTrades(accountId = "all") {
   if (accountId === "all") {
     return [...state.trades];
@@ -610,7 +972,7 @@ async function hydrateKlineFromLocalDb() {
     return;
   }
   try {
-    const r = await fetch(`${API_BASE}/daily-close/for-trades`, { cache: "no-store" });
+    const r = await apiFetch(`${API_BASE}/daily-close/for-trades`, { cache: "no-store" });
     if (!r.ok) {
       return;
     }
@@ -752,7 +1114,9 @@ async function enrichNamesFromEastmoney(symbols) {
   await Promise.all(
     need.map(async (sym) => {
       try {
-        const response = await fetch(`${API_BASE}/stock/name?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+        const response = await apiFetch(`${API_BASE}/stock/name?symbol=${encodeURIComponent(sym)}`, {
+          cache: "no-store",
+        });
         const result = await response.json();
         const name = String(result?.name || "").trim();
         if (!name) {
@@ -1010,7 +1374,7 @@ async function hydrateState() {
   if (!apiReady) {
     staticParsed = await fetchStaticSiteState();
   }
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = localStorage.getItem(getSessionStateStorageKey());
   if (raw) {
     try {
       localParsed = JSON.parse(raw);
@@ -1018,7 +1382,8 @@ async function hydrateState() {
       console.error("读取本地数据失败，已使用默认配置", error);
     }
   }
-  if (remoteParsed && Array.isArray(remoteParsed.trades) && remoteParsed.trades.length) {
+  // 服务端已鉴权时：始终以当前用户的 /api/state 为准（含空持仓），避免新账号落到未隔离的本地缓存
+  if (remoteParsed && typeof remoteParsed === "object") {
     parsed = remoteParsed;
   } else if (localParsed) {
     parsed = localParsed;
@@ -1036,8 +1401,6 @@ async function hydrateState() {
     }
   } else if (staticParsed && Array.isArray(staticParsed.trades) && staticParsed.trades.length) {
     parsed = staticParsed;
-  } else if (remoteParsed) {
-    parsed = remoteParsed;
   }
   if (parsed && typeof parsed === "object") {
     state.route = parsed.route ?? state.route;
@@ -1053,6 +1416,8 @@ async function hydrateState() {
     state.stageRange = parsed.stageRange ?? state.stageRange;
     state.rangeDays = parsed.rangeDays ?? state.rangeDays;
     state.analysisRangeMode = parsed.analysisRangeMode ?? state.analysisRangeMode;
+    state.analysisPreset =
+      parsed.analysisPreset === "mtd" || parsed.analysisPreset === "ytd" ? parsed.analysisPreset : null;
     state.customRangeStart = parsed.customRangeStart ?? state.customRangeStart;
     state.customRangeEnd = parsed.customRangeEnd ?? state.customRangeEnd;
     state.capitalTrendMode = parsed.capitalTrendMode ?? state.capitalTrendMode;
@@ -1070,6 +1435,7 @@ async function hydrateState() {
     state.dailyReturns = Array.isArray(parsed.dailyReturns)
       ? parsed.dailyReturns.map(normalizeDailyReturnRow)
       : [];
+    state.appModule = parsed.appModule === "community" ? "community" : "holdings";
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
@@ -1077,21 +1443,38 @@ async function hydrateState() {
   if (!["preset", "custom", "all"].includes(state.analysisRangeMode)) {
     state.analysisRangeMode = "preset";
   }
-  if (!["both", "principal", "market"].includes(state.capitalTrendMode)) {
-    state.capitalTrendMode = "both";
+  if (state.capitalTrendMode === "both") {
+    state.capitalTrendMode = "principal";
+  }
+  if (!["principal", "market"].includes(state.capitalTrendMode)) {
+    state.capitalTrendMode = "principal";
   }
   if (state.stockAmountDisplay !== "cny" && state.stockAmountDisplay !== "native") {
     state.stockAmountDisplay = "native";
   }
-  if (state.useDemoData && state.trades.length === 0) {
-    state.trades = demoTrades.map((item) => ({ ...item }));
-  }
-  if (state.trades.length === 0) {
-    state.useDemoData = true;
-    state.trades = demoTrades.map((item) => ({ ...item }));
+  if (!sessionPhone) {
+    if (state.useDemoData && state.trades.length === 0) {
+      state.trades = demoTrades.map((item) => ({ ...item }));
+    }
+    if (state.trades.length === 0) {
+      state.useDemoData = true;
+      state.trades = demoTrades.map((item) => ({ ...item }));
+    }
+  } else if (state.trades.length === 0) {
+    state.useDemoData = false;
   }
   if (![7, 30, 90, 365].includes(Number(state.rangeDays))) {
     state.rangeDays = 30;
+  }
+  if (
+    !state.analysisPreset &&
+    state.analysisRangeMode === "preset" &&
+    Number(state.rangeDays) === 365
+  ) {
+    state.analysisPreset = "ytd";
+  }
+  if (state.analysisPreset && state.analysisRangeMode !== "preset") {
+    state.analysisPreset = null;
   }
   state.trades = state.trades.map((trade) => {
     if (!state.accounts.some((account) => account.id === trade.accountId)) {
@@ -1103,17 +1486,34 @@ async function hydrateState() {
   state.tradeFilterAccountId = resolveValidAccountFilter(state.tradeFilterAccountId);
   state.customRangeDraftStart = state.customRangeStart;
   state.customRangeDraftEnd = state.customRangeEnd;
+  if (!["holdings", "community"].includes(state.appModule)) {
+    state.appModule = "holdings";
+  }
+  if (state.route?.startsWith("community-") && state.route !== "community-profile") {
+    state.appModule = "community";
+  }
+  const holdingsRoutes = new Set(["earning", "analysis", "trade", "holdings-ai"]);
+  if (holdingsRoutes.has(state.route)) {
+    state.appModule = "holdings";
+  }
+  if (state.route === "community-profile") {
+    state.route = "community-feed";
+    state.appModule = "community";
+    state.communityProfileUserId = null;
+  }
 }
 
 function persistState() {
   const payload = {
     route: state.route,
+    appModule: state.appModule,
     useDemoData: state.useDemoData,
     algoMode: state.algoMode,
     benchmark: state.benchmark,
     stageRange: state.stageRange,
     rangeDays: state.rangeDays,
     analysisRangeMode: state.analysisRangeMode,
+    analysisPreset: state.analysisPreset,
     customRangeStart: state.customRangeStart,
     customRangeEnd: state.customRangeEnd,
     capitalTrendMode: state.capitalTrendMode,
@@ -1127,7 +1527,7 @@ function persistState() {
     trades: state.trades,
     dailyReturns: state.dailyReturns,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  localStorage.setItem(getSessionStateStorageKey(), JSON.stringify(payload));
   if (apiReady) {
     void pushSettingsToApi(payload);
     void pushDailyReturnsToApi(payload.dailyReturns);
@@ -1136,7 +1536,7 @@ function persistState() {
 
 async function checkApiHealth() {
   try {
-    const response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+    const response = await apiFetch(`${API_BASE}/health`, { cache: "no-store" });
     return response.ok;
   } catch (error) {
     return false;
@@ -1145,7 +1545,10 @@ async function checkApiHealth() {
 
 async function fetchRemoteState() {
   try {
-    const response = await fetch(`${API_BASE}/state`, { cache: "no-store" });
+    const response = await apiFetch(`${API_BASE}/state`, { cache: "no-store" });
+    if (response.status === 401) {
+      return null;
+    }
     if (!response.ok) {
       return null;
     }
@@ -1165,7 +1568,7 @@ async function pushSettingsToApi(payload) {
       acc[key] = payload[key];
       return acc;
     }, {});
-    await fetch(`${API_BASE}/settings`, {
+    await apiFetch(`${API_BASE}/settings`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1180,7 +1583,7 @@ async function pushDailyReturnsToApi(rows) {
     return;
   }
   try {
-    await fetch(`${API_BASE}/daily-returns/import`, {
+    await apiFetch(`${API_BASE}/daily-returns/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "replace", rows }),
@@ -1195,7 +1598,7 @@ async function importDailyReturnsToApi(rows, mode = "replace") {
     return;
   }
   try {
-    const response = await fetch(`${API_BASE}/daily-returns/import`, {
+    const response = await apiFetch(`${API_BASE}/daily-returns/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: mode === "replace" ? "replace" : "append", rows }),
@@ -1216,7 +1619,7 @@ async function saveTradeToApi(trade) {
   if (!apiReady) {
     return trade;
   }
-  const response = await fetch(`${API_BASE}/trades`, {
+  const response = await apiFetch(`${API_BASE}/trades`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(trade),
@@ -1232,7 +1635,7 @@ async function importTradesToApi(trades, mode = "append") {
   if (!apiReady) {
     return Array.isArray(trades) ? trades.map(normalizeTrade) : [];
   }
-  const response = await fetch(`${API_BASE}/trades/import`, {
+  const response = await apiFetch(`${API_BASE}/trades/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1251,7 +1654,7 @@ async function deleteTradeFromApi(tradeId) {
   if (!apiReady) {
     return true;
   }
-  const response = await fetch(`${API_BASE}/trades/${encodeURIComponent(String(tradeId || ""))}`, {
+  const response = await apiFetch(`${API_BASE}/trades/${encodeURIComponent(String(tradeId || ""))}`, {
     method: "DELETE",
   });
   return response.ok;
@@ -1265,16 +1668,78 @@ function bindEvents() {
     renderControls();
   });
 
-  routeButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      if (state.route !== "stock-record") {
-        state.previousRoute = state.route;
+  appMenuBtn?.addEventListener("click", () => {
+    if (appDrawer?.classList.contains("is-open")) {
+      closeAppDrawer();
+    } else {
+      openAppDrawer();
+    }
+  });
+  appDrawerBackdrop?.addEventListener("click", () => closeAppDrawer());
+  document.querySelectorAll("[data-drawer-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const a = btn.getAttribute("data-drawer-action");
+      if (a === "holdings") {
+        state.appModule = "holdings";
+        state.route = "earning";
+      } else if (a === "community") {
+        state.appModule = "community";
+        state.route = "community-feed";
+      } else if (a === "mine") {
+        state.route = "mine";
       }
-      state.route = button.dataset.route;
+      closeAppDrawer();
       persistState();
       renderAll();
     });
   });
+
+  appShell?.addEventListener("click", (e) => {
+    const tab = e.target.closest(".bottom-tabs .bottom-tab-btn");
+    if (tab && appShell.contains(tab)) {
+      const r = tab.dataset.route;
+      const mod = tab.dataset.module;
+      if (!r) {
+        return;
+      }
+      if (state.route !== "stock-record") {
+        state.previousRoute = state.route;
+      }
+      if (mod === "community") {
+        state.appModule = "community";
+      } else if (mod === "holdings") {
+        state.appModule = "holdings";
+      }
+      state.route = r;
+      persistState();
+      renderAll();
+      return;
+    }
+    const fb = e.target.closest(".community-follow-btn");
+    if (fb && appShell.contains(fb) && sessionUserId) {
+      const uid = fb.getAttribute("data-user-id");
+      void toggleFollowCommunity(uid, fb);
+      return;
+    }
+    const profileCard = e.target.closest("[data-community-profile-card]");
+    if (profileCard && appShell.contains(profileCard)) {
+      const uid = profileCard.getAttribute("data-community-user");
+      if (uid) {
+        openCommunityProfile(uid);
+      }
+    }
+  });
+
+  communityProfileBackBtn?.addEventListener("click", () => {
+    state.route = state.communityProfileReturnRoute || "community-feed";
+    state.communityProfileUserId = null;
+    persistState();
+    renderAll();
+  });
+
+  mineCommunitySaveBtn?.addEventListener("click", () => void saveMineCommunityProfile());
+
+  mineCommunityPublicToggle?.addEventListener("change", () => void quickSaveCommunityPublicFromHome());
 
   if (demoToggleBtn) {
     demoToggleBtn.addEventListener("click", () => {
@@ -1302,12 +1767,25 @@ function bindEvents() {
   document.querySelectorAll("[data-mine-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-mine-open");
-      state.route = target === "accounts" ? "mine-accounts" : "mine-algo";
+      if (target === "accounts") {
+        state.route = "mine-accounts";
+      } else if (target === "community") {
+        state.route = "mine-community";
+      } else {
+        state.route = "mine-algo";
+      }
       persistState();
       renderAll();
     });
   });
   document.querySelectorAll("[data-mine-back]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.route = "mine";
+      persistState();
+      renderAll();
+    });
+  });
+  document.querySelectorAll("[data-mine-back-community]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.route = "mine";
       persistState();
@@ -1369,14 +1847,27 @@ function bindEvents() {
       const value = chip.dataset.range;
       if (value === "custom") {
         state.analysisRangeMode = "custom";
+        state.analysisPreset = null;
         state.customRangeDraftStart = state.customRangeStart;
         state.customRangeDraftEnd = state.customRangeEnd;
       } else if (value === "all") {
         state.analysisRangeMode = "all";
+        state.analysisPreset = null;
+        state.analysisPanOffset = 0;
+      } else if (value === "mtd") {
+        state.analysisRangeMode = "preset";
+        state.analysisPreset = "mtd";
         state.analysisPanOffset = 0;
       } else {
         state.analysisRangeMode = "preset";
-        state.rangeDays = Number(value);
+        const n = Number(value);
+        if (n === 365) {
+          state.analysisPreset = "ytd";
+          state.rangeDays = 365;
+        } else {
+          state.analysisPreset = null;
+          state.rangeDays = n;
+        }
         state.analysisPanOffset = 0;
       }
       persistState();
@@ -1419,6 +1910,7 @@ function bindEvents() {
     state.customRangeDraftStart = start;
     state.customRangeDraftEnd = end;
     state.analysisRangeMode = "custom";
+    state.analysisPreset = null;
     state.analysisPanOffset = 0;
     persistState();
     renderControls();
@@ -1426,7 +1918,7 @@ function bindEvents() {
   });
 
   assetCurveModeSelect?.addEventListener("change", () => {
-    state.capitalTrendMode = assetCurveModeSelect.value || "both";
+    state.capitalTrendMode = assetCurveModeSelect.value || "principal";
     persistState();
     void renderAnalysis();
   });
@@ -1541,30 +2033,31 @@ function bindEvents() {
     if (!id) {
       return;
     }
-    showRecordActionPopover(row, id);
+    openTradeRecordActionsSheet(id);
   });
 
-  document.addEventListener("click", (event) => {
-    if (!recordActionPopover) {
+  stockRecordListBody?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-record-id]");
+    if (!row) {
       return;
     }
-    if (recordActionPopover.contains(event.target)) {
+    const id = row.dataset.recordId;
+    if (!id) {
       return;
     }
-    if (event.target.closest("tr[data-record-id]")) {
-      return;
-    }
-    hideRecordActionPopover();
+    openTradeRecordActionsSheet(id);
   });
 
-  recordActionPopover?.addEventListener("click", (event) => {
+  closeRecordTradeActionsBtn?.addEventListener("click", () => closeTradeRecordActionsSheet());
+
+  recordTradeActionsDialog?.addEventListener("click", (event) => {
     const actionBtn = event.target.closest("button[data-action]");
     if (!actionBtn) {
       return;
     }
     const action = actionBtn.dataset.action;
-    const tradeId = recordActionPopover.dataset.tradeId;
-    hideRecordActionPopover();
+    const tradeId = recordTradeActionsDialog.dataset.tradeId;
+    closeTradeRecordActionsSheet();
     if (!tradeId) {
       return;
     }
@@ -1575,6 +2068,31 @@ function bindEvents() {
     if (action === "delete") {
       void removeTradeById(tradeId);
     }
+  });
+
+  accountTableBody?.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-account-id]");
+    if (!row) {
+      return;
+    }
+    const id = row.dataset.accountId;
+    if (!id) {
+      return;
+    }
+    openAccountManageDialog(id);
+  });
+
+  closeAccountManageBtn?.addEventListener("click", () => {
+    state.editingAccountId = null;
+    accountManageDialog?.close();
+  });
+
+  accountManageSaveBtn?.addEventListener("click", () => void saveManagedAccount());
+
+  accountManageDeleteBtn?.addEventListener("click", () => deleteManagedAccount());
+
+  accountManageDialog?.addEventListener("close", () => {
+    state.editingAccountId = null;
   });
 
   stockTableBody?.addEventListener("click", (event) => {
@@ -1590,6 +2108,47 @@ function bindEvents() {
     state.route = state.previousRoute || "earning";
     persistState();
     renderRoute();
+  });
+
+  bindAnalysisStockRankHelpOnce();
+}
+
+function bindAnalysisStockRankHelpOnce() {
+  if (analysisStockRankHelpListenersBound || !analysisStockRankBody) {
+    return;
+  }
+  analysisStockRankHelpListenersBound = true;
+  analysisStockRankBody.addEventListener("click", (e) => {
+    const btn = e.target.closest(".stock-rank-help-btn");
+    if (!btn) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    const wrap = btn.closest(".stock-rank-help-wrap");
+    const bubble = wrap?.querySelector(".stock-rank-help-bubble");
+    const wasOpen = bubble?.classList.contains("is-open");
+    analysisStockRankBody.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    analysisStockRankBody.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
+    if (!wasOpen && bubble) {
+      bubble.classList.add("is-open");
+      btn.setAttribute("aria-expanded", "true");
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".stock-rank-help-wrap")) {
+      return;
+    }
+    analysisStockRankBody?.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    analysisStockRankBody?.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
   });
 }
 
@@ -1640,6 +2199,24 @@ function renderAll() {
 }
 
 function renderMineSection() {
+  if (mineUserPhone) {
+    const line = sessionProfile.phoneMasked || sessionPhone;
+    mineUserPhone.textContent = sessionPhone ? `已登录 ${line}` : "";
+  }
+  if (mineNicknameDisplay) {
+    const nick = sessionProfile.nickname || "";
+    mineNicknameDisplay.textContent = nick || "未设置";
+  }
+  if (mineNicknameInput) {
+    if (document.activeElement !== mineNicknameInput) {
+      mineNicknameInput.value = sessionProfile.nickname || "";
+    }
+    mineNicknameInput.disabled = !sessionPhone;
+  }
+  if (mineCommunityPublicToggle) {
+    mineCommunityPublicToggle.checked = sessionProfile.communityPublic !== false;
+    mineCommunityPublicToggle.disabled = !sessionPhone;
+  }
   if (mineAlgoSummary) {
     const labels = { cost: "成本算法", money: "资金加权", time: "时间加权" };
     mineAlgoSummary.textContent = labels[state.algoMode] || labels.cost;
@@ -1658,12 +2235,22 @@ function renderControls() {
   }
   rangeChips.forEach((chip) => {
     const value = chip.dataset.range;
-    const active =
-      value === "custom"
-        ? state.analysisRangeMode === "custom"
-        : value === "all"
-          ? state.analysisRangeMode === "all"
-          : state.analysisRangeMode === "preset" && Number(value) === state.rangeDays;
+    let active = false;
+    if (value === "custom") {
+      active = state.analysisRangeMode === "custom";
+    } else if (value === "all") {
+      active = state.analysisRangeMode === "all";
+    } else if (value === "mtd") {
+      active = state.analysisRangeMode === "preset" && state.analysisPreset === "mtd";
+    } else if (value === "365") {
+      active = state.analysisRangeMode === "preset" && state.analysisPreset === "ytd";
+    } else {
+      active =
+        state.analysisRangeMode === "preset" &&
+        state.analysisPreset !== "mtd" &&
+        state.analysisPreset !== "ytd" &&
+        Number(value) === state.rangeDays;
+    }
     chip.classList.toggle("active", active);
   });
   if (customRangeRow) {
@@ -1739,8 +2326,9 @@ function renderAccountSection() {
   accountTableBody.innerHTML = state.accounts
     .map((account) => {
       const count = tradeCountByAccount[account.id] || 0;
+      const aid = escapeHtml(String(account.id));
       return `
-        <tr>
+        <tr class="account-table-row" data-account-id="${aid}">
           <td>${escapeHtml(account.name)}</td>
           <td>${getCurrencyLabel(account.currency)}</td>
           <td>${count}</td>
@@ -1751,7 +2339,683 @@ function renderAccountSection() {
 }
 
 function isMineRoute(route) {
-  return route === "mine" || route === "mine-accounts" || route === "mine-algo";
+  return (
+    route === "mine" ||
+    route === "mine-accounts" ||
+    route === "mine-algo" ||
+    route === "mine-community"
+  );
+}
+
+function formatTwrSignedHtml(x) {
+  if (x == null || !Number.isFinite(Number(x))) {
+    return "<strong>—</strong>";
+  }
+  const v = Number(x) * 100;
+  const sign = v > 0 ? "+" : "";
+  const cls = v > 0 ? "up" : v < 0 ? "down" : "";
+  return `<strong class="${cls}">${sign}${v.toFixed(2)}%</strong>`;
+}
+
+function openAppDrawer() {
+  appDrawerBackdrop?.classList.remove("hidden");
+  appDrawer?.classList.add("is-open");
+  appDrawerBackdrop?.classList.add("is-open");
+  appDrawer?.setAttribute("aria-hidden", "false");
+  appMenuBtn?.setAttribute("aria-expanded", "true");
+}
+
+function closeAppDrawer() {
+  appDrawer?.classList.remove("is-open");
+  appDrawerBackdrop?.classList.remove("is-open");
+  appDrawer?.setAttribute("aria-hidden", "true");
+  appMenuBtn?.setAttribute("aria-expanded", "false");
+  window.setTimeout(() => {
+    appDrawerBackdrop?.classList.add("hidden");
+  }, 220);
+}
+
+function openCommunityProfile(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  if (uid === sessionUserId) {
+    state.route = "mine";
+    persistState();
+    renderAll();
+    return;
+  }
+  if (state.route.startsWith("community-") && state.route !== "community-profile") {
+    state.communityProfileReturnRoute = state.route;
+  } else {
+    state.communityProfileReturnRoute = "community-feed";
+  }
+  state.communityProfileUserId = uid;
+  state.route = "community-profile";
+  state.appModule = "community";
+  state.communityProfileStage = "month";
+  state.lastPublicProfileDetail = null;
+  persistState();
+  renderAll();
+}
+
+function communityFollowButtonHtml(card) {
+  if (!sessionUserId || card.userId === sessionUserId) {
+    return "";
+  }
+  const uid = escapeHtml(card.userId);
+  const fo = card.following ? "已关注" : "关注";
+  const followCls = card.following ? "community-follow-btn is-on" : "community-follow-btn";
+  return `<button type="button" class="${followCls}" data-user-id="${uid}">${escapeHtml(fo)}</button>`;
+}
+
+function buildTop3ListHtml(topPositions) {
+  const top = (topPositions || []).slice(0, 3);
+  if (!top.length) {
+    return "";
+  }
+  const rows = top
+    .map((p, i) => {
+      const w = Number(p.weight);
+      const right = Number.isFinite(w)
+        ? `<span class="community-top3-pct">${(w * 100).toFixed(1)}%</span>`
+        : "—";
+      const code = escapeHtml(p.displayCode || p.symbol || "");
+      return `<div class="community-top3-row">
+        <span class="community-top3-rank">${i + 1}</span>
+        <div class="community-top3-mid">
+          <strong>${escapeHtml(p.name)}</strong>
+          <span class="community-top3-code">${code}</span>
+        </div>
+        <div class="community-top3-val">${right}</div>
+      </div>`;
+    })
+    .join("");
+  return `<div class="community-top3"><div class="community-top3-title">TOP3持仓</div>${rows}</div>`;
+}
+
+function buildCommunityCardInner(card, opts = {}) {
+  const { showRank = null, followHtml = "" } = opts;
+  const name = escapeHtml(card.displayName || "用户");
+  const rankBlock =
+    showRank != null
+      ? `<div class="community-rank-index ${showRank <= 3 ? `top${showRank}` : ""}">${showRank}</div>`
+      : "";
+  const top3 = buildTop3ListHtml(card.topPositions);
+  return `
+    <div class="community-card__header-row">
+      <div class="community-card__header-left">
+        ${rankBlock}
+        <div class="community-card-name-stack">
+          <div class="community-card-name-line">${name}</div>
+          ${card.mutual ? `<p class="community-card-meta">互相关注</p>` : ""}
+        </div>
+      </div>
+      ${followHtml ? `<div class="community-card__header-follow">${followHtml}</div>` : ""}
+    </div>
+    <div class="community-metrics">
+      <div class="community-metric-cell">
+        <span class="community-metric-label">今日</span>
+        ${formatTwrSignedHtml(card.todayTwr)}
+      </div>
+      <div class="community-metric-cell">
+        <span class="community-metric-label">本月</span>
+        ${formatTwrSignedHtml(card.mtdTwr)}
+      </div>
+      <div class="community-metric-cell">
+        <span class="community-metric-label">本年</span>
+        ${formatTwrSignedHtml(card.ytdTwr)}
+      </div>
+      <div class="community-metric-cell">
+        <span class="community-metric-label">累计</span>
+        ${formatTwrSignedHtml(card.totalTwr)}
+      </div>
+    </div>
+    ${top3}
+  `;
+}
+
+function wrapInteractiveCommunityCard(card, opts = {}) {
+  const uid = escapeHtml(card.userId);
+  const innerHtml = buildCommunityCardInner(card, {
+    showRank: opts.showRank ?? null,
+    followHtml: communityFollowButtonHtml(card),
+  });
+  return `<article class="community-card community-card--interactive" data-community-profile-card data-community-user="${uid}">
+    <div class="community-card__main">${innerHtml}</div>
+  </article>`;
+}
+
+function feedRowHtml(t) {
+  const side = t.side === "sell" ? "sell" : "buy";
+  const sideLabel = t.side === "sell" ? "卖出" : "买入";
+  const uid = escapeHtml(t.userId);
+  const tag = escapeHtml(t.marketTag || "OT");
+  const tagLower = String(t.marketTag || "ot").toLowerCase();
+  const code = escapeHtml(t.displayCode || t.symbol || "");
+  const priceStr =
+    t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
+  const dateDisplay = String(t.date || "—").replace(/-/g, "\u2013");
+  const noteBlock = t.note
+    ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(t.note)}</span></p>`
+    : "";
+  return `
+    <article class="community-feed-card community-card--interactive" data-community-profile-card data-community-user="${uid}">
+      <div class="community-feed-card__inner">
+        <div class="community-feed-card__head">
+          <span class="community-feed-user-name">${escapeHtml(t.displayName)}</span>
+          <span class="community-feed-side-text community-feed-side-${side}">${sideLabel}</span>
+        </div>
+        <div class="community-feed-card__body">
+          <div class="community-feed-card__col community-feed-card__col--stock">
+            <strong class="community-feed-stock-name">${escapeHtml(t.name || t.symbol)}</strong>
+            <div class="community-feed-stock-sub">
+              <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
+              <span class="community-feed-stock-code">${code}</span>
+            </div>
+          </div>
+          <div class="community-feed-card__col community-feed-card__col--detail">
+            <div class="community-feed-kv">
+              <span class="community-feed-kv-label">交易价格</span>
+              <span class="community-feed-kv-value">${escapeHtml(priceStr)}</span>
+            </div>
+            <div class="community-feed-kv">
+              <span class="community-feed-kv-label">交易日期</span>
+              <span class="community-feed-kv-value">${escapeHtml(dateDisplay)}</span>
+            </div>
+          </div>
+        </div>
+        ${noteBlock}
+      </div>
+    </article>
+  `;
+}
+
+async function toggleFollowCommunity(userId, btnEl) {
+  const uid = String(userId || "").trim();
+  if (!uid || !sessionUserId || uid === sessionUserId || !btnEl) {
+    return;
+  }
+  const base = getApiBaseForFetch();
+  const isOn = btnEl.classList.contains("is-on");
+  try {
+    const r = await apiFetch(`${base}/community/follow/${encodeURIComponent(uid)}`, {
+      method: isOn ? "DELETE" : "POST",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      return;
+    }
+    const nowOn = isOn ? false : j.following !== false;
+    btnEl.classList.toggle("is-on", nowOn);
+    btnEl.textContent = nowOn ? "已关注" : "关注";
+    if (state.route === "community-profile" && state.communityProfileUserId === uid) {
+      lastCommunityDataKey = "";
+      void loadCommunityProfileDetail();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function loadCommunityFeed() {
+  if (!communityFeedList || !sessionPhone) {
+    return;
+  }
+  if (!apiReady) {
+    communityFeedList.innerHTML = `<p class="empty">连接服务端后可查看社区动态</p>`;
+    return;
+  }
+  communityFeedList.innerHTML = `<p class="empty">加载中…</p>`;
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/community/feed`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      communityFeedList.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      return;
+    }
+    const rows = Array.isArray(j.data) ? j.data : [];
+    if (!rows.length) {
+      communityFeedList.innerHTML = `<p class="empty">暂无动态，试试「关注的人」或「排行」</p>`;
+      return;
+    }
+    communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");
+  } catch {
+    communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
+  }
+}
+
+async function loadCommunityFollowing() {
+  if (!communityFollowingList || !sessionPhone) {
+    return;
+  }
+  if (!apiReady) {
+    communityFollowingList.innerHTML = `<p class="empty">连接服务端后可查看</p>`;
+    return;
+  }
+  communityFollowingList.innerHTML = `<p class="empty">加载中…</p>`;
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/community/following`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      communityFollowingList.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      return;
+    }
+    const cards = Array.isArray(j.data) ? j.data : [];
+    if (!cards.length) {
+      communityFollowingList.innerHTML = `<p class="empty">还没有关注任何人</p>`;
+      return;
+    }
+    communityFollowingList.innerHTML = cards.map((c) => wrapInteractiveCommunityCard(c)).join("");
+  } catch {
+    communityFollowingList.innerHTML = `<p class="empty">网络错误</p>`;
+  }
+}
+
+async function loadCommunityLeaderboard() {
+  if (!communityLeaderboardList || !sessionPhone) {
+    return;
+  }
+  if (!apiReady) {
+    communityLeaderboardList.innerHTML = `<p class="empty">连接服务端后可查看排行</p>`;
+    return;
+  }
+  communityLeaderboardList.innerHTML = `<p class="empty">加载中…</p>`;
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/community/leaderboard`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      communityLeaderboardList.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      return;
+    }
+    const entries = j.data?.entries || [];
+    if (!entries.length) {
+      communityLeaderboardList.innerHTML = `<p class="empty">暂无排行（需公开社区、满足归一条件并有交易）</p>`;
+      return;
+    }
+    communityLeaderboardList.innerHTML = entries
+      .map((c, idx) =>
+        wrapInteractiveCommunityCard(c, { showRank: idx + 1 }),
+      )
+      .join("");
+  } catch {
+    communityLeaderboardList.innerHTML = `<p class="empty">网络错误</p>`;
+  }
+}
+
+function profitMainClassFromAmount(amount) {
+  if (amount == null || !Number.isFinite(Number(amount))) {
+    return "";
+  }
+  return Number(amount) > 0 ? "up" : Number(amount) < 0 ? "down" : "";
+}
+
+function twrColorClass(rate) {
+  if (rate == null || !Number.isFinite(Number(rate))) {
+    return "";
+  }
+  const v = Number(rate);
+  return v > 0 ? "up" : v < 0 ? "down" : "";
+}
+
+function metricValueWithRateMoney(amount, rate) {
+  const core = formatCurrency(amount);
+  const amountText = Number(amount) > 0 ? `+${core}` : core;
+  const rateText = formatPercent(rate);
+  const amtCls = profitMainClassFromAmount(amount);
+  const rateCls = twrColorClass(rate);
+  return `<span class="profit-amt ${amtCls}">${amountText}</span><span class="profit-rate-inline ${rateCls}">${rateText}</span>`;
+}
+
+function metricValueWithRateMoneyOptional(amount, rate) {
+  if (amount != null && Number.isFinite(Number(amount))) {
+    return metricValueWithRateMoney(amount, rate);
+  }
+  const rateText =
+    rate != null && Number.isFinite(Number(rate)) ? formatPercent(rate) : "—";
+  const rateCls = twrColorClass(rate);
+  return `<span class="profit-amt">—</span><span class="profit-rate-inline ${rateCls}">${rateText}</span>`;
+}
+
+function renderPublicStockTableRows(rows) {
+  if (!rows || !rows.length) {
+    return `<tr><td colspan="14"><p class="empty">暂无持仓数据</p></td></tr>`;
+  }
+  return rows
+    .map((row) => {
+      const tag = row.marketTag || "OT";
+      const stockCode = escapeHtml(row.displayCode || "");
+      const dayClass = (row.todayProfit ?? 0) >= 0 ? "up" : "down";
+      const fmt = (v) =>
+        v == null || !Number.isFinite(Number(v)) ? "—" : formatCurrency(Number(v));
+      const dash = "—";
+      return `<tr>
+          <td class="stock-name">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span><i class="market-tag">${tag}</i> ${stockCode}</span>
+          </td>
+          <td class="${dayClass}">${fmt(row.todayProfit)}</td>
+          <td>
+            <div class="cell-main">${row.currentPrice != null ? formatNumber(row.currentPrice, 3) : dash}</div>
+            <div class="cell-sub">${dash}</div>
+          </td>
+          <td>
+            <div class="cell-main">${fmt(row.marketValue)}</div>
+            <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
+          </td>
+          <td>${formatPercent(row.weight)}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+          <td>${dash}</td>
+        </tr>`;
+    })
+    .join("");
+}
+
+function renderPublicEarningProfileHtml(d) {
+  const ev = d.earningLike;
+  if (!ev) {
+    return `<p class="empty">暂无脱敏持仓数据</p>`;
+  }
+  const kpis = ev.kpis
+    .map(
+      (item) => `
+    <article class="kpi-item">
+      <p class="kpi-label">${escapeHtml(item.label)}</p>
+      <p class="kpi-value">${
+        item.value == null || !Number.isFinite(Number(item.value))
+          ? "—"
+          : formatCurrency(Number(item.value))
+      }</p>
+    </article>`,
+    )
+    .join("");
+  const stockRows = renderPublicStockTableRows(ev.stockRows);
+  const pt = ev.profitToday;
+  const ver = d.normalizationVersion != null ? escapeHtml(String(d.normalizationVersion)) : "";
+  const pubTag = `<p class="community-desensitize-tag">社区脱敏展示 · 归一系数版本 ${ver || "—"}</p>`;
+  return `
+    ${pubTag}
+    <article class="overview-card">
+      <div class="overview-head">
+        <label class="head-select-wrap" style="opacity:0.88;pointer-events:none">
+          <select class="head-select" disabled><option>全部账户</option></select>
+          <span class="arrow">▼</span>
+        </label>
+      </div>
+      <div class="profit-row">
+        <div class="profit-block">
+          <p class="profit-label">今日收益</p>
+          <p id="pubTodayProfitMain" class="profit-main">${metricValueWithRateMoneyOptional(pt.amount, pt.rate ?? 0)}</p>
+        </div>
+        <div class="profit-block">
+          <label class="profit-label stage-select-wrap">
+            <select id="pubStageRangeSelect" class="stage-select">
+              <option value="month">本月收益</option>
+              <option value="ytd">本年收益</option>
+              <option value="total">总收益</option>
+            </select>
+            <span class="arrow">▼</span>
+          </label>
+          <p id="pubStageProfitMain" class="profit-main">--</p>
+        </div>
+      </div>
+      <div class="overview-grid">${kpis}</div>
+    </article>
+    <article class="stock-card">
+      <div class="stock-head stock-head-row">
+        <h2 class="stock-title">个股收益</h2>
+        <span class="stock-currency-toggle is-disabled" aria-hidden="true">¥</span>
+      </div>
+      <div class="table-scroll">
+        <table class="stock-table">
+          <thead>
+            <tr>
+              <th class="name-head">名称</th>
+              <th>今日收益</th>
+              <th>现价/涨跌</th>
+              <th>市值/数量</th>
+              <th>仓位</th>
+              <th>成本</th>
+              <th>月收益</th>
+              <th>月收益占比</th>
+              <th>年收益</th>
+              <th>年收益占比</th>
+              <th>总收益</th>
+              <th>总收益率</th>
+              <th>后悔率</th>
+              <th>记录</th>
+            </tr>
+          </thead>
+          <tbody>${stockRows}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+function bindPublicProfileStageSelect() {
+  const sel = document.getElementById("pubStageRangeSelect");
+  if (!sel) {
+    return;
+  }
+  sel.value = state.communityProfileStage;
+  sel.addEventListener("change", () => {
+    state.communityProfileStage = sel.value;
+    syncPublicProfileStageRow();
+  });
+  syncPublicProfileStageRow();
+}
+
+function syncPublicProfileStageRow() {
+  const ev = state.lastPublicProfileDetail?.earningLike;
+  if (!ev) {
+    return;
+  }
+  const sel = document.getElementById("pubStageRangeSelect");
+  if (sel) {
+    sel.value = state.communityProfileStage;
+  }
+  const stage = state.communityProfileStage;
+  const block =
+    stage === "ytd" ? ev.profitYtd : stage === "total" ? ev.profitTotal : ev.profitMonth;
+  const main = document.getElementById("pubStageProfitMain");
+  if (main) {
+    main.innerHTML = metricValueWithRateMoneyOptional(block.amount, block.rate ?? 0);
+    main.className = "profit-main";
+  }
+}
+
+let lastCommunityDataKey = "";
+
+async function loadCommunityProfileDetail() {
+  if (!communityProfileBody || !state.communityProfileUserId) {
+    return;
+  }
+  const uid = state.communityProfileUserId;
+  const toolbar = document.getElementById("communityProfileToolbar");
+  communityProfileBody.innerHTML = `<p class="empty">加载中…</p>`;
+  if (toolbar) {
+    toolbar.classList.add("hidden");
+    toolbar.innerHTML = "";
+  }
+  if (communityProfileTitle) {
+    communityProfileTitle.textContent = "加载中…";
+  }
+  try {
+    const r = await apiFetch(
+      `${getApiBaseForFetch()}/community/users/${encodeURIComponent(uid)}/profile`,
+      { cache: "no-store" },
+    );
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 404) {
+      if (toolbar) {
+        toolbar.classList.add("hidden");
+        toolbar.innerHTML = "";
+      }
+      communityProfileBody.innerHTML = `<p class="empty">用户未公开或不可见</p>`;
+      return;
+    }
+    if (!r.ok || !j?.ok) {
+      if (toolbar) {
+        toolbar.classList.add("hidden");
+        toolbar.innerHTML = "";
+      }
+      communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      return;
+    }
+    const d = j.data;
+    if (d.isSelf) {
+      state.route = "mine";
+      state.communityProfileUserId = null;
+      persistState();
+      renderAll();
+      return;
+    }
+    state.lastPublicProfileDetail = d;
+    if (communityProfileTitle) {
+      communityProfileTitle.textContent = d.displayName || "社区资料";
+    }
+    if (toolbar) {
+      if (sessionUserId && d.userId !== sessionUserId) {
+        toolbar.classList.remove("hidden");
+        const uidEsc = escapeHtml(d.userId);
+        const fu = d.following ? "已关注" : "关注";
+        const cl = d.following ? "community-follow-btn is-on" : "community-follow-btn";
+        toolbar.innerHTML = `<button type="button" class="${cl}" data-user-id="${uidEsc}">${escapeHtml(fu)}</button>`;
+      } else {
+        toolbar.classList.add("hidden");
+        toolbar.innerHTML = "";
+      }
+    }
+    communityProfileBody.innerHTML = renderPublicEarningProfileHtml(d);
+    bindPublicProfileStageSelect();
+  } catch {
+    communityProfileBody.innerHTML = `<p class="empty">网络错误</p>`;
+  }
+}
+
+function scheduleCommunityDataLoad() {
+  if (!sessionPhone) {
+    return;
+  }
+  if (state.appModule !== "community") {
+    lastCommunityDataKey = "";
+    return;
+  }
+  const uid = state.communityProfileUserId || "";
+  const key = `${state.route}|${uid}`;
+  if (key === lastCommunityDataKey) {
+    return;
+  }
+  lastCommunityDataKey = key;
+  if (state.route === "community-feed") {
+    void loadCommunityFeed();
+  } else if (state.route === "community-following") {
+    void loadCommunityFollowing();
+  } else if (state.route === "community-rank") {
+    void loadCommunityLeaderboard();
+  } else if (state.route === "community-profile" && state.communityProfileUserId) {
+    void loadCommunityProfileDetail();
+  }
+}
+
+async function quickSaveCommunityPublicFromHome() {
+  if (!sessionPhone || !mineCommunityPublicToggle) {
+    return;
+  }
+  const want = mineCommunityPublicToggle.checked;
+  const revertTo = !want;
+  mineCommunityHomeMsg?.classList.add("hidden");
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/me/community-profile`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nickname: sessionProfile.nickname ?? null,
+        communityPublic: want,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      mineCommunityPublicToggle.checked = revertTo;
+      if (mineCommunityHomeMsg) {
+        mineCommunityHomeMsg.textContent = j?.error || "保存失败";
+        mineCommunityHomeMsg.classList.remove("hidden", "is-ok");
+        mineCommunityHomeMsg.classList.add("is-error");
+      }
+      return;
+    }
+    sessionProfile.communityPublic = j.profile?.communityPublic !== false;
+    lastCommunityDataKey = "";
+    if (mineCommunityHomeMsg) {
+      mineCommunityHomeMsg.textContent = "已更新";
+      mineCommunityHomeMsg.classList.remove("hidden", "is-error");
+      mineCommunityHomeMsg.classList.add("is-ok");
+      window.setTimeout(() => mineCommunityHomeMsg.classList.add("hidden"), 1800);
+    }
+  } catch {
+    mineCommunityPublicToggle.checked = revertTo;
+    if (mineCommunityHomeMsg) {
+      mineCommunityHomeMsg.textContent = "网络错误";
+      mineCommunityHomeMsg.classList.remove("hidden", "is-ok");
+      mineCommunityHomeMsg.classList.add("is-error");
+    }
+  }
+}
+
+async function saveMineCommunityProfile() {
+  if (!sessionPhone) {
+    return;
+  }
+  const nickname = mineNicknameInput?.value?.trim() || "";
+  const communityPublic = mineCommunityPublicToggle?.checked ?? true;
+  mineCommunityProfileMsg?.classList.add("hidden");
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/me/community-profile`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nickname: nickname || null,
+        communityPublic,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      if (mineCommunityProfileMsg) {
+        mineCommunityProfileMsg.textContent = j?.error || "保存失败";
+        mineCommunityProfileMsg.classList.remove("hidden", "is-ok");
+        mineCommunityProfileMsg.classList.add("is-error");
+      }
+      return;
+    }
+    sessionProfile.nickname = j.profile?.nickname ?? null;
+    sessionProfile.communityPublic = j.profile?.communityPublic !== false;
+    sessionProfile.displayName = String(j.profile?.displayName || "");
+    if (mineNicknameInput) {
+      mineNicknameInput.value = sessionProfile.nickname || "";
+    }
+    if (mineCommunityProfileMsg) {
+      mineCommunityProfileMsg.textContent = "已保存";
+      mineCommunityProfileMsg.classList.remove("hidden", "is-error");
+      mineCommunityProfileMsg.classList.add("is-ok");
+    }
+    lastCommunityDataKey = "";
+    renderMineSection();
+  } catch {
+    if (mineCommunityProfileMsg) {
+      mineCommunityProfileMsg.textContent = "网络错误";
+      mineCommunityProfileMsg.classList.remove("hidden", "is-ok");
+      mineCommunityProfileMsg.classList.add("is-error");
+    }
+  }
 }
 
 function renderRoute() {
@@ -1759,30 +3023,60 @@ function renderRoute() {
     "earning",
     "analysis",
     "trade",
+    "holdings-ai",
     "mine",
     "mine-accounts",
     "mine-algo",
+    "mine-community",
+    "community-feed",
+    "community-following",
+    "community-rank",
+    "community-ai",
+    "community-profile",
     "stock-record",
   ]);
   if (!validRoutes.has(state.route)) {
-    state.route = "earning";
+    state.route = state.appModule === "community" ? "community-feed" : "earning";
   }
-  routeButtons.forEach((button) => {
+  if (appHeaderTitle) {
+    if (state.route === "community-profile") {
+      appHeaderTitle.textContent = "持仓收益";
+    } else if (isMineRoute(state.route)) {
+      appHeaderTitle.textContent = "我的";
+    } else if (state.appModule === "community") {
+      appHeaderTitle.textContent = "社区广场";
+    } else {
+      appHeaderTitle.textContent = "持仓收益";
+    }
+  }
+  document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
-    const active = r === state.route || (r === "mine" && isMineRoute(state.route));
-    button.classList.toggle("active", active);
+    button.classList.toggle("active", r === state.route);
   });
   routePanes.forEach((pane) => {
     const id = String(pane.id || "").replace(/^route-/, "");
     pane.classList.toggle("active", id === state.route);
   });
-  const bottomTabs = document.querySelector(".bottom-tabs");
-  if (bottomTabs) {
-    bottomTabs.style.display = state.route === "stock-record" ? "none" : "grid";
-  }
+  const hideTabs =
+    state.route === "stock-record" ||
+    state.route === "community-profile" ||
+    isMineRoute(state.route);
+  document.querySelectorAll(".bottom-tabs").forEach((bar) => {
+    const isCo = bar.classList.contains("bottom-tabs--community");
+    const isHo = bar.classList.contains("bottom-tabs--holdings");
+    let show = !hideTabs;
+    if (show && isCo) {
+      show = state.appModule === "community";
+    }
+    if (show && isHo) {
+      show = state.appModule === "holdings";
+    }
+    bar.style.display = show ? "grid" : "none";
+  });
   if (state.route === "stock-record" && state.activeRecordSymbol) {
     void renderStockRecordPage(state.activeRecordSymbol);
   }
+  scheduleCommunityDataLoad();
 }
 
 function renderOverviewAndStockTable() {
@@ -1799,8 +3093,17 @@ function renderOverviewAndStockTable() {
   } else {
     stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.totalProfitNative), 0);
   }
-  const stageRateOv =
+  let stageRateOv =
     portfolio.overviewPrincipal > 0 ? stageProfitOv / portfolio.overviewPrincipal : 0;
+  if (state.algoMode === "time" || state.algoMode === "money") {
+    const fullHist = buildPortfolioHistory(portfolio.positions, scope.trades);
+    const firstTradeDate =
+      scope.trades.length > 0 ? [...scope.trades].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
+    const startKey = getStageStartKey(state.stageRange, firstTradeDate);
+    const stageHist = fullHist.filter((p) => p.date >= startKey);
+    const histForMode = stageHist.length ? stageHist : fullHist;
+    stageRateOv = computeModeSeries(histForMode, state.algoMode).at(-1)?.rate ?? 0;
+  }
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
     { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
@@ -1896,9 +3199,9 @@ function getStageStartKey(stageRange, firstDate) {
   return toDateKey(start);
 }
 
-/** 分析页「年初至今」chip 用 rangeDays=365，语义为当年 1 月 1 日起，非滚动 365 日。 */
+/** 分析页「年初至今」：本年 1 月 1 日起（analysisPreset=ytd，兼容旧数据 rangeDays=365）。 */
 function isAnalysisYtdPreset() {
-  return state.analysisRangeMode === "preset" && Number(state.rangeDays) === 365;
+  return state.analysisRangeMode === "preset" && state.analysisPreset === "ytd";
 }
 
 function ytdStartDateKey() {
@@ -1906,9 +3209,21 @@ function ytdStartDateKey() {
   return toDateKey(new Date(y.getFullYear(), 0, 1));
 }
 
+function monthToDateStartKey() {
+  const y = new Date();
+  return toDateKey(new Date(y.getFullYear(), y.getMonth(), 1));
+}
+
+function isAnalysisMtdPreset() {
+  return state.analysisRangeMode === "preset" && state.analysisPreset === "mtd";
+}
+
 function getDefaultAnalysisStartDate() {
   if (isAnalysisYtdPreset()) {
     return ytdStartDateKey();
+  }
+  if (isAnalysisMtdPreset()) {
+    return monthToDateStartKey();
   }
   const dt = new Date();
   dt.setDate(dt.getDate() - Math.max(state.rangeDays - 1, 0));
@@ -2113,6 +3428,354 @@ function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
   );
 }
 
+/** 区间期末收盘价：最后一根 day ≤ dateKey 的 K 线收盘；含当日 bar；若 dateKey 为今日则可用行情现价。 */
+function getSymbolCloseOnOrBeforeKey(symbol, dateKey, fallbackPrice) {
+  const kline = getKlineBySymbol(symbol);
+  for (let i = kline.length - 1; i >= 0; i -= 1) {
+    const item = kline[i];
+    if (item.day <= dateKey && Number.isFinite(Number(item.close))) {
+      return Number(item.close);
+    }
+  }
+  const todayKey = toDateKey(new Date());
+  if (dateKey >= todayKey) {
+    const quote = getQuoteBySymbol(symbol);
+    return validNumber(quote.current, quote.prevClose, fallbackPrice, 0);
+  }
+  return validNumber(fallbackPrice, 0);
+}
+
+/**
+ * 与 computePositionStageProfit 同口径：区间 [startKey, endKey] 内标的盈亏（原币）。
+ * 期初用 startKey 之前持仓 × startKey 前一日收盘；期末用 endKey 日及以前持仓 × 期末价；区间内交易金额为现金流。
+ */
+function computePositionProfitInDateRange(position, startKey, endKey, trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const symbolTrades = tradeList.filter((t) => t.symbol === position.symbol).sort(sortTradeAsc);
+  if (!symbolTrades.length) {
+    return 0;
+  }
+  let startQuantity = 0;
+  let endQuantity = 0;
+  let stageFlowNative = 0;
+  for (const trade of symbolTrades) {
+    const delta = trade.side === "buy" ? trade.quantity : -trade.quantity;
+    if (trade.date < startKey) {
+      startQuantity += delta;
+    }
+    if (trade.date <= endKey) {
+      endQuantity += delta;
+    }
+    if (trade.date >= startKey && trade.date <= endKey) {
+      stageFlowNative += signedAmount(trade);
+    }
+  }
+  const startClose = getSymbolCloseBeforeDate(position.symbol, startKey, position.prevClose);
+  const endClose = getSymbolCloseOnOrBeforeKey(
+    position.symbol,
+    endKey,
+    validNumber(position.currentPrice, position.prevClose)
+  );
+  const startMv = startQuantity * startClose;
+  const endMv = endQuantity * endClose;
+  return endMv - startMv - stageFlowNative;
+}
+
+function profitNativeToAnalysisCny(position, nativeProfit) {
+  const n = Number.isFinite(Number(nativeProfit)) ? Number(nativeProfit) : 0;
+  if (position.currency === "CNY" || position.market === "A股") {
+    return n;
+  }
+  return n * (validNumber(position.fxRate, 1) || 1);
+}
+
+function addCalendarDaysToDateKey(dateKey, deltaDays) {
+  const d = new Date(`${dateKey}T12:00:00`);
+  if (Number.isNaN(d.getTime())) {
+    return dateKey;
+  }
+  d.setDate(d.getDate() + deltaDays);
+  return toDateKey(d);
+}
+
+/**
+ * 分析周期 [periodStart, periodEnd] 内：按自然日日终持仓大于 0 连成连续段。
+ */
+function collectHoldingSegmentsInPeriod(symbolTrades, periodStart, periodEnd) {
+  let qty = 0;
+  for (const t of symbolTrades) {
+    if (t.date < periodStart) {
+      qty += t.side === "buy" ? t.quantity : -t.quantity;
+    }
+  }
+  const startDate = new Date(`${periodStart}T12:00:00`);
+  const endDate = new Date(`${periodEnd}T12:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+    return [];
+  }
+  const segments = [];
+  let runStart = null;
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const dk = toDateKey(cursor);
+    for (const t of symbolTrades) {
+      if (t.date === dk) {
+        qty += t.side === "buy" ? t.quantity : -t.quantity;
+      }
+    }
+    if (qty > 0) {
+      if (runStart === null) {
+        runStart = dk;
+      }
+    } else if (runStart !== null) {
+      const endSeg = addCalendarDaysToDateKey(dk, -1);
+      if (endSeg >= runStart) {
+        segments.push({ start: runStart, end: endSeg });
+      }
+      runStart = null;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  if (runStart !== null) {
+    segments.push({ start: runStart, end: periodEnd });
+  }
+  return segments;
+}
+
+/**
+ * 持仓区间展示：仅日期～日期；多段时每段后附（该段持仓天数、该段个股涨跌幅、该段区间收益¥），口径与排行表同列一致。
+ */
+function formatHoldingSegmentsLabel(position, symbolTrades, periodStart, periodEnd, trades) {
+  const segments = collectHoldingSegmentsInPeriod(symbolTrades, periodStart, periodEnd);
+  if (!segments.length) {
+    return "";
+  }
+  if (segments.length === 1) {
+    const s = segments[0];
+    return `${s.start}～${s.end}`;
+  }
+  return segments
+    .map((s) => {
+      const m = computePositionPeriodMetrics(position, s.start, s.end, trades);
+      const profitCny = profitNativeToAnalysisCny(position, m.profitNative);
+      const pctStr = formatPercent(m.pxChange);
+      const profitStr = `${profitCny >= 0 ? "+" : ""}¥${formatNumber(profitCny, 2)}`;
+      return `${s.start}～${s.end}（${m.heldDays}天，${pctStr}，${profitStr}）`;
+    })
+    .join("，");
+}
+
+/** 区间内自然日，按日终持仓大于 0 计一天（与区间内交易顺序一致）。 */
+function countHeldDaysInRange(symbolTrades, startKey, endKey) {
+  let qty = 0;
+  for (const t of symbolTrades) {
+    if (t.date < startKey) {
+      qty += t.side === "buy" ? t.quantity : -t.quantity;
+    }
+  }
+  const startDate = new Date(`${startKey}T12:00:00`);
+  const endDate = new Date(`${endKey}T12:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+    return 0;
+  }
+  let held = 0;
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const dk = toDateKey(cursor);
+    for (const t of symbolTrades) {
+      if (t.date === dk) {
+        qty += t.side === "buy" ? t.quantity : -t.quantity;
+      }
+    }
+    if (qty > 0) {
+      held += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return held;
+}
+
+/**
+ * 区间内：盈亏（原币）、个股涨跌幅（区间内首笔买入成交价→期末价；无区间内买入则退回前收→期末）、持仓天数。
+ */
+function computePositionPeriodMetrics(position, startKey, endKey, trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const symbolTrades = tradeList.filter((t) => t.symbol === position.symbol).sort(sortTradeAsc);
+  if (!symbolTrades.length) {
+    return {
+      profitNative: 0,
+      pxChange: 0,
+      heldDays: 0,
+    };
+  }
+  const profitNative = computePositionProfitInDateRange(position, startKey, endKey, tradeList);
+  const endClose = getSymbolCloseOnOrBeforeKey(
+    position.symbol,
+    endKey,
+    validNumber(position.currentPrice, position.prevClose)
+  );
+  let entryPx = 0;
+  for (const trade of symbolTrades) {
+    if (trade.date < startKey) {
+      continue;
+    }
+    if (trade.date > endKey) {
+      break;
+    }
+    if (trade.side === "buy" && validNumber(trade.price, 0) > 0) {
+      entryPx = Number(trade.price);
+      break;
+    }
+  }
+  const startPxForStockMove =
+    entryPx > 1e-9 ? entryPx : getSymbolCloseBeforeDate(position.symbol, startKey, position.prevClose);
+  const pxChange = startPxForStockMove > 1e-9 ? endClose / startPxForStockMove - 1 : 0;
+  const heldDays = countHeldDaysInRange(symbolTrades, startKey, endKey);
+  return { profitNative, pxChange, heldDays };
+}
+
+/**
+ * 分析 Tab 所选完整周期 [a,b]（与顶部区间一致，不受图表横向平移窗口影响）。
+ */
+function resolveAnalysisPeriodAB(history) {
+  const todayKey = toDateKey(new Date());
+  if (!history.length) {
+    return { a: todayKey, b: todayKey };
+  }
+  const lastH = history[history.length - 1].date;
+  if (state.analysisRangeMode === "all") {
+    return { a: history[0].date, b: lastH };
+  }
+  if (state.analysisRangeMode === "custom") {
+    let start = state.customRangeStart || history[0].date;
+    let end = state.customRangeEnd || lastH;
+    if (start > end) {
+      [start, end] = [end, start];
+    }
+    const picked = history.filter((p) => p.date >= start && p.date <= end);
+    if (picked.length) {
+      return { a: start, b: end };
+    }
+  }
+  if (isAnalysisMtdPreset()) {
+    return { a: monthToDateStartKey(), b: lastH };
+  }
+  if (isAnalysisYtdPreset()) {
+    return { a: ytdStartDateKey(), b: lastH };
+  }
+  const windowSize = Math.min(Math.max(state.rangeDays, 2), history.length);
+  const startIdx = Math.max(0, history.length - windowSize);
+  return { a: history[startIdx].date, b: lastH };
+}
+
+/** 标的在 dateKey 当日及以前成交累计后的日终股数（含 dateKey 当天）。 */
+function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
+  let qty = 0;
+  for (const t of symbolTrades) {
+    if (t.date <= dateKey) {
+      qty += t.side === "buy" ? t.quantity : -t.quantity;
+    }
+  }
+  return qty;
+}
+
+/**
+ * 个股排行：周期 a、b 来自顶部选择；仅展示 [a,b] 内至少有一天日终持仓大于 0 的标的。
+ * 有效区间：effStart=A早于a则a否则A；effEnd 默认 B 早于 b 取 B 否则取 b；若周期末日 b 仍持仓则强制 effEnd=b，避免仅一笔买入时 B 停在买入日导致涨跌幅异常。
+ */
+function renderAnalysisStockRank(history, scope, portfolio) {
+  if (!analysisStockRankBody) {
+    return;
+  }
+  if (!history.length) {
+    analysisStockRankBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
+    return;
+  }
+  const { a, b } = resolveAnalysisPeriodAB(history);
+  const rows = [];
+  for (const pos of portfolio.positions) {
+    const symbolTrades = scope.trades.filter((t) => t.symbol === pos.symbol).sort(sortTradeAsc);
+    if (!symbolTrades.length) {
+      continue;
+    }
+    const A = symbolTrades[0].date;
+    const B = symbolTrades[symbolTrades.length - 1].date;
+    if (countHeldDaysInRange(symbolTrades, a, b) < 1) {
+      continue;
+    }
+    const effStart = A < a ? a : A;
+    let effEnd = B < b ? B : b;
+    if (symbolEodQtyOnOrBefore(symbolTrades, b) > 0) {
+      effEnd = b;
+    }
+    if (effStart > effEnd) {
+      continue;
+    }
+    const m = computePositionPeriodMetrics(pos, effStart, effEnd, scope.trades);
+    const profitCny = profitNativeToAnalysisCny(pos, m.profitNative);
+    rows.push({
+      symbol: pos.symbol,
+      name: pos.name,
+      holdIntervalsLabel: formatHoldingSegmentsLabel(pos, symbolTrades, a, b, scope.trades),
+      profitCny,
+      pxChange: m.pxChange,
+      heldDays: m.heldDays,
+    });
+  }
+  rows.sort((a, b) => b.profitCny - a.profitCny);
+
+  if (!rows.length) {
+    analysisStockRankBody.innerHTML = `<p class="empty">本分析周期内无持仓的标的。</p>`;
+    return;
+  }
+
+  analysisStockRankBody.innerHTML = `
+    <div class="analysis-stock-rank-table" role="table" aria-label="个股收益排行">
+      <div class="analysis-stock-rank-head" role="row">
+        <span class="col-rank" role="columnheader">#</span>
+        <span class="col-name" role="columnheader">名称</span>
+        <span class="col-profit" role="columnheader">区间收益(¥)</span>
+        <span class="col-px col-with-help stock-rank-help-wrap" role="columnheader">
+          <span class="col-th-label">个股涨跌幅</span>
+          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="个股涨跌幅说明">?</button>
+          <div class="stock-rank-help-bubble" role="tooltip">
+            有效持仓区间内，起点取时间顺序第一笔买入成交价，终点取区间末日收盘（含今日则用现价），涨跌幅为终点÷起点−1；区间内无买入则起点为区间首日前一交易日收盘。多笔买入仅首笔价，非摊薄成本。
+          </div>
+        </span>
+        <span class="col-days col-with-help stock-rank-help-wrap" role="columnheader">
+          <span class="col-th-label">持仓天数</span>
+          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="持仓天数说明">?</button>
+          <div class="stock-rank-help-bubble" role="tooltip">
+            在有效区间内按自然日逐日统计：当日全部成交完成后，若日终持股大于零则计一天并累加。清仓后再买回会分段，总天数与「持仓区间」各段有仓日之和一致。
+          </div>
+        </span>
+        <span class="col-hold-interval" role="columnheader">持仓区间</span>
+      </div>
+      ${rows
+        .map((row, idx) => {
+          const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
+          const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
+          const code = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
+          return `
+        <div class="analysis-stock-rank-row" role="row">
+          <span class="col-rank" role="cell">${idx + 1}</span>
+          <div class="col-name" role="cell">
+            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
+            <span class="rank-code">${escapeHtml(code)}</span>
+          </div>
+          <span class="col-profit ${cls}" role="cell">${row.profitCny >= 0 ? "+" : ""}¥${formatNumber(
+            row.profitCny,
+            2
+          )}</span>
+          <span class="col-px ${pCls}" role="cell">${formatPercent(row.pxChange)}</span>
+          <span class="col-days" role="cell">${row.heldDays} 天</span>
+          <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+}
+
 function renderTradeTable() {
   if (!tradeTableBody) {
     return;
@@ -2130,7 +3793,7 @@ function renderTradeTable() {
   tradeTableBody.innerHTML = sorted
     .map((trade) => {
       return `
-        <tr class="trade-row" data-record-id="${trade.id}">
+        <tr class="trade-row trade-row--clickable" data-record-id="${escapeHtml(String(trade.id))}">
           <td>${trade.date.replace(/-/g, "/")}</td>
           <td>${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
           <td class="type-cell">${typeLabel(trade.type)}</td>
@@ -2145,26 +3808,102 @@ function renderTradeTable() {
     .join("");
 }
 
-function showRecordActionPopover(row, tradeId) {
-  if (!recordActionPopover) {
+function openTradeRecordActionsSheet(tradeId) {
+  if (!recordTradeActionsDialog || !tradeId) {
     return;
   }
-  const rect = row.getBoundingClientRect();
-  recordActionPopover.dataset.tradeId = tradeId;
-  recordActionPopover.style.top = `${window.scrollY + rect.bottom - 2}px`;
-  recordActionPopover.style.left = `${window.scrollX + rect.right - 118}px`;
-  recordActionPopover.classList.add("show");
+  recordTradeActionsDialog.dataset.tradeId = String(tradeId);
+  recordTradeActionsDialog.showModal();
 }
 
-function hideRecordActionPopover() {
-  if (!recordActionPopover) {
+function closeTradeRecordActionsSheet() {
+  if (!recordTradeActionsDialog) {
     return;
   }
-  recordActionPopover.classList.remove("show");
-  recordActionPopover.dataset.tradeId = "";
+  recordTradeActionsDialog.close();
+  recordTradeActionsDialog.dataset.tradeId = "";
+}
+
+function openAccountManageDialog(accountId) {
+  const acc = state.accounts.find((a) => a.id === accountId);
+  if (!acc || !accountManageDialog) {
+    return;
+  }
+  state.editingAccountId = accountId;
+  if (accountManageName) {
+    accountManageName.value = acc.name || "";
+  }
+  if (accountManageCurrency) {
+    accountManageCurrency.value = acc.currency || "CNY";
+  }
+  const isDef = acc.id === DEFAULT_ACCOUNT.id;
+  if (accountManageName) {
+    accountManageName.disabled = isDef;
+  }
+  if (accountManageCurrency) {
+    accountManageCurrency.disabled = isDef;
+  }
+  if (accountManageSaveBtn) {
+    accountManageSaveBtn.disabled = isDef;
+  }
+  accountManageDefaultHint?.classList.toggle("hidden", !isDef);
+  accountManageDeleteBtn?.classList.toggle("hidden", isDef);
+  accountManageDialog.showModal();
+}
+
+function saveManagedAccount() {
+  const id = state.editingAccountId;
+  if (!id || id === DEFAULT_ACCOUNT.id || !accountManageName || !accountManageCurrency) {
+    return;
+  }
+  const name = String(accountManageName.value || "").trim();
+  let currency = String(accountManageCurrency.value || "CNY").toUpperCase();
+  if (!name) {
+    return;
+  }
+  if (!["CNY", "USD", "HKD"].includes(currency)) {
+    currency = "CNY";
+  }
+  state.accounts = normalizeAccounts(
+    state.accounts.map((a) => (a.id === id ? { ...a, name, currency } : a)),
+  );
+  state.editingAccountId = null;
+  accountManageDialog?.close();
+  persistState();
+  renderControls();
+  renderAccountSection();
+}
+
+function deleteManagedAccount() {
+  const id = state.editingAccountId;
+  if (!id || id === DEFAULT_ACCOUNT.id) {
+    return;
+  }
+  if (!window.confirm("确定删除该股票账户？删除后不可恢复。")) {
+    return;
+  }
+  const n = state.trades.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === id).length;
+  if (n > 0) {
+    window.alert(`该账户下仍有 ${n} 条交易记录，请先删除或编辑交易改用其他账户。`);
+    return;
+  }
+  state.accounts = normalizeAccounts(state.accounts.filter((a) => a.id !== id));
+  if (state.selectedAccountId === id) {
+    state.selectedAccountId = "all";
+  }
+  if (state.tradeFilterAccountId === id) {
+    state.tradeFilterAccountId = "all";
+  }
+  state.editingAccountId = null;
+  accountManageDialog?.close();
+  persistState();
+  renderControls();
+  renderAccountSection();
+  renderAll();
 }
 
 function openEditTradeDialog(tradeId) {
+  closeTradeRecordActionsSheet();
   const trade = state.trades.find((item) => item.id === tradeId);
   if (!trade) {
     return;
@@ -2203,6 +3942,7 @@ function clearEditState() {
 }
 
 async function removeTradeById(tradeId) {
+  closeTradeRecordActionsSheet();
   try {
     await deleteTradeFromApi(tradeId);
   } catch (error) {
@@ -2210,13 +3950,17 @@ async function removeTradeById(tradeId) {
   }
   state.trades = state.trades.filter((item) => item.id !== tradeId);
   if (state.trades.length === 0) {
-    state.useDemoData = true;
-    state.trades = demoTrades.map((item) => ({ ...item }));
-    if (apiReady) {
-      try {
-        await importTradesToApi(state.trades, "replace");
-      } catch (error) {
-        console.error("同步演示交易到数据库失败", error);
+    if (sessionPhone) {
+      state.useDemoData = false;
+    } else {
+      state.useDemoData = true;
+      state.trades = demoTrades.map((item) => ({ ...item }));
+      if (apiReady) {
+        try {
+          await importTradesToApi(state.trades, "replace");
+        } catch (error) {
+          console.error("同步演示交易到数据库失败", error);
+        }
       }
     }
   }
@@ -2352,6 +4096,7 @@ function renderAnalysisFromHistory() {
   if (analysisProfitSummary) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
   }
+  renderAnalysisStockRank(history, scope, portfolio);
 }
 
 async function renderAnalysis() {
@@ -2365,7 +4110,7 @@ async function renderAnalysis() {
   if (apiReady) {
     try {
       const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/analysis-daily?accountId=${encodeURIComponent(aid)}&from=1970-01-01&to=2099-12-31`,
         { cache: "no-store" }
       );
@@ -2474,6 +4219,7 @@ async function renderAnalysis() {
   if (analysisProfitSummary) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
   }
+  renderAnalysisStockRank(pseudoHistory, scope, portfolio);
 }
 
 function resolveAnalysisRange(history) {
@@ -2493,6 +4239,20 @@ function resolveAnalysisRange(history) {
     if (picked.length) {
       return picked;
     }
+  }
+  if (isAnalysisMtdPreset()) {
+    const mtdKey = monthToDateStartKey();
+    const filtered = history.filter((point) => point.date >= mtdKey);
+    if (!filtered.length) {
+      return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+    }
+    const windowSize = Math.min(Math.max(Math.min(filtered.length, 62), 2), filtered.length);
+    const maxOffset = Math.max(0, filtered.length - windowSize);
+    const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
+    state.analysisPanOffset = offset;
+    const end = filtered.length - offset;
+    const start = Math.max(0, end - windowSize);
+    return filtered.slice(start, end);
   }
   if (isAnalysisYtdPreset()) {
     const ytdKey = ytdStartDateKey();
@@ -2567,12 +4327,20 @@ async function openStockRecordDialog(symbol) {
 async function renderStockRecordPage(symbol) {
   const scope = getPortfolioScope();
   const position = computePortfolio(scope.trades).positions.find((item) => item.symbol === symbol);
-  if (!position) {
-    return;
-  }
   const symbolTrades = scope.trades
     .filter((item) => item.symbol === symbol)
     .sort(sortTradeDesc);
+  if (!position) {
+    if (state.route === "stock-record" && state.activeRecordSymbol === symbol) {
+      state.route = state.previousRoute || "earning";
+      state.activeRecordSymbol = null;
+      persistState();
+      renderRoute();
+      renderOverviewAndStockTable();
+      renderTradeTable();
+    }
+    return;
+  }
   const quote = getQuoteBySymbol(symbol);
   const current = validNumber(quote.current, position.currentPrice);
   const prev = validNumber(quote.prevClose, position.prevClose, current);
@@ -2584,14 +4352,14 @@ async function renderStockRecordPage(symbol) {
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
   stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
-  stockRecordMarket.textContent = marketLabel(position.market);
+  stockRecordMarket.textContent = stockRecordAccountCaption(scope, symbolTrades);
   stockRecordRegret.textContent = `后悔率 ${formatPercent(position.regretRate)}`;
   stockRecordRegret.className = `${position.regretRate >= 0 ? "up" : "down"}`;
 
   stockRecordListBody.innerHTML = symbolTrades
     .map(
       (trade) => `
-      <tr>
+      <tr class="stock-record-trade-row" data-record-id="${escapeHtml(String(trade.id))}">
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
         <td>${formatNumber(trade.price, 2)}</td>
@@ -2601,7 +4369,7 @@ async function renderStockRecordPage(symbol) {
           2
         )}</td>
       </tr>
-    `
+    `,
     )
     .join("");
 
@@ -2609,7 +4377,7 @@ async function renderStockRecordPage(symbol) {
   if (apiReady) {
     try {
       const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/symbol-daily?accountId=${encodeURIComponent(aid)}&symbol=${encodeURIComponent(
           normalizeSymbol(symbol)
         )}&from=2000-01-01&to=2099-12-31`,
@@ -2731,19 +4499,6 @@ function buildFallbackKlineFromTrades(symbol) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return rows;
-}
-
-function marketLabel(market) {
-  if (market === "A股") {
-    return "CN 沪深默认";
-  }
-  if (market === "港股") {
-    return "HK 港股默认";
-  }
-  if (market === "美股") {
-    return "US 美股默认";
-  }
-  return "OT 其他市场";
 }
 
 function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
@@ -3333,6 +5088,7 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
       yMax: height - 36,
       yAxisMode: options.yAxisMode || (seriesB && seriesB.length ? "left-right" : "left"),
       axisByKey: options.axisByKey || {},
+      yRangePadding: options.yRangePadding,
     }
   );
   drawChartGrid(ctx, width, height, payload);
@@ -3353,19 +5109,15 @@ function drawSingleLineChart(canvas, series, color) {
   return drawDualLineChart(canvas, series, null, color, null);
 }
 
+const ASSET_CHART_Y_MIN_FACTOR = 0.95;
+const ASSET_CHART_Y_MAX_FACTOR = 1.05;
+
 function drawAssetChart(assetSeries) {
   const principalSeries = assetSeries.map((item) => ({ date: item.date, value: item.principal }));
   const marketSeries = assetSeries.map((item) => ({ date: item.date, value: item.market }));
-  if (state.capitalTrendMode === "principal") {
-    return drawDualLineChart(analysisAssetChart, principalSeries, null, "#5f6c82", null, {
-      keyA: "principal",
-      labelA: "本金",
-      yAxisMode: "left",
-      leftLabel: "本金",
-      valueFormatter: (value) => formatNumber(value, 2),
-      axisFormatter: (value) => formatNumber(value, 2),
-    });
-  }
+  const assetYScale = {
+    yRangePadding: { minFactor: ASSET_CHART_Y_MIN_FACTOR, maxFactor: ASSET_CHART_Y_MAX_FACTOR },
+  };
   if (state.capitalTrendMode === "market") {
     return drawDualLineChart(analysisAssetChart, marketSeries, null, "#4f83f1", null, {
       keyA: "market",
@@ -3374,18 +5126,17 @@ function drawAssetChart(assetSeries) {
       leftLabel: "总市值",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
+      ...assetYScale,
     });
   }
-  return drawDualLineChart(analysisAssetChart, principalSeries, marketSeries, "#5f6c82", "#4f83f1", {
+  return drawDualLineChart(analysisAssetChart, principalSeries, null, "#5f6c82", null, {
     keyA: "principal",
-    keyB: "market",
     labelA: "本金",
-    labelB: "总市值",
-    yAxisMode: "left-right",
+    yAxisMode: "left",
     leftLabel: "本金",
-    rightLabel: "总市值",
     valueFormatter: (value) => formatNumber(value, 2),
     axisFormatter: (value) => formatNumber(value, 2),
+    ...assetYScale,
   });
 }
 
@@ -3439,6 +5190,7 @@ function buildChartPayload(seriesList, options = {}) {
   const yMin = options.yMin ?? 20;
   const yMax = options.yMax ?? 300;
   const yAxisMode = options.yAxisMode || "left";
+  const yRangePadding = options.yRangePadding;
   const maxCount = Math.max(
     ...seriesList.map((item) => Math.max((item.values || []).length, 0)),
     2
@@ -3463,6 +5215,20 @@ function buildChartPayload(seriesList, options = {}) {
     return { ...item, axis, values };
   });
   const resolveRange = (values) => {
+    if (
+      yRangePadding &&
+      Number.isFinite(yRangePadding.minFactor) &&
+      Number.isFinite(yRangePadding.maxFactor) &&
+      values.length
+    ) {
+      const rawMin = Math.min(...values);
+      const rawMax = Math.max(...values);
+      if (Number.isFinite(rawMin) && Number.isFinite(rawMax)) {
+        const min = rawMin * yRangePadding.minFactor;
+        const max = rawMax * yRangePadding.maxFactor;
+        return { min, max, range: Math.max(max - min, 1e-9) };
+      }
+    }
     const min = Math.min(...values, 0);
     const max = Math.max(...values, 0);
     return { min, max, range: Math.max(max - min, 0.001) };
@@ -3901,6 +5667,9 @@ function updateAnalysisWindowByScale(scale) {
   if (state.analysisRangeMode !== "preset") {
     return;
   }
+  if (state.analysisPreset === "mtd" || state.analysisPreset === "ytd") {
+    return;
+  }
   const delta = scale > 1 ? -6 : 6;
   state.rangeDays = Math.max(7, Math.min(365, state.rangeDays + delta));
 }
@@ -3916,7 +5685,8 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
 }
 
-async function refreshMarketData() {
+async function refreshMarketData(opts = {}) {
+  const skipFinalRender = opts.skipFinalRender === true;
   if (state.marketLoading) {
     return;
   }
@@ -3933,6 +5703,9 @@ async function refreshMarketData() {
     const symbols = collectSymbolsForMarket();
     if (!symbols.length) {
       state.marketLoading = false;
+      if (!skipFinalRender) {
+        renderAll();
+      }
       return;
     }
     await fetchQuoteNames(symbols);
@@ -3999,7 +5772,9 @@ async function refreshMarketData() {
     console.error("行情拉取失败，保留本地数据展示", error);
   } finally {
     state.marketLoading = false;
-    renderAll();
+    if (!skipFinalRender) {
+      renderAll();
+    }
   }
 }
 
@@ -4009,7 +5784,10 @@ async function refreshMarketData() {
  */
 async function fetchLatestQuoteFromDailyKlineFallback(symbol) {
   try {
-    const list = await fetchKlineData(symbol);
+    let list = getKlineBySymbol(symbol);
+    if (!Array.isArray(list) || list.length < 2) {
+      list = await fetchKlineData(symbol);
+    }
     if (!Array.isArray(list) || list.length < 2) {
       return null;
     }
@@ -4101,12 +5879,14 @@ async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) 
   const apiB = getApiBaseForFetch();
   const directHttps = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?${qs}`;
   let url = useProxy ? `${apiB}/sina-kline?${qs}` : directHttps;
-  let response = await fetch(url, {
-    cache: "no-store",
-    headers: useProxy ? undefined : SINA_KLINE_HEADERS,
-  });
+  let response = useProxy
+    ? await apiFetch(url, { cache: "no-store" })
+    : await fetch(url, {
+        cache: "no-store",
+        headers: SINA_KLINE_HEADERS,
+      });
   if (!response.ok && useProxy) {
-    response = await fetch(`${apiB}/sina_kline?${qs}`, { cache: "no-store" });
+    response = await apiFetch(`${apiB}/sina_kline?${qs}`, { cache: "no-store" });
   }
   if (!response.ok) {
     throw new Error(`新浪K线失败: ${response.status}`);
@@ -4147,7 +5927,8 @@ async function supplementKlineForMonthBoundary(symbol) {
     : toDateKey(new Date());
   const monthStartKey = getStageStartKey("month", firstDate);
   const isUs = inferMarket(symbol) === "美股";
-  if (!isUs && list.some((item) => item.day && item.day < monthStartKey)) {
+  // 已覆盖「本月起点」之前的日 K 则不必再拉新浪（含美股；否则每次 refresh / 定时刷新都会重复打满 1023 根）
+  if (list.some((item) => item.day && item.day < monthStartKey)) {
     return list;
   }
 
@@ -4234,7 +6015,7 @@ async function fetchRealtimeQuotesTencent(symbols) {
 
   if (apiReady) {
     try {
-      const r = await fetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(keysJoined)}`, {
+      const r = await apiFetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(keysJoined)}`, {
         cache: "no-store",
       });
       if (r.ok) {
@@ -4382,7 +6163,7 @@ async function fetchRealtimeForexTencent() {
 
   if (apiReady) {
     try {
-      const r = await fetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(q)}`, {
+      const r = await apiFetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(q)}`, {
         cache: "no-store",
       });
       if (r.ok) {
@@ -4705,7 +6486,7 @@ function formatNumber(value, fraction = 2) {
 function formatPercent(value) {
   const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
   const num = (safe * 100).toFixed(2);
-  return `${safe >= 0 ? "+" : ""}${num}%`;
+  return `${safe > 0 ? "+" : ""}${num}%`;
 }
 
 function metricValueWithRate(amount, rate) {
