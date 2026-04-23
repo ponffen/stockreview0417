@@ -313,6 +313,14 @@ body {
   font-size: 12px;
 }
 
+/* 他人主页总览：仅展示收益率时与原先主金额同字号 */
+.community-profile-overview-min .profit-main .profit-rate-inline.profit-rate-only {
+  margin-left: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+
 .profit-amt {
   font-weight: inherit;
 }
@@ -445,6 +453,18 @@ body {
   text-align: left !important;
 }
 
+.stock-table .name-head .th-sort-btn--name {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+}
+
+.th-sort-static {
+  font: inherit;
+  color: inherit;
+  font-weight: 500;
+}
+
 .th-sort-btn {
   border: none;
   background: transparent;
@@ -508,6 +528,40 @@ body {
 .stock-table thead th:last-child,
 .stock-table td:last-child {
   text-align: left;
+}
+
+/* 个人页首页「个股收益」：除首列外各列为内容宽度（单行、不挤压），表宽随内容；容器横向滚动保证能看全 */
+.public-profile-stock-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.public-profile-stock-table thead th:not(.name-head),
+.public-profile-stock-table tbody td:not(.stock-name) {
+  white-space: nowrap;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.public-profile-stock-table thead th.name-head,
+.public-profile-stock-table tbody td.stock-name {
+  width: auto;
+  min-width: 10rem;
+}
+
+/* 覆盖主持仓表格对 .stock-name 的 62px / 省略号，个人页名称与代码需完整展示 */
+.public-profile-stock-table .stock-name {
+  min-width: 10rem;
+  width: auto;
+  max-width: none;
+}
+
+.public-profile-stock-table .stock-name strong {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .stock-name {
@@ -663,6 +717,7 @@ h2 {
 
 .chart-wrap {
   position: relative;
+  overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -691,6 +746,10 @@ h2 {
 }
 
 .chart-wrap canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
   -webkit-user-select: none;
   user-select: none;
   touch-action: none;
@@ -721,6 +780,141 @@ h2 {
   min-width: 680px;
   --stock-rank-col-rank: 28px;
   --stock-rank-col-gap: 8px;
+}
+
+/* 他人个人页「个股收益排行」：名称后「收益占比」；列宽跟内容走，余量给持仓区间 */
+.analysis-stock-rank-table--public {
+  display: grid;
+  grid-template-columns:
+    var(--stock-rank-col-rank)
+    max-content
+    minmax(4.5rem, max-content)
+    minmax(5rem, max-content)
+    minmax(6rem, max-content)
+    minmax(11rem, 1fr);
+  min-width: max-content;
+  padding-left: 10px;
+  padding-right: 10px;
+  box-sizing: border-box;
+  font-size: 13px;
+  /* stretch：同行各格等高，底边 border 才不会「错行」；勿用 center */
+  align-items: stretch;
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-head,
+.analysis-stock-rank-table--public > .analysis-stock-rank-row {
+  display: contents;
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-head > *,
+.analysis-stock-rank-table--public > .analysis-stock-rank-row > * {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+.analysis-stock-rank-table--public .col-rank {
+  justify-content: center;
+}
+
+.analysis-stock-rank-table--public .col-px,
+.analysis-stock-rank-table--public .col-days {
+  justify-content: flex-end;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-hold-interval,
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-hold-interval {
+  align-items: flex-start;
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-head > * {
+  background: #f6f8fb;
+  border-bottom: 1px solid var(--line);
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-row > * {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-row:last-child > * {
+  border-bottom: none;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-head .stock-rank-help-wrap {
+  flex-wrap: nowrap;
+  min-width: max-content;
+  justify-content: flex-end;
+}
+
+.analysis-stock-rank-table--public .col-profit-share {
+  justify-content: flex-end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-hold-interval {
+  white-space: pre-line;
+  word-break: normal;
+  line-height: 1.45;
+}
+
+/* 名称列：纵向堆叠 + 在等高格内垂直居中 */
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  min-width: max-content;
+}
+
+/*
+ * 横向滚动时：后续列在 DOM 中靠后，默认会叠在 sticky 的 # / 名称之上导致「穿出去」。
+ * 抬高 sticky 层级，其余格用 z-index:0 明确垫在下面。
+ */
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-rank {
+  z-index: 22;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-rank {
+  z-index: 21;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name {
+  z-index: 21;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
+  z-index: 20;
+}
+
+.analysis-stock-rank-table--public > .analysis-stock-rank-row > *:not(.col-rank):not(.col-name) {
+  position: relative;
+  z-index: 0;
+}
+
+/* 去掉主持仓同款右侧阴影条（左滑时像裂缝）；只保留名称列右侧一根淡分割线 */
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-rank,
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-rank,
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
+  box-shadow: none;
+}
+
+.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
+  border-right: 1px solid var(--line);
+}
+
+/* 数值/涨跌幅列完整显示，避免 +xxx% 被格宽裁掉 */
+.analysis-stock-rank-table--public .col-profit-share,
+.analysis-stock-rank-table--public .col-px,
+.analysis-stock-rank-table--public .col-days {
+  white-space: nowrap;
+  overflow: visible;
 }
 
 .analysis-stock-rank-head,
@@ -993,6 +1187,44 @@ h2 {
   min-height: 30px;
 }
 
+.trade-subtab-bar {
+  display: flex;
+  gap: 0;
+  margin: 0 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: #eef1f6;
+}
+
+.trade-subtab-btn {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: #7a8495;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.trade-subtab-btn.is-active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.trade-subtab-panel.hidden {
+  display: none !important;
+}
+
+.cash-transfer-delete-btn {
+  margin-top: 8px;
+  color: var(--up) !important;
+}
+
 .trade-filter-btn {
   font-size: 14px;
   color: #8a94a7;
@@ -1007,6 +1239,14 @@ h2 {
   width: 100%;
   border-collapse: collapse;
   min-width: 700px;
+}
+
+.trade-table--cash {
+  min-width: 480px;
+}
+
+.trade-table--cash tbody tr {
+  cursor: pointer;
 }
 
 .trade-table thead th {
@@ -1042,6 +1282,20 @@ h2 {
 
 .trade-table .type-cell {
   font-weight: 500;
+}
+
+/* 持仓收益 / 个人页交易表：交易方向列约为原先默认宽度的一半 */
+.trade-table thead th:nth-child(3),
+.trade-table tbody td:nth-child(3),
+.public-profile-trade-table thead th:nth-child(3),
+.public-profile-trade-table tbody td:nth-child(3) {
+  width: 1%;
+  max-width: 4.75rem;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 
 .trade-table thead th:nth-child(4),
@@ -1308,7 +1562,12 @@ h2 {
   background: #fff;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  z-index: 20;
+  z-index: 100;
+}
+
+/** 他人持仓底栏仅 3 项，需占满整行（避免继承 4 列网格右侧留白） */
+.bottom-tabs.bottom-tabs--profile {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .bottom-tab-btn {
@@ -1321,6 +1580,8 @@ h2 {
   align-items: center;
   gap: 2px;
   font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .bottom-tab-btn .tab-ico {
@@ -1900,6 +2161,148 @@ body.auth-mode {
   margin-bottom: 0;
 }
 
+.community-profile-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 0 0;
+}
+
+.community-profile-back-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.community-profile-page-title {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 700;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.community-profile-follow-slot {
+  flex-shrink: 0;
+  min-width: 72px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.community-profile-follow-slot:empty {
+  min-width: 0;
+}
+
+.community-profile-disclaimer {
+  margin: 10px 2px 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.community-profile-subtabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 4px 0 10px;
+  padding: 6px 0 0;
+  background: var(--panel);
+  border-radius: 12px 12px 0 0;
+  border: 1px solid var(--line);
+}
+
+.community-profile-subtab {
+  border: none;
+  background: transparent;
+  color: var(--tab);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  padding: 10px 4px;
+  cursor: pointer;
+}
+
+.community-profile-subtab .tab-ico {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.community-profile-subtab.active {
+  color: var(--blue);
+}
+
+.community-profile-tab-panel {
+  display: none;
+}
+
+.community-profile-tab-panel.is-active {
+  display: block;
+}
+
+/* 他人主页交易列表：名称列宽约 40% */
+/* 名称列约为原 40% 宽度时的视觉宽度（原 max 40% → 16%） */
+.public-profile-trade-table .pub-trade-col-name {
+  width: 16%;
+  max-width: 16%;
+  box-sizing: border-box;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.trade-table .trade-col-name {
+  width: 16%;
+  max-width: 16%;
+  box-sizing: border-box;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.public-profile-trade-table .pub-trade-amt-th-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+.public-profile-trade-table .pub-trade-amt-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 他人主页个股记录表头：金额 + 与收益排行一致的气泡 */
+.stock-record-amt-th-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+.stock-record-table--pub .stock-record-amt-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.stock-record-table--pub th:nth-child(3),
+.stock-record-table--pub td:nth-child(3),
+.stock-record-table--pub th:nth-child(4),
+.stock-record-table--pub td:nth-child(4) {
+  text-align: right;
+}
+
 .community-profile-toolbar {
   padding: 0 12px 12px;
   display: flex;
@@ -1927,9 +2330,10 @@ body.auth-mode {
 }
 
 .community-card-name-line {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
+  color: var(--blue);
 }
 
 .community-top3 {
@@ -1977,9 +2381,14 @@ body.auth-mode {
   font-weight: 600;
 }
 
+.community-top3-stock-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .community-top3-code {
-  display: block;
-  margin-top: 2px;
   font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
@@ -2023,9 +2432,9 @@ body.auth-mode {
 }
 
 .community-feed-user-name {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--blue);
   min-width: 0;
 }
 
@@ -2071,6 +2480,18 @@ body.auth-mode {
   font-size: 12px;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+.community-feed-kv-label--with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.community-feed-card .community-feed-amt-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
 .community-feed-kv-value {
@@ -2194,4 +2615,110 @@ body.auth-mode {
 
 .community-feed-note .community-feed-dd {
   font-weight: 400;
+}
+
+.trade-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trade-search-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trade-search-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.trade-search-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.trade-search-input-wrap {
+  position: relative;
+}
+
+.trade-stock-search-input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.trade-stock-search-input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(79, 131, 241, 0.2);
+}
+
+.trade-stock-search-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: min(56vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(32, 38, 47, 0.12);
+}
+
+.trade-stock-search-results[hidden] {
+  display: none !important;
+}
+
+.trade-stock-search-results li {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 15px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trade-stock-search-results li:last-child {
+  border-bottom: none;
+}
+
+.trade-stock-search-results li:active {
+  background: #f4f6fa;
+}
+
+.trade-stock-search-name {
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.trade-stock-search-meta {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.35;
+}
+
+.trade-stock-search-code {
+  font-weight: 600;
+  color: #5c6675;
+}
+
+.trade-stock-search-loading,
+.trade-stock-search-empty {
+  padding: 14px;
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
 }

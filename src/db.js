@@ -303,6 +303,26 @@ function ensureCommunitySchema() {
 
 ensureCommunitySchema();
 
+function ensureCashTransfersSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cash_transfers (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      transfer_date TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_date
+      ON cash_transfers (user_id, transfer_date ASC, created_at ASC);
+  `);
+}
+
+ensureCashTransfersSchema();
+
 const UPSERT_ACCOUNT_STMT = db.prepare(`
 INSERT INTO accounts (user_id, id, name, currency, created_at, updated_at)
 VALUES (@user_id, @id, @name, @currency, @created_at, @updated_at)
@@ -784,6 +804,126 @@ function deleteTradeById(tradeId, userId) {
   return res.changes > 0;
 }
 
+const UPSERT_CASH_TRANSFER_STMT = db.prepare(`
+INSERT INTO cash_transfers (
+  id, user_id, account_id, transfer_date, direction, amount, note, created_at, updated_at
+) VALUES (
+  @id, @user_id, @account_id, @transfer_date, @direction, @amount, @note, @created_at, @updated_at
+)
+ON CONFLICT(id) DO UPDATE SET
+  user_id = excluded.user_id,
+  account_id = excluded.account_id,
+  transfer_date = excluded.transfer_date,
+  direction = excluded.direction,
+  amount = excluded.amount,
+  note = excluded.note,
+  updated_at = excluded.updated_at
+`);
+
+const SELECT_ALL_CASH_TRANSFERS_STMT = db.prepare(`
+SELECT id, account_id, transfer_date, direction, amount, note, created_at
+FROM cash_transfers
+WHERE user_id = ?
+ORDER BY transfer_date DESC, created_at DESC
+`);
+
+const DELETE_CASH_TRANSFER_STMT = db.prepare("DELETE FROM cash_transfers WHERE user_id = ? AND id = ?");
+const DELETE_ALL_CASH_TRANSFERS_STMT = db.prepare("DELETE FROM cash_transfers WHERE user_id = ?");
+
+function normalizeCashTransfer(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const id = String(r.id || "").trim() || randomUUID();
+  const dir = String(r.direction || "").toLowerCase();
+  const direction = dir === "out" || dir === "transfer_out" || dir === "转出" ? "out" : "in";
+  const amount = Math.abs(validNumber(r.amount, 0));
+  return {
+    id,
+    accountId: String(r.accountId || r.account_id || "default").trim() || "default",
+    date: toDateKey(r.date || r.transfer_date),
+    direction: direction === "out" ? "out" : "in",
+    amount,
+    note: String(r.note || "").trim(),
+    createdAt: validNumber(r.createdAt, r.created_at, nowMs()),
+  };
+}
+
+function cashTransferToRow(ct, userId) {
+  const safe = normalizeCashTransfer(ct);
+  const updatedAt = nowMs();
+  return {
+    id: safe.id,
+    user_id: String(userId || "").trim(),
+    account_id: safe.accountId,
+    transfer_date: safe.date,
+    direction: safe.direction,
+    amount: safe.amount,
+    note: safe.note,
+    created_at: safe.createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+function rowToCashTransfer(row) {
+  return {
+    id: row.id,
+    accountId: row.account_id || "default",
+    date: row.transfer_date,
+    direction: row.direction === "out" ? "out" : "in",
+    amount: Number(row.amount),
+    note: row.note || "",
+    createdAt: Number(row.created_at),
+  };
+}
+
+function getCashTransfers(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  return SELECT_ALL_CASH_TRANSFERS_STMT.all(uid).map(rowToCashTransfer);
+}
+
+function upsertCashTransfer(record, userId) {
+  const uid = String(userId || "").trim();
+  const row = cashTransferToRow(record, userId);
+  if (!row.user_id) {
+    throw new Error("userId required");
+  }
+  UPSERT_CASH_TRANSFER_STMT.run(row);
+  const all = getCashTransfers(uid);
+  return all.find((x) => x.id === row.id) || all[all.length - 1];
+}
+
+const replaceCashTransfersTx = db.transaction((rows, userId) => {
+  DELETE_ALL_CASH_TRANSFERS_STMT.run(userId);
+  for (const r of rows) {
+    UPSERT_CASH_TRANSFER_STMT.run(cashTransferToRow(r, userId));
+  }
+});
+
+const appendCashTransfersTx = db.transaction((rows, userId) => {
+  for (const r of rows) {
+    UPSERT_CASH_TRANSFER_STMT.run(cashTransferToRow(r, userId));
+  }
+});
+
+function importCashTransfers(rows, mode = "append", userId = null) {
+  const uid = String(userId || getCliUserId()).trim();
+  const list = Array.isArray(rows) ? rows.map(normalizeCashTransfer) : [];
+  if (mode === "replace") {
+    replaceCashTransfersTx(list, uid);
+  } else {
+    appendCashTransfersTx(list, uid);
+  }
+  return getCashTransfers(uid);
+}
+
+function deleteCashTransferById(cashId, userId) {
+  const uid = String(userId || "").trim();
+  const res = DELETE_CASH_TRANSFER_STMT.run(uid, String(cashId || ""));
+  return res.changes > 0;
+}
+
 function rowToAccount(row) {
   return {
     id: row.id,
@@ -1143,6 +1283,23 @@ function getSymbolDailyCloseRange(symbol, fromDate, toDate) {
   }));
 }
 
+const SELECT_LATEST_SYMBOL_DAILY_CLOSE_STMT = db.prepare(
+  `SELECT close, date FROM symbol_daily_close WHERE symbol = ? ORDER BY date DESC LIMIT 1`,
+);
+
+/** 用于社区 TOP3 等与「当前成交」对齐的估值：最新一日收盘价（库内 K 线） */
+function getLatestSymbolDailyClose(symbol) {
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    return null;
+  }
+  const row = SELECT_LATEST_SYMBOL_DAILY_CLOSE_STMT.get(sym);
+  if (!row || row.close == null) {
+    return null;
+  }
+  return { close: Number(row.close), date: String(row.date) };
+}
+
 /** 全部成交里出现过的标的：首日−1 ～ max(末次+1, 今天) */
 function getTradeWindowForDailyClose(userId) {
   const trades = getTrades(userId);
@@ -1294,6 +1451,7 @@ function getState(userId) {
     ...getSettings(uid),
     trades: getTrades(uid),
     dailyReturns: getDailyReturns({}, uid),
+    cashTransfers: getCashTransfers(uid),
   };
 }
 
@@ -1495,12 +1653,46 @@ function selectAnalysisSnapshotsFrom(userId, accountId, fromDate) {
   const from = String(fromDate || "1970-01-01");
   return db
     .prepare(
-      `SELECT date, total_rate_twr, profit_cny, market_value
+      `SELECT date, total_rate_twr, total_rate_cost, profit_cny, market_value,
+              fx_hkd_cny, fx_usd_cny
        FROM analysis_daily_snapshot
        WHERE user_id = ? AND account_id = ? AND date >= ?
        ORDER BY date ASC`
     )
     .all(uid, acc, from);
+}
+
+/** 社区等：优先 all，若无行则按账户依次尝试，避免仅有分账户快照时无收益率 */
+function selectAnalysisSnapshotsForPublicMetrics(userId) {
+  const uid = String(userId || "").trim();
+  const tryIds = [];
+  const seen = new Set();
+  const push = (id) => {
+    const a = String(id || "all").trim() || "all";
+    if (seen.has(a)) {
+      return;
+    }
+    seen.add(a);
+    tryIds.push(a);
+  };
+  push("all");
+  try {
+    for (const ac of getAccounts(uid) || []) {
+      push(ac?.id);
+    }
+  } catch {
+    // ignore
+  }
+  for (const t of getTrades(uid) || []) {
+    push(t.accountId);
+  }
+  for (const acc of tryIds) {
+    const rows = selectAnalysisSnapshotsFrom(uid, acc, "2000-01-01");
+    if (rows.length) {
+      return rows;
+    }
+  }
+  return [];
 }
 
 function selectLatestSymbolDailyDate(userId, accountId) {
@@ -1593,6 +1785,11 @@ module.exports = {
   upsertTrade,
   importTrades,
   deleteTradeById,
+  normalizeCashTransfer,
+  getCashTransfers,
+  upsertCashTransfer,
+  importCashTransfers,
+  deleteCashTransferById,
   getAccounts,
   replaceAccountsFromList,
   getDailyReturns,
@@ -1610,6 +1807,7 @@ module.exports = {
   deleteAllAnalysisDailySnapshot,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
+  getLatestSymbolDailyClose,
   getTradeWindowForDailyClose,
   addCalendarDays,
   closeDatabase,
@@ -1631,6 +1829,7 @@ module.exports = {
   getCommunityLeaderboardCache,
   setCommunityLeaderboardCache,
   selectAnalysisSnapshotsFrom,
+  selectAnalysisSnapshotsForPublicMetrics,
   selectLatestSymbolDailyDate,
   selectTopSymbolDailyByDate,
   getCommunityFeedTradesRecent,

@@ -52,6 +52,10 @@ const {
   upsertTrade,
   importTrades,
   deleteTradeById,
+  getCashTransfers,
+  upsertCashTransfer,
+  importCashTransfers,
+  deleteCashTransferById,
   getAccounts,
   getDailyReturns,
   upsertDailyReturn,
@@ -87,8 +91,13 @@ const {
   getPublicProfileDetail,
   getFollowingCards,
   getFeedTrades,
+  enrichFeedRowsWithTencent,
+  enrichCardsTopPositionsWithTencent,
+  enrichLeaderboardPayloadWithTencent,
+  enrichPublicProfileDetailWithTencent,
 } = require("./src/community-service");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
+const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
@@ -160,34 +169,37 @@ app.patch("/api/me/community-profile", requireAuth, (req, res) => {
   }
 });
 
-app.get("/api/community/leaderboard", requireAuth, (_req, res) => {
+app.get("/api/community/leaderboard", requireAuth, async (_req, res) => {
   try {
     const data = getLeaderboard();
+    await enrichLeaderboardPayloadWithTencent(data);
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "leaderboard failed" });
   }
 });
 
-app.get("/api/community/following", requireAuth, (req, res) => {
+app.get("/api/community/following", requireAuth, async (req, res) => {
   try {
     const cards = getFollowingCards(req.userId);
+    await enrichCardsTopPositionsWithTencent(cards);
     res.json({ ok: true, data: cards });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "following failed" });
   }
 });
 
-app.get("/api/community/feed", requireAuth, (req, res) => {
+app.get("/api/community/feed", requireAuth, async (req, res) => {
   try {
     const rows = getFeedTrades(req.userId);
+    await enrichFeedRowsWithTencent(rows);
     res.json({ ok: true, data: rows });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "feed failed" });
   }
 });
 
-app.get("/api/community/users/:targetId/profile", requireAuth, (req, res) => {
+app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
     const detail = getPublicProfileDetail(req.userId, targetId);
@@ -199,6 +211,8 @@ app.get("/api/community/users/:targetId/profile", requireAuth, (req, res) => {
       res.status(404).json({ ok: false, error: "用户未公开或不可见" });
       return;
     }
+    res.set("Cache-Control", "no-store");
+    await enrichPublicProfileDetailWithTencent(detail);
     res.json({ ok: true, data: detail });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "profile failed" });
@@ -221,16 +235,24 @@ app.delete("/api/community/follow/:targetId", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+const REGISTER_INVITE_CODE = "20260422";
+
 app.post("/api/auth/register", (req, res) => {
   try {
     const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
     const password = req.body?.password != null ? String(req.body.password) : "";
+    const inviteCode =
+      req.body?.inviteCode != null ? String(req.body.inviteCode).trim() : "";
     if (!isValidPhone(phone)) {
       res.status(400).json({ ok: false, error: "请输入 11 位手机号" });
       return;
     }
     if (!isValidPasswordDigits(password)) {
       res.status(400).json({ ok: false, error: "密码为不少于 6 位的数字" });
+      return;
+    }
+    if (inviteCode !== REGISTER_INVITE_CODE) {
+      res.status(400).json({ ok: false, error: "邀请码错误" });
       return;
     }
     const u = createRegisteredUser(phone, password);
@@ -399,6 +421,36 @@ app.post("/api/trades", requireAuth, (req, res) => {
 app.delete("/api/trades/:id", requireAuth, (req, res) => {
   const ok = deleteTradeById(req.params.id, req.userId);
   res.json({ ok: true, deleted: ok });
+});
+
+app.get("/api/cash-transfers", requireAuth, (req, res) => {
+  res.json({ ok: true, data: getCashTransfers(req.userId) });
+});
+
+app.post("/api/cash-transfers", requireAuth, (req, res) => {
+  try {
+    const row = upsertCashTransfer(req.body || {}, req.userId);
+    res.json({ ok: true, data: row });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "save cash transfer failed" });
+  }
+});
+
+app.delete("/api/cash-transfers/:id", requireAuth, (req, res) => {
+  const ok = deleteCashTransferById(req.params.id, req.userId);
+  res.json({ ok: true, deleted: ok });
+});
+
+app.post("/api/cash-transfers/import", requireAuth, (req, res) => {
+  try {
+    const payload = req.body || {};
+    const mode = payload.mode === "replace" ? "replace" : "append";
+    const rows = Array.isArray(payload.cashTransfers) ? payload.cashTransfers : [];
+    const data = importCashTransfers(rows, mode, req.userId);
+    res.json({ ok: true, count: data.length, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "import failed" });
+  }
 });
 
 app.post("/api/trades/import", requireAuth, (req, res) => {
@@ -747,6 +799,45 @@ app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
     res.json({ ok: true, from: w.from, to: w.to, counts });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "backfill failed" });
+  }
+});
+
+/**
+ * 新浪 suggest 搜索代理（免浏览器跨域、GBK 解码），供新增交易时按字联想。
+ * see https://suggest3.sinajs.cn/suggest/
+ */
+app.get("/api/sina/suggest", async (req, res) => {
+  const key = req.query.key != null ? String(req.query.key) : "";
+  if (!key || key.length > 64) {
+    res.status(400).json({ ok: false, error: "invalid key" });
+    return;
+  }
+  const url = `https://suggest3.sinajs.cn/suggest/?key=${encodeURIComponent(
+    key
+  )}&type=111,41,31,101&name=suggest&num=50`;
+  try {
+    const r = await fetch(url, { headers: { "user-agent": "stockreview/1" } });
+    if (!r.ok) {
+      res.status(502).json({ ok: false, error: "sina suggest http error" });
+      return;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    let text = iconv.decode(buf, "gbk");
+    if (!/var suggest\s*=/.test(text) && /var suggest/.test(buf.toString("utf8"))) {
+      text = buf.toString("utf8");
+    }
+    const lines = parseSinaSuggestText(text);
+    const results = [];
+    for (const line of lines) {
+      const item = suggestLineToItem(line, normalizeSymbol);
+      if (item) {
+        results.push(item);
+      }
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, results });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error?.message || "sina suggest failed" });
   }
 });
 
