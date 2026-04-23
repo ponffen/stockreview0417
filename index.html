@@ -86,19 +86,6 @@
               required
             />
           </div>
-          <div class="form-row">
-            <label for="authRegInvite">邀请码</label>
-            <input
-              id="authRegInvite"
-              name="inviteCode"
-              type="text"
-              inputmode="numeric"
-              maxlength="16"
-              autocomplete="off"
-              placeholder="请输入邀请码"
-              required
-            />
-          </div>
           <p id="authRegisterError" class="auth-error hidden" role="alert"></p>
           <button type="submit" class="btn btn-primary full">注册</button>
           <p class="auth-switch">已有账号？<button type="button" class="btn-link" id="authShowLogin">登录</button></p>
@@ -288,28 +275,6 @@
 
       <section id="route-trade" class="route-pane">
         <article class="panel">
-          <div class="trade-subtab-bar" role="tablist" aria-label="内容类型">
-            <button
-              type="button"
-              class="trade-subtab-btn is-active"
-              id="tradeSubtabTrades"
-              data-trade-subtab="trades"
-              role="tab"
-              aria-selected="true"
-            >
-              交易记录
-            </button>
-            <button
-              type="button"
-              class="trade-subtab-btn"
-              id="tradeSubtabCash"
-              data-trade-subtab="cash"
-              role="tab"
-              aria-selected="false"
-            >
-              资金记录
-            </button>
-          </div>
           <div class="trade-filter-row">
             <label class="head-select-wrap trade-account-wrap">
               <select id="tradeAccountFilterSelect" class="head-select trade-filter-select"></select>
@@ -320,59 +285,20 @@
               <button id="tradeAddBtn" class="btn btn-primary trade-add-btn" type="button">新增交易</button>
             </div>
           </div>
-          <div id="tradeRecordsPanel" class="trade-subtab-panel" data-panel="trades">
-            <div class="trade-table-wrap">
-              <table class="trade-table">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>名称</th>
-                    <th>交易方向</th>
-                    <th>价格</th>
-                    <th>数量</th>
-                    <th>发生金额</th>
-                  </tr>
-                </thead>
-                <tbody id="tradeTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-          <div id="cashRecordsPanel" class="trade-subtab-panel hidden" data-panel="cash">
-            <div class="trade-table-wrap">
-              <table class="trade-table trade-table--cash">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>股票账户</th>
-                    <th>操作类型</th>
-                    <th>金额</th>
-                    <th>备注</th>
-                  </tr>
-                </thead>
-                <tbody id="cashTransferTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </article>
-      </section>
-
-      <section id="route-trade-search" class="route-pane">
-        <article class="panel trade-search-panel">
-          <div class="trade-search-head">
-            <button type="button" class="btn btn-ghost" id="tradeSearchBackBtn" aria-label="返回">返回</button>
-            <h2>搜索股票</h2>
-          </div>
-          <p class="form-hint trade-search-hint">输入代码、简称或拼音首字母，选择标的后进入新增交易</p>
-          <div class="trade-search-input-wrap">
-            <input
-              type="search"
-              id="tradeStockSearchInput"
-              class="trade-stock-search-input"
-              placeholder="如 600519、茅台、AAPL、00700"
-              autocomplete="off"
-              enterkeyhint="search"
-            />
-            <ul id="tradeStockSearchResults" class="trade-stock-search-results" role="listbox" hidden></ul>
+          <div class="trade-table-wrap">
+            <table class="trade-table">
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>价格</th>
+                  <th>数量</th>
+                  <th>发生金额</th>
+                </tr>
+              </thead>
+              <tbody id="tradeTableBody"></tbody>
+            </table>
           </div>
         </article>
       </section>
@@ -544,14 +470,11 @@
 
       <section id="route-community-profile" class="route-pane community-profile-route">
         <article class="panel community-profile-head-panel">
-          <div class="community-profile-top-row">
-            <button type="button" class="btn community-profile-back-btn" id="communityProfileBackBtn">返回</button>
-            <h2 id="communityProfileTitle" class="community-profile-page-title">社区资料</h2>
-            <div id="communityProfileFollowSlot" class="community-profile-follow-slot"></div>
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" id="communityProfileBackBtn">返回</button>
+            <h2 id="communityProfileTitle">社区资料</h2>
           </div>
-          <p class="community-profile-disclaimer">
-            本页金额数据均已随机处理，持仓占比、收益率与真实情况一致。
-          </p>
+          <div id="communityProfileToolbar" class="community-profile-toolbar hidden"></div>
         </article>
         <div id="communityProfileBody" class="community-profile-body"></div>
       </section>
@@ -587,18 +510,6 @@
           <span class="tab-ico">◇</span><span>AI</span>
         </button>
       </nav>
-
-      <nav class="bottom-tabs bottom-tabs--profile" aria-label="他人持仓导航">
-        <button type="button" class="bottom-tab-btn" data-profile-subtab="earning">
-          <span class="tab-ico">▦</span><span>收益</span>
-        </button>
-        <button type="button" class="bottom-tab-btn" data-profile-subtab="analysis">
-          <span class="tab-ico">◔</span><span>分析</span>
-        </button>
-        <button type="button" class="bottom-tab-btn" data-profile-subtab="trade">
-          <span class="tab-ico">¥</span><span>交易</span>
-        </button>
-      </nav>
     </main>
 
     <div id="appDrawerBackdrop" class="app-drawer-backdrop hidden" aria-hidden="true"></div>
@@ -610,47 +521,6 @@
         <button type="button" class="app-drawer-item" data-drawer-action="mine">我的</button>
       </nav>
     </aside>
-
-    <dialog id="cashTransferDialog" class="dialog">
-      <form id="cashTransferForm" method="dialog">
-        <div class="panel-head">
-          <h2 id="cashTransferDialogTitle">新增资金记录</h2>
-          <button type="button" id="closeCashTransferDialogBtn" class="btn btn-ghost">关闭</button>
-        </div>
-        <div class="form-row">
-          <label for="cashTransferAccount">股票账户</label>
-          <select id="cashTransferAccount" name="accountId" required></select>
-        </div>
-        <div class="form-row">
-          <label for="cashTransferDate">日期</label>
-          <input id="cashTransferDate" name="date" type="date" required />
-        </div>
-        <div class="form-row">
-          <label for="cashTransferDirection">操作类型</label>
-          <select id="cashTransferDirection" name="direction" required>
-            <option value="in">银证转入</option>
-            <option value="out">银证转出</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="cashTransferAmount">金额</label>
-          <input id="cashTransferAmount" name="amount" type="number" step="0.01" min="0" required />
-        </div>
-        <p class="form-hint">金额按该账户默认币种计（与账户设置中币种一致）。</p>
-        <div class="form-row">
-          <label for="cashTransferNote">备注</label>
-          <input id="cashTransferNote" name="note" placeholder="可选" />
-        </div>
-        <button id="cashTransferSubmitBtn" type="submit" class="btn btn-primary full">保存</button>
-        <button
-          type="button"
-          id="cashTransferDeleteBtn"
-          class="btn btn-ghost full cash-transfer-delete-btn hidden"
-        >
-          删除
-        </button>
-      </form>
-    </dialog>
 
     <dialog id="tradeDialog" class="dialog">
       <form id="tradeForm" method="dialog">
