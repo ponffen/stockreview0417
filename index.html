@@ -316,7 +316,6 @@
               <span class="arrow">▼</span>
             </label>
             <div class="trade-head-actions">
-              <button class="plain-btn trade-filter-btn">所有交易 <span class="arrow">▼</span></button>
               <button id="tradeAddBtn" class="btn btn-primary trade-add-btn" type="button">新增交易</button>
             </div>
           </div>
@@ -712,17 +711,13 @@
     </dialog>
 
     <dialog id="capitalDialog" class="dialog">
-      <form id="capitalForm" method="dialog">
-        <div class="panel-head">
-          <h2>设置本金</h2>
-          <button type="button" id="closeCapitalDialogBtn" class="btn btn-ghost">关闭</button>
-        </div>
-        <div class="form-row">
-          <label for="capitalAmount">资金金额</label>
-          <input id="capitalAmount" name="capitalAmount" type="number" step="0.01" required />
-        </div>
-        <button type="submit" class="btn btn-primary full">保存</button>
-      </form>
+      <div class="panel-head">
+        <h2>本金与现金</h2>
+        <button type="button" id="closeCapitalDialogBtn" class="btn btn-ghost">关闭</button>
+      </div>
+      <p class="form-hint" style="margin: 0; line-height: 1.5">
+        本金 = max(交易记录累计发生额, 资金记录净额)，现金 = 本金 − 交易记录累计发生额。累计发生额按买入为正、卖出为负的成交金额折人民币后累加；资金净额为银证转入与转出按账户币种折算后的人民币净额。以上均由记录自动计算。
+      </p>
     </dialog>
 
     <dialog id="recordTradeActionsDialog" class="dialog record-trade-actions-dialog">

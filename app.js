@@ -64,18 +64,6 @@ function getApiBaseForFetch() {
   }
   return API_BASE;
 }
-
-/** GitHub Pages 使用仓库子路径（/stockreview0417/）；静态资源必须用相对 URL，避免请求根路径 /data/... 404 */
-function getStaticSiteStateUrl() {
-  try {
-    if (typeof document !== "undefined" && document.baseURI) {
-      return new URL("./data/site-state.json", document.baseURI).toString();
-    }
-  } catch {
-    // ignore
-  }
-  return "./data/site-state.json";
-}
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 1023;
 const CHART_FALLBACK_DAYS = 90;
@@ -313,9 +301,7 @@ const tradeAmountInput = document.getElementById("tradeAmount");
 const tradeDialogTitle = document.getElementById("tradeDialogTitle");
 const tradeSubmitBtn = document.getElementById("tradeSubmitBtn");
 const capitalDialog = document.getElementById("capitalDialog");
-const capitalForm = document.getElementById("capitalForm");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
-const capitalAmountInput = document.getElementById("capitalAmount");
 const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
 const stockRecordTitle = document.getElementById("stockRecordTitle");
 const stockRecordTime = document.getElementById("stockRecordTime");
@@ -1053,6 +1039,64 @@ function getFilteredCashTransfers(accountId = "all") {
   return list.filter((row) => String(row.accountId) === String(accountId));
 }
 
+/** 单条银证资金记录折算人民币净额（转入为正、转出为负） */
+function cashTransferRowNetCny(r) {
+  const acc = getAccountById(r.accountId);
+  const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+  const sign = r.direction === "out" ? -1 : 1;
+  const nat = sign * Math.abs(Number(r.amount) || 0);
+  if (!Number.isFinite(nat) || nat === 0) {
+    return 0;
+  }
+  return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, r.date);
+}
+
+/** 截至 endDateKey（含）的资金记录净额 Σ资金（人民币计） */
+function fundNetCnyUpToDate(ctf, endDateKey) {
+  if (!Array.isArray(ctf) || !endDateKey) {
+    return 0;
+  }
+  const end = String(endDateKey).slice(0, 10);
+  let sum = 0;
+  for (const row of ctf) {
+    const d = String(row.date || "").slice(0, 10);
+    if (d && d <= end) {
+      sum += cashTransferRowNetCny(row);
+    }
+  }
+  return sum;
+}
+
+/**
+ * 与 fundNetCnyUpToDate 同口径的逐日累计 Σ资金（仅用于与 points 等长的序列表，避免 O(n²)）
+ */
+function fundCnyCumulativeAlongDates(ctf, dateKeys) {
+  const m = new Map();
+  if (!Array.isArray(dateKeys) || !dateKeys.length) {
+    return m;
+  }
+  if (!Array.isArray(ctf) || !ctf.length) {
+    for (const d of dateKeys) {
+      m.set(d, 0);
+    }
+    return m;
+  }
+  const dayDelta = new Map();
+  for (const row of ctf) {
+    const d = String(row.date || "").slice(0, 10);
+    if (!d) {
+      continue;
+    }
+    dayDelta.set(d, (dayDelta.get(d) || 0) + cashTransferRowNetCny(row));
+  }
+  let cum = 0;
+  for (const d of dateKeys) {
+    cum += dayDelta.get(d) || 0;
+    m.set(d, cum);
+  }
+  return m;
+}
+
 function hasCnNameLabel(text) {
   return /[\u4e00-\u9fff]/.test(String(text || ""));
 }
@@ -1480,7 +1524,7 @@ function cycleSortOrder(current) {
 
 async function fetchStaticSiteState() {
   try {
-    const response = await fetch(getStaticSiteStateUrl(), { cache: "no-store" });
+    const response = await fetch("/site-state.json", { cache: "no-store" });
     if (!response.ok) {
       return null;
     }
@@ -2363,21 +2407,10 @@ function bindEvents() {
 
   if (setCapitalBtn) {
     setCapitalBtn.addEventListener("click", () => {
-      capitalAmountInput.value = state.capitalAmount ? String(state.capitalAmount) : "";
-      capitalDialog.showModal();
+      capitalDialog?.showModal();
     });
   }
-  closeCapitalDialogBtn?.addEventListener("click", () => capitalDialog.close());
-  if (capitalForm) {
-    capitalForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const formData = new FormData(capitalForm);
-      state.capitalAmount = Math.max(0, Number(formData.get("capitalAmount") || 0));
-      persistState();
-      capitalDialog.close();
-      renderOverviewAndStockTable();
-    });
-  }
+  closeCapitalDialogBtn?.addEventListener("click", () => capitalDialog?.close());
 
   tradeTableBody?.addEventListener("click", (event) => {
     const row = event.target.closest("tr[data-record-id]");
@@ -3319,11 +3352,9 @@ function withPublicTradesContext(d, fn) {
     return fn();
   }
   const prevTrades = state.trades;
-  const prevCap = state.capitalAmount;
   const prevAlgo = state.algoMode;
   const prevBook = state._overviewBookCurrencyOverride;
   state.trades = d.publicTrades;
-  state.capitalAmount = Number(d.publicCapitalAmount) || 0;
   const m = String(d.publicAlgoMode ?? "cost");
   if (m === "cost" || m === "time" || m === "money") {
     state.algoMode = m;
@@ -3343,7 +3374,6 @@ function withPublicTradesContext(d, fn) {
     return fn();
   } finally {
     state.trades = prevTrades;
-    state.capitalAmount = prevCap;
     state.algoMode = prevAlgo;
     state._overviewBookCurrencyOverride = prevBook;
   }
@@ -5120,10 +5150,6 @@ function syncTradePanelTabUi() {
   if (tradeAddBtn) {
     tradeAddBtn.textContent = isCash ? "新增资金记录" : "新增交易";
   }
-  const filterBtn = document.querySelector(".trade-filter-btn");
-  if (filterBtn) {
-    filterBtn.style.display = isCash ? "none" : "";
-  }
 }
 
 function openNewCashTransferDialog() {
@@ -5486,7 +5512,7 @@ function renderAnalysisFromHistory() {
   const mySeries = computeModeSeries(selected, state.algoMode);
   const benchSeries = buildBenchmarkSeries(selected);
   const profitSeries = buildProfitSeries(selected);
-  const assetSeries = buildAssetSeries(selected, portfolio.principal);
+  const assetSeries = buildAssetSeries(selected, scope.cashTransfers);
 
   const ratePayload = drawLineChart(mySeries, benchSeries);
   const profitPayload = drawDualLineChart(
@@ -5745,14 +5771,19 @@ function buildProfitSeries(points) {
   });
 }
 
-function buildAssetSeries(points, principalFallback) {
+/** 走势：逐日 Σ发生 与 逐日 Σ资金，本金 = max(二者)（与 computePortfolio 一致） */
+function buildAssetSeries(points, ctf) {
+  const list = Array.isArray(ctf) ? ctf : [];
   if (!points.length) {
-    return [{ date: toDateKey(new Date()), principal: principalFallback || 0, market: 0 }];
+    return [{ date: toDateKey(new Date()), principal: 0, market: 0 }];
   }
+  const dateKeys = points.map((p) => p.date);
+  const fundCumByDate = fundCnyCumulativeAlongDates(list, dateKeys);
   let sigmaFlow = 0;
   return points.map((point) => {
     sigmaFlow += point.flow;
-    const principal = Math.max(principalFallback, sigmaFlow, 0);
+    const fundCum = fundCumByDate.get(point.date) ?? 0;
+    const principal = Math.max(sigmaFlow, fundCum, 0);
     return {
       date: point.date,
       principal,
@@ -6209,24 +6240,17 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     item.yearWeight = yearDen !== 0 ? yp / yearDen : 0;
   });
 
+  /** Σ发生：交易记录带符号折人民币累计（买正卖负），与「现金=本金−Σ发生」同一口径 */
   const sigmaAmountAll = tradeList.reduce(
     (sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade),
     0
   );
-  const principal = Math.max(state.capitalAmount, sigmaAmountAll, 0);
+  /** Σ资金：资金记录银证净额（人民币计，转入正、转出负） */
+  const sigmaFundCny = Array.isArray(ctf) ? ctf.reduce((sum, r) => sum + cashTransferRowNetCny(r), 0) : 0;
+  /** 本金 = max(Σ发生, Σ资金)；现金 = 本金 − Σ发生（不在此重复加银证，避免与本金双计） */
+  const principal = Math.max(sigmaAmountAll, sigmaFundCny, 0);
   const totalMarketValueCnyBook = visiblePositions.reduce((sum, item) => sum + item.marketValue, 0);
-  let transferNetCny = 0;
-  for (const r of ctf) {
-    const acc = getAccountById(r.accountId);
-    const ccy = String(acc.currency || "CNY").toUpperCase();
-    const sign = r.direction === "out" ? -1 : 1;
-    const nat = sign * Math.abs(Number(r.amount) || 0);
-    if (!Number.isFinite(nat) || nat === 0) {
-      continue;
-    }
-    transferNetCny += ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, r.date);
-  }
-  const cash = principal - sigmaAmountAll + transferNetCny;
+  const cash = principal - sigmaAmountAll;
 
   const overviewBookCurrency = getOverviewBookCurrency();
   const toBook = (row, nativeVal) => nativeToOverviewBook(row, nativeVal, overviewBookCurrency);

@@ -20,7 +20,8 @@ const {
 
 const {
   getTrades,
-  getSettings,
+  getCashTransfers,
+  getAccounts,
   normalizeSymbol,
   getSymbolDailyCloseRange,
   upsertSymbolDailyPnlBatch,
@@ -233,6 +234,44 @@ function filterTradesForAccount(allTrades, accountId) {
   return allTrades.filter((t) => t.accountId === accountId).sort(sortTradeAsc);
 }
 
+function filterCashForAccount(allCash, accountId) {
+  if (accountId === "all") {
+    return [...allCash];
+  }
+  return allCash.filter((c) => String(c.accountId) === String(accountId));
+}
+
+function cashTransferNetCnyForRow(r, accById, fxUsdMap, fxHkdMap) {
+  const acc = accById.get(String(r.accountId)) || { currency: "CNY" };
+  const ccy = String(acc.currency || "CNY").toUpperCase();
+  const sign = r.direction === "out" ? -1 : 1;
+  const nat = sign * Math.abs(validNumber(r.amount, 0));
+  if (!Number.isFinite(nat) || nat === 0) {
+    return 0;
+  }
+  const d = String(r.date).slice(0, 10);
+  return ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, d);
+}
+
+/** 与前端 computePortfolio 一致：本金 = max(Σ发生, Σ资金) 的逐日 Σ资金（人民币累计） */
+function buildFundCumCnyByDate(cashRows, accountId, accounts, allDates, fxUsdMap, fxHkdMap) {
+  const accById = new Map(accounts.map((a) => [String(a.id), a]));
+  const filtered = filterCashForAccount(cashRows, accountId);
+  const dayDelta = new Map();
+  for (const r of filtered) {
+    const d = String(r.date).slice(0, 10);
+    const net = cashTransferNetCnyForRow(r, accById, fxUsdMap, fxHkdMap);
+    dayDelta.set(d, (dayDelta.get(d) || 0) + net);
+  }
+  let cum = 0;
+  const out = new Map();
+  for (const D of allDates) {
+    cum += dayDelta.get(D) || 0;
+    out.set(D, cum);
+  }
+  return out;
+}
+
 /** 优先采用 symbol_daily_close，再叠加新浪补缺；输出与 fetchKlineDataSina 相同 { day, close }[] */
 function mergeKlinePreferDb(dbRows, sinaRows) {
   const map = new Map();
@@ -267,8 +306,8 @@ async function main() {
     process.exit(0);
   }
 
-  const settings = getSettings(uid);
-  const capitalAmount = validNumber(settings.capitalAmount, 0);
+  const allCash = getCashTransfers(uid);
+  const accounts = getAccounts(uid);
 
   console.log("[backfill] 拉取外汇日 K…");
   const fxUsdMap = await fetchSinaForexDayKSeries("usdcny", "USDCNY");
@@ -398,6 +437,8 @@ async function main() {
     const accTrades = filterTradesForAccount(allTrades, accountId);
     if (!accTrades.length) continue;
 
+    const fundCumByDate = buildFundCumCnyByDate(allCash, accountId, accounts, allDates, fxUsdMap, fxHkdMap);
+
     const points = buildPortfolioHistoryCny(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap);
     if (!points.length) continue;
 
@@ -430,7 +471,8 @@ async function main() {
         const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, tr.date);
         sigmaCny += signedAmount(tr) * fx;
       }
-      const principal = Math.max(capitalAmount, sigmaCny, 0);
+      const fundCny = fundCumByDate.get(dk) ?? 0;
+      const principal = Math.max(sigmaCny, fundCny, 0);
 
       cumProfit += profitCny;
 

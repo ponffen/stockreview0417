@@ -1225,11 +1225,6 @@ h2 {
   color: var(--up) !important;
 }
 
-.trade-filter-btn {
-  font-size: 14px;
-  color: #8a94a7;
-}
-
 .trade-table-wrap {
   overflow-x: auto;
   border-top: 1px solid var(--line);
