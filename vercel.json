@@ -1,11 +1,12 @@
 {
   "functions": {
     "api/index.js": {
-      "includeFiles": "index.html+app.js+styles.css"
+      "includeFiles": "{index.html,app.js,styles.css,data/site-state.json}"
     }
   },
   "routes": [
     { "handle": "filesystem" },
-    { "src": "/api/(.*)", "dest": "/api" }
+    { "src": "/api/(.*)", "dest": "/api" },
+    { "src": "/(.*)", "dest": "/api" }
   ]
 }
