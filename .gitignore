@@ -1,6 +1,7 @@
 .DS_Store
 **/.DS_Store
 node_modules/
+api/public/
 data/*
 !data/site-state.json
 npm-debug.log*

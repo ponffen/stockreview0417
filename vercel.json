@@ -1,7 +1,8 @@
 {
+  "buildCommand": "npm run build",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{index.html,app.js,styles.css,data/site-state.json}"
+      "includeFiles": "api/public/**"
     }
   },
   "routes": [

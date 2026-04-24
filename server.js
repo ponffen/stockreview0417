@@ -44,9 +44,12 @@ function ensureDataDir() {
 
 ensureDataDir();
 
-/** Vercel 无服务打包时静态文件可能与 server 同目录或上一级；找不到则全回落成 index.html（症状：CSS/JS 与 HTML 同体积） */
+/**
+ * 浏览器静态根目录。本地优先仓库根（与 server.js 同级的 index.html）；Vercel 上由 `npm run build`
+ * 把资源复制到 api/public/ 并由 includeFiles 打进函数包，避免 sendFile ENOENT。
+ */
 function resolveWebStaticRoot() {
-  const cands = [__dirname, path.join(__dirname, "..")];
+  const cands = [__dirname, path.join(__dirname, ".."), path.join(__dirname, "api", "public")];
   for (const dir of cands) {
     if (fs.existsSync(path.join(dir, "app.js")) && fs.existsSync(path.join(dir, "index.html"))) {
       return dir;

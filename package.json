@@ -4,6 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "build": "node scripts/copy-web-to-api-public.js",
     "start": "node server.js",
     "dev": "node server.js",
     "import:trades": "node scripts/import-trades.js",
