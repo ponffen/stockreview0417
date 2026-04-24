@@ -1,6 +1,9 @@
 {
   "buildCommand": "npm run build",
   "functions": {
+    "api/assets.js": {
+      "includeFiles": "api/public/**"
+    },
     "api/index.js": {
       "includeFiles": "api/public/**"
     },
@@ -11,10 +14,11 @@
   "routes": [
     { "handle": "filesystem" },
     { "src": "/api/health/?", "dest": "/api/health" },
+    { "src": "/api/assets/?", "dest": "/api/assets" },
     { "src": "/api/(.*)", "dest": "/api" },
-    { "src": "/styles.css", "dest": "/api/static" },
-    { "src": "/app.js", "dest": "/api/static" },
-    { "src": "/site-state.json", "dest": "/api/static" },
+    { "src": "/styles.css", "dest": "/api/assets?file=styles.css" },
+    { "src": "/app.js", "dest": "/api/assets?file=app.js" },
+    { "src": "/site-state.json", "dest": "/api/assets?file=site-state.json" },
     { "src": "/(.*)", "dest": "/api" }
   ]
 }
