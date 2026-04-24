@@ -16,6 +16,7 @@
     { "src": "/api/health/?", "dest": "/api/health" },
     { "src": "/api/assets/?", "dest": "/api/assets" },
     { "src": "/api/(.*)", "dest": "/api" },
+    { "src": "/favicon.ico", "dest": "/api/assets?file=favicon.ico" },
     { "src": "/styles.css", "dest": "/api/assets?file=styles.css" },
     { "src": "/app.js", "dest": "/api/assets?file=app.js" },
     { "src": "/site-state.json", "dest": "/api/assets?file=site-state.json" },

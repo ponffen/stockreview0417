@@ -1,9 +1,25 @@
 const STORAGE_KEY = "earning-clone-state-v2";
 const SESSION_TAB_KEY = "stockreview_session_tabs_seeded";
 const API_BASE = "/api";
+const API_GET_TIMEOUT_MS = 12_000;
 
 function apiFetch(input, init = {}) {
-  return fetch(input, { ...init, credentials: "include" });
+  const { timeoutMs, ...rest } = init || {};
+  const method = String(rest.method || "GET").toUpperCase();
+  const parsedTimeout = Number(timeoutMs);
+  const resolvedTimeoutMs = Number.isFinite(parsedTimeout)
+    ? parsedTimeout
+    : method === "GET" || method === "HEAD"
+      ? API_GET_TIMEOUT_MS
+      : 0;
+  if (resolvedTimeoutMs <= 0 || typeof AbortController === "undefined" || rest.signal) {
+    return fetch(input, { ...rest, credentials: "include" });
+  }
+  const controller = new AbortController();
+  const timerId = window.setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  return fetch(input, { ...rest, credentials: "include", signal: controller.signal }).finally(() => {
+    window.clearTimeout(timerId);
+  });
 }
 
 let sessionPhone = "";
@@ -363,7 +379,10 @@ function dismissAppBootLoading() {
 
 async function refreshSessionFromServer() {
   try {
-    const r = await apiFetch(`${getApiBaseForFetch()}/auth/me`, { cache: "no-store" });
+    const r = await apiFetch(`${getApiBaseForFetch()}/auth/me`, {
+      cache: "no-store",
+      timeoutMs: 4_000,
+    });
     if (!r.ok) {
       sessionUserId = "";
       sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
@@ -1728,7 +1747,7 @@ function persistState() {
 
 async function checkApiHealth() {
   try {
-    const response = await apiFetch(`${API_BASE}/health`, { cache: "no-store" });
+    const response = await apiFetch(`${API_BASE}/health`, { cache: "no-store", timeoutMs: 4_000 });
     return response.ok;
   } catch (error) {
     return false;
@@ -1737,7 +1756,7 @@ async function checkApiHealth() {
 
 async function fetchRemoteState() {
   try {
-    const response = await apiFetch(`${API_BASE}/state`, { cache: "no-store" });
+    const response = await apiFetch(`${API_BASE}/state`, { cache: "no-store", timeoutMs: 6_000 });
     if (response.status === 401) {
       return null;
     }
