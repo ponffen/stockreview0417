@@ -41,6 +41,7 @@ const DB_PATH = getDatabaseUrl() ? "[postgresql]" : "";
 let pool;
 let initPromise;
 let postInitTasksStarted = false;
+let isBootstrapping = false;
 
 function getSslOption() {
   if (process.env.DATABASE_SSL === "0") {
@@ -196,6 +197,7 @@ async function initPool() {
     );
   }
   initPromise = (async () => {
+    isBootstrapping = true;
     pool = new Pool({
       connectionString: dbUrl,
       max: 20,
@@ -208,10 +210,11 @@ async function initPool() {
       for (const sql of DDL) {
         await c.query(sql);
       }
+      await ensureSeedUserRowWithClient(c);
     } finally {
       c.release();
+      isBootstrapping = false;
     }
-    await ensureSeedUserRow();
     startPostInitTasks();
     return pool;
   })();
@@ -235,11 +238,28 @@ function startPostInitTasks() {
 }
 
 async function q(text, params = []) {
+  if (isBootstrapping && pool) {
+    return pool.query(text, params);
+  }
   const p = await initPool();
   return p.query(text, params);
 }
 
 const SEED_USER_PASSWORD = "123456";
+
+async function ensureSeedUserRowWithClient(client) {
+  const check = await client.query("SELECT id FROM users WHERE phone = $1", [SEED_USER_PHONE]);
+  if (check.rows.length) {
+    return check.rows[0].id;
+  }
+  const id = randomUUID();
+  const now = nowMs();
+  await client.query(
+    `INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)`,
+    [id, SEED_USER_PHONE, hashPassword(SEED_USER_PASSWORD), now, now]
+  );
+  return id;
+}
 
 async function ensureSeedUserRow() {
   const { rows: existing } = await q("SELECT id FROM users WHERE phone = $1", [SEED_USER_PHONE]);
