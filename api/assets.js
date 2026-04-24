@@ -9,6 +9,7 @@ const ASSET_META = {
   "styles.css": "text/css; charset=utf-8",
   "app.js": "application/javascript; charset=utf-8",
   "site-state.json": "application/json; charset=utf-8",
+  "favicon.ico": "image/x-icon",
 };
 
 function parseRequestedFile(reqUrl) {
@@ -33,6 +34,13 @@ function resolveAssetPath(fileName) {
   return "";
 }
 
+function transparentIcoBuffer() {
+  return Buffer.from(
+    "AAABAAEAEBAAAAAAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAGAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////fwAAAAAAAP///38AAAAAAAD///9/AAAAAAAAmZmZAAAJkQAAAAAAAACZmZkAAAmRAAAACZEAAJmZmQAJkQAAAAmRAACZmZkACZEAAAAJkQAAzMzNAAAJkQAAAAAAAADMzM0AAAmRAAAACZEAAMzMzQAJkQAAAAmRAADMzM0ACZEAAAAJkQAAzMzNAAAJkQAAAAAAAADMzM0AAAmRAAAACZEAAMzMzQAJkQAAAAmRAADMzM0ACZEAAAAJkQAAzMzNAAAJkQAAAAAAAACZmZkAAAmRAAAACZEAAJmZmQAJkQAAAAmRAACZmZkACZEAAAAJkQAA////fwAAAAAAAP///38AAAAAAAD///9/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "base64"
+  );
+}
+
 module.exports = function handler(req, res) {
   const fileName = parseRequestedFile(req.url);
   const contentType = ASSET_META[fileName];
@@ -44,6 +52,14 @@ module.exports = function handler(req, res) {
   }
 
   const assetPath = resolveAssetPath(fileName);
+  if (!assetPath && fileName === "favicon.ico") {
+    const ico = transparentIcoBuffer();
+    res.statusCode = 200;
+    res.setHeader("Content-Type", ASSET_META[fileName]);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.end(ico);
+    return;
+  }
   if (!assetPath) {
     res.statusCode = 404;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
