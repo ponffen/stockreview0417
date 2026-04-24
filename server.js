@@ -44,6 +44,19 @@ function ensureDataDir() {
 
 ensureDataDir();
 
+/** Vercel 无服务打包时静态文件可能与 server 同目录或上一级；找不到则全回落成 index.html（症状：CSS/JS 与 HTML 同体积） */
+function resolveWebStaticRoot() {
+  const cands = [__dirname, path.join(__dirname, "..")];
+  for (const dir of cands) {
+    if (fs.existsSync(path.join(dir, "app.js")) && fs.existsSync(path.join(dir, "index.html"))) {
+      return dir;
+    }
+  }
+  return __dirname;
+}
+
+const WEB_ROOT = resolveWebStaticRoot();
+
 const {
   DEFAULT_SETTINGS,
   normalizeSymbol,
@@ -847,7 +860,7 @@ app.use("/api", (_req, res) => {
 
 // 避免浏览器强缓存 HTML/JS/CSS，否则改代码后仍常见「刷新仍是旧页面」
 app.use(
-  express.static(path.join(__dirname), {
+  express.static(WEB_ROOT, {
     setHeaders(res, filePath) {
       if (/\.(html|js|css|json|ico|svg)$/i.test(filePath)) {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -859,7 +872,7 @@ app.use(
 
 app.use((_req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.sendFile(path.join(WEB_ROOT, "index.html"));
 });
 
 if (require.main === module) {
