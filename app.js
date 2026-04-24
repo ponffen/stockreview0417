@@ -32,6 +32,7 @@ let sessionProfile = {
   phoneMasked: "",
 };
 let authSubmitting = false;
+let authApiReachable = true;
 let quoteIntervalStarted = false;
 let analysisStockRankHelpListenersBound = false;
 
@@ -385,6 +386,7 @@ async function refreshSessionFromServer() {
       cache: "no-store",
       timeoutMs: 4_000,
     });
+    authApiReachable = true;
     if (!r.ok) {
       sessionUserId = "";
       sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
@@ -404,6 +406,7 @@ async function refreshSessionFromServer() {
     };
     return true;
   } catch {
+    authApiReachable = false;
     return false;
   }
 }
@@ -653,6 +656,19 @@ async function initialize() {
   bindAuthUi();
   const authed = await tryRestoreSession();
   if (!authed) {
+    if (!authApiReachable) {
+      // API 不可达时允许离线进入（演示/本地缓存），避免卡死在登录页。
+      sessionPhone = "";
+      sessionUserId = "";
+      sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
+      showAppShell();
+      try {
+        await startAppAfterAuth({ sessionAlreadyFresh: true });
+      } finally {
+        dismissAppBootLoading();
+      }
+      return;
+    }
     showAuthShell();
     dismissAppBootLoading();
     return;
@@ -1781,8 +1797,12 @@ function persistState() {
 
 async function checkApiHealth() {
   try {
-    const response = await apiFetch(`${API_BASE}/health`, { cache: "no-store", timeoutMs: 4_000 });
-    return response.ok;
+    const response = await apiFetch(`${getApiBaseForFetch()}/state`, {
+      cache: "no-store",
+      timeoutMs: 4_000,
+    });
+    // /api/state 鉴权失败(401)也说明核心 API 可达。
+    return response.ok || response.status === 401;
   } catch (error) {
     return false;
   }
