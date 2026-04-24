@@ -1,6 +1,7 @@
 {
   "buildCommand": "npm run build",
   "functions": {
+    "api/health.js": {},
     "api/index.js": {
       "includeFiles": "api/public/**"
     },
@@ -10,6 +11,7 @@
   },
   "routes": [
     { "handle": "filesystem" },
+    { "src": "/api/health/?", "dest": "/api/health" },
     { "src": "/api/(.*)", "dest": "/api" },
     { "src": "/styles.css", "dest": "/api/static" },
     { "src": "/app.js", "dest": "/api/static" },
