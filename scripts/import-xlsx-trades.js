@@ -107,7 +107,7 @@ function rowToRawTrade(row, index) {
   };
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.file) {
     printUsage();
@@ -134,11 +134,15 @@ function main() {
     rawTrades.push(normalizeTrade(raw));
   }
 
-  const all = importTrades(rawTrades, mode);
+  const all = await importTrades(rawTrades, mode);
   // eslint-disable-next-line no-console
   console.log(
     `Imported ${rawTrades.length} trades from ${absPath} (sheet: ${sheetName}, mode: ${mode}). Skipped ${skipped} empty/invalid rows. Total in DB: ${all.length}.`
   );
 }
 
-main();
+main().catch((e) => {
+  // eslint-disable-next-line no-console
+  console.error(e);
+  process.exit(1);
+});

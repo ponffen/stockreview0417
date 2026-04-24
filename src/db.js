@@ -1,1018 +1,558 @@
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 const {
   hashPassword,
   verifyPassword,
   isValidPhone,
   isValidPasswordDigits,
 } = require("./password");
+const {
+  SEED_USER_PHONE,
+  DEFAULT_SETTINGS,
+  randomUUID,
+  nowMs,
+  toDateKey,
+  validNumber,
+  normalizeAccountRecords,
+  normalizeSymbol,
+  normalizeTrade,
+  tradeToRow,
+  rowToTrade,
+  rowToAccount,
+  normalizeDailyReturn,
+  rowToDailyReturn,
+  normalizeCashTransfer,
+  cashTransferToRow,
+  rowToCashTransfer,
+  addCalendarDays,
+} = require("./db-pure");
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "app.db");
-const db = new Database(DB_PATH);
+const DB_PATH = process.env.DATABASE_URL ? "[postgresql]" : "";
 
-db.pragma("journal_mode = WAL");
+let pool;
+let initPromise;
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS trades (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL DEFAULT 'default',
-  type TEXT NOT NULL,
-  symbol TEXT NOT NULL,
-  name TEXT NOT NULL,
-  side TEXT NOT NULL,
-  price REAL NOT NULL DEFAULT 0,
-  quantity REAL NOT NULL DEFAULT 0,
-  amount REAL NOT NULL DEFAULT 0,
-  trade_date TEXT NOT NULL,
-  note TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+function getSslOption() {
+  if (process.env.DATABASE_SSL === "0") {
+    return false;
+  }
+  const u = String(process.env.DATABASE_URL || "");
+  if (/localhost|127\.0\.0\.1/.test(u)) {
+    return false;
+  }
+  return { rejectUnauthorized: false };
+}
 
-CREATE INDEX IF NOT EXISTS idx_trades_trade_date_created_at
-  ON trades (trade_date ASC, created_at ASC);
+const DDL = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    phone TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    nickname TEXT,
+    community_public INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL DEFAULT 'default',
+    type TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    name TEXT NOT NULL,
+    side TEXT NOT NULL,
+    price DOUBLE PRECISION NOT NULL DEFAULT 0,
+    quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+    amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    trade_date TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades (user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_trades_trade_date_created_at ON trades (trade_date ASC, created_at ASC)`,
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    user_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS accounts (
+    user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts (created_at ASC)`,
+  `CREATE TABLE IF NOT EXISTS daily_returns (
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    profit DOUBLE PRECISION NOT NULL DEFAULT 0,
+    return_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_asset DOUBLE PRECISION,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, account_id, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_daily_returns_date ON daily_returns (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS symbol_daily_pnl (
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    date TEXT NOT NULL,
+    eod_shares DOUBLE PRECISION NOT NULL DEFAULT 0,
+    day_trade_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+    day_trade_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    day_close_price DOUBLE PRECISION,
+    day_pnl_native DOUBLE PRECISION NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, account_id, symbol, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_symbol_daily_pnl_date ON symbol_daily_pnl (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS analysis_daily_snapshot (
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    rate_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+    rate_dietz DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_profit DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_rate_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_rate_dietz DOUBLE PRECISION NOT NULL DEFAULT 0,
+    principal DOUBLE PRECISION NOT NULL DEFAULT 0,
+    market_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+    fx_hkd_cny DOUBLE PRECISION,
+    fx_usd_cny DOUBLE PRECISION,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, account_id, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS symbol_daily_close (
+    symbol TEXT NOT NULL,
+    date TEXT NOT NULL,
+    close DOUBLE PRECISION NOT NULL,
+    source TEXT,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (symbol, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_symbol_daily_close_date ON symbol_daily_close (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS community_follows (
+    follower_id TEXT NOT NULL,
+    followee_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (follower_id, followee_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_community_follows_followee ON community_follows (followee_id)`,
+  `CREATE TABLE IF NOT EXISTS community_leaderboard_cache (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    payload TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS cash_transfers (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    transfer_date TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_date ON cash_transfers (user_id, transfer_date ASC, created_at ASC)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_nonnull
+   ON users (nickname)
+   WHERE nickname IS NOT NULL AND length(trim(nickname)) > 0`,
+];
 
-CREATE TABLE IF NOT EXISTS app_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+async function initPool() {
+  if (initPromise) {
+    return initPromise;
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is required. Set it to your PostgreSQL connection string (e.g. Neon, Supabase, Vercel Marketplace)."
+    );
+  }
+  initPromise = (async () => {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 20,
+      ssl: getSslOption(),
+    });
+    const c = await pool.connect();
+    try {
+      for (const sql of DDL) {
+        await c.query(sql);
+      }
+    } finally {
+      c.release();
+    }
+    await ensureSeedUserRow();
+    await migrateAllUsersAccountsIfEmpty();
+    await migrateTradeSymbolsToNormalized();
+    return pool;
+  })();
+  return initPromise;
+}
 
-CREATE TABLE IF NOT EXISTS accounts (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
+async function q(text, params = []) {
+  const p = await initPool();
+  return p.query(text, params);
+}
 
-CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts (created_at ASC);
-
-CREATE TABLE IF NOT EXISTS daily_returns (
-  account_id TEXT NOT NULL,
-  date TEXT NOT NULL,
-  profit REAL NOT NULL DEFAULT 0,
-  return_rate REAL NOT NULL DEFAULT 0,
-  total_asset REAL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (account_id, date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_daily_returns_date ON daily_returns (date ASC);
-
-CREATE TABLE IF NOT EXISTS symbol_daily_pnl (
-  account_id TEXT NOT NULL,
-  symbol TEXT NOT NULL,
-  date TEXT NOT NULL,
-  eod_shares REAL NOT NULL DEFAULT 0,
-  day_trade_qty REAL NOT NULL DEFAULT 0,
-  day_trade_amount REAL NOT NULL DEFAULT 0,
-  day_close_price REAL,
-  day_pnl_native REAL NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (account_id, symbol, date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_symbol_daily_pnl_date ON symbol_daily_pnl (date ASC);
-
-CREATE TABLE IF NOT EXISTS analysis_daily_snapshot (
-  account_id TEXT NOT NULL,
-  date TEXT NOT NULL,
-  profit_cny REAL NOT NULL DEFAULT 0,
-  rate_cost REAL NOT NULL DEFAULT 0,
-  rate_twr REAL NOT NULL DEFAULT 0,
-  rate_dietz REAL NOT NULL DEFAULT 0,
-  total_profit REAL NOT NULL DEFAULT 0,
-  total_rate_cost REAL NOT NULL DEFAULT 0,
-  total_rate_twr REAL NOT NULL DEFAULT 0,
-  total_rate_dietz REAL NOT NULL DEFAULT 0,
-  principal REAL NOT NULL DEFAULT 0,
-  market_value REAL NOT NULL DEFAULT 0,
-  fx_hkd_cny REAL,
-  fx_usd_cny REAL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (account_id, date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC);
-
-CREATE TABLE IF NOT EXISTS symbol_daily_close (
-  symbol TEXT NOT NULL,
-  date TEXT NOT NULL,
-  close REAL NOT NULL,
-  source TEXT,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (symbol, date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_symbol_daily_close_date ON symbol_daily_close (date ASC);
-
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  phone TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-`);
-
-const SEED_USER_PHONE = "18310270720";
 const SEED_USER_PASSWORD = "123456";
 
-const tradeColumns = db.prepare("PRAGMA table_info(trades)").all();
-if (!tradeColumns.some((col) => col.name === "account_id")) {
-  db.exec("ALTER TABLE trades ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default'");
-}
-
-function tradesHasUserIdColumn() {
-  return db.prepare("PRAGMA table_info(trades)").all().some((c) => c.name === "user_id");
-}
-
-function ensureSeedUserRow() {
-  const row = db.prepare("SELECT id FROM users WHERE phone = ?").get(SEED_USER_PHONE);
-  if (row) {
-    return row.id;
+async function ensureSeedUserRow() {
+  const { rows: existing } = await q("SELECT id FROM users WHERE phone = $1", [SEED_USER_PHONE]);
+  if (existing.length) {
+    return existing[0].id;
   }
   const id = randomUUID();
-  const now = Date.now();
-  db.prepare(
-    "INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES (?,?,?,?,?)"
-  ).run(id, SEED_USER_PHONE, hashPassword(SEED_USER_PASSWORD), now, now);
+  const now = nowMs();
+  await q(
+    `INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)`,
+    [id, SEED_USER_PHONE, hashPassword(SEED_USER_PASSWORD), now, now]
+  );
   return id;
 }
 
-function migratePerUserSchemaIfNeeded() {
-  if (tradesHasUserIdColumn()) {
-    ensureSeedUserRow();
-    return;
-  }
-  const seedId = ensureSeedUserRow();
-  const tx = db.transaction(() => {
-    db.exec(`
-CREATE TABLE accounts_mg (
-  user_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, id)
-);`);
-    db.prepare(
-      `INSERT INTO accounts_mg (user_id, id, name, currency, created_at, updated_at)
-       SELECT ?, id, name, currency, created_at, updated_at FROM accounts`
-    ).run(seedId);
-    db.exec(`DROP TABLE accounts; ALTER TABLE accounts_mg RENAME TO accounts;`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts (created_at ASC);`);
-
-    db.exec(`
-CREATE TABLE daily_returns_mg (
-  user_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  date TEXT NOT NULL,
-  profit REAL NOT NULL DEFAULT 0,
-  return_rate REAL NOT NULL DEFAULT 0,
-  total_asset REAL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, account_id, date)
-);`);
-    db.prepare(
-      `INSERT INTO daily_returns_mg (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
-       SELECT ?, account_id, date, profit, return_rate, total_asset, created_at, updated_at FROM daily_returns`
-    ).run(seedId);
-    db.exec(`DROP TABLE daily_returns; ALTER TABLE daily_returns_mg RENAME TO daily_returns;`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_daily_returns_date ON daily_returns (date ASC);`);
-
-    db.exec(`
-CREATE TABLE symbol_daily_pnl_mg (
-  user_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  symbol TEXT NOT NULL,
-  date TEXT NOT NULL,
-  eod_shares REAL NOT NULL DEFAULT 0,
-  day_trade_qty REAL NOT NULL DEFAULT 0,
-  day_trade_amount REAL NOT NULL DEFAULT 0,
-  day_close_price REAL,
-  day_pnl_native REAL NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, account_id, symbol, date)
-);`);
-    db.prepare(
-      `INSERT INTO symbol_daily_pnl_mg (
-         user_id, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount,
-         day_close_price, day_pnl_native, currency, created_at, updated_at
-       )
-       SELECT ?, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount,
-         day_close_price, day_pnl_native, currency, created_at, updated_at FROM symbol_daily_pnl`
-    ).run(seedId);
-    db.exec(`DROP TABLE symbol_daily_pnl; ALTER TABLE symbol_daily_pnl_mg RENAME TO symbol_daily_pnl;`);
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_symbol_daily_pnl_date ON symbol_daily_pnl (date ASC);`);
-
-    db.exec(`
-CREATE TABLE analysis_daily_snapshot_mg (
-  user_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  date TEXT NOT NULL,
-  profit_cny REAL NOT NULL DEFAULT 0,
-  rate_cost REAL NOT NULL DEFAULT 0,
-  rate_twr REAL NOT NULL DEFAULT 0,
-  rate_dietz REAL NOT NULL DEFAULT 0,
-  total_profit REAL NOT NULL DEFAULT 0,
-  total_rate_cost REAL NOT NULL DEFAULT 0,
-  total_rate_twr REAL NOT NULL DEFAULT 0,
-  total_rate_dietz REAL NOT NULL DEFAULT 0,
-  principal REAL NOT NULL DEFAULT 0,
-  market_value REAL NOT NULL DEFAULT 0,
-  fx_hkd_cny REAL,
-  fx_usd_cny REAL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, account_id, date)
-);`);
-    db.prepare(
-      `INSERT INTO analysis_daily_snapshot_mg (
-         user_id, account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
-         total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
-         principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-       )
-       SELECT ?, account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
-         total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
-         principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-       FROM analysis_daily_snapshot`
-    ).run(seedId);
-    db.exec(`DROP TABLE analysis_daily_snapshot; ALTER TABLE analysis_daily_snapshot_mg RENAME TO analysis_daily_snapshot;`);
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC);`
-    );
-
-    db.exec(`
-CREATE TABLE app_settings_mg (
-  user_id TEXT NOT NULL,
-  key TEXT NOT NULL,
-  value TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, key)
-);`);
-    db.prepare(
-      `INSERT INTO app_settings_mg (user_id, key, value, updated_at) SELECT ?, key, value, updated_at FROM app_settings`
-    ).run(seedId);
-    db.exec(`DROP TABLE app_settings; ALTER TABLE app_settings_mg RENAME TO app_settings;`);
-
-    db.exec(`ALTER TABLE trades ADD COLUMN user_id TEXT;`);
-    db.prepare(`UPDATE trades SET user_id = ? WHERE user_id IS NULL`).run(seedId);
-  });
-  tx();
-}
-
-migratePerUserSchemaIfNeeded();
-
-function ensureCommunitySchema() {
-  const ucols = db.prepare("PRAGMA table_info(users)").all();
-  if (!ucols.some((c) => c.name === "nickname")) {
-    db.exec("ALTER TABLE users ADD COLUMN nickname TEXT");
-  }
-  if (!ucols.some((c) => c.name === "community_public")) {
-    db.exec("ALTER TABLE users ADD COLUMN community_public INTEGER NOT NULL DEFAULT 1");
-  }
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS community_follows (
-      follower_id TEXT NOT NULL,
-      followee_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      PRIMARY KEY (follower_id, followee_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_community_follows_followee ON community_follows (followee_id);
-    CREATE TABLE IF NOT EXISTS community_leaderboard_cache (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      payload TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `);
-  db.exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_nonnull ON users(nickname) WHERE nickname IS NOT NULL AND length(trim(nickname)) > 0"
-  );
-}
-
-ensureCommunitySchema();
-
-function ensureCashTransfersSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS cash_transfers (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      transfer_date TEXT NOT NULL,
-      direction TEXT NOT NULL,
-      amount REAL NOT NULL DEFAULT 0,
-      note TEXT NOT NULL DEFAULT '',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_date
-      ON cash_transfers (user_id, transfer_date ASC, created_at ASC);
-  `);
-}
-
-ensureCashTransfersSchema();
-
-const UPSERT_ACCOUNT_STMT = db.prepare(`
-INSERT INTO accounts (user_id, id, name, currency, created_at, updated_at)
-VALUES (@user_id, @id, @name, @currency, @created_at, @updated_at)
-ON CONFLICT(user_id, id) DO UPDATE SET
-  name = excluded.name,
-  currency = excluded.currency,
-  updated_at = excluded.updated_at
-`);
-
-const SELECT_ALL_ACCOUNTS_STMT = db.prepare(`
-SELECT id, name, currency, created_at FROM accounts WHERE user_id = ? ORDER BY created_at ASC, id ASC
-`);
-
-const DELETE_ACCOUNT_STMT = db.prepare("DELETE FROM accounts WHERE user_id = ? AND id = ?");
-
-const SELECT_ALL_DAILY_RETURNS_STMT = db.prepare(`
-SELECT account_id, date, profit, return_rate, total_asset, created_at
-FROM daily_returns
-WHERE user_id = ?
-ORDER BY account_id ASC, date ASC
-`);
-
-const SELECT_DAILY_RETURNS_RANGE_STMT = db.prepare(`
-SELECT account_id, date, profit, return_rate, total_asset, created_at
-FROM daily_returns
-WHERE user_id = @user_id
-  AND (@account_id = '' OR account_id = @account_id)
-  AND date >= @from
-  AND date <= @to
-ORDER BY date ASC
-`);
-
-const UPSERT_DAILY_RETURN_STMT = db.prepare(`
-INSERT INTO daily_returns (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
-VALUES (@user_id, @account_id, @date, @profit, @return_rate, @total_asset, @created_at, @updated_at)
-ON CONFLICT(user_id, account_id, date) DO UPDATE SET
-  profit = excluded.profit,
-  return_rate = excluded.return_rate,
-  total_asset = excluded.total_asset,
-  updated_at = excluded.updated_at
-`);
-
-const DELETE_DAILY_RETURN_STMT = db.prepare(
-  "DELETE FROM daily_returns WHERE user_id = ? AND account_id = ? AND date = ?"
-);
-
-const DELETE_ALL_DAILY_RETURNS_STMT = db.prepare("DELETE FROM daily_returns WHERE user_id = ?");
-
-const DEFAULT_SETTINGS = {
-  route: "earning",
-  useDemoData: true,
-  algoMode: "cost",
-  benchmark: "none",
-  stageRange: "month",
-  rangeDays: 30,
-  analysisRangeMode: "preset",
-  analysisPreset: null,
-  customRangeStart: "",
-  customRangeEnd: "",
-  capitalTrendMode: "principal",
-  capitalAmount: 0,
-  accounts: [{ id: "default", name: "默认账户", currency: "CNY", createdAt: 0 }],
-  selectedAccountId: "all",
-  tradeFilterAccountId: "all",
-  stockSortKey: "default",
-  stockSortOrder: "default",
-  /** native=港股美元按原币种展示金额；cny=金额列用人民币并加 ¥（持仓与汇总仍以人民币计算） */
-  stockAmountDisplay: "native",
-};
-
-const UPSERT_TRADE_STMT = db.prepare(`
-INSERT INTO trades (
-  id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
-) VALUES (
-  @id, @user_id, @account_id, @type, @symbol, @name, @side, @price, @quantity, @amount, @trade_date, @note, @created_at, @updated_at
-)
-ON CONFLICT(id) DO UPDATE SET
-  user_id = excluded.user_id,
-  account_id = excluded.account_id,
-  type = excluded.type,
-  symbol = excluded.symbol,
-  name = excluded.name,
-  side = excluded.side,
-  price = excluded.price,
-  quantity = excluded.quantity,
-  amount = excluded.amount,
-  trade_date = excluded.trade_date,
-  note = excluded.note,
-  updated_at = excluded.updated_at
-`);
-
-const DELETE_ALL_TRADES_STMT = db.prepare("DELETE FROM trades WHERE user_id = ?");
-const DELETE_TRADE_STMT = db.prepare("DELETE FROM trades WHERE user_id = ? AND id = ?");
-const SELECT_ALL_TRADES_STMT = db.prepare(`
-SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
-FROM trades
-WHERE user_id = ?
-ORDER BY trade_date ASC, created_at ASC
-`);
-
-const UPSERT_SETTING_STMT = db.prepare(`
-INSERT INTO app_settings (user_id, key, value, updated_at)
-VALUES (@user_id, @key, @value, @updated_at)
-ON CONFLICT(user_id, key) DO UPDATE SET
-  value = excluded.value,
-  updated_at = excluded.updated_at
-`);
-const SELECT_ALL_SETTINGS_STMT = db.prepare("SELECT key, value FROM app_settings WHERE user_id = ?");
-
-function nowMs() {
-  return Date.now();
-}
-
-function toDateKey(input) {
-  const date = input ? new Date(input) : new Date();
-  if (Number.isNaN(date.getTime())) {
-    const fallback = new Date();
-    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, "0")}-${String(
-      fallback.getDate()
-    ).padStart(2, "0")}`;
-  }
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-}
-
-function validNumber(...values) {
-  for (const value of values) {
-    const num = Number(value);
-    if (Number.isFinite(num)) {
-      return num;
-    }
-  }
-  return 0;
-}
-
-function normalizeAccountRecords(rawList) {
-  const seen = new Set();
-  const base = [];
-  const input = Array.isArray(rawList) ? rawList : [];
-  for (const raw of input) {
-    const id = String(raw?.id || "").trim();
-    if (!id || seen.has(id)) {
-      continue;
-    }
-    const name = String(raw?.name || "").trim() || "未命名账户";
-    const currency = ["CNY", "USD", "HKD"].includes(String(raw?.currency || "CNY").toUpperCase())
-      ? String(raw.currency).toUpperCase()
-      : "CNY";
-    const createdAt = validNumber(raw?.createdAt, raw?.created_at, Date.now());
-    base.push({ id, name, currency, createdAt });
-    seen.add(id);
-  }
-  if (!seen.has("default")) {
-    base.unshift({ id: "default", name: "默认账户", currency: "CNY", createdAt: 0 });
-  } else {
-    const idx = base.findIndex((item) => item.id === "default");
-    base[idx] = {
-      ...base[idx],
-      name: "默认账户",
-      currency: base[idx].currency || "CNY",
-      createdAt: base[idx].createdAt || 0,
-    };
-  }
-  base.sort((a, b) => {
-    if (a.id === "default") {
-      return -1;
-    }
-    if (b.id === "default") {
-      return 1;
-    }
-    return Number(a.createdAt) - Number(b.createdAt);
-  });
-  return base;
-}
-
-function migrateAccountsIfEmptyForUser(userId) {
+async function migrateAccountsIfEmptyForUser(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return;
   }
-  const { c } = db.prepare("SELECT COUNT(*) AS c FROM accounts WHERE user_id = ?").get(uid);
-  if (c > 0) {
+  const { rows: cRows } = await q("SELECT COUNT(*)::int AS c FROM accounts WHERE user_id = $1", [uid]);
+  if (Number(cRows[0].c) > 0) {
     return;
   }
   let list = [{ id: "default", name: "默认账户", currency: "CNY", createdAt: 0 }];
-  const row = db.prepare("SELECT value FROM app_settings WHERE user_id = ? AND key = ?").get(uid, "accounts");
-  if (row && row.value) {
+  const { rows: sRows } = await q("SELECT value FROM app_settings WHERE user_id = $1 AND key = $2", [
+    uid,
+    "accounts",
+  ]);
+  if (sRows[0] && sRows[0].value) {
     try {
-      const parsed = JSON.parse(row.value);
+      const parsed = JSON.parse(sRows[0].value);
       if (Array.isArray(parsed) && parsed.length) {
         list = parsed;
       }
     } catch {
-      // ignore invalid legacy JSON
+      // ignore
     }
   }
   const now = nowMs();
-  const tx = db.transaction(() => {
-    for (const acc of normalizeAccountRecords(list)) {
-      UPSERT_ACCOUNT_STMT.run({
-        user_id: uid,
-        id: acc.id,
-        name: acc.name,
-        currency: acc.currency,
-        created_at: acc.createdAt,
-        updated_at: now,
-      });
-    }
-  });
-  tx();
-}
-
-function migrateAllUsersAccountsIfEmpty() {
-  const rows = db.prepare("SELECT id FROM users").all();
-  for (const r of rows) {
-    migrateAccountsIfEmptyForUser(r.id);
-  }
-}
-
-migrateAllUsersAccountsIfEmpty();
-
-function getCliUserId() {
-  const phone = String(process.env.STOCKREVIEW_PHONE || SEED_USER_PHONE).trim();
-  const row = db.prepare("SELECT id FROM users WHERE phone = ?").get(phone);
-  if (!row) {
-    throw new Error(`No user for phone ${phone}; open app once to seed database.`);
-  }
-  return row.id;
-}
-
-function normalizeSymbol(rawSymbol) {
-  const value = String(rawSymbol || "")
-    .trim()
-    .replace(/\s+/g, "")
-    .toLowerCase();
-  if (!value) {
-    return "";
-  }
-  if (
-    value.startsWith("sh") ||
-    value.startsWith("sz") ||
-    value.startsWith("hk") ||
-    value.startsWith("rt_hk") ||
-    value.startsWith("gb_")
-  ) {
-    return value;
-  }
-  if (/^\d{6}$/.test(value)) {
-    if (["5", "6", "9"].includes(value[0])) {
-      return `sh${value}`;
-    }
-    return `sz${value}`;
-  }
-  if (/^\d{5}$/.test(value)) {
-    return `hk${value}`;
-  }
-  if (/^\d{1,4}$/.test(value)) {
-    return `hk${value.padStart(5, "0")}`;
-  }
-  return value;
-}
-
-function migrateTradeSymbolsToNormalized() {
+  const p = await initPool();
+  const cl = await p.connect();
   try {
-    const rows = db.prepare("SELECT id, user_id, symbol FROM trades").all();
-    const stmt = db.prepare("UPDATE trades SET symbol = ?, updated_at = ? WHERE user_id = ? AND id = ?");
+    await cl.query("BEGIN");
+    for (const acc of normalizeAccountRecords(list)) {
+      await cl.query(
+        `INSERT INTO accounts (user_id, id, name, currency, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           name = EXCLUDED.name, currency = EXCLUDED.currency, updated_at = EXCLUDED.updated_at`,
+        [uid, acc.id, acc.name, acc.currency, acc.createdAt, now]
+      );
+    }
+    await cl.query("COMMIT");
+  } catch (e) {
+    await cl.query("ROLLBACK");
+    throw e;
+  } finally {
+    cl.release();
+  }
+}
+
+async function migrateAllUsersAccountsIfEmpty() {
+  const { rows } = await q("SELECT id FROM users");
+  for (const r of rows) {
+    await migrateAccountsIfEmptyForUser(r.id);
+  }
+}
+
+async function migrateTradeSymbolsToNormalized() {
+  try {
+    const { rows } = await q("SELECT id, user_id, symbol FROM trades");
     const now = nowMs();
     let updated = 0;
     for (const row of rows) {
       const next = normalizeSymbol(row.symbol);
       if (next && next !== row.symbol) {
-        stmt.run(next, now, row.user_id, row.id);
+        await q("UPDATE trades SET symbol = $1, updated_at = $2 WHERE user_id = $3 AND id = $4", [
+          next,
+          now,
+          row.user_id,
+          row.id,
+        ]);
         updated += 1;
       }
     }
-    if (typeof process !== "undefined" && process.env.STOCKREVIEW_SILENT_DB_LOG !== "1") {
+    if (process.env.STOCKREVIEW_SILENT_DB_LOG !== "1") {
       // eslint-disable-next-line no-console
-      console.log(
-        `[db] trade symbol migration: ${updated} row(s) updated, ${rows.length} trade(s) checked.`
-      );
+      console.log(`[db] trade symbol migration: ${updated} row(s) updated, ${rows.length} trade(s) checked.`);
     }
   } catch {
-    // ignore migration failures
+    // ignore
   }
 }
 
-migrateTradeSymbolsToNormalized();
-
-function normalizedSide(type, side) {
-  if (type === "dividend" || type === "merge") {
-    return "sell";
-  }
-  if (type === "bonus" || type === "split") {
-    return "buy";
-  }
-  return side === "sell" ? "sell" : "buy";
-}
-
-function parseSide(raw, fallbackType) {
-  const value = String(raw || "").trim().toLowerCase();
-  if (value === "buy" || value === "b" || value.includes("买")) {
-    return "buy";
-  }
-  if (value === "sell" || value === "s" || value.includes("卖")) {
-    return "sell";
-  }
-  return normalizedSide(fallbackType, "buy");
-}
-
-function parseType(rawType) {
-  const value = String(rawType || "").trim().toLowerCase();
-  if (!value) {
-    return "trade";
-  }
-  if (value === "dividend" || value.includes("分红")) {
-    return "dividend";
-  }
-  if (value === "bonus" || value.includes("送股")) {
-    return "bonus";
-  }
-  if (value === "split" || value.includes("拆股")) {
-    return "split";
-  }
-  if (value === "merge" || value.includes("合股")) {
-    return "merge";
-  }
-  return "trade";
-}
-
-function normalizeTrade(input) {
-  const raw = input || {};
-  const type = parseType(raw.type || raw.tradeType || raw["类型"]);
-  const symbol = normalizeSymbol(
-    raw.symbol || raw.code || raw.stockCode || raw.ts_code || raw["证券代码"] || raw["代码"]
-  );
-  const name = String(
-    raw.name || raw.stockName || raw.securityName || raw["证券名称"] || raw["名称"] || symbol || "unknown"
-  ).trim();
-  const side = parseSide(
-    raw.side || raw.direction || raw.action || raw["方向"] || raw["买卖"] || raw.type,
-    type
-  );
-  const price = validNumber(
-    raw.price,
-    raw.cost,
-    raw.tradePrice,
-    raw.dealPrice,
-    raw.avgPrice,
-    raw["成交价"],
-    raw["价格"],
-    0
-  );
-  const quantity = validNumber(
-    raw.quantity,
-    raw.share,
-    raw.qty,
-    raw.volume,
-    raw.shares,
-    raw["数量"],
-    raw["成交数量"],
-    0
-  );
-  const amount = Math.abs(
-    validNumber(
-      raw.amount,
-      raw.payment,
-      raw.tradeAmount,
-      raw.turnover,
-      raw["发生金额"],
-      raw["成交金额"],
-      price * quantity
-    )
-  );
-  const date = toDateKey(
-    raw.date || raw.trade_date || raw.tradeDate || raw.dealDate || raw["日期"] || raw["成交日期"]
-  );
-  const note = String(raw.note || raw.remark || raw["备注"] || "").trim();
-  const createdAt = validNumber(raw.createdAt, raw.created_at, raw.timestamp, Date.parse(date), nowMs());
-
-  return {
-    id: String(raw.id || raw.tradeId || raw.ts_id || randomUUID()),
-    accountId: String(raw.accountId || raw.account_id || raw.account || "default").trim() || "default",
-    type,
-    symbol,
-    name,
-    side,
-    price,
-    quantity,
-    amount,
-    date,
-    note,
-    createdAt,
-  };
-}
-
-function tradeToRow(trade, userId) {
-  const safe = normalizeTrade(trade);
-  const updatedAt = nowMs();
-  return {
-    id: safe.id,
-    user_id: String(userId || "").trim(),
-    account_id: safe.accountId || "default",
-    type: safe.type,
-    symbol: safe.symbol,
-    name: safe.name,
-    side: safe.side,
-    price: safe.price,
-    quantity: safe.quantity,
-    amount: safe.amount,
-    trade_date: safe.date,
-    note: safe.note,
-    created_at: safe.createdAt,
-    updated_at: updatedAt,
-  };
-}
-
-function rowToTrade(row) {
-  return {
-    id: row.id,
-    accountId: row.account_id || "default",
-    type: row.type,
-    symbol: row.symbol,
-    name: row.name,
-    side: row.side,
-    price: Number(row.price),
-    quantity: Number(row.quantity),
-    amount: Number(row.amount),
-    date: row.trade_date,
-    note: row.note || "",
-    createdAt: Number(row.created_at),
-  };
-}
-
-function getTrades(userId) {
+async function getTrades(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return [];
   }
-  return SELECT_ALL_TRADES_STMT.all(uid).map(rowToTrade);
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE user_id = $1
+     ORDER BY trade_date ASC, created_at ASC`,
+    [uid]
+  );
+  return rows.map(rowToTrade);
 }
 
-function upsertTrade(trade, userId) {
+async function upsertTrade(trade, userId) {
   const row = tradeToRow(trade, userId);
   if (!row.user_id) {
     throw new Error("userId required");
   }
-  UPSERT_TRADE_STMT.run(row);
+  await q(
+    `INSERT INTO trades (
+      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    ON CONFLICT (id) DO UPDATE SET
+      user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
+      name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
+      amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
+    [
+      row.id,
+      row.user_id,
+      row.account_id,
+      row.type,
+      row.symbol,
+      row.name,
+      row.side,
+      row.price,
+      row.quantity,
+      row.amount,
+      row.trade_date,
+      row.note,
+      row.created_at,
+      row.updated_at,
+    ]
+  );
   return normalizeTrade({ ...trade, id: row.id });
 }
 
-const replaceTradesTx = db.transaction((trades, userId) => {
-  DELETE_ALL_TRADES_STMT.run(userId);
-  for (const trade of trades) {
-    UPSERT_TRADE_STMT.run(tradeToRow(trade, userId));
-  }
-});
-
-const appendTradesTx = db.transaction((trades, userId) => {
-  for (const trade of trades) {
-    UPSERT_TRADE_STMT.run(tradeToRow(trade, userId));
-  }
-});
-
-function importTrades(trades, mode = "append", userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
+async function importTrades(trades, mode = "append", userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
   const list = Array.isArray(trades) ? trades : [];
-  if (mode === "replace") {
-    replaceTradesTx(list, uid);
-  } else {
-    appendTradesTx(list, uid);
+  const p = await initPool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    if (mode === "replace") {
+      await client.query("DELETE FROM trades WHERE user_id = $1", [uid]);
+    }
+    for (const trade of list) {
+      const row = tradeToRow(trade, uid);
+      await client.query(
+        `INSERT INTO trades (
+          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ON CONFLICT (id) DO UPDATE SET
+          user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
+          name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
+          amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
+        [
+          row.id,
+          row.user_id,
+          row.account_id,
+          row.type,
+          row.symbol,
+          row.name,
+          row.side,
+          row.price,
+          row.quantity,
+          row.amount,
+          row.trade_date,
+          row.note,
+          row.created_at,
+          row.updated_at,
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
   }
   return getTrades(uid);
 }
 
-function deleteTradeById(tradeId, userId) {
+async function deleteTradeById(tradeId, userId) {
   const uid = String(userId || "").trim();
-  const res = DELETE_TRADE_STMT.run(uid, String(tradeId || ""));
-  return res.changes > 0;
+  const { rowCount } = await q("DELETE FROM trades WHERE user_id = $1 AND id = $2", [uid, String(tradeId || "")]);
+  return rowCount > 0;
 }
 
-const UPSERT_CASH_TRANSFER_STMT = db.prepare(`
-INSERT INTO cash_transfers (
-  id, user_id, account_id, transfer_date, direction, amount, note, created_at, updated_at
-) VALUES (
-  @id, @user_id, @account_id, @transfer_date, @direction, @amount, @note, @created_at, @updated_at
-)
-ON CONFLICT(id) DO UPDATE SET
-  user_id = excluded.user_id,
-  account_id = excluded.account_id,
-  transfer_date = excluded.transfer_date,
-  direction = excluded.direction,
-  amount = excluded.amount,
-  note = excluded.note,
-  updated_at = excluded.updated_at
-`);
-
-const SELECT_ALL_CASH_TRANSFERS_STMT = db.prepare(`
-SELECT id, account_id, transfer_date, direction, amount, note, created_at
-FROM cash_transfers
-WHERE user_id = ?
-ORDER BY transfer_date DESC, created_at DESC
-`);
-
-const DELETE_CASH_TRANSFER_STMT = db.prepare("DELETE FROM cash_transfers WHERE user_id = ? AND id = ?");
-const DELETE_ALL_CASH_TRANSFERS_STMT = db.prepare("DELETE FROM cash_transfers WHERE user_id = ?");
-
-function normalizeCashTransfer(raw) {
-  const r = raw && typeof raw === "object" ? raw : {};
-  const id = String(r.id || "").trim() || randomUUID();
-  const dir = String(r.direction || "").toLowerCase();
-  const direction = dir === "out" || dir === "transfer_out" || dir === "转出" ? "out" : "in";
-  const amount = Math.abs(validNumber(r.amount, 0));
-  return {
-    id,
-    accountId: String(r.accountId || r.account_id || "default").trim() || "default",
-    date: toDateKey(r.date || r.transfer_date),
-    direction: direction === "out" ? "out" : "in",
-    amount,
-    note: String(r.note || "").trim(),
-    createdAt: validNumber(r.createdAt, r.created_at, nowMs()),
-  };
-}
-
-function cashTransferToRow(ct, userId) {
-  const safe = normalizeCashTransfer(ct);
-  const updatedAt = nowMs();
-  return {
-    id: safe.id,
-    user_id: String(userId || "").trim(),
-    account_id: safe.accountId,
-    transfer_date: safe.date,
-    direction: safe.direction,
-    amount: safe.amount,
-    note: safe.note,
-    created_at: safe.createdAt,
-    updated_at: updatedAt,
-  };
-}
-
-function rowToCashTransfer(row) {
-  return {
-    id: row.id,
-    accountId: row.account_id || "default",
-    date: row.transfer_date,
-    direction: row.direction === "out" ? "out" : "in",
-    amount: Number(row.amount),
-    note: row.note || "",
-    createdAt: Number(row.created_at),
-  };
-}
-
-function getCashTransfers(userId) {
+async function getCashTransfers(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return [];
   }
-  return SELECT_ALL_CASH_TRANSFERS_STMT.all(uid).map(rowToCashTransfer);
+  const { rows } = await q(
+    `SELECT id, account_id, transfer_date, direction, amount, note, created_at
+     FROM cash_transfers WHERE user_id = $1
+     ORDER BY transfer_date DESC, created_at DESC`,
+    [uid]
+  );
+  return rows.map(rowToCashTransfer);
 }
 
-function upsertCashTransfer(record, userId) {
+async function upsertCashTransfer(record, userId) {
   const uid = String(userId || "").trim();
   const row = cashTransferToRow(record, userId);
   if (!row.user_id) {
     throw new Error("userId required");
   }
-  UPSERT_CASH_TRANSFER_STMT.run(row);
-  const all = getCashTransfers(uid);
+  await q(
+    `INSERT INTO cash_transfers (id, user_id, account_id, transfer_date, direction, amount, note, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, transfer_date = EXCLUDED.transfer_date,
+       direction = EXCLUDED.direction, amount = EXCLUDED.amount, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
+    [
+      row.id,
+      row.user_id,
+      row.account_id,
+      row.transfer_date,
+      row.direction,
+      row.amount,
+      row.note,
+      row.created_at,
+      row.updated_at,
+    ]
+  );
+  const all = await getCashTransfers(uid);
   return all.find((x) => x.id === row.id) || all[all.length - 1];
 }
 
-const replaceCashTransfersTx = db.transaction((rows, userId) => {
-  DELETE_ALL_CASH_TRANSFERS_STMT.run(userId);
-  for (const r of rows) {
-    UPSERT_CASH_TRANSFER_STMT.run(cashTransferToRow(r, userId));
-  }
-});
-
-const appendCashTransfersTx = db.transaction((rows, userId) => {
-  for (const r of rows) {
-    UPSERT_CASH_TRANSFER_STMT.run(cashTransferToRow(r, userId));
-  }
-});
-
-function importCashTransfers(rows, mode = "append", userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
+async function importCashTransfers(rows, mode = "append", userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
   const list = Array.isArray(rows) ? rows.map(normalizeCashTransfer) : [];
-  if (mode === "replace") {
-    replaceCashTransfersTx(list, uid);
-  } else {
-    appendCashTransfersTx(list, uid);
+  const p = await initPool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    if (mode === "replace") {
+      await client.query("DELETE FROM cash_transfers WHERE user_id = $1", [uid]);
+    }
+    for (const r of list) {
+      const row = cashTransferToRow(r, uid);
+      await client.query(
+        `INSERT INTO cash_transfers (id, user_id, account_id, transfer_date, direction, amount, note, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (id) DO UPDATE SET
+           user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, transfer_date = EXCLUDED.transfer_date,
+           direction = EXCLUDED.direction, amount = EXCLUDED.amount, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
+        [
+          row.id,
+          row.user_id,
+          row.account_id,
+          row.transfer_date,
+          row.direction,
+          row.amount,
+          row.note,
+          row.created_at,
+          row.updated_at,
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
   }
   return getCashTransfers(uid);
 }
 
-function deleteCashTransferById(cashId, userId) {
+async function deleteCashTransferById(cashId, userId) {
   const uid = String(userId || "").trim();
-  const res = DELETE_CASH_TRANSFER_STMT.run(uid, String(cashId || ""));
-  return res.changes > 0;
+  const { rowCount } = await q("DELETE FROM cash_transfers WHERE user_id = $1 AND id = $2", [uid, String(cashId || "")]);
+  return rowCount > 0;
 }
 
-function rowToAccount(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    currency: row.currency,
-    createdAt: Number(row.created_at),
-  };
-}
-
-function getAccounts(userId) {
+async function getAccounts(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return [];
   }
-  return SELECT_ALL_ACCOUNTS_STMT.all(uid).map(rowToAccount);
+  const { rows } = await q(
+    "SELECT id, name, currency, created_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC, id ASC",
+    [uid]
+  );
+  return rows.map(rowToAccount);
 }
 
-function replaceAccountsFromList(accounts, userId) {
+async function replaceAccountsFromList(accounts, userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return;
   }
   const list = normalizeAccountRecords(accounts);
   const now = nowMs();
-  const tx = db.transaction(() => {
+  const p = await initPool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
     const ids = new Set(list.map((a) => a.id));
     for (const a of list) {
-      UPSERT_ACCOUNT_STMT.run({
-        user_id: uid,
-        id: a.id,
-        name: a.name,
-        currency: a.currency,
-        created_at: a.createdAt,
-        updated_at: now,
-      });
+      await client.query(
+        `INSERT INTO accounts (user_id, id, name, currency, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           name = EXCLUDED.name, currency = EXCLUDED.currency, updated_at = EXCLUDED.updated_at`,
+        [uid, a.id, a.name, a.currency, a.createdAt, now]
+      );
     }
-    const allIds = db.prepare("SELECT id FROM accounts WHERE user_id = ?").all(uid).map((r) => r.id);
-    for (const id of allIds) {
-      if (ids.has(id)) {
+    const { rows: allIdsRows } = await client.query("SELECT id FROM accounts WHERE user_id = $1", [uid]);
+    for (const r of allIdsRows) {
+      if (ids.has(r.id)) {
         continue;
       }
-      const { c } = db.prepare("SELECT COUNT(*) AS c FROM trades WHERE user_id = ? AND account_id = ?").get(
-        uid,
-        id
+      const cRes = await client.query(
+        "SELECT COUNT(*)::int AS c FROM trades WHERE user_id = $1 AND account_id = $2",
+        [uid, r.id]
       );
-      if (Number(c) === 0 && id !== "default") {
-        DELETE_ACCOUNT_STMT.run(uid, id);
+      if (Number(cRes.rows[0].c) === 0 && r.id !== "default") {
+        await client.query("DELETE FROM accounts WHERE user_id = $1 AND id = $2", [uid, r.id]);
       }
     }
-    db.prepare("DELETE FROM app_settings WHERE user_id = ? AND key = 'accounts'").run(uid);
-  });
-  tx();
-}
-
-function normalizeDailyReturn(input) {
-  const raw = input || {};
-  const accountId = String(raw.accountId || raw.account_id || "default").trim() || "default";
-  const date = toDateKey(raw.date || raw.day);
-  const profit = validNumber(raw.profit, raw.pnl, raw.earning, 0);
-  const returnRate = validNumber(raw.returnRate, raw.return_rate, raw.rate, 0);
-  let totalAsset = null;
-  if (raw.totalAsset != null || raw.total_asset != null) {
-    const n = Number(raw.totalAsset != null ? raw.totalAsset : raw.total_asset);
-    totalAsset = Number.isFinite(n) ? n : null;
+    await client.query("DELETE FROM app_settings WHERE user_id = $1 AND key = 'accounts'", [uid]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
   }
-  const createdAt = validNumber(raw.createdAt, raw.created_at, nowMs());
-  return {
-    accountId,
-    date,
-    profit,
-    returnRate,
-    totalAsset,
-    createdAt,
-  };
 }
 
-function rowToDailyReturn(row) {
-  const totalAsset = row.total_asset == null ? null : Number(row.total_asset);
-  return {
-    accountId: row.account_id,
-    date: row.date,
-    profit: Number(row.profit),
-    returnRate: Number(row.return_rate),
-    totalAsset: Number.isFinite(totalAsset) ? totalAsset : null,
-    createdAt: Number(row.created_at),
-  };
-}
-
-function getDailyReturns(query = {}, userId = null) {
+async function getDailyReturns(query = {}, userId = null) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return [];
@@ -1021,91 +561,88 @@ function getDailyReturns(query = {}, userId = null) {
   const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "";
   const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "";
   if (!accountId && !from && !to) {
-    return SELECT_ALL_DAILY_RETURNS_STMT.all(uid).map(rowToDailyReturn);
+    const { rows } = await q(
+      "SELECT account_id, date, profit, return_rate, total_asset, created_at FROM daily_returns WHERE user_id = $1 ORDER BY account_id ASC, date ASC",
+      [uid]
+    );
+    return rows.map(rowToDailyReturn);
   }
   const fromBound = from || "1970-01-01";
   const toBound = to || "9999-12-31";
-  return SELECT_DAILY_RETURNS_RANGE_STMT.all({
-    user_id: uid,
-    account_id: accountId,
-    from: fromBound,
-    to: toBound,
-  }).map(rowToDailyReturn);
+  const { rows } = await q(
+    `SELECT account_id, date, profit, return_rate, total_asset, created_at
+     FROM daily_returns
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND date >= $3 AND date <= $4
+     ORDER BY date ASC`,
+    [uid, accountId, fromBound, toBound]
+  );
+  return rows.map(rowToDailyReturn);
 }
 
-function upsertDailyReturn(input, userId) {
+async function upsertDailyReturn(input, userId) {
   const uid = String(userId || "").trim();
   const safe = normalizeDailyReturn(input);
   const updatedAt = nowMs();
-  UPSERT_DAILY_RETURN_STMT.run({
-    user_id: uid,
-    account_id: safe.accountId,
-    date: safe.date,
-    profit: safe.profit,
-    return_rate: safe.returnRate,
-    total_asset: safe.totalAsset,
-    created_at: safe.createdAt,
-    updated_at: updatedAt,
-  });
+  await q(
+    `INSERT INTO daily_returns (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (user_id, account_id, date) DO UPDATE SET
+       profit = EXCLUDED.profit, return_rate = EXCLUDED.return_rate, total_asset = EXCLUDED.total_asset, updated_at = EXCLUDED.updated_at`,
+    [uid, safe.accountId, safe.date, safe.profit, safe.returnRate, safe.totalAsset, safe.createdAt, updatedAt]
+  );
   return safe;
 }
 
-const replaceAllDailyReturnsTx = db.transaction((rows, userId) => {
-  const uid = String(userId || "").trim();
-  DELETE_ALL_DAILY_RETURNS_STMT.run(uid);
-  const updatedAt = nowMs();
-  for (const raw of rows) {
-    const safe = normalizeDailyReturn(raw);
-    UPSERT_DAILY_RETURN_STMT.run({
-      user_id: uid,
-      account_id: safe.accountId,
-      date: safe.date,
-      profit: safe.profit,
-      return_rate: safe.returnRate,
-      total_asset: safe.totalAsset,
-      created_at: safe.createdAt,
-      updated_at: updatedAt,
-    });
-  }
-});
-
-function importDailyReturns(rows, mode = "append", userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
+async function importDailyReturns(rows, mode = "append", userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
   const list = Array.isArray(rows) ? rows.map(normalizeDailyReturn) : [];
-  if (mode === "replace") {
-    replaceAllDailyReturnsTx(list, uid);
-  } else {
-    const updatedAt = nowMs();
-    for (const safe of list) {
-      UPSERT_DAILY_RETURN_STMT.run({
-        user_id: uid,
-        account_id: safe.accountId,
-        date: safe.date,
-        profit: safe.profit,
-        return_rate: safe.returnRate,
-        total_asset: safe.totalAsset,
-        created_at: safe.createdAt,
-        updated_at: updatedAt,
-      });
+  const p = await initPool();
+  const client = await p.connect();
+  const updatedAt = nowMs();
+  try {
+    await client.query("BEGIN");
+    if (mode === "replace") {
+      await client.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
     }
+    for (const safe of list) {
+      await client.query(
+        `INSERT INTO daily_returns (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (user_id, account_id, date) DO UPDATE SET
+           profit = EXCLUDED.profit, return_rate = EXCLUDED.return_rate, total_asset = EXCLUDED.total_asset, updated_at = EXCLUDED.updated_at`,
+        [uid, safe.accountId, safe.date, safe.profit, safe.returnRate, safe.totalAsset, safe.createdAt, updatedAt]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
   }
   return getDailyReturns({}, uid);
 }
 
-function deleteDailyReturn(accountId, date, userId) {
+async function deleteDailyReturn(accountId, date, userId) {
   const uid = String(userId || "").trim();
-  const res = DELETE_DAILY_RETURN_STMT.run(uid, String(accountId || ""), String(date || ""));
-  return res.changes > 0;
+  const { rowCount } = await q("DELETE FROM daily_returns WHERE user_id = $1 AND account_id = $2 AND date = $3", [
+    uid,
+    String(accountId || ""),
+    String(date || ""),
+  ]);
+  return rowCount > 0;
 }
 
-function getSettings(userId) {
+async function getSettings(userId) {
   const uid = String(userId || "").trim();
   const settings = { ...DEFAULT_SETTINGS };
   if (!uid) {
     settings.accounts = [];
     return settings;
   }
-  const rows = SELECT_ALL_SETTINGS_STMT.all(uid);
+  const { rows } = await q("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]);
   for (const row of rows) {
     if (row.key === "accounts") {
       continue;
@@ -1119,11 +656,11 @@ function getSettings(userId) {
       settings[row.key] = row.value;
     }
   }
-  settings.accounts = getAccounts(uid);
+  settings.accounts = await getAccounts(uid);
   return settings;
 }
 
-function setSettings(partial, userId) {
+async function setSettings(partial, userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return getSettings("");
@@ -1138,171 +675,300 @@ function setSettings(partial, userId) {
     }
     if (key === "accounts") {
       if (Array.isArray(value)) {
-        replaceAccountsFromList(value, uid);
+        await replaceAccountsFromList(value, uid);
       }
       continue;
     }
-    UPSERT_SETTING_STMT.run({
-      user_id: uid,
-      key,
-      value: JSON.stringify(value),
-      updated_at: updatedAt,
-    });
+    await q(
+      `INSERT INTO app_settings (user_id, key, value, updated_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+      [uid, key, JSON.stringify(value), updatedAt]
+    );
   }
   return getSettings(uid);
 }
 
-const SELECT_SYMBOL_DAILY_RANGE_STMT = db.prepare(`
-SELECT account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at
-FROM symbol_daily_pnl
-WHERE user_id = @user_id
-  AND (@account_id = '' OR account_id = @account_id)
-  AND date >= @from
-  AND date <= @to
-  AND (@symbol = '' OR symbol = @symbol)
-ORDER BY date ASC, symbol ASC
-`);
-
-const UPSERT_SYMBOL_DAILY_STMT = db.prepare(`
-INSERT INTO symbol_daily_pnl (
-  user_id, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at, updated_at
-) VALUES (
-  @user_id, @account_id, @symbol, @date, @eod_shares, @day_trade_qty, @day_trade_amount, @day_close_price, @day_pnl_native, @currency, @created_at, @updated_at
-)
-ON CONFLICT(user_id, account_id, symbol, date) DO UPDATE SET
-  eod_shares = excluded.eod_shares,
-  day_trade_qty = excluded.day_trade_qty,
-  day_trade_amount = excluded.day_trade_amount,
-  day_close_price = excluded.day_close_price,
-  day_pnl_native = excluded.day_pnl_native,
-  currency = excluded.currency,
-  updated_at = excluded.updated_at
-`);
-
-const SELECT_ANALYSIS_DAILY_RANGE_STMT = db.prepare(`
-SELECT account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
-  total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
-  principal, market_value, fx_hkd_cny, fx_usd_cny, created_at
-FROM analysis_daily_snapshot
-WHERE user_id = @user_id
-  AND (@account_id = '' OR account_id = @account_id)
-  AND date >= @from
-  AND date <= @to
-ORDER BY date ASC
-`);
-
-const UPSERT_ANALYSIS_DAILY_STMT = db.prepare(`
-INSERT INTO analysis_daily_snapshot (
-  user_id, account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
-  total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
-  principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-) VALUES (
-  @user_id, @account_id, @date, @profit_cny, @rate_cost, @rate_twr, @rate_dietz,
-  @total_profit, @total_rate_cost, @total_rate_twr, @total_rate_dietz,
-  @principal, @market_value, @fx_hkd_cny, @fx_usd_cny, @created_at, @updated_at
-)
-ON CONFLICT(user_id, account_id, date) DO UPDATE SET
-  profit_cny = excluded.profit_cny,
-  rate_cost = excluded.rate_cost,
-  rate_twr = excluded.rate_twr,
-  rate_dietz = excluded.rate_dietz,
-  total_profit = excluded.total_profit,
-  total_rate_cost = excluded.total_rate_cost,
-  total_rate_twr = excluded.total_rate_twr,
-  total_rate_dietz = excluded.total_rate_dietz,
-  principal = excluded.principal,
-  market_value = excluded.market_value,
-  fx_hkd_cny = excluded.fx_hkd_cny,
-  fx_usd_cny = excluded.fx_usd_cny,
-  updated_at = excluded.updated_at
-`);
-
-const UPSERT_SYMBOL_DAILY_CLOSE_STMT = db.prepare(`
-INSERT INTO symbol_daily_close (symbol, date, close, source, updated_at)
-VALUES (@symbol, @date, @close, @source, @updated_at)
-ON CONFLICT(symbol, date) DO UPDATE SET
-  close = excluded.close,
-  source = excluded.source,
-  updated_at = excluded.updated_at
-`);
-
-const SELECT_SYMBOL_DAILY_CLOSE_RANGE_STMT = db.prepare(`
-SELECT date, close, source FROM symbol_daily_close
-WHERE symbol = ? AND date >= ? AND date <= ?
-ORDER BY date ASC
-`);
-
-function addCalendarDays(dateStr, delta) {
-  const base = String(dateStr || "").slice(0, 10);
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(base);
-  if (!m) {
-    return base;
-  }
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  d.setDate(d.getDate() + Number(delta) || 0);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+async function getState(userId) {
+  const uid = String(userId || "").trim();
+  return {
+    ...(await getSettings(uid)),
+    trades: await getTrades(uid),
+    dailyReturns: await getDailyReturns({}, uid),
+    cashTransfers: await getCashTransfers(uid),
+  };
 }
 
-function upsertSymbolDailyCloseBatch(rows) {
+async function getSymbolDailyPnl(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
+  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  const { rows } = await q(
+    `SELECT account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND date >= $3 AND date <= $4
+       AND ($5 = '' OR symbol = $5)
+     ORDER BY date ASC, symbol ASC`,
+    [uid, accountId, from, to, symbol]
+  );
+  return rows.map((row) => ({
+    accountId: row.account_id,
+    symbol: row.symbol,
+    date: row.date,
+    eodShares: Number(row.eod_shares),
+    dayTradeQty: Number(row.day_trade_qty),
+    dayTradeAmount: Number(row.day_trade_amount),
+    dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
+    dayPnlNative: Number(row.day_pnl_native),
+    currency: row.currency,
+    createdAt: Number(row.created_at),
+  }));
+}
+
+async function upsertSymbolDailyPnlBatch(rows, userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  const list = Array.isArray(rows) ? rows : [];
+  const now = nowMs();
+  const p = await initPool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    for (const raw of list) {
+      const r = raw || {};
+      await client.query(
+        `INSERT INTO symbol_daily_pnl (
+           user_id, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ON CONFLICT (user_id, account_id, symbol, date) DO UPDATE SET
+           eod_shares = EXCLUDED.eod_shares, day_trade_qty = EXCLUDED.day_trade_qty, day_trade_amount = EXCLUDED.day_trade_amount,
+           day_close_price = EXCLUDED.day_close_price, day_pnl_native = EXCLUDED.day_pnl_native, currency = EXCLUDED.currency, updated_at = EXCLUDED.updated_at`,
+        [
+          uid,
+          String(r.accountId || r.account_id || "default").trim() || "default",
+          String(r.symbol || "").trim().toLowerCase(),
+          toDateKey(r.date),
+          validNumber(r.eodShares, r.eod_shares, 0),
+          validNumber(r.dayTradeQty, r.day_trade_qty, 0),
+          validNumber(r.dayTradeAmount, r.day_trade_amount, 0),
+          r.dayClosePrice != null || r.day_close_price != null ? validNumber(r.dayClosePrice, r.day_close_price, 0) : null,
+          validNumber(r.dayPnlNative, r.day_pnl_native, 0),
+          String(r.currency || "CNY").toUpperCase().slice(0, 3) || "CNY",
+          validNumber(r.createdAt, r.created_at, now),
+          now,
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  return list.length;
+}
+
+async function getAnalysisDailySnapshots(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
+  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
+  const { rows } = await q(
+    `SELECT account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
+      total_profit, total_rate_cost, total_rate_twr, total_rate_dietz, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at
+     FROM analysis_daily_snapshot
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND date >= $3 AND date <= $4
+     ORDER BY date ASC`,
+    [uid, accountId, from, to]
+  );
+  return rows.map((row) => ({
+    accountId: row.account_id,
+    date: row.date,
+    profitCny: Number(row.profit_cny),
+    rateCost: Number(row.rate_cost),
+    rateTwr: Number(row.rate_twr),
+    rateDietz: Number(row.rate_dietz),
+    totalProfit: Number(row.total_profit),
+    totalRateCost: Number(row.total_rate_cost),
+    totalRateTwr: Number(row.total_rate_twr),
+    totalRateDietz: Number(row.total_rate_dietz),
+    principal: Number(row.principal),
+    marketValue: Number(row.market_value),
+    fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
+    fxUsdCny: row.fx_usd_cny == null ? null : Number(row.fx_usd_cny),
+    createdAt: Number(row.created_at),
+  }));
+}
+
+async function upsertAnalysisDailySnapshot(input, userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  const r = input || {};
+  const now = nowMs();
+  const row = {
+    user_id: uid,
+    account_id: String(r.accountId || r.account_id || "default").trim() || "default",
+    date: toDateKey(r.date),
+    profit_cny: validNumber(r.profitCny, r.profit_cny, 0),
+    rate_cost: validNumber(r.rateCost, r.rate_cost, 0),
+    rate_twr: validNumber(r.rateTwr, r.rate_twr, 0),
+    rate_dietz: validNumber(r.rateDietz, r.rate_dietz, 0),
+    total_profit: validNumber(r.totalProfit, r.total_profit, 0),
+    total_rate_cost: validNumber(r.totalRateCost, r.total_rate_cost, 0),
+    total_rate_twr: validNumber(r.totalRateTwr, r.total_rate_twr, 0),
+    total_rate_dietz: validNumber(r.totalRateDietz, r.total_rate_dietz, 0),
+    principal: validNumber(r.principal, 0),
+    market_value: validNumber(r.marketValue, r.market_value, 0),
+    fx_hkd_cny: r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
+    fx_usd_cny: r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
+    created_at: validNumber(r.createdAt, r.created_at, now),
+    updated_at: now,
+  };
+  await q(
+    `INSERT INTO analysis_daily_snapshot (
+       user_id, account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz, total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
+       principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     ON CONFLICT (user_id, account_id, date) DO UPDATE SET
+       profit_cny = EXCLUDED.profit_cny, rate_cost = EXCLUDED.rate_cost, rate_twr = EXCLUDED.rate_twr, rate_dietz = EXCLUDED.rate_dietz,
+       total_profit = EXCLUDED.total_profit, total_rate_cost = EXCLUDED.total_rate_cost, total_rate_twr = EXCLUDED.total_rate_twr, total_rate_dietz = EXCLUDED.total_rate_dietz,
+       principal = EXCLUDED.principal, market_value = EXCLUDED.market_value, fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
+    [
+      row.user_id,
+      row.account_id,
+      row.date,
+      row.profit_cny,
+      row.rate_cost,
+      row.rate_twr,
+      row.rate_dietz,
+      row.total_profit,
+      row.total_rate_cost,
+      row.total_rate_twr,
+      row.total_rate_dietz,
+      row.principal,
+      row.market_value,
+      row.fx_hkd_cny,
+      row.fx_usd_cny,
+      row.created_at,
+      row.updated_at,
+    ]
+  );
+  return row;
+}
+
+async function deleteAllSymbolDailyPnl(userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  await q("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+}
+
+async function deleteAllAnalysisDailySnapshot(userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  await q("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
+}
+
+async function deleteAllDataForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const p = await initPool();
+  const c = await p.connect();
+  try {
+    await c.query("BEGIN");
+    await c.query("DELETE FROM trades WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM cash_transfers WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM app_settings WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM accounts WHERE user_id = $1", [uid]);
+    await c.query("COMMIT");
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+async function upsertSymbolDailyCloseBatch(rows) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) {
     return 0;
   }
   const now = nowMs();
-  const tx = db.transaction(() => {
+  const p = await initPool();
+  const c = await p.connect();
+  try {
+    await c.query("BEGIN");
     for (const raw of list) {
       const r = raw || {};
       const sym = normalizeSymbol(r.symbol);
       if (!sym || !Number.isFinite(Number(r.close))) {
         continue;
       }
-      UPSERT_SYMBOL_DAILY_CLOSE_STMT.run({
-        symbol: sym,
-        date: toDateKey(r.date),
-        close: validNumber(r.close, 0),
-        source: String(r.source || "").slice(0, 64),
-        updated_at: now,
-      });
+      await c.query(
+        `INSERT INTO symbol_daily_close (symbol, date, close, source, updated_at) VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (symbol, date) DO UPDATE SET close = EXCLUDED.close, source = EXCLUDED.source, updated_at = EXCLUDED.updated_at`,
+        [sym, toDateKey(r.date), validNumber(r.close, 0), String(r.source || "").slice(0, 64), now]
+      );
     }
-  });
-  tx();
+    await c.query("COMMIT");
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
   return list.length;
 }
 
-function getSymbolDailyCloseRange(symbol, fromDate, toDate) {
+async function getSymbolDailyCloseRange(symbol, fromDate, toDate) {
   const sym = normalizeSymbol(symbol);
   if (!sym) {
     return [];
   }
   const from = fromDate && String(fromDate).trim() ? String(fromDate).trim() : "1970-01-01";
   const to = toDate && String(toDate).trim() ? String(toDate).trim() : "9999-12-31";
-  return SELECT_SYMBOL_DAILY_CLOSE_RANGE_STMT.all(sym, from, to).map((row) => ({
+  const { rows } = await q(
+    "SELECT date, close, source FROM symbol_daily_close WHERE symbol = $1 AND date >= $2 AND date <= $3 ORDER BY date ASC",
+    [sym, from, to]
+  );
+  return rows.map((row) => ({
     date: row.date,
     close: Number(row.close),
     source: row.source || "",
   }));
 }
 
-const SELECT_LATEST_SYMBOL_DAILY_CLOSE_STMT = db.prepare(
-  `SELECT close, date FROM symbol_daily_close WHERE symbol = ? ORDER BY date DESC LIMIT 1`,
-);
-
-/** 用于社区 TOP3 等与「当前成交」对齐的估值：最新一日收盘价（库内 K 线） */
-function getLatestSymbolDailyClose(symbol) {
+async function getLatestSymbolDailyClose(symbol) {
   const sym = normalizeSymbol(symbol);
   if (!sym) {
     return null;
   }
-  const row = SELECT_LATEST_SYMBOL_DAILY_CLOSE_STMT.get(sym);
-  if (!row || row.close == null) {
+  const { rows } = await q(
+    "SELECT close, date FROM symbol_daily_close WHERE symbol = $1 ORDER BY date DESC LIMIT 1",
+    [sym]
+  );
+  if (!rows[0] || rows[0].close == null) {
     return null;
   }
-  return { close: Number(row.close), date: String(row.date) };
+  return { close: Number(rows[0].close), date: String(rows[0].date) };
 }
 
-/** 全部成交里出现过的标的：首日−1 ～ max(末次+1, 今天) */
-function getTradeWindowForDailyClose(userId) {
-  const trades = getTrades(userId);
+async function getTradeWindowForDailyClose(userId) {
+  const trades = await getTrades(userId);
   if (!trades.length) {
     return { symbols: [], from: null, to: null };
   }
@@ -1330,252 +996,105 @@ function getTradeWindowForDailyClose(userId) {
   return { symbols: [...set].sort(), from, to };
 }
 
-function getSymbolDailyPnl(query = {}, userId = null) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return [];
-  }
-  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
-  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
-  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
-  const symbol =
-    query.symbol != null && String(query.symbol).trim()
-      ? normalizeSymbol(String(query.symbol).trim())
-      : "";
-  return SELECT_SYMBOL_DAILY_RANGE_STMT.all({
-    user_id: uid,
-    account_id: accountId,
-    from,
-    to,
-    symbol,
-  }).map((row) => ({
-    accountId: row.account_id,
-    symbol: row.symbol,
-    date: row.date,
-    eodShares: Number(row.eod_shares),
-    dayTradeQty: Number(row.day_trade_qty),
-    dayTradeAmount: Number(row.day_trade_amount),
-    dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
-    dayPnlNative: Number(row.day_pnl_native),
-    currency: row.currency,
-    createdAt: Number(row.created_at),
-  }));
-}
-
-function upsertSymbolDailyPnlBatch(rows, userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
-  const list = Array.isArray(rows) ? rows : [];
-  const now = nowMs();
-  const tx = db.transaction(() => {
-    for (const raw of list) {
-      const r = raw || {};
-      UPSERT_SYMBOL_DAILY_STMT.run({
-        user_id: uid,
-        account_id: String(r.accountId || r.account_id || "default").trim() || "default",
-        symbol: String(r.symbol || "").trim().toLowerCase(),
-        date: toDateKey(r.date),
-        eod_shares: validNumber(r.eodShares, r.eod_shares, 0),
-        day_trade_qty: validNumber(r.dayTradeQty, r.day_trade_qty, 0),
-        day_trade_amount: validNumber(r.dayTradeAmount, r.day_trade_amount, 0),
-        day_close_price:
-          r.dayClosePrice != null || r.day_close_price != null
-            ? validNumber(r.dayClosePrice, r.day_close_price, 0)
-            : null,
-        day_pnl_native: validNumber(r.dayPnlNative, r.day_pnl_native, 0),
-        currency: String(r.currency || "CNY").toUpperCase().slice(0, 3) || "CNY",
-        created_at: validNumber(r.createdAt, r.created_at, now),
-        updated_at: now,
-      });
-    }
-  });
-  tx();
-}
-
-function getAnalysisDailySnapshots(query = {}, userId = null) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return [];
-  }
-  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
-  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
-  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
-  return SELECT_ANALYSIS_DAILY_RANGE_STMT.all({ user_id: uid, account_id: accountId, from, to }).map((row) => ({
-    accountId: row.account_id,
-    date: row.date,
-    profitCny: Number(row.profit_cny),
-    rateCost: Number(row.rate_cost),
-    rateTwr: Number(row.rate_twr),
-    rateDietz: Number(row.rate_dietz),
-    totalProfit: Number(row.total_profit),
-    totalRateCost: Number(row.total_rate_cost),
-    totalRateTwr: Number(row.total_rate_twr),
-    totalRateDietz: Number(row.total_rate_dietz),
-    principal: Number(row.principal),
-    marketValue: Number(row.market_value),
-    fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
-    fxUsdCny: row.fx_usd_cny == null ? null : Number(row.fx_usd_cny),
-    createdAt: Number(row.created_at),
-  }));
-}
-
-function upsertAnalysisDailySnapshot(input, userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
-  const r = input || {};
-  const now = nowMs();
-  const row = {
-    user_id: uid,
-    account_id: String(r.accountId || r.account_id || "default").trim() || "default",
-    date: toDateKey(r.date),
-    profit_cny: validNumber(r.profitCny, r.profit_cny, 0),
-    rate_cost: validNumber(r.rateCost, r.rate_cost, 0),
-    rate_twr: validNumber(r.rateTwr, r.rate_twr, 0),
-    rate_dietz: validNumber(r.rateDietz, r.rate_dietz, 0),
-    total_profit: validNumber(r.totalProfit, r.total_profit, 0),
-    total_rate_cost: validNumber(r.totalRateCost, r.total_rate_cost, 0),
-    total_rate_twr: validNumber(r.totalRateTwr, r.total_rate_twr, 0),
-    total_rate_dietz: validNumber(r.totalRateDietz, r.total_rate_dietz, 0),
-    principal: validNumber(r.principal, 0),
-    market_value: validNumber(r.marketValue, r.market_value, 0),
-    fx_hkd_cny: r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
-    fx_usd_cny: r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
-    created_at: validNumber(r.createdAt, r.created_at, now),
-    updated_at: now,
-  };
-  UPSERT_ANALYSIS_DAILY_STMT.run(row);
-  return row;
-}
-
-function getState(userId) {
-  const uid = String(userId || "").trim();
-  return {
-    ...getSettings(uid),
-    trades: getTrades(uid),
-    dailyReturns: getDailyReturns({}, uid),
-    cashTransfers: getCashTransfers(uid),
-  };
-}
-
 function closeDatabase() {
-  db.close();
+  if (pool) {
+    return pool.end();
+  }
+  return Promise.resolve();
 }
 
-function deleteAllSymbolDailyPnl(userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
-  db.prepare("DELETE FROM symbol_daily_pnl WHERE user_id = ?").run(uid);
+async function getCliUserId() {
+  const phone = String(process.env.STOCKREVIEW_PHONE || SEED_USER_PHONE).trim();
+  const { rows } = await q("SELECT id FROM users WHERE phone = $1", [phone]);
+  if (!rows[0]) {
+    throw new Error(`No user for phone ${phone}; open app once to seed database.`);
+  }
+  return rows[0].id;
 }
 
-function deleteAllAnalysisDailySnapshot(userId = null) {
-  const uid = String(userId || getCliUserId()).trim();
-  db.prepare("DELETE FROM analysis_daily_snapshot WHERE user_id = ?").run(uid);
-}
-
-function findUserByPhone(phone) {
+async function findUserByPhone(phone) {
   const p = String(phone || "").trim();
   if (!p) {
     return null;
   }
-  return db.prepare("SELECT id, phone, created_at FROM users WHERE phone = ?").get(p) || null;
+  const { rows } = await q("SELECT id, phone, created_at FROM users WHERE phone = $1", [p]);
+  return rows[0] || null;
 }
 
-function verifyUserLogin(phone, passwordPlain) {
+async function verifyUserLogin(phone, passwordPlain) {
   const p = String(phone || "").trim();
   if (!isValidPhone(p) || !isValidPasswordDigits(passwordPlain)) {
     return null;
   }
-  const row = db.prepare("SELECT id, password_hash FROM users WHERE phone = ?").get(p);
-  if (!row || !verifyPassword(passwordPlain, row.password_hash)) {
+  const { rows } = await q("SELECT id, password_hash FROM users WHERE phone = $1", [p]);
+  if (!rows[0] || !verifyPassword(passwordPlain, rows[0].password_hash)) {
     return null;
   }
-  return { id: row.id, phone: p };
+  return { id: rows[0].id, phone: p };
 }
 
-function createRegisteredUser(phone, passwordPlain) {
+async function createRegisteredUser(phone, passwordPlain) {
   const p = String(phone || "").trim();
   if (!isValidPhone(p) || !isValidPasswordDigits(passwordPlain)) {
     throw new Error("invalid phone or password");
   }
-  if (findUserByPhone(p)) {
+  if (await findUserByPhone(p)) {
     throw new Error("phone already registered");
   }
   const id = randomUUID();
   const now = nowMs();
-  db.prepare(
-    "INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES (?,?,?,?,?)"
-  ).run(id, p, hashPassword(passwordPlain), now, now);
-  migrateAccountsIfEmptyForUser(id);
+  await q(
+    "INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
+    [id, p, hashPassword(passwordPlain), now, now]
+  );
+  await migrateAccountsIfEmptyForUser(id);
   return { id, phone: p };
 }
 
-function updateUserPassword(userId, newPasswordPlain) {
+async function updateUserPassword(userId, newPasswordPlain) {
   const uid = String(userId || "").trim();
   if (!uid || !isValidPasswordDigits(newPasswordPlain)) {
     throw new Error("invalid password");
   }
   const now = nowMs();
-  const res = db
-    .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
-    .run(hashPassword(newPasswordPlain), now, uid);
-  return res.changes > 0;
+  const { rowCount } = await q("UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3", [
+    hashPassword(newPasswordPlain),
+    now,
+    uid,
+  ]);
+  return rowCount > 0;
 }
 
-function verifyUserPasswordById(userId, passwordPlain) {
+async function verifyUserPasswordById(userId, passwordPlain) {
   const uid = String(userId || "").trim();
-  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(uid);
-  if (!row) {
+  const { rows } = await q("SELECT password_hash FROM users WHERE id = $1", [uid]);
+  if (!rows[0]) {
     return false;
   }
-  return verifyPassword(passwordPlain, row.password_hash);
+  return verifyPassword(passwordPlain, rows[0].password_hash);
 }
 
-function getUserPhone(userId) {
+async function getUserPhone(userId) {
   const uid = String(userId || "").trim();
-  const row = db.prepare("SELECT phone FROM users WHERE id = ?").get(uid);
-  return row ? String(row.phone) : "";
+  const { rows } = await q("SELECT phone FROM users WHERE id = $1", [uid]);
+  return rows[0] ? String(rows[0].phone) : "";
 }
 
-const SELECT_USER_COMMUNITY_STMT = db.prepare(`
-SELECT id, phone, nickname, community_public FROM users WHERE id = ?
-`);
-
-const UPDATE_USER_COMMUNITY_STMT = db.prepare(`
-UPDATE users SET nickname = ?, community_public = ?, updated_at = ? WHERE id = ?
-`);
-
-const INSERT_FOLLOW_STMT = db.prepare(`
-INSERT INTO community_follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)
-`);
-
-const DELETE_FOLLOW_STMT = db.prepare(`
-DELETE FROM community_follows WHERE follower_id = ? AND followee_id = ?
-`);
-
-const SELECT_FOLLOWEES_STMT = db.prepare(`
-SELECT followee_id FROM community_follows WHERE follower_id = ?
-`);
-
-const SELECT_LEADERBOARD_CACHE_STMT = db.prepare(`
-SELECT payload, updated_at FROM community_leaderboard_cache WHERE id = 1
-`);
-
-const UPSERT_LEADERBOARD_CACHE_STMT = db.prepare(`
-INSERT INTO community_leaderboard_cache (id, payload, updated_at) VALUES (1, ?, ?)
-  ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
-`);
-
-function getUserCommunityRow(userId) {
+async function getUserCommunityRow(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return null;
   }
-  return SELECT_USER_COMMUNITY_STMT.get(uid) || null;
+  const { rows } = await q("SELECT id, phone, nickname, community_public FROM users WHERE id = $1", [uid]);
+  return rows[0] || null;
 }
 
-function updateUserCommunityProfile(userId, { nickname, communityPublic }) {
+async function updateUserCommunityProfile(userId, { nickname, communityPublic }) {
   const uid = String(userId || "").trim();
   if (!uid) {
     throw new Error("userId required");
   }
-  const row = getUserCommunityRow(uid);
+  const row = await getUserCommunityRow(uid);
   if (!row) {
     throw new Error("user not found");
   }
@@ -1588,8 +1107,8 @@ function updateUserCommunityProfile(userId, { nickname, communityPublic }) {
     }
     nick = t.length ? t : null;
     if (nick) {
-      const clash = db.prepare("SELECT id FROM users WHERE nickname = ? AND id != ?").get(nick, uid);
-      if (clash) {
+      const { rows: clash } = await q("SELECT id FROM users WHERE nickname = $1 AND id != $2", [nick, uid]);
+      if (clash[0]) {
         throw new Error("nickname taken");
       }
     }
@@ -1598,12 +1117,17 @@ function updateUserCommunityProfile(userId, { nickname, communityPublic }) {
   if (communityPublic !== undefined) {
     pub = communityPublic ? 1 : 0;
   }
-  UPDATE_USER_COMMUNITY_STMT.run(nick, pub, now, uid);
-  db.prepare("DELETE FROM community_leaderboard_cache").run();
+  await q("UPDATE users SET nickname = $1, community_public = $2, updated_at = $3 WHERE id = $4", [
+    nick,
+    pub,
+    now,
+    uid,
+  ]);
+  await q("DELETE FROM community_leaderboard_cache");
   return getUserCommunityRow(uid);
 }
 
-function setCommunityFollow(followerId, followeeId) {
+async function setCommunityFollow(followerId, followeeId) {
   const a = String(followerId || "").trim();
   const b = String(followeeId || "").trim();
   if (!a || !b || a === b) {
@@ -1611,59 +1135,68 @@ function setCommunityFollow(followerId, followeeId) {
   }
   const now = nowMs();
   try {
-    INSERT_FOLLOW_STMT.run(a, b, now);
+    await q("INSERT INTO community_follows (follower_id, followee_id, created_at) VALUES ($1,$2,$3)", [a, b, now]);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    if (e && e.code === "23505") {
+      return false;
+    }
+    throw e;
   }
 }
 
-function removeCommunityFollow(followerId, followeeId) {
+async function removeCommunityFollow(followerId, followeeId) {
   const a = String(followerId || "").trim();
   const b = String(followeeId || "").trim();
-  return DELETE_FOLLOW_STMT.run(a, b).changes > 0;
+  const { rowCount } = await q("DELETE FROM community_follows WHERE follower_id = $1 AND followee_id = $2", [a, b]);
+  return rowCount > 0;
 }
 
-function listCommunityFolloweeIds(followerId) {
+async function listCommunityFolloweeIds(followerId) {
   const a = String(followerId || "").trim();
   if (!a) {
     return [];
   }
-  return SELECT_FOLLOWEES_STMT.all(a).map((r) => r.followee_id);
+  const { rows } = await q("SELECT followee_id FROM community_follows WHERE follower_id = $1", [a]);
+  return rows.map((r) => r.followee_id);
 }
 
-function isCommunityFollowing(followerId, followeeId) {
-  const row = db
-    .prepare("SELECT 1 AS x FROM community_follows WHERE follower_id = ? AND followee_id = ?")
-    .get(String(followerId), String(followeeId));
-  return Boolean(row);
+async function isCommunityFollowing(followerId, followeeId) {
+  const { rows } = await q(
+    "SELECT 1 AS x FROM community_follows WHERE follower_id = $1 AND followee_id = $2",
+    [String(followerId), String(followeeId)]
+  );
+  return Boolean(rows[0]);
 }
 
-function getCommunityLeaderboardCache() {
-  return SELECT_LEADERBOARD_CACHE_STMT.get();
+async function getCommunityLeaderboardCache() {
+  const { rows } = await q("SELECT payload, updated_at FROM community_leaderboard_cache WHERE id = 1");
+  return rows[0] || null;
 }
 
-function setCommunityLeaderboardCache(payloadJson, updatedAt) {
-  UPSERT_LEADERBOARD_CACHE_STMT.run(payloadJson, updatedAt);
+async function setCommunityLeaderboardCache(payloadJson, updatedAt) {
+  await q(
+    `INSERT INTO community_leaderboard_cache (id, payload, updated_at) VALUES (1, $1, $2)
+     ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+    [payloadJson, updatedAt]
+  );
 }
 
-function selectAnalysisSnapshotsFrom(userId, accountId, fromDate) {
+async function selectAnalysisSnapshotsFrom(userId, accountId, fromDate) {
   const uid = String(userId || "").trim();
   const acc = String(accountId || "all");
   const from = String(fromDate || "1970-01-01");
-  return db
-    .prepare(
-      `SELECT date, total_rate_twr, total_rate_cost, profit_cny, market_value,
-              fx_hkd_cny, fx_usd_cny
-       FROM analysis_daily_snapshot
-       WHERE user_id = ? AND account_id = ? AND date >= ?
-       ORDER BY date ASC`
-    )
-    .all(uid, acc, from);
+  const { rows } = await q(
+    `SELECT date, total_rate_twr, total_rate_cost, profit_cny, market_value, fx_hkd_cny, fx_usd_cny
+     FROM analysis_daily_snapshot
+     WHERE user_id = $1 AND account_id = $2 AND date >= $3
+     ORDER BY date ASC`,
+    [uid, acc, from]
+  );
+  return rows;
 }
 
-/** 社区等：优先 all，若无行则按账户依次尝试，避免仅有分账户快照时无收益率 */
-function selectAnalysisSnapshotsForPublicMetrics(userId) {
+async function selectAnalysisSnapshotsForPublicMetrics(userId) {
   const uid = String(userId || "").trim();
   const tryIds = [];
   const seen = new Set();
@@ -1677,17 +1210,17 @@ function selectAnalysisSnapshotsForPublicMetrics(userId) {
   };
   push("all");
   try {
-    for (const ac of getAccounts(uid) || []) {
+    for (const ac of await getAccounts(uid)) {
       push(ac?.id);
     }
   } catch {
     // ignore
   }
-  for (const t of getTrades(uid) || []) {
+  for (const t of await getTrades(uid)) {
     push(t.accountId);
   }
   for (const acc of tryIds) {
-    const rows = selectAnalysisSnapshotsFrom(uid, acc, "2000-01-01");
+    const rows = await selectAnalysisSnapshotsFrom(uid, acc, "2000-01-01");
     if (rows.length) {
       return rows;
     }
@@ -1695,46 +1228,44 @@ function selectAnalysisSnapshotsForPublicMetrics(userId) {
   return [];
 }
 
-function selectLatestSymbolDailyDate(userId, accountId) {
+async function selectLatestSymbolDailyDate(userId, accountId) {
   const uid = String(userId || "").trim();
   const acc = String(accountId || "all");
-  const row = db
-    .prepare(
-      `SELECT MAX(date) AS d FROM symbol_daily_pnl WHERE user_id = ? AND account_id = ?`
-    )
-    .get(uid, acc);
-  return row?.d ? String(row.d) : null;
+  const { rows } = await q(
+    "SELECT MAX(date) AS d FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2",
+    [uid, acc]
+  );
+  return rows[0]?.d ? String(rows[0].d) : null;
 }
 
-function selectTopSymbolDailyByDate(userId, accountId, date, limit) {
+async function selectTopSymbolDailyByDate(userId, accountId, date, limit) {
   const uid = String(userId || "").trim();
   const acc = String(accountId || "all");
   const dk = String(date || "");
   const lim = Math.min(20, Math.max(1, Number(limit) || 3));
-  return db
-    .prepare(
-      `SELECT symbol, eod_shares, day_close_price, currency, day_pnl_native
-       FROM symbol_daily_pnl
-       WHERE user_id = ? AND account_id = ? AND date = ?
-       ORDER BY abs(eod_shares * COALESCE(day_close_price, 0)) DESC
-       LIMIT ?`
-    )
-    .all(uid, acc, dk, lim);
+  const { rows } = await q(
+    `SELECT symbol, eod_shares, day_close_price, currency, day_pnl_native
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND date = $3
+     ORDER BY abs(eod_shares * COALESCE(day_close_price, 0)) DESC
+     LIMIT $4`,
+    [uid, acc, dk, lim]
+  );
+  return rows;
 }
 
-function getCommunityFeedTradesRecent(_viewerId, limit = 50) {
+async function getCommunityFeedTradesRecent(_viewerId, limit = 50) {
   const lim = Math.min(2000, Math.max(1, Number(limit) || 50));
-  const rows = db
-    .prepare(
-      `SELECT t.id, t.user_id, t.symbol, t.name, t.price, t.quantity, t.amount, t.trade_date, t.note, t.side, t.created_at
-       FROM trades t
-       INNER JOIN users u ON u.id = t.user_id
-       WHERE IFNULL(u.community_public, 1) = 1
-         AND t.type = 'trade'
-       ORDER BY t.trade_date DESC, t.created_at DESC
-       LIMIT ?`
-    )
-    .all(lim);
+  const { rows } = await q(
+    `SELECT t.id, t.user_id, t.symbol, t.name, t.price, t.quantity, t.amount, t.trade_date, t.note, t.side, t.created_at
+     FROM trades t
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE COALESCE(u.community_public, 1) = 1
+       AND t.type = 'trade'
+     ORDER BY t.trade_date DESC, t.created_at DESC
+     LIMIT $1`,
+    [lim]
+  );
   return rows.map((row) => ({
     id: row.id,
     userId: row.user_id,
@@ -1750,27 +1281,23 @@ function getCommunityFeedTradesRecent(_viewerId, limit = 50) {
   }));
 }
 
-function listPublicCommunityUserIds() {
-  return db
-    .prepare(
-      `SELECT id FROM users WHERE IFNULL(community_public, 1) = 1`
-    )
-    .all()
-    .map((r) => r.id);
+async function listPublicCommunityUserIds() {
+  const { rows } = await q("SELECT id FROM users WHERE COALESCE(community_public, 1) = 1");
+  return rows.map((r) => r.id);
 }
 
-function selectSymbolDailyPositionsOnDate(userId, accountId, date) {
+async function selectSymbolDailyPositionsOnDate(userId, accountId, date) {
   const uid = String(userId || "").trim();
   const acc = String(accountId || "all");
   const dk = String(date || "");
-  return db
-    .prepare(
-      `SELECT symbol, eod_shares, day_close_price, currency, day_pnl_native
-       FROM symbol_daily_pnl
-       WHERE user_id = ? AND account_id = ? AND date = ? AND eod_shares > 0.0001
-       ORDER BY abs(eod_shares * COALESCE(day_close_price, 0)) DESC`
-    )
-    .all(uid, acc, dk);
+  const { rows } = await q(
+    `SELECT symbol, eod_shares, day_close_price, currency, day_pnl_native
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND date = $3 AND eod_shares > 0.0001
+     ORDER BY abs(eod_shares * COALESCE(day_close_price, 0)) DESC`,
+    [uid, acc, dk]
+  );
+  return rows;
 }
 
 module.exports = {
@@ -1805,6 +1332,7 @@ module.exports = {
   upsertAnalysisDailySnapshot,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
+  deleteAllDataForUser,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,

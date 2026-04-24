@@ -13,8 +13,8 @@ const {
 const { fetchRemoteDailyClosesForSymbol } = require(path.join(__dirname, "..", "src", "daily-close-backfill"));
 
 async function main() {
-  const uid = getCliUserId();
-  const w = getTradeWindowForDailyClose(uid);
+  const uid = await getCliUserId();
+  const w = await getTradeWindowForDailyClose(uid);
   if (!w.symbols.length) {
     console.log("[daily-close] 无成交，退出。");
     process.exit(0);
@@ -26,7 +26,7 @@ async function main() {
     process.stdout.write(`  [${i + 1}/${w.symbols.length}] ${sym} … `);
     try {
       const rows = await fetchRemoteDailyClosesForSymbol(sym, w.from, w.to);
-      upsertSymbolDailyCloseBatch(rows);
+      await upsertSymbolDailyCloseBatch(rows);
       counts[sym] = rows.length;
       console.log(rows.length, "行");
     } catch (e) {

@@ -124,8 +124,8 @@ function displayNameForUser(row) {
   return maskPhone(row.phone);
 }
 
-function findNormalizationBaseTrade(userId) {
-  const trades = getTrades(userId)
+async function findNormalizationBaseTrade(userId) {
+  const trades = (await getTrades(userId))
     .filter((t) => t.type === "trade")
     .sort((a, b) => a.createdAt - b.createdAt);
   for (const t of trades) {
@@ -143,8 +143,8 @@ function findNormalizationBaseTrade(userId) {
   return null;
 }
 
-function getNormalizationMeta(userId) {
-  const base = findNormalizationBaseTrade(userId);
+async function getNormalizationMeta(userId) {
+  const base = await findNormalizationBaseTrade(userId);
   if (!base) {
     return null;
   }
@@ -178,10 +178,10 @@ function subperiodForMetrics(rows, startIdx, endIdx) {
   return s;
 }
 
-function metricsFromSnapshots(userId) {
+async function metricsFromSnapshots(userId) {
   const ytd = ytdStartKey();
   const mtd = monthStartKey();
-  const rowsAll = selectAnalysisSnapshotsForPublicMetrics(userId);
+  const rowsAll = await selectAnalysisSnapshotsForPublicMetrics(userId);
   if (!rowsAll.length) {
     return { today: null, mtd: null, ytd: null, total: null };
   }
@@ -294,8 +294,8 @@ function mvNativeToCny(mvNative, currency, fxUsd, fxHkd) {
   return m;
 }
 
-function snapshotFxForDate(userId, dateKey) {
-  const rows = selectAnalysisSnapshotsForPublicMetrics(userId).filter(
+async function snapshotFxForDate(userId, dateKey) {
+  const rows = (await selectAnalysisSnapshotsForPublicMetrics(userId)).filter(
     (r) => String(r.date) === String(dateKey),
   );
   const hit = rows.length ? rows[rows.length - 1] : null;
@@ -311,16 +311,16 @@ function snapshotFxForDate(userId, dateKey) {
  * TOP3 与「当前成交」一致：删单后不会仍显示已清仓标的。
  * 股数来自 trades 汇总；市值 = 股数 ×（symbol_daily_close 最新收盘，缺省用最近一笔成交价）；再折人民币排序。
  */
-function buildTopPositions(userId, factor) {
-  const trades = getTrades(userId);
+async function buildTopPositions(userId, factor) {
+  const trades = await getTrades(userId);
   if (!trades.some((t) => String(t.type || "trade") === "trade")) {
     return [];
   }
   const qtyMap = netQtyBySymbolFromTrades(trades);
-  const snapRows = selectAnalysisSnapshotsForPublicMetrics(userId);
+  const snapRows = await selectAnalysisSnapshotsForPublicMetrics(userId);
   const lastSnapD = snapRows.length ? String(snapRows[snapRows.length - 1].date) : null;
   const { fxUsd, fxHkd } = lastSnapD
-    ? snapshotFxForDate(userId, lastSnapD)
+    ? await snapshotFxForDate(userId, lastSnapD)
     : { fxUsd: FX_USD_CNY, fxHkd: FX_HKD_CNY };
 
   const scored = [];
@@ -328,7 +328,7 @@ function buildTopPositions(userId, factor) {
     if (!isActiveHoldQty(symNorm, rawQty)) {
       continue;
     }
-    const closeRow = getLatestSymbolDailyClose(symNorm);
+    const closeRow = await getLatestSymbolDailyClose(symNorm);
     const px = closeRow?.close ?? lastTradePriceForSymbol(trades, symNorm);
     if (!Number.isFinite(px) || px <= 0) {
       continue;
@@ -360,26 +360,26 @@ function buildTopPositions(userId, factor) {
   }));
 }
 
-function buildUserCard(targetId, viewerId, options = {}) {
+async function buildUserCard(targetId, viewerId, options = {}) {
   const { applyScale = true } = options;
-  const row = getUserCommunityRow(targetId);
+  const row = await getUserCommunityRow(targetId);
   if (!row || !Number(row.community_public)) {
     return null;
   }
-  const norm = getNormalizationMeta(targetId);
+  const norm = await getNormalizationMeta(targetId);
   if (!norm) {
     return null;
   }
-  const trades = getTrades(targetId);
+  const trades = await getTrades(targetId);
   if (!trades.some((t) => t.type === "trade")) {
     return null;
   }
-  const m = metricsFromSnapshots(targetId);
+  const m = await metricsFromSnapshots(targetId);
   const factor = applyScale ? norm.factor : 1;
-  const topPositions = buildTopPositions(targetId, factor);
+  const topPositions = await buildTopPositions(targetId, factor);
   const vid = String(viewerId || "").trim();
-  const following = vid ? isCommunityFollowing(vid, targetId) : false;
-  const followsMe = vid ? isCommunityFollowing(targetId, vid) : false;
+  const following = vid ? await isCommunityFollowing(vid, targetId) : false;
+  const followsMe = vid ? await isCommunityFollowing(targetId, vid) : false;
   return {
     userId: targetId,
     displayName: displayNameForUser(row),
@@ -394,11 +394,11 @@ function buildUserCard(targetId, viewerId, options = {}) {
   };
 }
 
-function buildLeaderboardPayload() {
-  const ids = listPublicCommunityUserIds();
+async function buildLeaderboardPayload() {
+  const ids = await listPublicCommunityUserIds();
   const entries = [];
   for (const id of ids) {
-    const card = buildUserCard(id, null, { applyScale: true });
+    const card = await buildUserCard(id, null, { applyScale: true });
     if (!card) {
       continue;
     }
@@ -424,8 +424,8 @@ function buildLeaderboardPayload() {
   };
 }
 
-function getLeaderboard() {
-  const cached = getCommunityLeaderboardCache();
+async function getLeaderboard() {
+  const cached = await getCommunityLeaderboardCache();
   const now = Date.now();
   if (cached && now - Number(cached.updated_at) < CACHE_TTL_MS) {
     try {
@@ -437,8 +437,8 @@ function getLeaderboard() {
       // fall through
     }
   }
-  const payload = buildLeaderboardPayload();
-  setCommunityLeaderboardCache(JSON.stringify(payload), now);
+  const payload = await buildLeaderboardPayload();
+  await setCommunityLeaderboardCache(JSON.stringify(payload), now);
   return payload;
 }
 
@@ -484,7 +484,7 @@ function overviewBookCurrencyFromSettings(settings) {
   return "CNY";
 }
 
-function getPublicProfileDetail(viewerId, targetId) {
+async function getPublicProfileDetail(viewerId, targetId) {
   const vid = String(viewerId || "").trim();
   const tid = String(targetId || "").trim();
   if (!vid || !tid) {
@@ -493,23 +493,23 @@ function getPublicProfileDetail(viewerId, targetId) {
   if (vid === tid) {
     return { isSelf: true, userId: tid };
   }
-  const row = getUserCommunityRow(tid);
+  const row = await getUserCommunityRow(tid);
   if (!row || !Number(row.community_public)) {
     return { error: "hidden" };
   }
-  const card = buildUserCard(tid, vid, { applyScale: true });
+  const card = await buildUserCard(tid, vid, { applyScale: true });
   if (!card) {
     return { error: "hidden" };
   }
-  const norm = getNormalizationMeta(tid);
+  const norm = await getNormalizationMeta(tid);
   if (!norm) {
     return { error: "hidden" };
   }
-  const dk = selectLatestSymbolDailyDate(tid, "all");
-  const trades = getTrades(tid);
+  const dk = await selectLatestSymbolDailyDate(tid, "all");
+  const trades = await getTrades(tid);
   let positions = [];
   if (dk) {
-    const rows = selectSymbolDailyPositionsOnDate(tid, "all", dk);
+    const rows = await selectSymbolDailyPositionsOnDate(tid, "all", dk);
     let sumMv = 0;
     const staged = rows.map((r) => {
       const q = Number(r.eod_shares);
@@ -529,7 +529,7 @@ function getPublicProfileDetail(viewerId, targetId) {
       weight: sumMv > 0 ? mv / sumMv : 0,
     }));
   }
-  const snaps = selectAnalysisSnapshotsForPublicMetrics(tid);
+  const snaps = await selectAnalysisSnapshotsForPublicMetrics(tid);
   const lastSnap = snaps.length ? snaps[snaps.length - 1] : null;
   const overview = lastSnap
     ? {
@@ -538,7 +538,7 @@ function getPublicProfileDetail(viewerId, targetId) {
       }
     : { marketValue: 0, profitCnyDay: 0 };
 
-  const settings = getSettings(tid);
+  const settings = await getSettings(tid);
   const capRaw = Number(settings.capitalAmount) || 0;
   const panOff = Number(settings.analysisPanOffset);
   const analysisPanOffset = Number.isFinite(panOff) ? panOff : 0;
@@ -551,10 +551,10 @@ function getPublicProfileDetail(viewerId, targetId) {
     // 该笔成交金额折算人民币（未乘脱敏系数），供他人主页「金额占比」列
     amountCnyRaw: tradeAmountCny(t),
   }));
-  const analysisDaily = getAnalysisDailySnapshots(
+  const analysisDaily = (await getAnalysisDailySnapshots(
     { accountId: "all", from: "1970-01-01", to: "2099-12-31" },
     tid,
-  ).map((row) => ({
+  )).map((row) => ({
     ...row,
     profitCny: Number(row.profitCny) * f,
     totalProfit: Number(row.totalProfit) * f,
@@ -640,15 +640,15 @@ async function enrichPublicProfileDetailWithTencent(detail) {
   }
 }
 
-function getFollowingCards(viewerId) {
+async function getFollowingCards(viewerId) {
   const vid = String(viewerId || "").trim();
   if (!vid) {
     return [];
   }
-  const ids = listCommunityFolloweeIds(vid);
+  const ids = await listCommunityFolloweeIds(vid);
   const out = [];
   for (const tid of ids) {
-    const card = buildUserCard(tid, vid, { applyScale: true });
+    const card = await buildUserCard(tid, vid, { applyScale: true });
     if (card) {
       out.push(card);
     }
@@ -656,18 +656,18 @@ function getFollowingCards(viewerId) {
   return out;
 }
 
-function getFeedTrades(viewerId) {
-  const raw = getCommunityFeedTradesRecent(viewerId, 800);
+async function getFeedTrades(viewerId) {
+  const raw = await getCommunityFeedTradesRecent(viewerId, 800);
   const out = [];
   const mvByUser = Object.create(null);
   for (const t of raw) {
-    const row = getUserCommunityRow(t.userId);
+    const row = await getUserCommunityRow(t.userId);
     if (!row || !Number(row.community_public)) {
       continue;
     }
     const uid = t.userId;
     if (mvByUser[uid] === undefined) {
-      const snaps = selectAnalysisSnapshotsForPublicMetrics(uid);
+      const snaps = await selectAnalysisSnapshotsForPublicMetrics(uid);
       const last = snaps.length ? snaps[snaps.length - 1] : null;
       mvByUser[uid] = last ? Number(last.market_value || 0) : 0;
     }

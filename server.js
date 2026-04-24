@@ -119,14 +119,14 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, node: process.version });
 });
 
-app.get("/api/auth/me", (req, res) => {
+app.get("/api/auth/me", async (req, res) => {
   const userId = readUserIdFromRequest(req);
   if (!userId) {
     res.status(401).json({ ok: false, error: "未登录" });
     return;
   }
-  const phone = getUserPhone(userId);
-  const row = getUserCommunityRow(userId);
+  const phone = await getUserPhone(userId);
+  const row = await getUserCommunityRow(userId);
   res.json({
     ok: true,
     user: {
@@ -140,10 +140,10 @@ app.get("/api/auth/me", (req, res) => {
   });
 });
 
-app.patch("/api/me/community-profile", requireAuth, (req, res) => {
+app.patch("/api/me/community-profile", requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
-    const u = updateUserCommunityProfile(req.userId, {
+    const u = await updateUserCommunityProfile(req.userId, {
       nickname: body.nickname,
       communityPublic: body.communityPublic,
     });
@@ -171,7 +171,7 @@ app.patch("/api/me/community-profile", requireAuth, (req, res) => {
 
 app.get("/api/community/leaderboard", requireAuth, async (_req, res) => {
   try {
-    const data = getLeaderboard();
+    const data = await getLeaderboard();
     await enrichLeaderboardPayloadWithTencent(data);
     res.json({ ok: true, data });
   } catch (error) {
@@ -181,7 +181,7 @@ app.get("/api/community/leaderboard", requireAuth, async (_req, res) => {
 
 app.get("/api/community/following", requireAuth, async (req, res) => {
   try {
-    const cards = getFollowingCards(req.userId);
+    const cards = await getFollowingCards(req.userId);
     await enrichCardsTopPositionsWithTencent(cards);
     res.json({ ok: true, data: cards });
   } catch (error) {
@@ -191,7 +191,7 @@ app.get("/api/community/following", requireAuth, async (req, res) => {
 
 app.get("/api/community/feed", requireAuth, async (req, res) => {
   try {
-    const rows = getFeedTrades(req.userId);
+    const rows = await getFeedTrades(req.userId);
     await enrichFeedRowsWithTencent(rows);
     res.json({ ok: true, data: rows });
   } catch (error) {
@@ -202,7 +202,7 @@ app.get("/api/community/feed", requireAuth, async (req, res) => {
 app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
-    const detail = getPublicProfileDetail(req.userId, targetId);
+    const detail = await getPublicProfileDetail(req.userId, targetId);
     if (detail.error === "unauthorized") {
       res.status(401).json({ ok: false, error: "未登录" });
       return;
@@ -219,25 +219,25 @@ app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) 
   }
 });
 
-app.post("/api/community/follow/:targetId", requireAuth, (req, res) => {
+app.post("/api/community/follow/:targetId", requireAuth, async (req, res) => {
   const targetId = String(req.params.targetId || "").trim();
   if (!targetId) {
     res.status(400).json({ ok: false, error: "invalid target" });
     return;
   }
-  setCommunityFollow(req.userId, targetId);
-  res.json({ ok: true, following: isCommunityFollowing(req.userId, targetId) });
+  await setCommunityFollow(req.userId, targetId);
+  res.json({ ok: true, following: await isCommunityFollowing(req.userId, targetId) });
 });
 
-app.delete("/api/community/follow/:targetId", requireAuth, (req, res) => {
+app.delete("/api/community/follow/:targetId", requireAuth, async (req, res) => {
   const targetId = String(req.params.targetId || "").trim();
-  removeCommunityFollow(req.userId, targetId);
+  await removeCommunityFollow(req.userId, targetId);
   res.json({ ok: true });
 });
 
 const REGISTER_INVITE_CODE = "20260422";
 
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", async (req, res) => {
   try {
     const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
     const password = req.body?.password != null ? String(req.body.password) : "";
@@ -255,7 +255,7 @@ app.post("/api/auth/register", (req, res) => {
       res.status(400).json({ ok: false, error: "邀请码错误" });
       return;
     }
-    const u = createRegisteredUser(phone, password);
+    const u = await createRegisteredUser(phone, password);
     setSessionCookie(res, u.id);
     res.json({ ok: true, user: { phone: u.phone } });
   } catch (error) {
@@ -268,10 +268,10 @@ app.post("/api/auth/register", (req, res) => {
   }
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
   const password = req.body?.password != null ? String(req.body.password) : "";
-  const u = verifyUserLogin(phone, password);
+  const u = await verifyUserLogin(phone, password);
   if (!u) {
     res.status(401).json({ ok: false, error: "手机号或密码错误" });
     return;
@@ -285,7 +285,7 @@ app.post("/api/auth/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/auth/password", requireAuth, (req, res) => {
+app.post("/api/auth/password", requireAuth, async (req, res) => {
   try {
     const oldPw = req.body?.oldPassword != null ? String(req.body.oldPassword) : "";
     const newPw = req.body?.newPassword != null ? String(req.body.newPassword) : "";
@@ -293,11 +293,11 @@ app.post("/api/auth/password", requireAuth, (req, res) => {
       res.status(400).json({ ok: false, error: "新密码为不少于 6 位的数字" });
       return;
     }
-    if (!verifyUserPasswordById(req.userId, oldPw)) {
+    if (!(await verifyUserPasswordById(req.userId, oldPw))) {
       res.status(400).json({ ok: false, error: "原密码错误" });
       return;
     }
-    updateUserPassword(req.userId, newPw);
+    await updateUserPassword(req.userId, newPw);
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ ok: false, error: error?.message || "修改失败" });
@@ -396,81 +396,81 @@ app.get("/api/stock/name", async (req, res) => {
   }
 });
 
-app.get("/api/state", requireAuth, (req, res) => {
-  res.json({ ok: true, data: getState(req.userId) });
+app.get("/api/state", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getState(req.userId) });
 });
 
-app.get("/api/trades", requireAuth, (req, res) => {
-  res.json({ ok: true, data: getTrades(req.userId) });
+app.get("/api/trades", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getTrades(req.userId) });
 });
 
-app.post("/api/trades", requireAuth, (req, res) => {
+app.post("/api/trades", requireAuth, async (req, res) => {
   try {
     const trade = normalizeTrade(req.body || {});
     if (!trade.symbol) {
       res.status(400).json({ ok: false, error: "symbol is required" });
       return;
     }
-    const saved = upsertTrade(trade, req.userId);
+    const saved = await upsertTrade(trade, req.userId);
     res.json({ ok: true, data: saved });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save trade failed" });
   }
 });
 
-app.delete("/api/trades/:id", requireAuth, (req, res) => {
-  const ok = deleteTradeById(req.params.id, req.userId);
+app.delete("/api/trades/:id", requireAuth, async (req, res) => {
+  const ok = await deleteTradeById(req.params.id, req.userId);
   res.json({ ok: true, deleted: ok });
 });
 
-app.get("/api/cash-transfers", requireAuth, (req, res) => {
-  res.json({ ok: true, data: getCashTransfers(req.userId) });
+app.get("/api/cash-transfers", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getCashTransfers(req.userId) });
 });
 
-app.post("/api/cash-transfers", requireAuth, (req, res) => {
+app.post("/api/cash-transfers", requireAuth, async (req, res) => {
   try {
-    const row = upsertCashTransfer(req.body || {}, req.userId);
+    const row = await upsertCashTransfer(req.body || {}, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save cash transfer failed" });
   }
 });
 
-app.delete("/api/cash-transfers/:id", requireAuth, (req, res) => {
-  const ok = deleteCashTransferById(req.params.id, req.userId);
+app.delete("/api/cash-transfers/:id", requireAuth, async (req, res) => {
+  const ok = await deleteCashTransferById(req.params.id, req.userId);
   res.json({ ok: true, deleted: ok });
 });
 
-app.post("/api/cash-transfers/import", requireAuth, (req, res) => {
+app.post("/api/cash-transfers/import", requireAuth, async (req, res) => {
   try {
     const payload = req.body || {};
     const mode = payload.mode === "replace" ? "replace" : "append";
     const rows = Array.isArray(payload.cashTransfers) ? payload.cashTransfers : [];
-    const data = importCashTransfers(rows, mode, req.userId);
+    const data = await importCashTransfers(rows, mode, req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
   }
 });
 
-app.post("/api/trades/import", requireAuth, (req, res) => {
+app.post("/api/trades/import", requireAuth, async (req, res) => {
   try {
     const payload = req.body || {};
     const mode = payload.mode === "replace" ? "replace" : "append";
     const trades = Array.isArray(payload.trades) ? payload.trades : [];
     const normalized = trades.map((item) => normalizeTrade(item));
-    const data = importTrades(normalized, mode, req.userId);
+    const data = await importTrades(normalized, mode, req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
   }
 });
 
-app.get("/api/settings", requireAuth, (req, res) => {
-  res.json({ ok: true, data: getSettings(req.userId) });
+app.get("/api/settings", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getSettings(req.userId) });
 });
 
-app.patch("/api/settings", requireAuth, (req, res) => {
+app.patch("/api/settings", requireAuth, async (req, res) => {
   try {
     const patch = req.body && typeof req.body === "object" ? req.body : {};
     const sanitized = {};
@@ -479,20 +479,20 @@ app.patch("/api/settings", requireAuth, (req, res) => {
         sanitized[key] = patch[key];
       }
     }
-    const data = setSettings(sanitized, req.userId);
+    const data = await setSettings(sanitized, req.userId);
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "update settings failed" });
   }
 });
 
-app.get("/api/accounts", requireAuth, (req, res) => {
-  res.json({ ok: true, data: getAccounts(req.userId) });
+app.get("/api/accounts", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getAccounts(req.userId) });
 });
 
-app.get("/api/symbol-daily", requireAuth, (req, res) => {
+app.get("/api/symbol-daily", requireAuth, async (req, res) => {
   try {
-    const data = getSymbolDailyPnl(
+    const data = await getSymbolDailyPnl(
       {
         accountId: req.query.accountId,
         from: req.query.from,
@@ -506,19 +506,19 @@ app.get("/api/symbol-daily", requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/symbol-daily/batch", requireAuth, (req, res) => {
+app.post("/api/symbol-daily/batch", requireAuth, async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    upsertSymbolDailyPnlBatch(rows, req.userId);
+    await upsertSymbolDailyPnlBatch(rows, req.userId);
     res.json({ ok: true, count: rows.length });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "symbol daily batch failed" });
   }
 });
 
-app.get("/api/analysis-daily", requireAuth, (req, res) => {
+app.get("/api/analysis-daily", requireAuth, async (req, res) => {
   try {
-    const data = getAnalysisDailySnapshots(
+    const data = await getAnalysisDailySnapshots(
       {
         accountId: req.query.accountId,
         from: req.query.from,
@@ -532,19 +532,19 @@ app.get("/api/analysis-daily", requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/analysis-daily", requireAuth, (req, res) => {
+app.post("/api/analysis-daily", requireAuth, async (req, res) => {
   try {
-    const row = upsertAnalysisDailySnapshot(req.body || {}, req.userId);
+    const row = await upsertAnalysisDailySnapshot(req.body || {}, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
   }
 });
 
-app.get("/api/daily-returns", requireAuth, (req, res) => {
+app.get("/api/daily-returns", requireAuth, async (req, res) => {
   try {
     const { accountId, from, to } = req.query || {};
-    const data = getDailyReturns(
+    const data = await getDailyReturns(
       {
         accountId: accountId != null ? String(accountId) : "",
         from: from != null ? String(from) : "",
@@ -558,28 +558,28 @@ app.get("/api/daily-returns", requireAuth, (req, res) => {
   }
 });
 
-app.post("/api/daily-returns", requireAuth, (req, res) => {
+app.post("/api/daily-returns", requireAuth, async (req, res) => {
   try {
-    const row = upsertDailyReturn(req.body || {}, req.userId);
+    const row = await upsertDailyReturn(req.body || {}, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save daily return failed" });
   }
 });
 
-app.post("/api/daily-returns/import", requireAuth, (req, res) => {
+app.post("/api/daily-returns/import", requireAuth, async (req, res) => {
   try {
     const payload = req.body || {};
     const mode = payload.mode === "replace" ? "replace" : "append";
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    const data = importDailyReturns(rows, mode, req.userId);
+    const data = await importDailyReturns(rows, mode, req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import daily returns failed" });
   }
 });
 
-app.delete("/api/daily-returns", requireAuth, (req, res) => {
+app.delete("/api/daily-returns", requireAuth, async (req, res) => {
   try {
     const accountId = req.query.accountId != null ? String(req.query.accountId) : "";
     const date = req.query.date != null ? String(req.query.date) : "";
@@ -587,7 +587,7 @@ app.delete("/api/daily-returns", requireAuth, (req, res) => {
       res.status(400).json({ ok: false, error: "accountId and date are required" });
       return;
     }
-    const deleted = deleteDailyReturn(accountId, date, req.userId);
+    const deleted = await deleteDailyReturn(accountId, date, req.userId);
     res.json({ ok: true, deleted });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "delete daily return failed" });
@@ -741,7 +741,7 @@ app.get("/api/us-historical-close", async (req, res) => {
 });
 
 /** 本地缓存的日收盘价（股票、日期、收盘），计算时优先进页前先 GET for-trades 灌入前端 */
-app.get("/api/daily-close", (req, res) => {
+app.get("/api/daily-close", async (req, res) => {
   try {
     const raw = req.query.symbol != null ? String(req.query.symbol) : "";
     const symbol = normalizeSymbol(raw);
@@ -752,22 +752,22 @@ app.get("/api/daily-close", (req, res) => {
     const from = req.query.from != null ? String(req.query.from).trim() : "1970-01-01";
     const to = req.query.to != null ? String(req.query.to).trim() : "9999-12-31";
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, data: getSymbolDailyCloseRange(symbol, from, to) });
+    res.json({ ok: true, data: await getSymbolDailyCloseRange(symbol, from, to) });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
   }
 });
 
-app.get("/api/daily-close/for-trades", requireAuth, (req, res) => {
+app.get("/api/daily-close/for-trades", requireAuth, async (req, res) => {
   try {
-    const w = getTradeWindowForDailyClose(req.userId);
+    const w = await getTradeWindowForDailyClose(req.userId);
     if (!w.symbols.length) {
       res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
       return;
     }
     const data = {};
     for (const sym of w.symbols) {
-      data[sym] = getSymbolDailyCloseRange(sym, w.from, w.to);
+      data[sym] = await getSymbolDailyCloseRange(sym, w.from, w.to);
     }
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data, from: w.from, to: w.to, symbols: w.symbols });
@@ -779,7 +779,7 @@ app.get("/api/daily-close/for-trades", requireAuth, (req, res) => {
 /** 从东财+新浪拉区间写入 symbol_daily_close（先跑回填再打开页面） */
 app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
   try {
-    const w = getTradeWindowForDailyClose(req.userId);
+    const w = await getTradeWindowForDailyClose(req.userId);
     if (!w.symbols.length) {
       res.json({ ok: true, message: "no trades", counts: {} });
       return;
@@ -792,7 +792,7 @@ app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
     const counts = {};
     for (const sym of symbols) {
       const rows = await fetchRemoteDailyClosesForSymbol(sym, w.from, w.to);
-      upsertSymbolDailyCloseBatch(rows);
+      await upsertSymbolDailyCloseBatch(rows);
       counts[sym] = rows.length;
       await new Promise((r) => setTimeout(r, 200));
     }

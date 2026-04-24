@@ -4494,7 +4494,10 @@ function getDefaultAnalysisStartDate() {
   return toDateKey(dt);
 }
 
-/** 总览区展示币种：跟随当前筛选股票账户的默认币种；「全部账户」时统一按人民币。 */
+/**
+ * 总览区展示币种：跟随当前筛选「股票账户」的默认币种；「全部账户」时统一按人民币。
+ * 注意：这仅影响总览/汇总用何种货币展示；单条交易的发生额、标的按各自原币（A/CNY、港/HKD、美/USD）在逻辑里已区分。
+ */
 function getOverviewBookCurrency() {
   const o = state._overviewBookCurrencyOverride;
   if (o) {

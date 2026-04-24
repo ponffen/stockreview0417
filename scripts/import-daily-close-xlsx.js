@@ -50,7 +50,7 @@ function cellToDateKey(v) {
   return t.length >= 10 ? t : "";
 }
 
-function main() {
+async function main() {
   const fileArg = process.argv[2];
   const xlsxPath = path.resolve(
     __dirname,
@@ -96,9 +96,13 @@ function main() {
     console.warn("[import-daily-close] 跳过无效行", bad.length, "条（示例首条）", bad[0]);
   }
 
-  const n = upsertSymbolDailyCloseBatch(out);
+  const n = await upsertSymbolDailyCloseBatch(out);
   // eslint-disable-next-line no-console
   console.log("[import-daily-close] 已 upsert", out.length, "条有效记录（批次数", n, "）");
 }
 
-main();
+main().catch((e) => {
+  // eslint-disable-next-line no-console
+  console.error(e);
+  process.exit(1);
+});

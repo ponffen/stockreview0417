@@ -15,7 +15,7 @@ function parseArgs(argv) {
       args.file = argv[i + 1] || "";
       i += 1;
     } else if (token === "--mode") {
-      args.mode = argv[i + 1] || "append";
+      args.mode = argv[i + 1] || "";
       i += 1;
     }
   }
@@ -44,7 +44,7 @@ function loadTrades(filePath) {
   throw new Error("JSON must be an array or an object containing trades array");
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.file) {
     printUsage();
@@ -52,9 +52,13 @@ function main() {
   }
   const mode = args.mode === "replace" ? "replace" : "append";
   const inputTrades = loadTrades(args.file).map((item) => normalizeTrade(item));
-  const allTrades = importTrades(inputTrades, mode);
+  const allTrades = await importTrades(inputTrades, mode);
   // eslint-disable-next-line no-console
   console.log(`Imported ${inputTrades.length} trades (${mode}). Total trades in DB: ${allTrades.length}`);
 }
 
-main();
+main().catch((e) => {
+  // eslint-disable-next-line no-console
+  console.error(e);
+  process.exit(1);
+});

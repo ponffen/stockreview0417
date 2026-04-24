@@ -291,13 +291,13 @@ function mergeKlinePreferDb(dbRows, sinaRows) {
 }
 
 async function main() {
-  const uid = getCliUserId();
+  const uid = await getCliUserId();
   const now = Date.now();
   console.log("[backfill] 清空两张日表…");
-  deleteAllSymbolDailyPnl(uid);
-  deleteAllAnalysisDailySnapshot(uid);
+  await deleteAllSymbolDailyPnl(uid);
+  await deleteAllAnalysisDailySnapshot(uid);
 
-  const allTrades = getTrades(uid).map((t) => ({
+  const allTrades = (await getTrades(uid)).map((t) => ({
     ...t,
     symbol: normalizeSymbol(t.symbol),
   }));
@@ -306,8 +306,8 @@ async function main() {
     process.exit(0);
   }
 
-  const allCash = getCashTransfers(uid);
-  const accounts = getAccounts(uid);
+  const allCash = await getCashTransfers(uid);
+  const accounts = await getAccounts(uid);
 
   console.log("[backfill] 拉取外汇日 K…");
   const fxUsdMap = await fetchSinaForexDayKSeries("usdcny", "USDCNY");
@@ -327,7 +327,7 @@ async function main() {
   const klineBySym = new Map();
   for (let i = 0; i < symbols.length; i += 1) {
     const sym = symbols[i];
-    const dbRows = getSymbolDailyCloseRange(sym, minD, maxD);
+    const dbRows = await getSymbolDailyCloseRange(sym, minD, maxD);
     let sinaRows = [];
     try {
       sinaRows = await fetchKlineDataSina(sym, 1023);
@@ -350,9 +350,9 @@ async function main() {
   const accDateNative = new Map();
 
   const symbolRowsBuffer = [];
-  const flushSym = () => {
+  const flushSym = async () => {
     if (!symbolRowsBuffer.length) return;
-    upsertSymbolDailyPnlBatch(symbolRowsBuffer.splice(0, symbolRowsBuffer.length), uid);
+    await upsertSymbolDailyPnlBatch(symbolRowsBuffer.splice(0, symbolRowsBuffer.length), uid);
   };
 
   for (const accountId of accountIds) {
@@ -418,11 +418,11 @@ async function main() {
 
         // 汇总层：先按账户+日+币种累加原币收益，回填结束后再统一乘当日汇率得人民币
         addDailyProfitNativeByCurrency(accDateNative, accountId, D, pnlNative, ccy);
-        if (symbolRowsBuffer.length >= 500) flushSym();
+        if (symbolRowsBuffer.length >= 500) await flushSym();
       }
     }
   }
-  flushSym();
+  await flushSym();
   console.log(`[backfill] symbol_daily_pnl 写入完成。`);
 
   /** `${accountId}|${date}` -> 当日 profit_cny（各币种原币合计后再换算） */
@@ -476,7 +476,7 @@ async function main() {
 
       cumProfit += profitCny;
 
-      upsertAnalysisDailySnapshot(
+      await upsertAnalysisDailySnapshot(
         {
           accountId,
           date: dk,
