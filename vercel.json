@@ -3,11 +3,17 @@
   "functions": {
     "api/index.js": {
       "includeFiles": "api/public/**"
+    },
+    "api/static.js": {
+      "includeFiles": "api/public/**"
     }
   },
   "routes": [
     { "handle": "filesystem" },
     { "src": "/api/(.*)", "dest": "/api" },
+    { "src": "/styles.css", "dest": "/api/static" },
+    { "src": "/app.js", "dest": "/api/static" },
+    { "src": "/site-state.json", "dest": "/api/static" },
     { "src": "/(.*)", "dest": "/api" }
   ]
 }
