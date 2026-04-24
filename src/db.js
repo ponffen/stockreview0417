@@ -199,6 +199,8 @@ async function initPool() {
       connectionString: dbUrl,
       max: 20,
       ssl: getSslOption(),
+      connectionTimeoutMillis: 15_000,
+      idleTimeoutMillis: 60_000,
     });
     const c = await pool.connect();
     try {
