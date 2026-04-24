@@ -23,10 +23,13 @@ function writeStateAndLog(state) {
 }
 
 async function main() {
-  if (!process.env.DATABASE_URL) {
+  if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
     // eslint-disable-next-line no-console
-    console.error("DATABASE_URL is required (PostgreSQL connection string).");
+    console.error("Set DATABASE_URL or POSTGRES_URL (PostgreSQL connection string).");
     process.exit(1);
+  }
+  if (!process.env.DATABASE_URL && process.env.POSTGRES_URL) {
+    process.env.DATABASE_URL = process.env.POSTGRES_URL;
   }
   const { getState, closeDatabase, getCliUserId } = require("../src/db");
   const state = await getState(await getCliUserId());

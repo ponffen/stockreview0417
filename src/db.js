@@ -26,7 +26,17 @@ const {
   addCalendarDays,
 } = require("./db-pure");
 
-const DB_PATH = process.env.DATABASE_URL ? "[postgresql]" : "";
+/** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
+function getDatabaseUrl() {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    ""
+  );
+}
+
+const DB_PATH = getDatabaseUrl() ? "[postgresql]" : "";
 
 let pool;
 let initPromise;
@@ -35,7 +45,7 @@ function getSslOption() {
   if (process.env.DATABASE_SSL === "0") {
     return false;
   }
-  const u = String(process.env.DATABASE_URL || "");
+  const u = String(getDatabaseUrl() || "");
   if (/localhost|127\.0\.0\.1/.test(u)) {
     return false;
   }
@@ -178,14 +188,15 @@ async function initPool() {
   if (initPromise) {
     return initPromise;
   }
-  if (!process.env.DATABASE_URL) {
+  const dbUrl = getDatabaseUrl();
+  if (!dbUrl) {
     throw new Error(
-      "DATABASE_URL is required. Set it to your PostgreSQL connection string (e.g. Neon, Supabase, Vercel Marketplace)."
+      "Database URL is required: set DATABASE_URL or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
     );
   }
   initPromise = (async () => {
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: dbUrl,
       max: 20,
       ssl: getSslOption(),
     });

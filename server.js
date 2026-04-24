@@ -861,7 +861,12 @@ app.use((_req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.sendFile(path.join(__dirname, "index.html"));
 });
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Server listening on http://0.0.0.0:${PORT}`);
-});
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  });
+}
+
+module.exports = app;
