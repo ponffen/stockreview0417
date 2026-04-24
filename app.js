@@ -2,6 +2,7 @@ const STORAGE_KEY = "earning-clone-state-v2";
 const SESSION_TAB_KEY = "stockreview_session_tabs_seeded";
 const API_BASE = "/api";
 const API_GET_TIMEOUT_MS = 12_000;
+const API_MUTATION_TIMEOUT_MS = 10_000;
 
 function apiFetch(input, init = {}) {
   const { timeoutMs, ...rest } = init || {};
@@ -11,7 +12,7 @@ function apiFetch(input, init = {}) {
     ? parsedTimeout
     : method === "GET" || method === "HEAD"
       ? API_GET_TIMEOUT_MS
-      : 0;
+      : API_MUTATION_TIMEOUT_MS;
   if (resolvedTimeoutMs <= 0 || typeof AbortController === "undefined" || rest.signal) {
     return fetch(input, { ...rest, credentials: "include" });
   }
@@ -30,6 +31,7 @@ let sessionProfile = {
   displayName: "",
   phoneMasked: "",
 };
+let authSubmitting = false;
 let quoteIntervalStarted = false;
 let analysisStockRankHelpListenersBound = false;
 
@@ -450,14 +452,24 @@ function bindAuthUi() {
 
   authLoginForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (authSubmitting) {
+      return;
+    }
     const phone = document.getElementById("authLoginPhone")?.value?.trim() || "";
     const password = document.getElementById("authLoginPassword")?.value || "";
     if (authLoginError) {
       authLoginError.classList.add("hidden");
     }
+    authSubmitting = true;
+    const loginSubmitBtn = authLoginForm.querySelector('button[type="submit"]');
+    if (loginSubmitBtn) {
+      loginSubmitBtn.disabled = true;
+      loginSubmitBtn.textContent = "登录中...";
+    }
     try {
       const r = await apiFetch(`${API_BASE}/auth/login`, {
         method: "POST",
+        timeoutMs: 8_000,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, password }),
       });
@@ -474,23 +486,39 @@ function bindAuthUi() {
       await startAppAfterAuth();
     } catch {
       if (authLoginError) {
-        authLoginError.textContent = "网络错误";
+        authLoginError.textContent = "网络超时或异常，请重试";
         authLoginError.classList.remove("hidden");
+      }
+    } finally {
+      authSubmitting = false;
+      if (loginSubmitBtn) {
+        loginSubmitBtn.disabled = false;
+        loginSubmitBtn.textContent = "登录";
       }
     }
   });
 
   authRegisterForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (authSubmitting) {
+      return;
+    }
     const phone = document.getElementById("authRegPhone")?.value?.trim() || "";
     const password = document.getElementById("authRegPassword")?.value || "";
     const inviteCode = document.getElementById("authRegInvite")?.value?.trim() || "";
     if (authRegisterError) {
       authRegisterError.classList.add("hidden");
     }
+    authSubmitting = true;
+    const registerSubmitBtn = authRegisterForm.querySelector('button[type="submit"]');
+    if (registerSubmitBtn) {
+      registerSubmitBtn.disabled = true;
+      registerSubmitBtn.textContent = "注册中...";
+    }
     try {
       const r = await apiFetch(`${API_BASE}/auth/register`, {
         method: "POST",
+        timeoutMs: 8_000,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, password, inviteCode }),
       });
@@ -507,8 +535,14 @@ function bindAuthUi() {
       await startAppAfterAuth();
     } catch {
       if (authRegisterError) {
-        authRegisterError.textContent = "网络错误";
+        authRegisterError.textContent = "网络超时或异常，请重试";
         authRegisterError.classList.remove("hidden");
+      }
+    } finally {
+      authSubmitting = false;
+      if (registerSubmitBtn) {
+        registerSubmitBtn.disabled = false;
+        registerSubmitBtn.textContent = "注册";
       }
     }
   });
