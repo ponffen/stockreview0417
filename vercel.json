@@ -13,7 +13,9 @@
   },
   "routes": [
     { "handle": "filesystem" },
-    { "src": "/api/health/?", "dest": "/api/health" },
+    { "src": "/api/health/db", "dest": "/api" },
+    { "src": "/api/health", "dest": "/api/health" },
+    { "src": "/api/health/", "dest": "/api/health" },
     { "src": "/api/assets/?", "dest": "/api/assets" },
     { "src": "/api/(.*)", "dest": "/api" },
     { "src": "/favicon.ico", "dest": "/api/assets?file=favicon.ico" },
