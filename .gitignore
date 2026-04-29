@@ -1,4 +1,5 @@
 .env
+neon-database.url
 .DS_Store
 **/.DS_Store
 node_modules/

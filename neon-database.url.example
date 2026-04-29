@@ -1,0 +1,1 @@
+postgresql://USER:PASSWORD@HOST.neon.tech/neondb?sslmode=require

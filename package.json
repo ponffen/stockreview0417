@@ -13,6 +13,7 @@
     "build:site-state": "node scripts/export-site-state.js",
     "db:print": "node scripts/db-print.js",
     "migrate:sqlite-to-pg": "node scripts/migrate-sqlite-to-postgres.js",
+    "db:sync-neon": "node scripts/sync-local-pg-to-neon.js",
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
     "backfill:daily-close:akshare": "python3 scripts/akshare_fill_symbol_daily_close.py",
