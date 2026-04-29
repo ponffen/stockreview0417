@@ -13,7 +13,7 @@
   },
   "routes": [
     { "handle": "filesystem" },
-    { "src": "/api/health/db", "dest": "/api" },
+    { "src": "/api/health/db", "dest": "/api/health-db" },
     { "src": "/api/health", "dest": "/api/health" },
     { "src": "/api/health/", "dest": "/api/health" },
     { "src": "/api/assets/?", "dest": "/api/assets" },

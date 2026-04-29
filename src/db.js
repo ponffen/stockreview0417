@@ -32,7 +32,7 @@ const {
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
   return (
-    // process.env.DATABASE_URL ||
+    process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_URL_NON_POOLING ||
     process.env.POSTGRES_PRISMA_URL ||
@@ -285,18 +285,32 @@ async function pingDatabase() {
     throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
   }
   const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+  const hardTimeoutMs = Math.max(1000, Number(process.env.DATABASE_PING_HARD_TIMEOUT_MS || connectMs + 2000));
   const client = new Client({
     connectionString: dbUrl,
     ssl: getSslOption(),
     connectionTimeoutMillis: connectMs,
+    query_timeout: connectMs,
   });
+  let timeoutId = null;
+  const withHardTimeout = (promise, stage) =>
+    new Promise((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`database ${stage} timeout after ${hardTimeoutMs}ms`));
+      }, hardTimeoutMs);
+      promise.then(resolve, reject);
+    });
   try {
-    await client.connect();
-    const { rows } = await client.query(
-      "SELECT current_database() AS db, current_schema() AS schema, NOW() AS server_time"
+    await withHardTimeout(client.connect(), "connect");
+    const { rows } = await withHardTimeout(
+      client.query("SELECT current_database() AS db, current_schema() AS schema, NOW() AS server_time"),
+      "query"
     );
     return rows[0] || {};
   } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
     await client.end().catch(() => {});
   }
 }
