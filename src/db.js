@@ -1,4 +1,6 @@
-require("dotenv").config();
+if (!process.env.VERCEL) {
+  require("dotenv").config();
+}
 const { Pool } = require("pg");
 const {
   hashPassword,
@@ -37,6 +39,24 @@ function getDatabaseUrl() {
   );
 }
 
+/**
+ * Neon 控制台有时会带上 channel_binding=require；在部分 Node/pg + serverless 环境里会在握手阶段长时间卡住。
+ * 去掉该参数不影响 sslmode=require 的加密连接。
+ */
+function sanitizeNeonConnectionString(url) {
+  let u = String(url || "").trim();
+  if (!u) {
+    return u;
+  }
+  u = u.replace(/[&?]channel_binding=[^&]*/gi, "");
+  u = u.replace(/\?(?:&|$)/g, "?").replace(/\?$/g, "");
+  return u;
+}
+
+function getPgConnectionString() {
+  return sanitizeNeonConnectionString(getDatabaseUrl());
+}
+
 const DB_PATH = getDatabaseUrl() ? "[postgresql]" : "";
 
 let pool;
@@ -48,7 +68,7 @@ function getSslOption() {
   if (process.env.DATABASE_SSL === "0") {
     return false;
   }
-  const u = String(getDatabaseUrl() || "");
+  const u = String(getPgConnectionString() || "");
   if (/localhost|127\.0\.0\.1/.test(u)) {
     return false;
   }
@@ -191,7 +211,7 @@ async function initPool() {
   if (initPromise) {
     return initPromise;
   }
-  const dbUrl = getDatabaseUrl();
+  const dbUrl = getPgConnectionString();
   if (!dbUrl) {
     throw new Error(
       "Database URL is required. Set DATABASE_URL in a local .env file (example: DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/stockreview) or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
@@ -199,14 +219,22 @@ async function initPool() {
   }
   initPromise = (async () => {
     isBootstrapping = true;
+    const poolMax = Number(process.env.PG_POOL_MAX || (process.env.VERCEL ? 4 : 20));
     pool = new Pool({
       connectionString: dbUrl,
-      max: 20,
+      max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 4,
       ssl: getSslOption(),
-      connectionTimeoutMillis: 15_000,
+      connectionTimeoutMillis: Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000),
       idleTimeoutMillis: 60_000,
     });
-    const c = await pool.connect();
+    let c;
+    try {
+      c = await pool.connect();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[db] Postgres connect failed:", e?.message || e);
+      throw e;
+    }
     try {
       for (const sql of DDL) {
         await c.query(sql);
