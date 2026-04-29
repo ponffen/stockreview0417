@@ -99,6 +99,7 @@ const {
   setCommunityFollow,
   removeCommunityFollow,
   isCommunityFollowing,
+  pingDatabase,
 } = require("./src/db");
 const {
   maskPhone,
@@ -133,6 +134,26 @@ function requireAuth(req, res, next) {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, node: process.version });
+});
+
+/** 数据库连通性探活（会走 initPool + 一次只读 SQL；勿对外暴露敏感信息） */
+app.get("/api/health/db", async (_req, res) => {
+  try {
+    const row = await pingDatabase();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      database: row.db != null ? String(row.db) : null,
+      schema: row.schema != null ? String(row.schema) : null,
+      serverTime: row.server_time != null ? String(row.server_time) : null,
+    });
+  } catch (error) {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(503).json({
+      ok: false,
+      error: error?.message || "database unreachable",
+    });
+  }
 });
 
 app.get("/api/auth/me", async (req, res) => {

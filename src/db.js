@@ -274,6 +274,14 @@ async function q(text, params = []) {
   return p.query(text, params);
 }
 
+/** 运维探活：只读查询，供 GET /api/health/db 使用 */
+async function pingDatabase() {
+  const { rows } = await q(
+    "SELECT current_database() AS db, current_schema() AS schema, NOW() AS server_time"
+  );
+  return rows[0] || {};
+}
+
 const SEED_USER_PASSWORD = "123456";
 
 async function ensureSeedUserRowWithClient(client) {
@@ -1448,4 +1456,5 @@ module.exports = {
   getCommunityFeedTradesRecent,
   listPublicCommunityUserIds,
   selectSymbolDailyPositionsOnDate,
+  pingDatabase,
 };
