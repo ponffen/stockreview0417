@@ -3240,7 +3240,7 @@ async function loadCommunityFeed() {
     }
     const rows = Array.isArray(j.data) ? j.data : [];
     if (!rows.length) {
-      communityFeedList.innerHTML = `<p class="empty">暂无动态，试试「关注的人」或「排行」</p>`;
+      communityFeedList.innerHTML = `<p class="empty">暂无已关注用户的交易动态，可在「排行」或他人主页关注用户后查看</p>`;
       return;
     }
     communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");

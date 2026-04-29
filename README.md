@@ -12,19 +12,42 @@ Dev server exposes static frontend plus APIs such as `GET /api/health`, `GET /ap
 
 ```bash
 npm install
+cp .env.example .env
 npm run dev
 ```
 
 Open: http://127.0.0.1:3030
 
+Before `npm run dev`, make sure Postgres is running locally and that `.env` contains a valid `DATABASE_URL`.
+
 ## Data storage
 
-- Trades and app settings are persisted in SQLite: `data/app.db`
+- Trades and app settings are persisted in Postgres (`DATABASE_URL` / `POSTGRES_URL`)
 - Frontend prefers `/api/*` for read/write; if the backend is unavailable, it falls back to `localStorage`.
+
+### Migrate from SQLite (`data/app.db`) to Postgres
+
+If you still have an old local `data/app.db`, copy its tables into the Postgres database configured in `.env`:
+
+```bash
+npm run migrate:sqlite-to-pg
+```
+
+Use another file path:
+
+```bash
+SQLITE_PATH=/path/to/app.db npm run migrate:sqlite-to-pg
+```
+
+If Postgres already has rows and you hit unique conflicts (for example duplicate phone), either resolve them manually or wipe all app tables in that database first (this deletes existing Postgres app data):
+
+```bash
+npm run migrate:sqlite-to-pg -- --wipe-pg
+```
 
 ### Daily close cache (日 K 收盘价本地表)
 
-Table `symbol_daily_close` stores `(symbol, date, close)` so the UI can hydrate K-line from SQLite instead of calling live APIs when offline or blocked.
+Table `symbol_daily_close` stores `(symbol, date, close)` so the UI can hydrate K-line from Postgres instead of calling live APIs when offline or blocked.
 
 1. Backfill once (uses Eastmoney long history plus Sina as merge): `npm run backfill:daily-close`
 2. Or with the server running: `POST /api/daily-close/backfill` (optional body `{ "symbols": ["sz300750"] }`)
@@ -37,7 +60,7 @@ GitHub Pages cannot run the Node server or SQLite. The deploy workflow runs `npm
 To change what visitors see on Pages:
 
 - If you only have sample data: edit `scripts/seed-trades.sample.json`, run `npm run build:site-state`, commit `data/site-state.json`.
-- If you already maintain a local SQLite DB at `data/app.db` (for example after `npm run import:trades`), run `npm run build:site-state` and it will export from that file automatically. Use `npm run build:site-state -- --seed` to force the sample seed instead, or `--db <path>` to export from another database file.
+- `npm run build:site-state` reads from **Postgres** (`DATABASE_URL`). If your data only exists in SQLite, run `npm run migrate:sqlite-to-pg` first, then `npm run build:site-state`.
 
 ## Batch import trades
 

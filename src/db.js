@@ -1,3 +1,4 @@
+require("dotenv").config();
 const { Pool } = require("pg");
 const {
   hashPassword,
@@ -193,7 +194,7 @@ async function initPool() {
   const dbUrl = getDatabaseUrl();
   if (!dbUrl) {
     throw new Error(
-      "Database URL is required: set DATABASE_URL or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
+      "Database URL is required. Set DATABASE_URL in a local .env file (example: DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/stockreview) or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
     );
   }
   initPromise = (async () => {
@@ -1303,17 +1304,22 @@ async function selectTopSymbolDailyByDate(userId, accountId, date, limit) {
   return rows;
 }
 
-async function getCommunityFeedTradesRecent(_viewerId, limit = 50) {
+async function getCommunityFeedTradesRecent(viewerId, limit = 50) {
+  const vid = String(viewerId || "").trim();
+  if (!vid) {
+    return [];
+  }
   const lim = Math.min(2000, Math.max(1, Number(limit) || 50));
   const { rows } = await q(
     `SELECT t.id, t.user_id, t.symbol, t.name, t.price, t.quantity, t.amount, t.trade_date, t.note, t.side, t.created_at
      FROM trades t
      INNER JOIN users u ON u.id = t.user_id
+     INNER JOIN community_follows f ON f.followee_id = t.user_id AND f.follower_id = $2
      WHERE COALESCE(u.community_public, 1) = 1
        AND t.type = 'trade'
      ORDER BY t.trade_date DESC, t.created_at DESC
      LIMIT $1`,
-    [lim]
+    [lim, vid]
   );
   return rows.map((row) => ({
     id: row.id,
@@ -1352,6 +1358,8 @@ async function selectSymbolDailyPositionsOnDate(userId, accountId, date) {
 module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
+  /** 与 `initPool` 建表语句一致；供 `scripts/migrate-sqlite-to-postgres.js` 等离线工具复用 */
+  schemaDdl: DDL,
   SEED_USER_PHONE,
   normalizeSymbol,
   normalizeTrade,

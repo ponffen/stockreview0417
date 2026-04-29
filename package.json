@@ -12,6 +12,7 @@
     "import:daily-close:xlsx": "node scripts/import-daily-close-xlsx.js",
     "build:site-state": "node scripts/export-site-state.js",
     "db:print": "node scripts/db-print.js",
+    "migrate:sqlite-to-pg": "node scripts/migrate-sqlite-to-postgres.js",
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
     "backfill:daily-close:akshare": "python3 scripts/akshare_fill_symbol_daily_close.py",
@@ -33,11 +34,15 @@
   },
   "homepage": "https://github.com/ponffen/stockreview0417#readme",
   "dependencies": {
-    "serverless-http": "^3.2.0",
-    "pg": "^8.16.0",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "iconv-lite": "^0.7.0",
+    "pg": "^8.16.0",
+    "serverless-http": "^3.2.0",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^12.9.0"
   }
 }
