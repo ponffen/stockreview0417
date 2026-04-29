@@ -1,7 +1,7 @@
 if (!process.env.VERCEL) {
   require("dotenv").config();
 }
-const { Pool } = require("pg");
+const { Pool, Client } = require("pg");
 const {
   hashPassword,
   verifyPassword,
@@ -274,12 +274,30 @@ async function q(text, params = []) {
   return p.query(text, params);
 }
 
-/** 运维探活：只读查询，供 GET /api/health/db 使用 */
+/**
+ * 运维探活：单次短连接 + 一条只读 SQL。
+ * 不走 initPool / DDL：冷启动若在这里触发完整建表，容易超过 Vercel 函数默认时限，浏览器会一直 pending、0 bytes。
+ */
 async function pingDatabase() {
-  const { rows } = await q(
-    "SELECT current_database() AS db, current_schema() AS schema, NOW() AS server_time"
-  );
-  return rows[0] || {};
+  const dbUrl = getPgConnectionString();
+  if (!dbUrl) {
+    throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
+  }
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: getSslOption(),
+    connectionTimeoutMillis: connectMs,
+  });
+  try {
+    await client.connect();
+    const { rows } = await client.query(
+      "SELECT current_database() AS db, current_schema() AS schema, NOW() AS server_time"
+    );
+    return rows[0] || {};
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 const SEED_USER_PASSWORD = "123456";
