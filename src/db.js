@@ -248,23 +248,30 @@ async function initPool() {
       throw e;
     }
     try {
-      console.log("[db] Skipping DDL execution in Vercel to prevent timeout");
+      console.log("[db] Checking Vercel DDL skip...");
       if (!process.env.VERCEL) {
+        console.log("[db] Not in Vercel, starting DDL execution...");
         for (let i = 0; i < DDL.length; i++) {
           await c.query(DDL[i]);
         }
         console.log("[db] DDL execution completed successfully.");
+      } else {
+        console.log("[db] Skipped DDL execution in Vercel");
       }
+      console.log("[db] Ensuring seed user...");
       await ensureSeedUserRowWithClient(c);
       console.log("[db] Seed user ensured.");
     } catch (e) {
-      console.error("[db] Postgres DDL init failed:", e?.message || e);
-      throw e;
+      console.error("[db] Postgres init tasks failed:", e?.message || e);
+      // Do not throw here if we are just ensuring seed user, let the app start
+      if (!process.env.VERCEL) throw e; 
     } finally {
       c.release();
       isBootstrapping = false;
     }
+    console.log("[db] Starting post init tasks (background)");
     startPostInitTasks();
+    console.log("[db] initPool completed");
     return pool;
   })();
   return initPromise;
@@ -343,8 +350,10 @@ async function ensureSeedUserRowWithClient(client) {
   }
   const id = randomUUID();
   const now = nowMs();
+  // 增加插入前的日志
+  console.log("[db] Inserting seed user...");
   await client.query(
-    `INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)`,
+    `INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (phone) DO NOTHING`,
     [id, SEED_USER_PHONE, hashPassword(SEED_USER_PASSWORD), now, now]
   );
   return id;
