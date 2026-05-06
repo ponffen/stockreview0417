@@ -39,6 +39,12 @@ function getDatabaseUrl() {
     process.env.POSTGRES_PRISMA_URL ||
     "";
     
+  // VERCEL 环境强制只读取 POSTGRES_URL_NON_POOLING 
+  // 这是为了防止前面一系列尝试仍因某些原因读到了 pooler 而导致超时
+  if (process.env.VERCEL && process.env.POSTGRES_URL_NON_POOLING) {
+     return process.env.POSTGRES_URL_NON_POOLING;
+  }
+    
   // 强制移除 -pooler 后缀以确保绝对使用直连
   let cleanUrl = url.replace('-pooler.c-', '.c-');
   
@@ -263,12 +269,12 @@ async function initPool() {
           await c.query(DDL[i]);
         }
         console.log("[db] DDL execution completed successfully.");
+        console.log("[db] Ensuring seed user...");
+        await ensureSeedUserRowWithClient(c);
+        console.log("[db] Seed user ensured.");
       } else {
-        console.log("[db] Skipped DDL execution in Vercel");
+        console.log("[db] Skipped DDL and Seed execution entirely in Vercel");
       }
-      console.log("[db] Ensuring seed user...");
-      await ensureSeedUserRowWithClient(c);
-      console.log("[db] Seed user ensured.");
     } catch (e) {
       console.error("[db] Postgres init tasks failed:", e?.message || e);
       // Do not throw here if we are just ensuring seed user, let the app start
