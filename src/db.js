@@ -32,14 +32,15 @@ const {
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
   // 优先使用非池化连接（Serverless 环境下 DDL 操作对池化连接极度不兼容，容易卡死）
-  return (
-    process.env.POSTGRES_URL_NON_POOLING ||
+  const url = process.env.POSTGRES_URL_NON_POOLING ||
     process.env.DATABASE_URL_UNPOOLED ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_PRISMA_URL ||
-    ""
-  );
+    "";
+    
+  // 强制移除 -pooler 后缀以确保绝对使用直连
+  return url.replace('-pooler.c-', '.c-');
 }
 
 /**
