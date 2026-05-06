@@ -49,8 +49,12 @@ function sanitizeNeonConnectionString(url) {
   if (!u) {
     return u;
   }
-  u = u.replace(/[&?]channel_binding=[^&]*/gi, "");
-  u = u.replace(/\?(?:&|$)/g, "?").replace(/\?$/g, "");
+  // 如果 ?channel_binding= 在查询参数的开头，处理它以及它后面的 &
+  u = u.replace(/\?channel_binding=[^&]*&?/gi, "?");
+  // 如果 &channel_binding= 在查询参数的中间
+  u = u.replace(/&channel_binding=[^&]*/gi, "");
+  // 清理尾部多余的 ? 或 &
+  u = u.replace(/[?&]$/g, "");
   return u;
 }
 
