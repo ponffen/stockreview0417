@@ -120,6 +120,32 @@ const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest"
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
 
+// 诊断中间件：在最前面打印进入与响应耗时。build=v3 做版本戳。
+app.use((req, res, next) => {
+  const started = Date.now();
+  console.log("[req.in] build=v3 method=%s url=%s", req.method, req.url);
+  res.on("finish", () => {
+    console.log(
+      "[req.out] build=v3 method=%s url=%s status=%d ms=%d",
+      req.method,
+      req.url,
+      res.statusCode,
+      Date.now() - started
+    );
+  });
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      console.log(
+        "[req.closed-early] build=v3 method=%s url=%s ms=%d",
+        req.method,
+        req.url,
+        Date.now() - started
+      );
+    }
+  });
+  next();
+});
+
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 
@@ -135,6 +161,18 @@ function requireAuth(req, res, next) {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, node: process.version });
+});
+
+// 部署版本自证端点：直接硬编码当前构建号，便于在浏览器判断 Vercel 是否跑的是最新代码
+app.get("/api/diag/v3", (_req, res) => {
+  res.json({
+    ok: true,
+    build: "v3",
+    commit: "1f6d9ce-plus-diag",
+    node: process.version,
+    env: process.env.VERCEL ? "vercel" : "local",
+    ts: Date.now(),
+  });
 });
 
 /** 数据库连通性探活（会走 initPool + 一次只读 SQL；勿对外暴露敏感信息） */
