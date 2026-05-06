@@ -248,11 +248,13 @@ async function initPool() {
       throw e;
     }
     try {
-      console.log("[db] Starting DDL execution...");
-      for (let i = 0; i < DDL.length; i++) {
-        await c.query(DDL[i]);
+      console.log("[db] Skipping DDL execution in Vercel to prevent timeout");
+      if (!process.env.VERCEL) {
+        for (let i = 0; i < DDL.length; i++) {
+          await c.query(DDL[i]);
+        }
+        console.log("[db] DDL execution completed successfully.");
       }
-      console.log("[db] DDL execution completed successfully.");
       await ensureSeedUserRowWithClient(c);
       console.log("[db] Seed user ensured.");
     } catch (e) {
