@@ -223,6 +223,7 @@ async function initPool() {
       "Database URL is required. Set DATABASE_URL in a local .env file (example: DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/stockreview) or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
     );
   }
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 5000); // Reduce timeout to fail fast
   initPromise = (async () => {
     isBootstrapping = true;
     const poolMax = Number(process.env.PG_POOL_MAX || (process.env.VERCEL ? 4 : 20));
@@ -230,15 +231,18 @@ async function initPool() {
       connectionString: dbUrl,
       max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 4,
       ssl: getSslOption(),
-      connectionTimeoutMillis: Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000),
+      connectionTimeoutMillis: connectMs,
       idleTimeoutMillis: 60_000,
     });
     let c;
     try {
+      console.log("[db] Attempting Postgres connect with timeout", connectMs, "ms to URL starting with:", dbUrl.split('@')[1] ? dbUrl.split('@')[1].split('/')[0] : 'hidden');
       c = await pool.connect();
+      console.log("[db] Postgres connect successful");
     } catch (e) {
       console.error("[db] Postgres connect failed:", e?.message || e);
       isBootstrapping = false;
+      initPromise = null; // Reset promise so next request can retry
       throw e;
     }
     try {
