@@ -32,9 +32,10 @@ const {
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
   return (
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.DATABASE_URL_UNPOOLED ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
-    process.env.POSTGRES_URL_NON_POOLING ||
     process.env.POSTGRES_PRISMA_URL ||
     ""
   );
