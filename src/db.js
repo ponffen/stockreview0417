@@ -34,26 +34,22 @@ const {
 
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
-  // VERCEL 环境强制只读取 POSTGRES_URL_NON_POOLING 
-  // 这是为了防止前面一系列尝试仍因某些原因读到了 pooler 而导致超时
-  if (process.env.VERCEL && process.env.POSTGRES_URL_NON_POOLING) {
-     return process.env.POSTGRES_URL_NON_POOLING;
-  }
-  
-  const url = process.env.DATABASE_URL_UNPOOLED ||
-    process.env.DATABASE_URL ||
+  // 使用 @neondatabase/serverless 驱动时，必须走 -pooler host（WebSocket 通道）
+  // 优先使用带 -pooler 的变量：DATABASE_URL / POSTGRES_URL
+  const url = process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_PRISMA_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.POSTGRES_URL_NON_POOLING ||
     "";
-    
-  // 强制移除 -pooler 后缀以确保绝对使用直连
-  let cleanUrl = url.replace('-pooler.c-', '.c-');
-  
+
+  let cleanUrl = url;
+
   // 确保在 Vercel 线上连接 Neon 时一定带有 sslmode=require
   if (process.env.VERCEL && cleanUrl && !cleanUrl.includes('sslmode=')) {
     cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'sslmode=require';
   }
-  
+
   return cleanUrl;
 }
 
