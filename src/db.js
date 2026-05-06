@@ -237,8 +237,8 @@ async function initPool() {
     try {
       c = await pool.connect();
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("[db] Postgres connect failed:", e?.message || e);
+      isBootstrapping = false;
       throw e;
     }
     try {
@@ -246,6 +246,9 @@ async function initPool() {
         await c.query(sql);
       }
       await ensureSeedUserRowWithClient(c);
+      } catch (e) {
+      console.error("[db] Postgres DDL init failed:", e?.message || e);
+      throw e;
     } finally {
       c.release();
       isBootstrapping = false;
