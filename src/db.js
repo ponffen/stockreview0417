@@ -239,21 +239,25 @@ async function initPool() {
       "Database URL is required. Set DATABASE_URL in a local .env file (example: DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/stockreview) or connect Postgres in Vercel (POSTGRES_URL is used automatically when present)."
     );
   }
-  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 5000); // Reduce timeout to fail fast
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 3000); // Fail very fast
   initPromise = (async () => {
     isBootstrapping = true;
-    const poolMax = Number(process.env.PG_POOL_MAX || (process.env.VERCEL ? 4 : 20));
+    const poolMax = Number(process.env.PG_POOL_MAX || (process.env.VERCEL ? 2 : 20)); // Reduce connections in Vercel to avoid exhaustion
     pool = new Pool({
       connectionString: dbUrl,
-      max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 4,
+      max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 2,
       ssl: getSslOption(),
       connectionTimeoutMillis: connectMs,
-      idleTimeoutMillis: 60_000,
+      idleTimeoutMillis: 10000, // Close idle connections much faster in Serverless
     });
     let c;
     try {
       console.log("[db] Attempting Postgres connect with timeout", connectMs, "ms to URL starting with:", dbUrl.split('@')[1] ? dbUrl.split('@')[1].split('/')[0] : 'hidden');
-      c = await pool.connect();
+      // Adding a hard JS timeout wrapper around pool.connect() just in case pg ignores connectionTimeoutMillis
+      c = await Promise.race([
+        pool.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Hard JS timeout during pool.connect()")), connectMs + 500))
+      ]);
       console.log("[db] Postgres connect successful");
     } catch (e) {
       console.error("[db] Postgres connect failed:", e?.message || e);
