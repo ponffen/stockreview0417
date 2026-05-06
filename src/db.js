@@ -254,11 +254,11 @@ async function initPool() {
     let c;
     try {
       console.log("[db] Attempting Postgres connect with timeout", connectMs, "ms to URL starting with:", dbUrl.split('@')[1] ? dbUrl.split('@')[1].split('/')[0] : 'hidden');
-      // Adding a hard JS timeout wrapper around pool.connect() just in case pg ignores connectionTimeoutMillis
-      c = await Promise.race([
-        pool.connect(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Hard JS timeout during pool.connect()")), connectMs + 500))
-      ]);
+      
+      // IMPORTANT: In Vercel Edge/Serverless with neon ws driver, Promise.race with setTimeout 
+      // can sometimes cause the event loop to freeze if the promise resolves too quickly or the timeout hangs.
+      // Removing the hard JS timeout to let neon native ws handle the timeout.
+      c = await pool.connect();
       console.log("[db] Postgres connect successful");
     } catch (e) {
       console.error("[db] Postgres connect failed:", e?.message || e);
