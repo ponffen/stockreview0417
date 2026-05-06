@@ -130,7 +130,7 @@ app.use((req, res, next) => {
       req.headers["x-forwarded-uri"] ||
       req.headers["x-original-url"] ||
       req.headers["x-matched-path"];
-    const looksStripped = req.url === "/" || req.url === "/api" || req.url === "/api/";
+    const looksStripped = req.url === "/" || req.url === "/api" || req.url === "/api/" || req.url === "/api/index";
     if (looksStripped && typeof original === "string" && original.startsWith("/")) {
       console.log("[req.url-restore] from=%s to=%s", req.url, original);
       req.url = original;
@@ -974,9 +974,22 @@ app.use(
   })
 );
 
-app.use((_req, res) => {
+app.use((req, res) => {
+  if (req.url.startsWith("/api/")) {
+    res.status(404).json({ ok: false, error: "API Not Found", url: req.url });
+    return;
+  }
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.sendFile(path.join(WEB_ROOT, "index.html"));
+  const htmlPath = path.join(WEB_ROOT, "index.html");
+  if (fs.existsSync(htmlPath)) {
+    // Avoid res.sendFile in serverless environments as it can cause 300s hangs
+    // due to unclosed streams in serverless-http.
+    const html = fs.readFileSync(htmlPath, "utf-8");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } else {
+    res.status(404).send("Not Found");
+  }
 });
 
 if (require.main === module) {

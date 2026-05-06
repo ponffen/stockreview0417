@@ -47,7 +47,7 @@ module.exports = async function handler(req, res) {
       req.headers["x-original-url"] ||
       req.headers["x-matched-path"];
     if (
-      (req.url === "/" || req.url === "/api" || req.url === "/api/") &&
+      (req.url === "/" || req.url === "/api" || req.url === "/api/" || req.url === "/api/index") &&
       typeof originalPath === "string" &&
       originalPath.startsWith("/api/") &&
       originalPath !== "/api" &&
