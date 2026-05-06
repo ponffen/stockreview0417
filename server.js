@@ -120,13 +120,32 @@ const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest"
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
 
-// 诊断中间件：在最前面打印进入与响应耗时。build=v3 做版本戳。
+// 诊断中间件：在最前面打印进入与响应耗时。build=v4 版本戳（含 url 兜底还原）。
 app.use((req, res, next) => {
   const started = Date.now();
-  console.log("[req.in] build=v3 method=%s url=%s", req.method, req.url);
+  // 兜底：Vercel 的 legacy routes 会把 /api/xxx 的 URL 改写成 /api 甚至 /
+  // 导致 Express 落到 SPA 兜底。如果 req.url 看上去被剥短了，优先用 Vercel 透传的 header 还原。
+  try {
+    const original =
+      req.headers["x-forwarded-uri"] ||
+      req.headers["x-original-url"] ||
+      req.headers["x-matched-path"];
+    const looksStripped = req.url === "/" || req.url === "/api" || req.url === "/api/";
+    if (looksStripped && typeof original === "string" && original.startsWith("/")) {
+      console.log("[req.url-restore] from=%s to=%s", req.url, original);
+      req.url = original;
+    }
+  } catch (_) {}
+  console.log(
+    "[req.in] build=v4 method=%s url=%s x-matched-path=%s x-forwarded-uri=%s",
+    req.method,
+    req.url,
+    req.headers["x-matched-path"] || "-",
+    req.headers["x-forwarded-uri"] || req.headers["x-original-url"] || "-"
+  );
   res.on("finish", () => {
     console.log(
-      "[req.out] build=v3 method=%s url=%s status=%d ms=%d",
+      "[req.out] build=v4 method=%s url=%s status=%d ms=%d",
       req.method,
       req.url,
       res.statusCode,
@@ -136,7 +155,7 @@ app.use((req, res, next) => {
   res.on("close", () => {
     if (!res.writableEnded) {
       console.log(
-        "[req.closed-early] build=v3 method=%s url=%s ms=%d",
+        "[req.closed-early] build=v4 method=%s url=%s ms=%d",
         req.method,
         req.url,
         Date.now() - started
