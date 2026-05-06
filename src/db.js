@@ -317,11 +317,14 @@ async function q(text, params = []) {
         promise.then(resolve, reject);
       });
     try {
+      console.log("[db.q.vercel] build=v2 stage=connect-start textHead=%s", String(text).substring(0, 40));
       await withHardTimeout(client.connect(), "connect");
+      console.log("[db.q.vercel] stage=connected, running query...");
       const result = await withHardTimeout(client.query(text, params), "query");
+      console.log("[db.q.vercel] stage=query-done rows=%d", result?.rowCount ?? -1);
       return result;
     } catch (e) {
-      console.error("[db] query error:", e?.message || e, String(text).substring(0, 80));
+      console.error("[db.q.vercel] stage=error msg=%s textHead=%s", e?.message || e, String(text).substring(0, 80));
       throw e;
     } finally {
       if (timeoutId) clearTimeout(timeoutId);

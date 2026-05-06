@@ -158,24 +158,35 @@ app.get("/api/health/db", async (_req, res) => {
 });
 
 app.get("/api/auth/me", async (req, res) => {
-  const userId = readUserIdFromRequest(req);
-  if (!userId) {
-    res.status(401).json({ ok: false, error: "未登录" });
-    return;
+  try {
+    console.log("[auth.me] start");
+    const userId = readUserIdFromRequest(req);
+    if (!userId) {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    const phone = await getUserPhone(userId);
+    const row = await getUserCommunityRow(userId);
+    console.log("[auth.me] ok userId=", userId);
+    res.json({
+      ok: true,
+      user: {
+        id: userId,
+        phone,
+        phoneMasked: maskPhone(phone),
+        nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
+        communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+        displayName: row ? displayNameForUser(row) : maskPhone(phone),
+      },
+    });
+  } catch (error) {
+    console.error("[auth.me] error:", error?.message || error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message || "auth/me failed",
+      code: error?.code || null,
+    });
   }
-  const phone = await getUserPhone(userId);
-  const row = await getUserCommunityRow(userId);
-  res.json({
-    ok: true,
-    user: {
-      id: userId,
-      phone,
-      phoneMasked: maskPhone(phone),
-      nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
-      communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
-      displayName: row ? displayNameForUser(row) : maskPhone(phone),
-    },
-  });
 });
 
 app.patch("/api/me/community-profile", requireAuth, async (req, res) => {
@@ -307,15 +318,26 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
-  const password = req.body?.password != null ? String(req.body.password) : "";
-  const u = await verifyUserLogin(phone, password);
-  if (!u) {
-    res.status(401).json({ ok: false, error: "手机号或密码错误" });
-    return;
+  try {
+    console.log("[auth.login] start");
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
+    const password = req.body?.password != null ? String(req.body.password) : "";
+    const u = await verifyUserLogin(phone, password);
+    if (!u) {
+      res.status(401).json({ ok: false, error: "手机号或密码错误" });
+      return;
+    }
+    setSessionCookie(res, u.id);
+    console.log("[auth.login] ok userId=", u.id);
+    res.json({ ok: true, user: { phone: u.phone } });
+  } catch (error) {
+    console.error("[auth.login] error:", error?.message || error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message || "auth/login failed",
+      code: error?.code || null,
+    });
   }
-  setSessionCookie(res, u.id);
-  res.json({ ok: true, user: { phone: u.phone } });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
