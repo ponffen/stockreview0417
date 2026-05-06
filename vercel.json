@@ -11,17 +11,17 @@
       "includeFiles": "api/public/**"
     }
   },
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/api/health/db", "dest": "/api/health-db" },
-    { "src": "/api/health", "dest": "/api/health" },
-    { "src": "/api/health/", "dest": "/api/health" },
-    { "src": "/api/assets/?", "dest": "/api/assets" },
-    { "src": "/api/(.*)", "dest": "/api" },
-    { "src": "/favicon.ico", "dest": "/api/assets?file=favicon.ico" },
-    { "src": "/styles.css", "dest": "/api/assets?file=styles.css" },
-    { "src": "/app.js", "dest": "/api/assets?file=app.js" },
-    { "src": "/site-state.json", "dest": "/api/assets?file=site-state.json" },
-    { "src": "/(.*)", "dest": "/api" }
+  "rewrites": [
+    { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/health/", "destination": "/api/health" },
+    { "source": "/api/health/db", "destination": "/api/health-db" },
+    { "source": "/api/assets", "destination": "/api/assets" },
+    { "source": "/api/assets/", "destination": "/api/assets" },
+    { "source": "/favicon.ico", "destination": "/api/assets?file=favicon.ico" },
+    { "source": "/styles.css", "destination": "/api/assets?file=styles.css" },
+    { "source": "/app.js", "destination": "/api/assets?file=app.js" },
+    { "source": "/site-state.json", "destination": "/api/assets?file=site-state.json" },
+    { "source": "/api/:path*", "destination": "/api" },
+    { "source": "/:path*", "destination": "/api" }
   ]
 }

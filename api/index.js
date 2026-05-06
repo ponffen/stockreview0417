@@ -31,7 +31,32 @@ function getServerlessApp() {
 
 // 最外层 handler：先处理"不依赖 server.js"的自证端点，再异步加载 Express app
 module.exports = async function handler(req, res) {
-  console.log("[api/index.js] handler start url=%s", req.url);
+  console.log(
+    "[api/index.js] handler start url=%s method=%s x-matched-path=%s x-forwarded-uri=%s",
+    req.url,
+    req.method,
+    req.headers["x-matched-path"] || "-",
+    req.headers["x-forwarded-uri"] || req.headers["x-original-url"] || "-"
+  );
+
+  // 兜底：如果 Vercel 的 rewrite 把 req.url 改成了 "/" 或 "/api"，
+  // 优先用 Vercel 透传的原始 path header 还原，避免 Express 错路由到 SPA fallback。
+  try {
+    const originalPath =
+      req.headers["x-forwarded-uri"] ||
+      req.headers["x-original-url"] ||
+      req.headers["x-matched-path"];
+    if (
+      (req.url === "/" || req.url === "/api" || req.url === "/api/") &&
+      typeof originalPath === "string" &&
+      originalPath.startsWith("/api/") &&
+      originalPath !== "/api" &&
+      originalPath !== "/api/"
+    ) {
+      console.log("[api/index.js] restoring req.url from %s to %s", req.url, originalPath);
+      req.url = originalPath;
+    }
+  } catch (_) {}
 
   // 不依赖 server.js 的诊断端点：证明 /api/(.*) 这条路由至少能到达函数
   if (req.url && req.url.startsWith("/api/diag/v5")) {
