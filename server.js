@@ -36,6 +36,7 @@ async function handleSinaKlineProxy(req, res) {
 }
 
 function ensureDataDir() {
+  if (process.env.VERCEL) return; // Serverless 环境文件系统只读，直接跳过
   const dataDir = path.join(__dirname, "data");
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
