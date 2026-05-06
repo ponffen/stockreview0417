@@ -1,7 +1,10 @@
 if (!process.env.VERCEL) {
   require("dotenv").config();
 }
-const { Pool, Client } = require("pg");
+const { neonConfig, Pool, Client } = require("@neondatabase/serverless");
+const ws = require("ws");
+neonConfig.webSocketConstructor = ws; // 必需：让 neon 使用 ws 库在 Node.js 中建立连接
+
 const {
   hashPassword,
   verifyPassword,
