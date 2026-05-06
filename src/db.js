@@ -285,28 +285,10 @@ async function initPool() {
       c.release();
       isBootstrapping = false;
     }
-    console.log("[db] Starting post init tasks (background)");
-    startPostInitTasks();
     console.log("[db] initPool completed");
     return pool;
   })();
   return initPromise;
-}
-
-function startPostInitTasks() {
-  if (postInitTasksStarted) {
-    return;
-  }
-  postInitTasksStarted = true;
-  // 冷启动首个请求（含登录/注册）只做最小必要初始化，重迁移改为后台执行，避免函数长时间 pending。
-  setImmediate(async () => {
-    try {
-      await migrateAllUsersAccountsIfEmpty();
-      await migrateTradeSymbolsToNormalized();
-    } catch {
-      // ignore background migration errors to keep API responsive
-    }
-  });
 }
 
 async function q(text, params = []) {
