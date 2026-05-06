@@ -40,7 +40,14 @@ function getDatabaseUrl() {
     "";
     
   // 强制移除 -pooler 后缀以确保绝对使用直连
-  return url.replace('-pooler.c-', '.c-');
+  let cleanUrl = url.replace('-pooler.c-', '.c-');
+  
+  // 确保在 Vercel 线上连接 Neon 时一定带有 sslmode=require
+  if (process.env.VERCEL && cleanUrl && !cleanUrl.includes('sslmode=')) {
+    cleanUrl += (cleanUrl.includes('?') ? '&' : '?') + 'sslmode=require';
+  }
+  
+  return cleanUrl;
 }
 
 /**
@@ -73,13 +80,14 @@ let postInitTasksStarted = false;
 let isBootstrapping = false;
 
 function getSslOption() {
-  if (process.env.DATABASE_SSL === "0") {
+  if (process.env.DATABASE_SSL === "0" || process.env.DATABASE_SSL === "false") {
     return false;
   }
   const u = String(getPgConnectionString() || "");
   if (/localhost|127\.0\.0\.1/.test(u)) {
     return false;
   }
+  // Vercel 部署时连接 Neon 必须带 SSL
   return { rejectUnauthorized: false };
 }
 
