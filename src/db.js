@@ -248,10 +248,13 @@ async function initPool() {
       throw e;
     }
     try {
-      for (const sql of DDL) {
-        await c.query(sql);
+      console.log("[db] Starting DDL execution...");
+      for (let i = 0; i < DDL.length; i++) {
+        await c.query(DDL[i]);
       }
+      console.log("[db] DDL execution completed successfully.");
       await ensureSeedUserRowWithClient(c);
+      console.log("[db] Seed user ensured.");
     } catch (e) {
       console.error("[db] Postgres DDL init failed:", e?.message || e);
       throw e;
