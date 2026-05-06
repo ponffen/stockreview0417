@@ -291,6 +291,44 @@ async function initPool() {
 }
 
 async function q(text, params = []) {
+  // Vercel Serverless：绝对不复用长生命周期 Pool。
+  // 同一个函数实例会被 freeze/thaw，冻结期间 WebSocket 往往被中间层悄悄断开，
+  // 复用时写入新请求会永久挂起直到 300s 函数超时。
+  // 因此每次查询都临时新建 Client，用完立刻 end()。
+  if (process.env.VERCEL) {
+    const dbUrl = getPgConnectionString();
+    if (!dbUrl) {
+      throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
+    }
+    const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+    const hardTimeoutMs = Math.max(1000, Number(process.env.DATABASE_PING_HARD_TIMEOUT_MS || connectMs + 2000));
+    const client = new Client({
+      connectionString: dbUrl,
+      ssl: getSslOption(),
+      connectionTimeoutMillis: connectMs,
+      query_timeout: connectMs,
+    });
+    let timeoutId = null;
+    const withHardTimeout = (promise, stage) =>
+      new Promise((resolve, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`database ${stage} timeout after ${hardTimeoutMs}ms`));
+        }, hardTimeoutMs);
+        promise.then(resolve, reject);
+      });
+    try {
+      await withHardTimeout(client.connect(), "connect");
+      const result = await withHardTimeout(client.query(text, params), "query");
+      return result;
+    } catch (e) {
+      console.error("[db] query error:", e?.message || e, String(text).substring(0, 80));
+      throw e;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      await client.end().catch(() => {});
+    }
+  }
+
   if (isBootstrapping && pool) {
     return pool.query(text, params);
   }
@@ -312,6 +350,15 @@ async function pingDatabase() {
   if (!dbUrl) {
     throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
   }
+  try {
+    const hostPart = dbUrl.split("@")[1]?.split("/")[0] || "hidden";
+    const hasPooler = hostPart.includes("-pooler");
+    console.log(
+      "[db.ping] connecting host=%s pooler=%s driver=@neondatabase/serverless",
+      hostPart,
+      hasPooler
+    );
+  } catch (_) {}
   const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
   const hardTimeoutMs = Math.max(1000, Number(process.env.DATABASE_PING_HARD_TIMEOUT_MS || connectMs + 2000));
   const client = new Client({
