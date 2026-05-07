@@ -168,6 +168,14 @@ app.use((req, res, next) => {
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 
+// 强力禁止 Vercel CDN/浏览器缓存任何 API 响应，防止串号和数据泄露
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
+
 function requireAuth(req, res, next) {
   const userId = readUserIdFromRequest(req);
   if (!userId) {
