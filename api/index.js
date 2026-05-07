@@ -63,17 +63,30 @@ module.exports = async function handler(req, res) {
   // ---------------------------------------------------------
   const isMe = req.url.endsWith("/api/auth/me");
   const isLogin = req.url.endsWith("/api/auth/login");
+  const isLogout = req.url.endsWith("/api/auth/logout");
 
-  if (isMe || isLogin) {
+  if (isMe || isLogin || isLogout) {
     try {
-      console.log(`[api/index.js] direct-handle ${isMe ? 'me' : 'login'} start`);
+      console.log(`[api/index.js] direct-handle ${isMe ? 'me' : isLogin ? 'login' : 'logout'} start`);
       // Lazy require DB and Auth logic only when these routes are hit
       const { getUserPhone, getUserCommunityRow, verifyUserLogin } = require("../src/db");
-      const { readUserIdFromRequest, setSessionCookie } = require("../src/auth-session");
+      const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("../src/auth-session");
       const { maskPhone, displayNameForUser } = require("../src/community-service");
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
+
+      if (isLogout) {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: "Method Not Allowed" }));
+          return;
+        }
+        clearSessionCookie(res);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
 
       if (isMe) {
         if (req.method !== "GET") {
