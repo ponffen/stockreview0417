@@ -58,6 +58,101 @@ module.exports = async function handler(req, res) {
     }
   } catch (_) {}
 
+  // ---------------------------------------------------------
+  // 极端防御：直接在 Vercel Handler 层拦截登录和用户信息接口，彻底绕过 Express
+  // ---------------------------------------------------------
+  const isMe = req.url.endsWith("/api/auth/me");
+  const isLogin = req.url.endsWith("/api/auth/login");
+
+  if (isMe || isLogin) {
+    try {
+      console.log(`[api/index.js] direct-handle ${isMe ? 'me' : 'login'} start`);
+      // Lazy require DB and Auth logic only when these routes are hit
+      const { getUserPhone, getUserCommunityRow, verifyUserLogin } = require("../src/db");
+      const { readUserIdFromRequest, setSessionCookie } = require("../src/auth-session");
+      const { maskPhone, displayNameForUser } = require("../src/community-service");
+
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+
+      if (isMe) {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: "Method Not Allowed" }));
+          return;
+        }
+        const userId = readUserIdFromRequest(req);
+        if (!userId) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "未登录" }));
+          return;
+        }
+        const phone = await getUserPhone(userId);
+        const row = await getUserCommunityRow(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({
+          ok: true,
+          user: {
+            id: userId,
+            phone,
+            phoneMasked: maskPhone(phone),
+            nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
+            communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+            displayName: row ? displayNameForUser(row) : maskPhone(phone),
+          },
+        }));
+        return;
+      }
+
+      if (isLogin) {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: "Method Not Allowed" }));
+          return;
+        }
+
+        // 读取 JSON body
+        const bodyStr = await new Promise((resolve, reject) => {
+          let data = '';
+          req.on('data', chunk => data += chunk);
+          req.on('end', () => resolve(data));
+          req.on('error', reject);
+        });
+
+        let body = {};
+        if (bodyStr) {
+          try { body = JSON.parse(bodyStr); } catch (e) {}
+        }
+
+        const phone = body?.phone != null ? String(body.phone).trim() : "";
+        const password = body?.password != null ? String(body.password) : "";
+
+        const u = await verifyUserLogin(phone, password);
+        if (!u) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "手机号或密码错误" }));
+          return;
+        }
+
+        // 调用 auth-session.js 里的 setSessionCookie 来生成标准的 session token
+        setSessionCookie(res, u.id);
+
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, user: { phone: u.phone } }));
+        return;
+      }
+    } catch (error) {
+      console.error(`[api/index.js] direct-handle error:`, error);
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({
+        ok: false,
+        error: error?.message || "auth failed in direct handler",
+      }));
+      return;
+    }
+  }
+
   // 不依赖 server.js 的诊断端点：证明 /api/(.*) 这条路由至少能到达函数
   if (req.url && req.url.startsWith("/api/diag/v5")) {
     res.statusCode = 200;
