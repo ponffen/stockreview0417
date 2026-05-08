@@ -21,6 +21,7 @@
     { "source": "/styles.css", "destination": "/api/assets?file=styles.css" },
     { "source": "/app.js", "destination": "/api/assets?file=app.js" },
     { "source": "/site-state.json", "destination": "/api/assets?file=site-state.json" },
+    { "source": "/quote-smoke-test.html", "destination": "/api/assets?file=quote-smoke-test.html" },
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/api/index" }
   ]

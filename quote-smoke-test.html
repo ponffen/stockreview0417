@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>行情接口冒烟 · 腾讯实时 + 新浪日K</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+        max-width: 960px;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 1.1rem;
+      }
+      pre {
+        background: #f4f4f7;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+        border-radius: 8px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        vertical-align: top;
+      }
+      th {
+        background: #f0f2f8;
+        text-align: left;
+      }
+      .ok {
+        color: #0a7;
+      }
+      .fail {
+        color: #c32;
+      }
+      button {
+        padding: 8px 16px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .muted {
+        color: #666;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>腾讯实时（qt.gtimg）+ 新浪日K（CN_MarketData.getKLineData）冒烟测试</h1>
+    <p class="muted">
+      与本站主程序一致：美股用腾讯 <code>usTICKER</code> / 新浪 <code>gb_TICKER</code>；港股
+      <code>hk五位</code> / 新浪 <code>rt_hk_五位</code>；沪深 <code>sh/sz+六位</code>。
+    </p>
+    <p><button type="button" id="runBtn">运行测试</button> <span id="statusEl" class="muted"></span></p>
+
+    <h2>批量腾讯（一次请求）</h2>
+    <p class="muted" id="tencentUrlEl"></p>
+    <pre id="tencentRawEl">（未请求）</pre>
+
+    <h2>新浪日K（逐项）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>站内代码</th>
+          <th>腾讯 q</th>
+          <th>新浪 symbol</th>
+          <th>结果</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+
+    <script>
+      /**
+       * 与 app.js / 截图一致的 8 只标的。
+       */
+      const ROWS = [
+        { label: "台积电", internal: "gb_tsm", tencent: "usTSM", sina: "gb_TSM" },
+        { label: "Alphabet GOOG", internal: "gb_goog", tencent: "usGOOG", sina: "gb_GOOG" },
+        { label: "标普500联接（示例 513500）", internal: "sh513500", tencent: "sh513500", sina: "sh513500" },
+        { label: "泡泡玛特", internal: "hk09992", tencent: "hk09992", sina: "rt_hk_09992" },
+        { label: "富途控股", internal: "gb_futu", tencent: "usFUTU", sina: "gb_FUTU" },
+        { label: "晶泰控股", internal: "hk02228", tencent: "hk02228", sina: "rt_hk_02228" },
+        { label: "紫金矿业", internal: "sh601899", tencent: "sh601899", sina: "sh601899" },
+        { label: "宁德时代", internal: "sz300750", tencent: "sz300750", sina: "sz300750" },
+      ];
+
+      function parseTencentLine(text, wantSourceKey) {
+        const re = new RegExp(`v_${wantSourceKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}="([^"]*)"`);
+        const m = String(text || "").match(re);
+        return m ? m[1] : "";
+      }
+
+      function briefQuoteFromPayload(symbolLabel, payload) {
+        if (!payload) return "—";
+        const parts = String(payload).split("~");
+        const name = (parts[0] || "").trim();
+        const cur = parts[3] != null ? parts[3] : "";
+        const prev = parts[4] != null ? parts[4] : "";
+        return `${name || symbolLabel} 现价:${cur} 昨收:${prev}`;
+      }
+
+      async function fetchSinaKline(sinaSym) {
+        const qs = new URLSearchParams({
+          symbol: sinaSym,
+          scale: "240",
+          ma: "no",
+          datalen: "60",
+        });
+        const r = await fetch(`/api/sina-kline?${qs}`, { cache: "no-store" });
+        const ct = r.headers.get("content-type") || "";
+        let bodyPreview = "";
+        let bars = null;
+        if (ct.includes("application/json")) {
+          const j = await r.json();
+          if (Array.isArray(j)) bars = j;
+          else bodyPreview = JSON.stringify(j).slice(0, 200);
+        } else {
+          const t = await r.text();
+          bodyPreview = t.slice(0, 200);
+        }
+        let lastClose = "";
+        if (bars && bars.length) {
+          const last = bars[bars.length - 1];
+          lastClose = last && last.close != null ? String(last.close) : "";
+        }
+        return { ok: r.ok, status: r.status, bars: bars ? bars.length : 0, lastClose, bodyPreview };
+      }
+
+      async function run() {
+        const statusEl = document.getElementById("statusEl");
+        const tbody = document.getElementById("tbody");
+        const tencentRawEl = document.getElementById("tencentRawEl");
+        const tencentUrlEl = document.getElementById("tencentUrlEl");
+        statusEl.textContent = "请求中…";
+        tbody.innerHTML = "";
+        tencentRawEl.textContent = "…";
+
+        const qJoined = ROWS.map((r) => r.tencent).join(",");
+        const tUrl = `/api/quote/tencent?q=${encodeURIComponent(qJoined)}`;
+        tencentUrlEl.textContent = `GET ${tUrl}`;
+
+        let tencentText = "";
+        try {
+          const tr = await fetch(tUrl, { cache: "no-store" });
+          tencentText = await tr.text();
+          if (!tr.ok) {
+            tencentRawEl.textContent = `HTTP ${tr.status}\n${tencentText.slice(0, 2000)}`;
+          } else {
+            tencentRawEl.textContent = tencentText.slice(0, 4000) + (tencentText.length > 4000 ? "\n…" : "");
+          }
+        } catch (e) {
+          tencentRawEl.textContent = String(e.message || e);
+        }
+
+        for (const row of ROWS) {
+          const tr = document.createElement("tr");
+          const payload = parseTencentLine(tencentText, row.tencent);
+          const qq = payload ? `<span class="ok">${briefQuoteFromPayload(row.label, payload)}</span>` : `<span class="fail">本批响应中未匹配 v_${row.tencent}</span>`;
+
+          let sk = "";
+          try {
+            const k = await fetchSinaKline(row.sina);
+            if (k.ok && k.bars > 0) {
+              sk = `<span class="ok">HTTP ${k.status}，${k.bars} 根日K，最近收盘 ${k.lastClose || "—"}</span>`;
+            } else if (k.ok && k.bars === 0) {
+              sk = `<span class="fail">HTTP ${k.status}，K线为空或非数组</span> ${escapeHtml(k.bodyPreview)}`;
+            } else {
+              sk = `<span class="fail">HTTP ${k.status}</span> ${escapeHtml(k.bodyPreview)}`;
+            }
+          } catch (e) {
+            sk = `<span class="fail">${escapeHtml(String(e.message || e))}</span>`;
+          }
+
+          tr.innerHTML = `<td>${escapeHtml(row.label)}</td><td><code>${escapeHtml(row.internal)}</code></td><td><code>${escapeHtml(
+            row.tencent
+          )}</code></td><td><code>${escapeHtml(row.sina)}</code></td><td>${qq}<br/><br/>新浪：${sk}</td>`;
+          tbody.appendChild(tr);
+        }
+
+        statusEl.textContent = "完成 " + new Date().toLocaleString();
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      document.getElementById("runBtn").addEventListener("click", () => void run());
+
+      void run();
+    </script>
+  </body>
+</html>

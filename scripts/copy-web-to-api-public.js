@@ -12,6 +12,7 @@ const copies = [
   ["index.html", "index.html"],
   ["app.js", "app.js"],
   ["styles.css", "styles.css"],
+  ["quote-smoke-test.html", "quote-smoke-test.html"],
   ["data/site-state.json", "site-state.json"],
 ];
 
