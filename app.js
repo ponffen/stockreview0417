@@ -745,18 +745,7 @@ async function fetchSinaForexDayKSeries(currency, startDate, endDate) {
   }
   const symbol = currency === "USD" ? "fx_USDCNY" : "fx_HKDCNY";
   const len = Math.max(64, Math.min(5000, estimateRangeDays(startDate, endDate) + 32));
-  const url = apiReady
-    ? `${API_BASE}/sina-kline?symbol=${encodeURIComponent(symbol)}&len=${encodeURIComponent(
-        String(len)
-      )}&asc=0`
-    : `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
-        symbol
-      )}&len=${encodeURIComponent(String(len))}&asc=0`;
-  const response = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
-  if (!response.ok) {
-    throw new Error(`sina dayk ${response.status}`);
-  }
-  const payload = await response.json();
+  const payload = await fetchSinaDailyBatchPayloadWithFallback(symbol, len, "0");
   const rows = pickSinaDailyBatchRows(payload, symbol);
   const out = {};
   for (const row of mapSinaKlineRows(rows)) {
@@ -7327,7 +7316,7 @@ async function refreshMarketData(opts = {}) {
       }
     });
 
-    await enrichNamesFromEastmoney(symbols);
+    // 名称由腾讯实时批量结果填充；停用东财兜底，避免产生与行情无关的超时红项。
   } catch (error) {
     console.error("行情拉取失败，保留本地数据展示", error);
   } finally {
@@ -7436,6 +7425,55 @@ function pickSinaDailyBatchRows(payload, requestSymbol) {
   );
 }
 
+/**
+ * 优先浏览器直连新浪 DailyK_Batch（用户本地网络可达时更快更稳）；
+ * 若失败再退回本站 /api/sina-kline 代理，避免 CORS 或网络差异导致不可用。
+ */
+async function fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, asc = "0") {
+  const lenSafe = Math.min(5000, Math.max(2, Number(len) || KLINE_DATALEN));
+  const ascSafe = String(asc) === "1" ? "1" : "0";
+  const directUrl = `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
+    requestSymbol
+  )}&len=${encodeURIComponent(String(lenSafe))}&asc=${encodeURIComponent(ascSafe)}`;
+  let lastErr = null;
+
+  try {
+    const directResp = await apiFetch(directUrl, { cache: "no-store", timeoutMs: 25_000 });
+    if (directResp.ok) {
+      return await directResp.json();
+    }
+    lastErr = new Error(`sina direct ${directResp.status}`);
+  } catch (error) {
+    lastErr = error;
+  }
+
+  if (!shouldUseSinaKlineProxy()) {
+    throw lastErr || new Error("sina direct failed");
+  }
+
+  const apiB = getApiBaseForFetch();
+  const proxyUrls = [
+    `${apiB}/sina-kline?symbol=${encodeURIComponent(requestSymbol)}&len=${encodeURIComponent(
+      String(lenSafe)
+    )}&asc=${encodeURIComponent(ascSafe)}`,
+    `${apiB}/sina_kline?symbol=${encodeURIComponent(requestSymbol)}&len=${encodeURIComponent(
+      String(lenSafe)
+    )}&asc=${encodeURIComponent(ascSafe)}`,
+  ];
+  for (const u of proxyUrls) {
+    try {
+      const r = await apiFetch(u, { cache: "no-store", timeoutMs: 35_000 });
+      if (r.ok) {
+        return await r.json();
+      }
+      lastErr = new Error(`sina proxy ${r.status}`);
+    } catch (error) {
+      lastErr = error;
+    }
+  }
+  throw lastErr || new Error("sina dailyk failed");
+}
+
 async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) {
   const requestSymbol = toSinaKlineSymbol(symbol);
   if (!requestSymbol) {
@@ -7446,32 +7484,7 @@ async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) 
     return [];
   }
   const len = Math.min(5000, Math.max(2, Number(datalen) || KLINE_DATALEN));
-  const params = new URLSearchParams({ symbol: requestSymbol, len: String(len), asc: "0" });
-  const qs = params.toString();
-  const useProxy = shouldUseSinaKlineProxy();
-  const apiB = getApiBaseForFetch();
-  const directHttps = `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
-    requestSymbol
-  )}&len=${encodeURIComponent(String(len))}&asc=0`;
-  let url = useProxy ? `${apiB}/sina-kline?${qs}` : directHttps;
-  let response = useProxy
-    ? await apiFetch(url, { cache: "no-store" })
-    : await fetch(url, {
-        cache: "no-store",
-        headers: SINA_KLINE_HEADERS,
-      });
-  if (!response.ok && useProxy) {
-    response = await apiFetch(`${apiB}/sina_kline?${qs}`, { cache: "no-store" });
-  }
-  if (!response.ok) {
-    throw new Error(`新浪DailyK失败: ${response.status}`);
-  }
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    return [];
-  }
+  const payload = await fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, "0");
   const rows = pickSinaDailyBatchRows(payload, requestSymbol);
   return mapSinaKlineRows(rows);
 }
