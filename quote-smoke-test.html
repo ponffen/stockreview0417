@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>行情接口冒烟 · 腾讯实时 + 新浪日K</title>
+    <title>行情接口冒烟 · 腾讯实时 + 新浪DailyK_Batch</title>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -56,10 +56,11 @@
     </style>
   </head>
   <body>
-    <h1>腾讯实时（qt.gtimg）+ 新浪日K（CN_MarketData.getKLineData）冒烟测试</h1>
+    <h1>腾讯实时（qt.gtimg）+ 新浪日K（MarketCenterService.getDailyK_Batch）冒烟测试</h1>
     <p class="muted">
-      与本站主程序一致：美股用腾讯 <code>usTICKER</code> / 新浪 <code>gb_TICKER</code>；港股
-      <code>hk五位</code> / 新浪 <code>rt_hk_五位</code>；沪深 <code>sh/sz+六位</code>。
+      与主程序一致：新浪日K统一使用 <code>us_*</code> / <code>cn_sh*</code> / <code>hk_hk*</code> /
+      <code>fx_*</code>；腾讯实时统一使用 <code>us*</code> / <code>sh*</code> / <code>hk*</code> /
+      <code>wh*</code>。
     </p>
     <p><button type="button" id="runBtn">运行测试</button> <span id="statusEl" class="muted"></span></p>
 
@@ -82,18 +83,17 @@
     </table>
 
     <script>
-      /**
-       * 与 app.js / 截图一致的 8 只标的。
-       */
       const ROWS = [
-        { label: "台积电", internal: "gb_tsm", tencent: "usTSM", sina: "gb_TSM" },
-        { label: "Alphabet GOOG", internal: "gb_goog", tencent: "usGOOG", sina: "gb_GOOG" },
-        { label: "标普500联接（示例 513500）", internal: "sh513500", tencent: "sh513500", sina: "sh513500" },
-        { label: "泡泡玛特", internal: "hk09992", tencent: "hk09992", sina: "rt_hk_09992" },
-        { label: "富途控股", internal: "gb_futu", tencent: "usFUTU", sina: "gb_FUTU" },
-        { label: "晶泰控股", internal: "hk02228", tencent: "hk02228", sina: "rt_hk_02228" },
-        { label: "紫金矿业", internal: "sh601899", tencent: "sh601899", sina: "sh601899" },
-        { label: "宁德时代", internal: "sz300750", tencent: "sz300750", sina: "sz300750" },
+        { label: "台积电", internal: "gb_tsm", tencent: "usTSM", sina: "us_TSM" },
+        { label: "Alphabet GOOG", internal: "gb_goog", tencent: "usGOOG", sina: "us_GOOG" },
+        { label: "标普500联接（513500）", internal: "sh513500", tencent: "sh513500", sina: "cn_sh513500" },
+        { label: "泡泡玛特", internal: "hk09992", tencent: "hk09992", sina: "hk_hk09992" },
+        { label: "富途控股", internal: "gb_futu", tencent: "usFUTU", sina: "us_FUTU" },
+        { label: "晶泰控股", internal: "hk02228", tencent: "hk02228", sina: "hk_hk02228" },
+        { label: "紫金矿业", internal: "sh601899", tencent: "sh601899", sina: "cn_sh601899" },
+        { label: "宁德时代", internal: "sz300750", tencent: "sz300750", sina: "cn_sz300750" },
+        { label: "USDCNY", internal: "fx_usdcny", tencent: "whUSDCNY", sina: "fx_USDCNY" },
+        { label: "HKDCNY", internal: "fx_hkdcny", tencent: "whHKDCNY", sina: "fx_HKDCNY" },
       ];
 
       function parseTencentLine(text, wantSourceKey) {

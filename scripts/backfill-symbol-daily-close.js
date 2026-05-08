@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 按成交区间从东财+新浪回填日收盘价到 symbol_daily_close。
+ * 按成交区间从新浪 DailyK_Batch 回填日收盘价到 symbol_daily_close。
  * 用法：node scripts/backfill-symbol-daily-close.js
  */
 const path = require("node:path");

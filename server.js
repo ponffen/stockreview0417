@@ -4,35 +4,65 @@ const express = require("express");
 const cors = require("cors");
 const iconv = require("iconv-lite");
 
-const { fetchSinaKlineJsonFromUpstream } = require("./src/sina-kline-upstream");
+const {
+  fetchSinaKlineJsonFromUpstream,
+  fetchSinaDailyKBatchFromUpstream,
+} = require("./src/sina-kline-upstream");
 const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill");
 
 /**
- * 新浪 CN_MarketData.getKLineData 代理。勿依赖单一字符串路径，避免部署/转发后落到 app.use('/api') 的 404。
+ * 新浪 DailyK_Batch 代理。兼容老参数（symbol / datalen），统一转发至 MarketCenterService.getDailyK_Batch。
  */
 async function handleSinaKlineProxy(req, res) {
   const symbol = req.query.symbol != null ? String(req.query.symbol) : "";
-  const scale = req.query.scale != null ? String(req.query.scale) : "240";
+  const symbolsRaw = req.query.symbols != null ? String(req.query.symbols) : "";
   const datalen = req.query.datalen != null ? String(req.query.datalen) : "1023";
-  const ma = req.query.ma != null ? String(req.query.ma) : "no";
-  const sym = symbol.trim();
-  if (!sym || sym.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(sym)) {
+  const len = req.query.len != null ? String(req.query.len) : datalen;
+  const asc = req.query.asc != null ? String(req.query.asc) : "0";
+  const start = req.query.start != null ? String(req.query.start) : "";
+  const end = req.query.end != null ? String(req.query.end) : "";
+  const symbols = (symbolsRaw ? symbolsRaw.split(",") : [symbol])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  if (!symbols.length || symbols.some((sym) => sym.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(sym))) {
     res.status(400).json({ ok: false, error: "invalid symbol" });
     return;
   }
-  if (!/^\d+$/.test(scale) || !/^\d+$/.test(datalen)) {
-    res.status(400).json({ ok: false, error: "invalid scale or datalen" });
+  if (!/^\d+$/.test(len) || !/^[01]$/.test(asc)) {
+    res.status(400).json({ ok: false, error: "invalid len or asc" });
     return;
   }
-  const result = await fetchSinaKlineJsonFromUpstream({ symbol: sym, scale, ma, datalen });
-  if (!result.ok) {
-    res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
+  if ((start && !/^\d{4}-\d{2}-\d{2}$/.test(start)) || (end && !/^\d{4}-\d{2}-\d{2}$/.test(end))) {
+    res.status(400).json({ ok: false, error: "invalid start or end" });
     return;
   }
-  res.setHeader("Cache-Control", "no-store");
-  /** 新浪对无效/暂无数据常返回 JSON null；统一成 [] 便于前端解析 */
-  const body = result.data == null ? [] : result.data;
-  res.json(body);
+  try {
+    if (symbols.length > 1 || symbolsRaw) {
+      const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
+      if (!result.ok) {
+        res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
+        return;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.json(result.data || {});
+      return;
+    }
+    const result = await fetchSinaKlineJsonFromUpstream({
+      symbol: symbols[0],
+      len,
+      asc,
+      start,
+      end,
+    });
+    if (!result.ok) {
+      res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json(result.data == null ? [] : result.data);
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error?.message || "sina kline failed" });
+  }
 }
 
 function ensureDataDir() {
@@ -728,54 +758,29 @@ app.delete("/api/daily-returns", requireAuth, async (req, res) => {
   }
 });
 
-/** 新浪外汇日 K JSONP 原文（日期,开,高,低,收,），供前端解析收盘价 */
-const SINA_FX_DAYK_URL = {
-  usdcny:
-    "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20USDCNY=/NewForexService.getDayKLine?symbol=fx_susdcny",
-  hkdcny:
-    "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20HKDCNY=/NewForexService.getDayKLine?symbol=fx_shkdcny",
-};
-
 app.get("/api/fx/sina-dayk", async (req, res) => {
-  const pair = String(req.query.pair || "").toLowerCase();
-  const url = SINA_FX_DAYK_URL[pair];
-  if (!url) {
+  const pair = String(req.query.pair || "").toLowerCase().trim();
+  const symbol = pair === "usdcny" ? "fx_USDCNY" : pair === "hkdcny" ? "fx_HKDCNY" : "";
+  if (!symbol) {
     res.status(400).json({ ok: false, error: "pair must be usdcny or hkdcny" });
     return;
   }
   try {
-    const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
+    const result = await fetchSinaKlineJsonFromUpstream({
+      symbol,
+      len: req.query.len != null ? String(req.query.len) : "5000",
+      asc: req.query.asc != null ? String(req.query.asc) : "0",
+      start: req.query.start != null ? String(req.query.start) : "",
+      end: req.query.end != null ? String(req.query.end) : "",
     });
-    if (!r.ok) {
-      res.status(502).json({ ok: false, error: `sina ${r.status}` });
+    if (!result.ok) {
+      res.status(502).json({ ok: false, error: result.error || "sina dayk failed" });
       return;
     }
-    const text = await r.text();
     res.setHeader("Cache-Control", "no-store");
-    res.type("text/plain; charset=utf-8");
-    res.send(text);
+    res.json({ ok: true, data: result.data || [] });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "sina dayk failed" });
-  }
-});
-
-/** 外汇实时：waihui123（USD 基准下 CNY/HKD 为交叉盘中间价，由前端换算为 1 USD、1 HKD 兑 CNY） */
-app.get("/api/fx/waihui123", async (_req, res) => {
-  try {
-    const url = "https://www.waihui123.com/reteapi?action=get&code=USD,CNY,HKD";
-    const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
-    });
-    if (!r.ok) {
-      res.status(502).json({ ok: false, error: `waihui123 ${r.status}` });
-      return;
-    }
-    const json = await r.json();
-    res.setHeader("Cache-Control", "no-store");
-    res.json(json);
-  } catch (error) {
-    res.status(502).json({ ok: false, error: error.message || "waihui123 fx failed" });
   }
 });
 
@@ -808,7 +813,7 @@ app.get("/api/quote/tencent", async (req, res) => {
 });
 
 /**
- * 美股：取「严格早于 before（YYYY-MM-DD）」的最后一个交易日的收盘（新浪 CN_MarketData.getKLineData，gb_TICKER 日 K）。
+ * 美股：取「严格早于 before（YYYY-MM-DD）」的最后一个交易日收盘（新浪 DailyK_Batch，us_TICKER）。
  */
 app.get("/api/us-historical-close", async (req, res) => {
   const raw = req.query.symbol != null ? String(req.query.symbol) : "";
@@ -827,13 +832,12 @@ app.get("/api/us-historical-close", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid symbol" });
     return;
   }
-  const sinaSymbol = `gb_${ticker}`;
+  const sinaSymbol = `us_${ticker}`;
   try {
     const sinaRes = await fetchSinaKlineJsonFromUpstream({
       symbol: sinaSymbol,
-      scale: "240",
-      ma: "no",
-      datalen: "1023",
+      len: "5000",
+      asc: "0",
     });
     if (!sinaRes.ok) {
       res.status(502).json({ ok: false, error: sinaRes.error || "sina failed" });

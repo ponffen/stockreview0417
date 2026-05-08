@@ -1,129 +1,139 @@
 /**
- * 新浪 CN_MarketData.getKLineData 日 K（与 app.js fetchKlineDataSina 规则一致）+ 新浪外汇 JSONP 解析
+ * 新浪 DailyK_Batch：统一日 K 与外汇日线。
  */
+const SINA_DAILY_BATCH_ENDPOINT =
+  "https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch";
 const SINA_KLINE_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Referer: "https://finance.sina.com.cn/",
+  Referer: "https://quotes.sina.cn/",
 };
 
-/** normalized symbol -> 新浪 symbol */
-function toSinaKlineSymbolFromNormalized(symbol) {
-  const n = String(symbol || "")
-    .trim()
-    .replace(/\s+/g, "")
-    .toLowerCase();
+function toSinaDailyBatchSymbolFromNormalized(symbol) {
+  const src = String(symbol || "").trim().replace(/\s+/g, "");
+  const n = src.toLowerCase();
   if (!n) {
     return "";
   }
-  if (/^sh\d{6}$/.test(n) || /^sz\d{6}$/.test(n)) {
+  if (/^cn_(sh|sz)\d{6}$/i.test(src)) {
     return n;
   }
+  if (/^hk_hk\d{5}$/i.test(src)) {
+    return `hk_hk${src.replace(/^hk_hk/i, "")}`;
+  }
+  if (/^us_[A-Z0-9._-]+$/i.test(src)) {
+    return `us_${src.replace(/^us_/i, "").replace(/\.(OQ|N)$/i, "").toUpperCase()}`;
+  }
+  if (/^fx_(USDCNY|HKDCNY)$/i.test(src)) {
+    return `fx_${src.replace(/^fx_/i, "").toUpperCase()}`;
+  }
+  if (/^sh\d{6}$/.test(n) || /^sz\d{6}$/.test(n)) {
+    return `cn_${n}`;
+  }
   if (/^hk\d{5}$/.test(n)) {
-    return `rt_hk_${n.slice(2)}`;
+    return `hk_${n}`;
   }
   if (/^rt_hk/i.test(n)) {
     const digits = n.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `rt_hk_${digits}`;
+    return `hk_hk${digits}`;
   }
   if (/^gb_/i.test(n)) {
-    return `gb_${n.slice(3).toUpperCase()}`;
+    return `us_${n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
   }
-  if (/^[a-z][a-z0-9._-]*$/i.test(n)) {
-    return `gb_${n.toUpperCase()}`;
+  if (/^us[A-Z0-9._-]+$/i.test(src)) {
+    return `us_${src.replace(/^us/i, "").replace(/\.(OQ|N)$/i, "").toUpperCase()}`;
   }
-  return n;
+  if (/^fx_usdcny$/i.test(src) || /^whusdcny$/i.test(src) || /^usdcny$/i.test(src)) {
+    return "fx_USDCNY";
+  }
+  if (/^fx_hkdcny$/i.test(src) || /^whhkdcny$/i.test(src) || /^hkdcny$/i.test(src)) {
+    return "fx_HKDCNY";
+  }
+  if (/^[a-z][a-z0-9._-]*$/i.test(src)) {
+    return `us_${src.replace(/\.(OQ|N)$/i, "").toUpperCase()}`;
+  }
+  return "";
 }
 
-async function fetchKlineDataSina(symbol, datalen = 1023) {
-  const requestSymbol = toSinaKlineSymbolFromNormalized(symbol);
-  if (!requestSymbol) {
+function mapSinaDailyRows(source) {
+  if (!Array.isArray(source)) {
     return [];
   }
-  const len = Math.min(1023, Math.max(2, Number(datalen) || 1023));
-  const params = new URLSearchParams({
-    symbol: requestSymbol,
-    scale: "240",
-    ma: "no",
-    datalen: String(len),
-  });
-  const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?${params}`;
-  const response = await fetch(url, {
-    cache: "no-store",
-    headers: SINA_KLINE_HEADERS,
-  });
-  if (!response.ok) {
-    throw new Error(`新浪K线失败 ${symbol}: ${response.status}`);
-  }
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    return [];
-  }
-  if (payload == null || !Array.isArray(payload)) {
-    return [];
-  }
-  return payload
-    .map((item) => {
-      const raw = String(item?.day ?? "").trim();
-      const day = raw.includes(" ")
-        ? raw.replace(/\//g, "-")
-        : raw.slice(0, 10).replace(/\//g, "-");
-      const close = Number(String(item?.close ?? "").replace(/,/g, ""));
-      return { day, close };
-    })
-    .filter((item) => item.day && Number.isFinite(item.close) && item.close > 0)
-    .sort((a, b) => a.day.localeCompare(b.day));
-}
-
-function parseTencentPriceField(segment) {
-  const t = String(segment ?? "").trim().replace(/,/g, "");
-  const n = Number(t);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function parseSinaForexDayKJsonp(text, varName) {
-  const out = {};
-  const cleaned = String(text).replace(/^\/\*[\s\S]*?\*\/\s*/m, "");
-  const re = new RegExp(`var\\s+${varName}\\s*=\\s*\\("([^"]*)"\\s*\\)\\s*;?`);
-  const m = cleaned.match(re);
-  if (!m || !m[1]) {
-    return out;
-  }
-  const body = m[1];
-  body.split("|").forEach((rec) => {
-    const parts = rec.split(",");
-    if (parts.length < 5) return;
-    const day = String(parts[0] || "")
+  const num = (v) => Number(String(v ?? "").replace(/,/g, ""));
+  const out = [];
+  for (const item of source) {
+    const day = String(item?.day ?? item?.date ?? item?.d ?? "")
       .trim()
-      .slice(0, 10);
-    const close = parseTencentPriceField(parts[4]);
-    if (day && Number.isFinite(close) && close > 0) {
-      out[day] = close;
+      .slice(0, 10)
+      .replace(/\//g, "-");
+    const close = num(item?.close ?? item?.c);
+    if (!day || !Number.isFinite(close) || close <= 0) {
+      continue;
     }
-  });
+    out.push({
+      day,
+      open: num(item?.open ?? item?.o),
+      high: num(item?.high ?? item?.h),
+      low: num(item?.low ?? item?.l),
+      close,
+      volume: num(item?.volume ?? item?.v ?? item?.amount ?? item?.a),
+    });
+  }
+  out.sort((a, b) => a.day.localeCompare(b.day));
   return out;
 }
 
-const SINA_FX_DAYK_URL = {
-  usdcny:
-    "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20USDCNY=/NewForexService.getDayKLine?symbol=fx_susdcny",
-  hkdcny:
-    "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20HKDCNY=/NewForexService.getDayKLine?symbol=fx_shkdcny",
-};
-
-async function fetchSinaForexDayKSeries(pair, varName) {
-  const url = SINA_FX_DAYK_URL[pair];
-  if (!url) return {};
+async function fetchSinaDailyBatchRows(symbol, options = {}) {
+  const requestSymbol = toSinaDailyBatchSymbolFromNormalized(symbol);
+  if (!requestSymbol) {
+    return [];
+  }
+  const len = Math.min(5000, Math.max(2, Number(options.len) || 2048));
+  const params = new URLSearchParams({
+    symbols: requestSymbol,
+    len: String(len),
+    asc: String(options.asc != null ? options.asc : 0),
+  });
+  const start = String(options.start || "").slice(0, 10);
+  const end = String(options.end || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    params.set("start", start);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    params.set("end", end);
+  }
+  const url = `${SINA_DAILY_BATCH_ENDPOINT}?${params.toString()}`;
   const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview-backfill/1.0)" },
+    cache: "no-store",
+    headers: SINA_KLINE_HEADERS,
+    signal: AbortSignal.timeout(35_000),
   });
   if (!response.ok) {
-    throw new Error(`sina fx ${pair} ${response.status}`);
+    throw new Error(`新浪DailyK失败 ${symbol}: ${response.status}`);
   }
-  const text = await response.text();
-  return parseSinaForexDayKJsonp(text, varName);
+  const payload = await response.json();
+  const root = payload?.result?.data || payload?.data || {};
+  const arr = root?.[requestSymbol] || root?.[requestSymbol.toLowerCase()] || root?.[requestSymbol.toUpperCase()] || [];
+  return mapSinaDailyRows(arr);
+}
+
+async function fetchKlineDataSina(symbol, datalen = 2048) {
+  return fetchSinaDailyBatchRows(symbol, { len: datalen, asc: 0 });
+}
+
+async function fetchSinaForexDayKSeries(currencyOrPair) {
+  const raw = String(currencyOrPair || "").trim().toUpperCase();
+  const symbol =
+    raw === "USD" || raw === "USDCNY" || raw === "FX_USDCNY" ? "fx_USDCNY" : raw === "HKD" || raw === "HKDCNY" || raw === "FX_HKDCNY" ? "fx_HKDCNY" : "";
+  if (!symbol) {
+    return {};
+  }
+  const rows = await fetchSinaDailyBatchRows(symbol, { len: 5000, asc: 0 });
+  const out = {};
+  for (const row of rows) {
+    out[row.day] = row.close;
+  }
+  return out;
 }
 
 function toDateKey(date = new Date()) {
@@ -160,7 +170,7 @@ function validNumber(...values) {
 module.exports = {
   fetchKlineDataSina,
   fetchSinaForexDayKSeries,
-  toSinaKlineSymbolFromNormalized,
+  toSinaKlineSymbolFromNormalized: toSinaDailyBatchSymbolFromNormalized,
   toDateKey,
   enumerateDays,
   validNumber,

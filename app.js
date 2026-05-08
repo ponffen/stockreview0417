@@ -117,21 +117,10 @@ const FX_RATE_FALLBACK = {
   HKD: 0.92,
   USD: 7.2,
 };
-/** 实时外汇主源：waihui123（失败则腾讯 qt 外汇） */
-const WAIHUI123_FX_API = "https://www.waihui123.com/reteapi?action=get&code=USD,CNY,HKD";
-/** 腾讯财经外汇（实时兜底）：qt.gtimg.cn */
-const TENCENT_FOREX_SPOT_CODES = ["fx_susdcny", "fx_shkdcn"];
-const TENCENT_FOREX_CODE_TO_CCY = { fx_susdcny: "USD", fx_shkdcn: "HKD" };
-/** 新浪外汇日 K：一次返回全历史，param 见 server.js /api/fx/sina-dayk */
-const SINA_FX_DAYK_DIRECT = {
-  USD: "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20USDCNY=/NewForexService.getDayKLine?symbol=fx_susdcny",
-  HKD: "http://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20HKDCNY=/NewForexService.getDayKLine?symbol=fx_shkdcny",
-};
-const SINA_FX_DAYK_VAR = { USD: "USDCNY", HKD: "HKDCNY" };
-const SINA_FX_DAYK_PAIR = { USD: "usdcny", HKD: "hkdcny" };
+/** 腾讯财经外汇实时：与主行情接口同源 qt.gtimg.cn */
+const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
+const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
 const FX_HISTORY_DAYS = 420;
-const FX_API_BASE = "https://api.frankfurter.app";
-const FX_TIMEFRAME_DAYS = 120;
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
@@ -699,7 +688,7 @@ async function initializeFxRates(opts = {}) {
       renderAll();
     }
   } catch (error) {
-    console.error("加载历史汇率失败（新浪日 K / Frankfurter），已回退固定汇率", error);
+    console.error("加载历史汇率失败（新浪 DailyK_Batch），已回退固定汇率", error);
   } finally {
     state.fxLoading = false;
   }
@@ -726,7 +715,7 @@ async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
     return result;
   }
   try {
-    const full = await fetchSinaForexDayKSeries(currency);
+    const full = await fetchSinaForexDayKSeries(currency, startDate, endDate);
     if (full && Object.keys(full).length) {
       Object.entries(full).forEach(([date, rate]) => {
         if (date >= startDate && date <= endDate) {
@@ -738,96 +727,52 @@ async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
       }
     }
   } catch {
-    // fall through
+    // use fallback rates
   }
-  let cursor = new Date(startDate);
+  const fallback = FX_RATE_FALLBACK[currency] || 1;
+  const cursor = new Date(startDate);
   const end = new Date(endDate);
   while (cursor <= end) {
-    const chunkStart = toDateKey(cursor);
-    const chunkEndDate = new Date(cursor);
-    chunkEndDate.setDate(chunkEndDate.getDate() + (FX_TIMEFRAME_DAYS - 1));
-    if (chunkEndDate > end) {
-      chunkEndDate.setTime(end.getTime());
-    }
-    const chunkEnd = toDateKey(chunkEndDate);
-    try {
-      const chunkRates = await fetchFxHistorySeriesFrankfurter(currency, chunkStart, chunkEnd);
-      Object.assign(result, chunkRates);
-    } catch {
-      // ignore chunk failure
-    }
-    cursor.setDate(cursor.getDate() + FX_TIMEFRAME_DAYS);
+    result[toDateKey(cursor)] = fallback;
+    cursor.setDate(cursor.getDate() + 1);
   }
   return result;
 }
 
-async function fetchFxHistorySeriesFrankfurter(currency, startDate, endDate) {
-  const url = `${FX_API_BASE}/${startDate}..${endDate}?from=${encodeURIComponent(currency)}&to=CNY`;
-  const response = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
-  if (!response.ok) {
-    throw new Error(`FX请求失败: ${currency} ${startDate}..${endDate}`);
-  }
-  const payload = await response.json();
-  const rates = payload?.rates || {};
-  const result = {};
-  Object.entries(rates).forEach(([date, value]) => {
-    const parsed = Number(value?.CNY);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      result[date] = parsed;
-    }
-  });
-  return result;
-}
-
-/**
- * 解析新浪外汇日 K JSONP：`var USDCNY=("日期,开,高,低,收,|...");`
- * 以收盘价（第 5 列）为当日 1 单位外币兑 CNY（USDCNY / HKDCNY 与新浪品种一致）。
- */
-function parseSinaForexDayKJsonp(text, varName) {
-  const out = {};
-  const cleaned = String(text).replace(/^\/\*[\s\S]*?\*\/\s*/m, "");
-  const re = new RegExp(`var\\s+${varName}\\s*=\\s*\\("([^"]*)"\\s*\\)\\s*;?`);
-  const m = cleaned.match(re);
-  if (!m || !m[1]) {
-    return out;
-  }
-  const body = m[1];
-  body.split("|").forEach((rec) => {
-    const parts = rec.split(",");
-    if (parts.length < 5) {
-      return;
-    }
-    const day = String(parts[0] || "").trim().slice(0, 10);
-    const close = parseTencentPriceField(parts[4]);
-    if (day && Number.isFinite(close) && close > 0) {
-      out[day] = close;
-    }
-  });
-  return out;
-}
-
-async function fetchSinaForexDayKSeries(currency) {
+async function fetchSinaForexDayKSeries(currency, startDate, endDate) {
   if (currency !== "USD" && currency !== "HKD") {
     return {};
   }
-  const pair = SINA_FX_DAYK_PAIR[currency];
-  const varName = SINA_FX_DAYK_VAR[currency];
+  const symbol = currency === "USD" ? "fx_USDCNY" : "fx_HKDCNY";
+  const len = Math.max(64, Math.min(5000, estimateRangeDays(startDate, endDate) + 32));
   const url = apiReady
-    ? `${API_BASE}/fx/sina-dayk?pair=${encodeURIComponent(pair)}`
-    : SINA_FX_DAYK_DIRECT[currency];
+    ? `${API_BASE}/sina-kline?symbol=${encodeURIComponent(symbol)}&len=${encodeURIComponent(
+        String(len)
+      )}&asc=0`
+    : `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
+        symbol
+      )}&len=${encodeURIComponent(String(len))}&asc=0`;
   const response = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
   if (!response.ok) {
     throw new Error(`sina dayk ${response.status}`);
   }
-  const text = await response.text();
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{")) {
-    const j = JSON.parse(trimmed);
-    if (j && j.ok === false) {
-      throw new Error(String(j.error || "sina proxy error"));
-    }
+  const payload = await response.json();
+  const rows = pickSinaDailyBatchRows(payload, symbol);
+  const out = {};
+  for (const row of mapSinaKlineRows(rows)) {
+    out[row.day] = row.close;
   }
-  return parseSinaForexDayKJsonp(text, varName);
+  return out;
+}
+
+function estimateRangeDays(startDate, endDate) {
+  const s = new Date(`${String(startDate || "").slice(0, 10)}T00:00:00+08:00`);
+  const e = new Date(`${String(endDate || "").slice(0, 10)}T00:00:00+08:00`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
+    return 365;
+  }
+  const delta = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+  return Math.max(1, delta);
 }
 
 function normalizeAccounts(rawAccounts) {
@@ -1411,7 +1356,7 @@ function toTencentQuoteSymbol(symbol) {
 const SINA_KLINE_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Referer: "https://finance.sina.com.cn/",
+  Referer: "https://quotes.sina.cn/",
 };
 
 /** 本机 / 局域网打开页面时也走同源代理：浏览器直连新浪会因 CORS 失败；勿仅依赖 /api/health（apiReady）。 */
@@ -1448,9 +1393,7 @@ function shouldUseSinaKlineProxy() {
   return apiReady || isLikelyLanOrLocalHost();
 }
 
-/**
- * 新浪 getKLineData：A股 sh/sz；港股 rt_hk_00700；美股 gb_AAPL（Ticker 大写）。
- */
+/** 统一映射到新浪 DailyK_Batch：cn_sh/sz、hk_hk、us_、fx_。 */
 function toSinaKlineSymbol(symbol) {
   if (!symbol) {
     return "";
@@ -1459,21 +1402,42 @@ function toSinaKlineSymbol(symbol) {
   if (!n) {
     return "";
   }
-  if (/^sh\d{6}$/.test(n) || /^sz\d{6}$/.test(n)) {
+  if (/^cn_(sh|sz)\d{6}$/i.test(n)) {
     return n;
   }
+  if (/^hk_hk\d{5}$/i.test(n)) {
+    return n;
+  }
+  if (/^us_[a-z0-9._-]+$/i.test(n)) {
+    return `us_${n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
+  }
+  if (/^fx_(usdcny|hkdcny)$/i.test(n)) {
+    return `fx_${n.slice(3).toUpperCase()}`;
+  }
+  if (/^sh\d{6}$/.test(n) || /^sz\d{6}$/.test(n)) {
+    return `cn_${n}`;
+  }
   if (/^hk\d{5}$/.test(n)) {
-    return `rt_hk_${n.slice(2)}`;
+    return `hk_${n}`;
   }
   if (/^rt_hk/i.test(n)) {
     const digits = n.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `rt_hk_${digits}`;
+    return `hk_hk${digits}`;
   }
   if (/^gb_/i.test(n)) {
-    return `gb_${n.slice(3).toUpperCase()}`;
+    return `us_${n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
+  }
+  if (/^us[a-z0-9._-]+$/i.test(n)) {
+    return `us_${n.slice(2).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
+  }
+  if (/^fx_usdcny$/i.test(n) || /^whusdcny$/i.test(n) || /^usdcny$/i.test(n)) {
+    return "fx_USDCNY";
+  }
+  if (/^fx_hkdcny$/i.test(n) || /^whhkdcny$/i.test(n) || /^hkdcny$/i.test(n)) {
+    return "fx_HKDCNY";
   }
   if (/^[a-z][a-z0-9._-]*$/i.test(n)) {
-    return `gb_${n.toUpperCase()}`;
+    return `us_${n.replace(/\.(oq|n)$/i, "").toUpperCase()}`;
   }
   return n;
 }
@@ -1516,7 +1480,7 @@ function parseTencentQuoteRecord(symbol, rawText) {
   };
 }
 
-/** 腾讯 qt 外汇：`fx_susdcny` / `fx_shkdcn`，~ 分段 3 当前价、4 昨收 */
+/** 腾讯 qt 外汇：`whUSDCNY` / `whHKDCNY`，~ 分段 3 当前价、4 昨收 */
 function parseTencentForexQuotePayload(rawText) {
   if (!rawText || typeof rawText !== "string") {
     return null;
@@ -7435,7 +7399,7 @@ async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
   return fetchKlineDataSina(symbol, scale, datalen);
 }
 
-/** 新浪 CN_MarketData.getKLineData：日 K 为 scale=240；分钟线为 1–60。 */
+/** 新浪 DailyK_Batch：仅日 K。 */
 function mapSinaKlineRows(source) {
   if (!Array.isArray(source)) {
     return [];
@@ -7459,27 +7423,36 @@ function mapSinaKlineRows(source) {
     .filter((item) => item.day && Number.isFinite(item.close));
 }
 
+function pickSinaDailyBatchRows(payload, requestSymbol) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  const root = payload?.result?.data || payload?.data || {};
+  return (
+    root?.[requestSymbol] ||
+    root?.[String(requestSymbol).toLowerCase()] ||
+    root?.[String(requestSymbol).toUpperCase()] ||
+    []
+  );
+}
+
 async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) {
   const requestSymbol = toSinaKlineSymbol(symbol);
   if (!requestSymbol) {
     return [];
   }
   const scaleNum = Number(scale);
-  const isDaily = !Number.isFinite(scaleNum) || scaleNum >= 240;
-  const sinaScale = isDaily ? 240 : Math.max(1, Math.min(60, scaleNum));
-  const len = isDaily
-    ? Math.min(1023, Math.max(2, Number(datalen) || KLINE_DATALEN))
-    : Math.min(2000, Math.max(2, Number(datalen) || 2));
-  const params = new URLSearchParams({
-    symbol: requestSymbol,
-    scale: String(sinaScale),
-    ma: "no",
-    datalen: String(len),
-  });
+  if (Number.isFinite(scaleNum) && scaleNum < 240) {
+    return [];
+  }
+  const len = Math.min(5000, Math.max(2, Number(datalen) || KLINE_DATALEN));
+  const params = new URLSearchParams({ symbol: requestSymbol, len: String(len), asc: "0" });
   const qs = params.toString();
   const useProxy = shouldUseSinaKlineProxy();
   const apiB = getApiBaseForFetch();
-  const directHttps = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?${qs}`;
+  const directHttps = `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
+    requestSymbol
+  )}&len=${encodeURIComponent(String(len))}&asc=0`;
   let url = useProxy ? `${apiB}/sina-kline?${qs}` : directHttps;
   let response = useProxy
     ? await apiFetch(url, { cache: "no-store" })
@@ -7491,7 +7464,7 @@ async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) 
     response = await apiFetch(`${apiB}/sina_kline?${qs}`, { cache: "no-store" });
   }
   if (!response.ok) {
-    throw new Error(`新浪K线失败: ${response.status}`);
+    throw new Error(`新浪DailyK失败: ${response.status}`);
   }
   let payload;
   try {
@@ -7499,10 +7472,8 @@ async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) 
   } catch {
     return [];
   }
-  if (payload == null) {
-    return [];
-  }
-  return mapSinaKlineRows(Array.isArray(payload) ? payload : []);
+  const rows = pickSinaDailyBatchRows(payload, requestSymbol);
+  return mapSinaKlineRows(rows);
 }
 
 /** 合并日 K；同一 key（day）后者覆盖前者。 */
@@ -7680,64 +7651,12 @@ function loadScript(src, charset = "utf-8") {
   });
 }
 
-/**
- * waihui123 JSON：meta.base_currency=USD 时 data.CNY 为 1 USD 兑 CNY，data.HKD 为 1 USD 兑 HKD；
- * 1 HKD 兑 CNY = CNY/HKD。
- */
-function parseWaihui123FxResponse(json) {
-  const out = {};
-  if (!json || Number(json.code) !== 200 || !json.data || typeof json.data !== "object") {
-    return out;
-  }
-  const d = json.data;
-  const cnyPerUsd = Number(d.CNY);
-  const hkdPerUsd = Number(d.HKD);
-  if (Number.isFinite(cnyPerUsd) && cnyPerUsd > 0) {
-    out.USD = cnyPerUsd;
-  }
-  if (
-    Number.isFinite(cnyPerUsd) &&
-    cnyPerUsd > 0 &&
-    Number.isFinite(hkdPerUsd) &&
-    hkdPerUsd > 0
-  ) {
-    out.HKD = cnyPerUsd / hkdPerUsd;
-  }
-  return out;
-}
-
-async function fetchRealtimeForexWaihui123() {
-  const url = apiReady ? `${API_BASE}/fx/waihui123` : WAIHUI123_FX_API;
-  const r = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
-  if (!r.ok) {
-    throw new Error(`waihui ${r.status}`);
-  }
-  const json = await r.json();
-  if (json && json.ok === false) {
-    throw new Error(String(json.error || "waihui proxy error"));
-  }
-  return parseWaihui123FxResponse(json);
-}
-
-/** 实时外汇：主用 waihui123，缺 USD/HKD 任一则腾讯 qt 外汇补全 */
+/** 实时外汇：统一使用腾讯 qt（whUSDCNY / whHKDCNY）。 */
 async function fetchRealtimeForexSpot() {
-  let w = {};
-  try {
-    w = await fetchRealtimeForexWaihui123();
-  } catch {
-    w = {};
-  }
-  if (w.USD && w.HKD) {
-    return w;
-  }
-  const t = await fetchRealtimeForexTencent().catch(() => ({}));
-  return {
-    USD: w.USD || t.USD,
-    HKD: w.HKD || t.HKD,
-  };
+  return fetchRealtimeForexTencent().catch(() => ({}));
 }
 
-/** 腾讯 qt 外汇实时（兜底）：USDCNY / HKDCNY 当前价 */
+/** 腾讯 qt 外汇实时：USDCNY / HKDCNY 当前价。 */
 async function fetchRealtimeForexTencent() {
   const out = {};
   const q = TENCENT_FOREX_SPOT_CODES.join(",");
