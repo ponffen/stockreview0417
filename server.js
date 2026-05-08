@@ -130,8 +130,17 @@ app.use((req, res, next) => {
       req.headers["x-forwarded-uri"] ||
       req.headers["x-original-url"] ||
       req.headers["x-matched-path"];
-    const looksStripped = req.url === "/" || req.url === "/api" || req.url === "/api/" || req.url === "/api/index";
-    if (looksStripped && typeof original === "string" && original.startsWith("/")) {
+    const reqPathOnly = String(req.url || "").split("?")[0] || "/";
+    const looksStripped =
+      reqPathOnly === "/" || reqPathOnly === "/api" || reqPathOnly === "/api/" || reqPathOnly === "/api/index";
+    const origPathOnly = typeof original === "string" ? String(original.split("?")[0] || "/") || "/" : "";
+    if (
+      looksStripped &&
+      typeof original === "string" &&
+      original.startsWith("/api/") &&
+      origPathOnly !== "/api" &&
+      origPathOnly !== "/api/"
+    ) {
       console.log("[req.url-restore] from=%s to=%s", req.url, original);
       req.url = original;
     }

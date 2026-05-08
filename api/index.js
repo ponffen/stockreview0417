@@ -29,6 +29,12 @@ function getServerlessApp() {
   return appPromise;
 }
 
+/** 仅 path，不含 query；用于 Vercel 剥短 URL 后的匹配与还原判断 */
+function urlPathOnly(u) {
+  const p = String(u || "").split("?")[0];
+  return p || "/";
+}
+
 // 最外层 handler：先处理"不依赖 server.js"的自证端点，再异步加载 Express app
 module.exports = async function handler(req, res) {
   console.log(
@@ -46,24 +52,26 @@ module.exports = async function handler(req, res) {
       req.headers["x-forwarded-uri"] ||
       req.headers["x-original-url"] ||
       req.headers["x-matched-path"];
+    const pu = urlPathOnly(req.url);
     if (
-      (req.url === "/" || req.url === "/api" || req.url === "/api/" || req.url === "/api/index") &&
+      (pu === "/" || pu === "/api" || pu === "/api/" || pu === "/api/index") &&
       typeof originalPath === "string" &&
       originalPath.startsWith("/api/") &&
-      originalPath !== "/api" &&
-      originalPath !== "/api/"
+      urlPathOnly(originalPath) !== "/api"
     ) {
       console.log("[api/index.js] restoring req.url from %s to %s", req.url, originalPath);
       req.url = originalPath;
     }
   } catch (_) {}
 
+  const pathOnly = urlPathOnly(req.url);
+
   // ---------------------------------------------------------
   // 极端防御：直接在 Vercel Handler 层拦截登录和用户信息接口，彻底绕过 Express
   // ---------------------------------------------------------
-  const isMe = req.url.endsWith("/api/auth/me");
-  const isLogin = req.url.endsWith("/api/auth/login");
-  const isLogout = req.url.endsWith("/api/auth/logout");
+  const isMe = pathOnly === "/api/auth/me";
+  const isLogin = pathOnly === "/api/auth/login";
+  const isLogout = pathOnly === "/api/auth/logout";
 
   if (isMe || isLogin || isLogout) {
     try {
@@ -166,8 +174,184 @@ module.exports = async function handler(req, res) {
     }
   }
 
+  // --------- 直连：/api/state 与社区 API（与同上 auth，避免 Express 落到 SPA）---------
+  const communityProfileMatch =
+    pathOnly.match(/^\/api\/community\/users\/([^/]+)\/profile$/) || null;
+  const communityFollowMatch = pathOnly.match(/^\/api\/community\/follow\/([^/]+)$/) || null;
+  const isStateOrCommunityDirect =
+    (req.method === "GET" &&
+      (pathOnly === "/api/state" ||
+        pathOnly === "/api/community/feed" ||
+        pathOnly === "/api/community/following" ||
+        pathOnly === "/api/community/leaderboard")) ||
+    (req.method === "GET" && communityProfileMatch) ||
+    (req.method === "PATCH" && pathOnly === "/api/me/community-profile") ||
+    ((req.method === "POST" || req.method === "DELETE") && communityFollowMatch);
+
+  if (isStateOrCommunityDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+
+      console.log("[api/index.js] direct-handle state/community path=%s method=%s", pathOnly, req.method);
+
+      const {
+        getState,
+        updateUserCommunityProfile,
+        setCommunityFollow,
+        removeCommunityFollow,
+        isCommunityFollowing,
+      } = require("../src/db");
+      const {
+        getLeaderboard,
+        getFollowingCards,
+        getFeedTrades,
+        enrichFeedRowsWithTencent,
+        enrichCardsTopPositionsWithTencent,
+        enrichLeaderboardPayloadWithTencent,
+        getPublicProfileDetail,
+        enrichPublicProfileDetailWithTencent,
+        displayNameForUser,
+      } = require("../src/community-service");
+
+      const readRawBody = () =>
+        new Promise((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => (data += chunk));
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+
+      if (req.method === "GET" && pathOnly === "/api/state") {
+        const data = await getState(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (req.method === "GET" && pathOnly === "/api/community/feed") {
+        const rows = await getFeedTrades(userId);
+        await enrichFeedRowsWithTencent(rows);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: rows }));
+        return;
+      }
+
+      if (req.method === "GET" && pathOnly === "/api/community/following") {
+        const cards = await getFollowingCards(userId);
+        await enrichCardsTopPositionsWithTencent(cards);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: cards }));
+        return;
+      }
+
+      if (req.method === "GET" && pathOnly === "/api/community/leaderboard") {
+        const data = await getLeaderboard();
+        await enrichLeaderboardPayloadWithTencent(data);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (req.method === "GET" && communityProfileMatch) {
+        const targetId = String(communityProfileMatch[1] || "").trim();
+        const detail = await getPublicProfileDetail(userId, targetId);
+        if (detail.error === "unauthorized") {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "未登录" }));
+          return;
+        }
+        if (detail.error === "hidden") {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
+          return;
+        }
+        await enrichPublicProfileDetailWithTencent(detail);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: detail }));
+        return;
+      }
+
+      if (req.method === "PATCH" && pathOnly === "/api/me/community-profile") {
+        let body = {};
+        const raw = await readRawBody();
+        if (raw) {
+          try {
+            body = JSON.parse(raw);
+          } catch (_) {}
+        }
+        try {
+          const u = await updateUserCommunityProfile(userId, {
+            nickname: body.nickname,
+            communityPublic: body.communityPublic,
+          });
+          res.statusCode = 200;
+          res.end(
+            JSON.stringify({
+              ok: true,
+              profile: {
+                nickname: u.nickname != null && String(u.nickname).trim() ? String(u.nickname).trim() : null,
+                communityPublic: !!Number(u.community_public),
+                displayName: displayNameForUser(u),
+              },
+            })
+          );
+        } catch (error) {
+          const msg = error?.message || "更新失败";
+          if (msg.includes("nickname taken")) {
+            res.statusCode = 409;
+            res.end(JSON.stringify({ ok: false, error: "昵称已被占用" }));
+            return;
+          }
+          if (msg.includes("too long")) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ ok: false, error: "昵称最长 20 个字符" }));
+            return;
+          }
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: msg }));
+        }
+        return;
+      }
+
+      if (communityFollowMatch && (req.method === "POST" || req.method === "DELETE")) {
+        const targetId = String(communityFollowMatch[1] || "").trim();
+        if (!targetId) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "invalid target" }));
+          return;
+        }
+        if (req.method === "POST") {
+          await setCommunityFollow(userId, targetId);
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, following: await isCommunityFollowing(userId, targetId) }));
+        } else {
+          await removeCommunityFollow(userId, targetId);
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true }));
+        }
+        return;
+      }
+    } catch (error) {
+      console.error("[api/index.js] direct state/community error:", error);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify({ ok: false, error: error?.message || "state/community handler failed" }));
+      }
+      return;
+    }
+  }
+
   // 不依赖 server.js 的诊断端点：证明 /api/(.*) 这条路由至少能到达函数
-  if (req.url && req.url.startsWith("/api/diag/v5")) {
+  if (req.url && urlPathOnly(req.url).startsWith("/api/diag/v5")) {
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
