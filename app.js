@@ -626,15 +626,20 @@ async function startAppAfterAuth(options = {}) {
     state.route = state.appModule === "community" ? "community-feed" : "earning";
     persistState();
   }
-  try {
-    await Promise.allSettled([
-      initializeFxRates({ skipFinalRender: true }),
-      refreshMarketData({ skipFinalRender: true }),
-    ]);
-  } catch {
-    // ignore
-  }
+  // 首屏先渲染：汇率/港股行情等外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   renderAll();
+  void Promise.allSettled([
+    initializeFxRates({ skipFinalRender: true }),
+    refreshMarketData({ skipFinalRender: true }),
+  ]).finally(() => {
+    renderAll();
+    if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
+      refreshPublicProfileEarningPanel();
+      if (state.communityProfileTab === "analysis") {
+        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+      }
+    }
+  });
   if (!quoteIntervalStarted) {
     quoteIntervalStarted = true;
     window.setInterval(() => {
@@ -758,7 +763,7 @@ async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
 
 async function fetchFxHistorySeriesFrankfurter(currency, startDate, endDate) {
   const url = `${FX_API_BASE}/${startDate}..${endDate}?from=${encodeURIComponent(currency)}&to=CNY`;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
   if (!response.ok) {
     throw new Error(`FX请求失败: ${currency} ${startDate}..${endDate}`);
   }
@@ -810,7 +815,7 @@ async function fetchSinaForexDayKSeries(currency) {
   const url = apiReady
     ? `${API_BASE}/fx/sina-dayk?pair=${encodeURIComponent(pair)}`
     : SINA_FX_DAYK_DIRECT[currency];
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
   if (!response.ok) {
     throw new Error(`sina dayk ${response.status}`);
   }
@@ -7703,7 +7708,7 @@ function parseWaihui123FxResponse(json) {
 
 async function fetchRealtimeForexWaihui123() {
   const url = apiReady ? `${API_BASE}/fx/waihui123` : WAIHUI123_FX_API;
-  const r = await fetch(url, { cache: "no-store" });
+  const r = await apiFetch(url, { cache: "no-store", timeoutMs: API_GET_TIMEOUT_MS });
   if (!r.ok) {
     throw new Error(`waihui ${r.status}`);
   }
