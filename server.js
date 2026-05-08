@@ -387,6 +387,110 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
   };
 }
 
+const PROBE_DEFAULT_TIMEOUT_MS = 12_000;
+const PROBE_MAX_TIMEOUT_MS = 30_000;
+const PROBE_DEFAULT_ROUNDS = 1;
+const PROBE_MAX_ROUNDS = 5;
+
+function parsePositiveInt(input, fallback, min, max) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  const v = Math.floor(n);
+  return Math.min(max, Math.max(min, v));
+}
+
+function summarizeSinaProbeBody(text) {
+  try {
+    const payload = JSON.parse(String(text || ""));
+    const root = payload?.result?.data || payload?.data || {};
+    const symbols = Object.keys(root || {});
+    let totalBars = 0;
+    for (const key of symbols) {
+      const rows = Array.isArray(root?.[key]) ? root[key] : [];
+      totalBars += rows.length;
+    }
+    return {
+      parseOk: true,
+      symbols,
+      totalBars,
+    };
+  } catch (error) {
+    return {
+      parseOk: false,
+      parseError: error?.message || "invalid json",
+    };
+  }
+}
+
+function summarizeTencentProbeBody(text) {
+  const map = parseTencentQuoteTextToMap(text);
+  return {
+    parseOk: map.size > 0,
+    records: map.size,
+    keys: [...map.keys()].slice(0, 12),
+  };
+}
+
+async function runUpstreamHttpProbe({ name, url, timeoutMs, parser }) {
+  const startedAt = Date.now();
+  const result = {
+    name,
+    url,
+    timeoutMs,
+    startedAt: new Date(startedAt).toISOString(),
+    elapsedMs: 0,
+    ok: false,
+    status: 0,
+    statusText: "",
+    error: "",
+    response: {
+      contentType: "",
+      contentLength: 0,
+      preview: "",
+      summary: {},
+    },
+  };
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview-probe/1.0)" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await response.text();
+    result.ok = response.ok;
+    result.status = Number(response.status || 0);
+    result.statusText = String(response.statusText || "");
+    result.response.contentType = String(response.headers.get("content-type") || "");
+    result.response.contentLength = Buffer.byteLength(text, "utf8");
+    result.response.preview = String(text || "").slice(0, 220);
+    result.response.summary = typeof parser === "function" ? parser(text) : {};
+  } catch (error) {
+    result.error = error?.message || String(error);
+  } finally {
+    result.elapsedMs = Date.now() - startedAt;
+  }
+  return result;
+}
+
+async function runUpstreamProbeRound({ timeoutMs, sinaUrl, tencentUrl }) {
+  const [sina, tencent] = await Promise.all([
+    runUpstreamHttpProbe({
+      name: "sina",
+      url: sinaUrl,
+      timeoutMs,
+      parser: summarizeSinaProbeBody,
+    }),
+    runUpstreamHttpProbe({
+      name: "tencent",
+      url: tencentUrl,
+      timeoutMs,
+      parser: summarizeTencentProbeBody,
+    }),
+  ]);
+  return { sina, tencent };
+}
+
 /**
  * 新浪 DailyK_Batch 代理：优先上游实时，失败时回退 DB/内存缓存并显式标记延迟数据。
  */
@@ -603,6 +707,95 @@ function requireAuth(req, res, next) {
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, node: process.version });
+});
+
+/**
+ * 上游可达性探针：用于验证「当前 Vercel 服务器」访问新浪/腾讯是否稳定。
+ * 浏览器可直接访问：
+ * /api/probe/upstream
+ * /api/probe/upstream?rounds=3&timeoutMs=15000&len=120
+ */
+app.get("/api/probe/upstream", async (req, res) => {
+  const rounds = parsePositiveInt(req.query.rounds, PROBE_DEFAULT_ROUNDS, 1, PROBE_MAX_ROUNDS);
+  const timeoutMs = parsePositiveInt(
+    req.query.timeoutMs,
+    PROBE_DEFAULT_TIMEOUT_MS,
+    1_000,
+    PROBE_MAX_TIMEOUT_MS
+  );
+  const len = parsePositiveInt(req.query.len, MARKET_KLINE_DEFAULT_LEN, 2, 5000);
+  const sinaSymbolsRaw =
+    req.query.sinaSymbols != null ? String(req.query.sinaSymbols) : "us_TSM,cn_sh601899,fx_USDCNY";
+  const tencentQRaw =
+    req.query.tencentQ != null ? String(req.query.tencentQ) : "usTSM,sh601899,whUSDCNY";
+  const sinaSymbols = [...new Set(sinaSymbolsRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  const tencentQ = [...new Set(tencentQRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!sinaSymbols.length || !tencentQ.length) {
+    res.status(400).json({ ok: false, error: "sinaSymbols/tencentQ required" });
+    return;
+  }
+
+  const sinaUrl =
+    "https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?" +
+    new URLSearchParams({
+      symbols: sinaSymbols.join(","),
+      len: String(len),
+      asc: "0",
+    }).toString();
+  const tencentUrl = `https://qt.gtimg.cn/q=${encodeURIComponent(tencentQ.join(","))}`;
+
+  const probeStartedAt = Date.now();
+  const roundsOut = [];
+  for (let i = 0; i < rounds; i += 1) {
+    const roundStartedAt = Date.now();
+    const upstream = await runUpstreamProbeRound({ timeoutMs, sinaUrl, tencentUrl });
+    roundsOut.push({
+      round: i + 1,
+      startedAt: new Date(roundStartedAt).toISOString(),
+      elapsedMs: Date.now() - roundStartedAt,
+      upstream,
+    });
+  }
+
+  const all = roundsOut.flatMap((r) => [r.upstream.sina, r.upstream.tencent]);
+  const okCount = all.filter((x) => x.ok).length;
+  const timeoutCount = all.filter((x) => /timed out/i.test(String(x.error || ""))).length;
+  const errorCount = all.length - okCount;
+  const avgElapsedMs =
+    all.length > 0
+      ? Math.round(all.reduce((sum, x) => sum + (Number(x.elapsedMs) || 0), 0) / all.length)
+      : 0;
+
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    message: "Runs from current server runtime, not browser network.",
+    runtime: {
+      node: process.version,
+      env: process.env.VERCEL ? "vercel" : "local",
+      vercelRegion: process.env.VERCEL_REGION || null,
+      vercelUrl: process.env.VERCEL_URL || null,
+      requestHost: req.headers.host || null,
+      xVercelId: req.headers["x-vercel-id"] || null,
+      ts: Date.now(),
+    },
+    config: {
+      rounds,
+      timeoutMs,
+      len,
+      sinaSymbols,
+      tencentQ,
+    },
+    summary: {
+      totalChecks: all.length,
+      okCount,
+      errorCount,
+      timeoutCount,
+      avgElapsedMs,
+      totalElapsedMs: Date.now() - probeStartedAt,
+    },
+    rounds: roundsOut,
+  });
 });
 
 // 部署版本自证端点：直接硬编码当前构建号，便于在浏览器判断 Vercel 是否跑的是最新代码
