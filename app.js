@@ -638,10 +638,7 @@ async function startAppAfterAuth(options = {}) {
   }
   // 首屏先渲染：汇率/港股行情等外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   renderAll();
-  void Promise.allSettled([
-    initializeFxRates({ skipFinalRender: true }),
-    refreshMarketData({ skipFinalRender: true }),
-  ]).finally(() => {
+  void refreshMarketData({ skipFinalRender: true }).finally(() => {
     renderAll();
     if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
       refreshPublicProfileEarningPanel();
@@ -650,6 +647,10 @@ async function startAppAfterAuth(options = {}) {
       }
     }
   });
+  // 历史汇率延后拉取，避免与首屏快照并发请求。
+  window.setTimeout(() => {
+    void initializeFxRates({ skipFinalRender: true });
+  }, 1_200);
   if (!quoteIntervalStarted) {
     quoteIntervalStarted = true;
     window.setInterval(() => {
@@ -7129,16 +7130,8 @@ async function refreshMarketData(opts = {}) {
 
   try {
     await hydrateKlineFromLocalDb();
-
-    const fxSpotRes = await fetchRealtimeForexSpot().catch(() => ({ rates: {}, delayed: true }));
-    if (fxSpotRes?.delayed) {
-      markMarketDataDelayed("fx-cache");
-    }
-    if (fxSpotRes?.rates && typeof fxSpotRes.rates === "object") {
-      Object.assign(state.fxSpot, fxSpotRes.rates);
-    }
-
     const symbols = collectSymbolsForMarket();
+    const klineSymbols = collectKlineSymbolsForMarket();
     if (!symbols.length) {
       state.marketLoading = false;
       if (!skipFinalRender) {
@@ -7146,50 +7139,53 @@ async function refreshMarketData(opts = {}) {
       }
       return;
     }
-    let quoteMap = {};
+
+    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
     try {
-      quoteMap = await fetchRealtimeQuotes(symbols);
-    } catch (error) {
-      quoteMap = {};
-    }
-    if (Object.keys(quoteMap).length) {
-      Object.entries(quoteMap).forEach(([symbol, quote]) => {
+      const snapshot = await fetchMarketSnapshot({
+        quoteSymbols: symbols,
+        klineSymbols: needKlineSymbols,
+        klineLen: KLINE_DATALEN,
+        includeFx: true,
+      });
+      if (snapshot?.delayed) {
+        markMarketDataDelayed(snapshot.delaySource || "cache");
+      }
+      if (snapshot?.fxSpot && typeof snapshot.fxSpot === "object") {
+        Object.assign(state.fxSpot, snapshot.fxSpot);
+      }
+      const quoteMap = snapshot?.quoteMap && typeof snapshot.quoteMap === "object" ? snapshot.quoteMap : {};
+      if (Object.keys(quoteMap).length) {
+        Object.entries(quoteMap).forEach(([symbol, quote]) => {
+          const normalized = normalizeSymbol(symbol);
+          const alias = normalized.replace(/^gb_/i, "");
+          state.quoteMap[normalized] = quote;
+          state.quoteMap[alias] = quote;
+          const nm = String(quote?.name || "").trim();
+          const display = quoteNameForDisplay(normalized, nm);
+          if (display) {
+            state.nameMap[normalized] = display;
+            state.nameMap[alias] = display;
+          }
+        });
+      }
+      if (snapshot?.quoteTime) {
+        state.quoteTime = String(snapshot.quoteTime);
+      }
+      const klineMap = snapshot?.klineMap && typeof snapshot.klineMap === "object" ? snapshot.klineMap : {};
+      Object.entries(klineMap).forEach(([symbol, list]) => {
+        if (!Array.isArray(list) || !list.length) {
+          return;
+        }
         const normalized = normalizeSymbol(symbol);
         const alias = normalized.replace(/^gb_/i, "");
-        state.quoteMap[normalized] = quote;
-        state.quoteMap[alias] = quote;
-        const nm = String(quote?.name || "").trim();
-        const display = quoteNameForDisplay(normalized, nm);
-        if (display) {
-          state.nameMap[normalized] = display;
-          state.nameMap[alias] = display;
-        }
+        state.klineMap[normalized] = list;
+        state.klineMap[alias] = list;
       });
-      const times = Object.values(quoteMap)
-        .map((item) => item.time)
-        .filter(Boolean);
-      state.quoteTime = times[0] || state.quoteTime;
+    } catch (error) {
+      console.warn("快照拉取失败，保留本地数据展示", error);
     }
 
-    const klineSymbols = collectKlineSymbolsForMarket();
-    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
-    if (needKlineSymbols.length) {
-      try {
-        const batch = await fetchKlineDataSinaBatch(needKlineSymbols, KLINE_DATALEN);
-        for (const sym of needKlineSymbols) {
-          const list = batch[sym];
-          if (!Array.isArray(list) || !list.length) {
-            continue;
-          }
-          const normalized = normalizeSymbol(sym);
-          const alias = normalized.replace(/^gb_/i, "");
-          state.klineMap[normalized] = list;
-          state.klineMap[alias] = list;
-        }
-      } catch (error) {
-        console.warn("批量K线拉取失败", error);
-      }
-    }
     for (const symbol of klineSymbols) {
       // Fallback "realtime": use local daily-kline only; do not fan out remote single-symbol requests.
       if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
@@ -7250,6 +7246,34 @@ async function fetchLatestQuoteFromDailyKlineFallback(symbol, options = {}) {
   } catch (error) {
     return null;
   }
+}
+
+async function fetchMarketSnapshot({ quoteSymbols = [], klineSymbols = [], klineLen = KLINE_DATALEN, includeFx = true } = {}) {
+  if (!apiReady) {
+    throw new Error("api not ready");
+  }
+  const body = {
+    quoteSymbols: [...new Set((quoteSymbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))],
+    klineSymbols: [...new Set((klineSymbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))],
+    klineLen: Math.max(2, Math.min(5000, Number(klineLen) || KLINE_DATALEN)),
+    includeFx: includeFx !== false,
+  };
+  const response = await apiFetch(`${getApiBaseForFetch()}/market/snapshot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    timeoutMs: 35_000,
+  });
+  readMarketDelayFromResponse(response);
+  if (!response.ok) {
+    throw new Error(`market snapshot ${response.status}`);
+  }
+  const result = await response.json();
+  if (!result?.ok) {
+    throw new Error(String(result?.error || "market snapshot failed"));
+  }
+  return result;
 }
 
 async function fetchRealtimeQuotes(symbols) {

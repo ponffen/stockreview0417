@@ -155,6 +155,238 @@ function buildTencentQuoteTextFromMap(reqKeys, payloadMap) {
   return lines.join("\n");
 }
 
+function toTencentQuoteSymbol(rawSymbol) {
+  if (!rawSymbol) {
+    return "";
+  }
+  const src = String(rawSymbol).trim();
+  const raw = src.toLowerCase().replace(/\s+/g, "");
+  const orig = src.replace(/\s+/g, "");
+  if (/^sh\d{6}$/.test(raw) || /^sz\d{6}$/.test(raw) || /^hk\d{5}$/.test(raw)) {
+    return raw;
+  }
+  if (/^us_[a-z0-9._-]+$/i.test(src)) {
+    const base = src.replace(/^us_/i, "").replace(/\.(OQ|N)$/i, "");
+    return `us${base.toUpperCase()}`;
+  }
+  if (/^us[A-Z0-9._-]+$/i.test(orig)) {
+    const base = orig.replace(/^us/i, "").replace(/\.(OQ|N)$/i, "");
+    return `us${base.toUpperCase()}`;
+  }
+  if (/^gb_/i.test(raw)) {
+    return `us${raw.slice(3).toUpperCase()}`;
+  }
+  if (/^rt_hk/i.test(raw)) {
+    const code = raw.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
+    return `hk${code}`;
+  }
+  if (/^[a-z][a-z0-9._-]*$/i.test(raw)) {
+    return `us${raw.toUpperCase()}`;
+  }
+  return "";
+}
+
+function parseTencentPriceField(segment) {
+  if (segment == null) {
+    return NaN;
+  }
+  const t = String(segment).trim().replace(/,/g, "");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function parseQuoteTimeToDateKey(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") {
+    return null;
+  }
+  const t = timeStr.trim();
+  if (!t || t === "--") {
+    return null;
+  }
+  const compact = /^(\d{4})(\d{2})(\d{2})/.exec(t.replace(/\s/g, ""));
+  if (compact && compact[0].length >= 8) {
+    return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  }
+  const iso = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/.exec(t);
+  if (iso) {
+    return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}-${String(Number(iso[3])).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+function parseTencentQuoteRecord(symbol, rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return null;
+  }
+  const parts = rawText.split("~");
+  if (parts.length < 6) {
+    return null;
+  }
+  const name = String(parts[1] || "").trim() || symbol;
+  const current = parseTencentPriceField(parts[3]);
+  const prevClose = parseTencentPriceField(parts[4]);
+  const time = String(parts[30] || parts[31] || "--").trim();
+  const quoteDate = parseQuoteTimeToDateKey(time);
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    name,
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time: time || "--",
+    quoteDate,
+  };
+}
+
+function parseTencentForexQuotePayload(rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return null;
+  }
+  const parts = rawText.split("~");
+  if (parts.length < 4) {
+    return null;
+  }
+  const current = parseTencentPriceField(parts[3]);
+  const prevClose = parseTencentPriceField(parts[4]);
+  const time = String(parts[parts.length - 1] || parts[10] || "").trim() || "--";
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time,
+  };
+}
+
+async function fetchSinaDailyBatchWithFallback(inputSymbols, options = {}) {
+  const start = options.start != null ? String(options.start) : "";
+  const end = options.end != null ? String(options.end) : "";
+  const asc = options.asc != null ? String(options.asc) : "0";
+  const len = normalizeLenParam(options.len, MARKET_KLINE_DEFAULT_LEN);
+  const symbols = [...new Set((inputSymbols || []).map((s) => toSinaDailyKBatchSymbol(s)).filter(Boolean))];
+  if (!symbols.length) {
+    return { ok: false, data: {}, delayed: false, source: "", error: "invalid symbol mapping" };
+  }
+  let payload = {};
+  let upstreamOk = false;
+  try {
+    const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
+    if (result.ok) {
+      upstreamOk = true;
+      payload = result.data || {};
+      for (const sym of symbols) {
+        const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
+        if (rows.length) {
+          cacheSet(sinaKlineMemoryCache, sym, rows);
+        }
+      }
+    }
+  } catch {
+    // ignore and continue to cache fallback
+  }
+
+  const delayedSources = new Set();
+  for (const sym of symbols) {
+    const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
+    if (rows.length) {
+      continue;
+    }
+    const fallback = await loadSinaFallbackRows(sym, { len, start, end });
+    if (fallback.rows.length) {
+      payload[sym] = fallback.rows;
+      delayedSources.add(fallback.source || "cache");
+    }
+  }
+
+  if (!Object.keys(payload).length) {
+    return { ok: false, data: {}, delayed: false, source: "", error: "sina kline failed and no cache" };
+  }
+  const delayed = delayedSources.size > 0 || !upstreamOk;
+  return {
+    ok: true,
+    data: payload,
+    delayed,
+    source: delayed ? [...delayedSources].join(",") || "cache" : "",
+    error: "",
+  };
+}
+
+async function fetchTencentQuotePayloadMap(reqKeys) {
+  const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!keys.length) {
+    return { ok: false, payloadMap: new Map(), delayed: false, source: "", error: "empty q keys", missingKeys: [] };
+  }
+  let payloadMap = new Map();
+  let usedCache = false;
+  let upstreamError = "";
+  try {
+    const url = `https://qt.gtimg.cn/q=${encodeURIComponent(keys.join(","))}&_=${Date.now()}`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const text = iconv.decode(buf, "gbk");
+      const liveMap = parseTencentQuoteTextToMap(text);
+      for (const [k, payload] of liveMap.entries()) {
+        cacheSet(tencentQuoteMemoryCache, k, payload);
+      }
+      for (const key of keys) {
+        const k = String(key).toLowerCase();
+        if (liveMap.has(k)) {
+          payloadMap.set(k, liveMap.get(k));
+          continue;
+        }
+        const cached = cacheGet(tencentQuoteMemoryCache, k);
+        if (cached != null) {
+          payloadMap.set(k, cached);
+          usedCache = true;
+        }
+      }
+    } else {
+      upstreamError = `tencent ${r.status}`;
+      for (const key of keys) {
+        const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+        if (cached != null) {
+          payloadMap.set(String(key).toLowerCase(), cached);
+          usedCache = true;
+        }
+      }
+    }
+  } catch (error) {
+    upstreamError = error?.message || "tencent quote failed";
+    for (const key of keys) {
+      const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+      if (cached != null) {
+        payloadMap.set(String(key).toLowerCase(), cached);
+        usedCache = true;
+      }
+    }
+  }
+  if (!payloadMap.size) {
+    return {
+      ok: false,
+      payloadMap,
+      delayed: false,
+      source: "",
+      error: upstreamError || "tencent quote failed and no cache",
+      missingKeys: keys,
+    };
+  }
+  const missingKeys = keys.filter((key) => !payloadMap.has(String(key).toLowerCase()));
+  return {
+    ok: true,
+    payloadMap,
+    delayed: usedCache,
+    source: usedCache ? "memory-cache" : "",
+    error: "",
+    missingKeys,
+  };
+}
+
 /**
  * 新浪 DailyK_Batch 代理：优先上游实时，失败时回退 DB/内存缓存并显式标记延迟数据。
  */
@@ -187,49 +419,25 @@ async function handleSinaKlineProxy(req, res) {
     return;
   }
   const isBatch = symbolsRaw || symbols.length > 1;
-  const len = normalizeLenParam(lenRaw, MARKET_KLINE_DEFAULT_LEN);
 
-  try {
-    const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
-    if (result.ok) {
-      const payload = result.data || {};
-      for (const sym of symbols) {
-        const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
-        if (rows.length) {
-          cacheSet(sinaKlineMemoryCache, sym, rows);
-        }
-      }
-      res.setHeader("Cache-Control", "no-store");
-      if (isBatch) {
-        res.json(payload);
-      } else {
-        res.json(payload[symbols[0]] || []);
-      }
-      return;
-    }
-  } catch {
-    // ignore and continue to cache fallback
-  }
-
-  const fallback = {};
-  const delayedSources = new Set();
-  for (const sym of symbols) {
-    const { rows, source } = await loadSinaFallbackRows(sym, { len, start, end });
-    if (rows.length) {
-      fallback[sym] = rows;
-      delayedSources.add(source || "cache");
-    }
-  }
-  if (!Object.keys(fallback).length) {
-    res.status(502).json({ ok: false, error: "sina kline failed and no cache" });
+  const result = await fetchSinaDailyBatchWithFallback(symbols, {
+    len: lenRaw,
+    asc,
+    start,
+    end,
+  });
+  if (!result.ok) {
+    res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
     return;
   }
-  setDelayedHeaders(res, [...delayedSources].join(","));
+  if (result.delayed) {
+    setDelayedHeaders(res, result.source);
+  }
   res.setHeader("Cache-Control", "no-store");
   if (isBatch) {
-    res.json(fallback);
+    res.json(result.data || {});
   } else {
-    res.json(fallback[symbols[0]] || []);
+    res.json((result.data || {})[symbols[0]] || []);
   }
 }
 
@@ -966,70 +1174,162 @@ app.get("/api/quote/tencent", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid q keys" });
     return;
   }
-  let payloadMap = new Map();
-  let usedCache = false;
-  try {
-    const url = `https://qt.gtimg.cn/q=${encodeURIComponent(q)}&_=${Date.now()}`;
-    const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (r.ok) {
-      const buf = Buffer.from(await r.arrayBuffer());
-      const text = iconv.decode(buf, "gbk");
-      const liveMap = parseTencentQuoteTextToMap(text);
-      for (const [k, payload] of liveMap.entries()) {
-        cacheSet(tencentQuoteMemoryCache, k, payload);
-      }
-      for (const key of reqKeys) {
-        const k = String(key).toLowerCase();
-        if (liveMap.has(k)) {
-          payloadMap.set(k, liveMap.get(k));
-          continue;
-        }
-        const cached = cacheGet(tencentQuoteMemoryCache, k);
-        if (cached != null) {
-          payloadMap.set(k, cached);
-          usedCache = true;
-        }
-      }
-    } else {
-      for (const key of reqKeys) {
-        const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
-        if (cached != null) {
-          payloadMap.set(String(key).toLowerCase(), cached);
-          usedCache = true;
-        }
-      }
-    }
-  } catch (error) {
-    for (const key of reqKeys) {
-      const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
-      if (cached != null) {
-        payloadMap.set(String(key).toLowerCase(), cached);
-        usedCache = true;
-      }
-    }
-    if (!payloadMap.size) {
-      res.status(502).json({ ok: false, error: error.message || "tencent quote failed" });
-      return;
-    }
-  }
-  if (!payloadMap.size) {
-    res.status(502).json({ ok: false, error: "tencent quote failed and no cache" });
+  const result = await fetchTencentQuotePayloadMap(reqKeys);
+  if (!result.ok) {
+    res.status(502).json({ ok: false, error: result.error || "tencent quote failed" });
     return;
   }
-  const text = buildTencentQuoteTextFromMap(reqKeys, payloadMap);
+  const text = buildTencentQuoteTextFromMap(reqKeys, result.payloadMap);
   if (!text) {
     res.status(502).json({ ok: false, error: "no quote payload available" });
     return;
   }
-  if (usedCache) {
-    setDelayedHeaders(res, "memory-cache");
+  if (result.delayed) {
+    setDelayedHeaders(res, result.source);
   }
   res.setHeader("Cache-Control", "no-store");
   res.type("text/plain; charset=utf-8");
   res.send(text);
+});
+
+/**
+ * 行情快照：一次返回 quote + kline + fx，减少前端并发请求与补拉风暴。
+ */
+app.post("/api/market/snapshot", requireAuth, async (req, res) => {
+  const quoteSymbolsInput = Array.isArray(req.body?.quoteSymbols) ? req.body.quoteSymbols : [];
+  const klineSymbolsInput = Array.isArray(req.body?.klineSymbols) ? req.body.klineSymbols : [];
+  const includeFx = req.body?.includeFx !== false;
+  const klineLen = req.body?.klineLen != null ? req.body.klineLen : MARKET_KLINE_DEFAULT_LEN;
+
+  const quoteSymbols = [...new Set(quoteSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+  const klineSymbols = [...new Set(klineSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+  if (quoteSymbols.length > 300 || klineSymbols.length > 300) {
+    res.status(400).json({ ok: false, error: "too many symbols" });
+    return;
+  }
+
+  const delayedSources = new Set();
+  const quoteMap = {};
+  const fxSpot = {};
+  const klineMap = {};
+  const missingQuotes = [];
+  const missingKline = [];
+
+  const tencentKeyToSymbols = new Map();
+  for (const symbol of quoteSymbols) {
+    const key = toTencentQuoteSymbol(symbol);
+    if (!key) {
+      missingQuotes.push(symbol);
+      continue;
+    }
+    const list = tencentKeyToSymbols.get(key) || [];
+    list.push(symbol);
+    tencentKeyToSymbols.set(key, list);
+  }
+  const tencentKeys = [...tencentKeyToSymbols.keys()];
+  if (includeFx) {
+    tencentKeys.push("whUSDCNY", "whHKDCNY");
+  }
+
+  if (tencentKeys.length) {
+    const tRes = await fetchTencentQuotePayloadMap(tencentKeys);
+    if (tRes.ok) {
+      if (tRes.delayed) {
+        delayedSources.add(tRes.source || "cache");
+      }
+      for (const [key, symbols] of tencentKeyToSymbols.entries()) {
+        const payload = tRes.payloadMap.get(String(key).toLowerCase());
+        if (!payload) {
+          missingQuotes.push(...symbols);
+          continue;
+        }
+        for (const symbol of symbols) {
+          const parsed = parseTencentQuoteRecord(symbol, payload);
+          if (parsed) {
+            quoteMap[symbol] = parsed;
+          } else {
+            missingQuotes.push(symbol);
+          }
+        }
+      }
+      if (includeFx) {
+        const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
+        const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
+        if (usd && Number.isFinite(usd.current) && usd.current > 0) {
+          fxSpot.USD = usd.current;
+        }
+        if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
+          fxSpot.HKD = hkd.current;
+        }
+      }
+    } else {
+      missingQuotes.push(...quoteSymbols);
+      if (includeFx) {
+        delayedSources.add("quote-unavailable");
+      }
+    }
+  }
+
+  if (klineSymbols.length) {
+    const localBySinaSymbol = new Map();
+    for (const symbol of klineSymbols) {
+      const sinaSymbol = toSinaDailyKBatchSymbol(symbol);
+      if (!sinaSymbol) {
+        missingKline.push(symbol);
+        continue;
+      }
+      if (!localBySinaSymbol.has(sinaSymbol)) {
+        localBySinaSymbol.set(sinaSymbol, []);
+      }
+      localBySinaSymbol.get(sinaSymbol).push(symbol);
+    }
+    if (localBySinaSymbol.size) {
+      const kRes = await fetchSinaDailyBatchWithFallback([...localBySinaSymbol.keys()], {
+        len: klineLen,
+        asc: "0",
+      });
+      if (kRes.ok) {
+        if (kRes.delayed) {
+          delayedSources.add(kRes.source || "cache");
+        }
+        for (const [sinaSymbol, locals] of localBySinaSymbol.entries()) {
+          const rows = Array.isArray(kRes.data?.[sinaSymbol]) ? kRes.data[sinaSymbol] : [];
+          if (!rows.length) {
+            missingKline.push(...locals);
+            continue;
+          }
+          for (const symbol of locals) {
+            klineMap[symbol] = rows;
+          }
+        }
+      } else {
+        missingKline.push(...klineSymbols);
+      }
+    }
+  }
+
+  const quoteTime = Object.values(quoteMap)
+    .map((item) => item?.time)
+    .find(Boolean) || "--";
+  const delayed = delayedSources.size > 0;
+  const delaySource = [...delayedSources].filter(Boolean).join(",");
+  if (delayed) {
+    setDelayedHeaders(res, delaySource || "cache");
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    quoteMap,
+    klineMap,
+    fxSpot,
+    quoteTime,
+    delayed,
+    delaySource,
+    missing: {
+      quotes: [...new Set(missingQuotes)],
+      kline: [...new Set(missingKline)],
+    },
+  });
 });
 
 /**
