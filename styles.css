@@ -217,6 +217,16 @@ body {
   align-items: center;
 }
 
+.market-data-status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.market-data-status.is-delayed {
+  color: #d46b08;
+}
+
 .head-select-wrap {
   position: relative;
   display: inline-flex;

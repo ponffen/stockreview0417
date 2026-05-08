@@ -82,8 +82,25 @@ function getApiBaseForFetch() {
   }
   return API_BASE;
 }
+
+function markMarketDataDelayed(source = "cache") {
+  state.marketDataDelayed = true;
+  if (!state.marketDataDelaySource) {
+    state.marketDataDelaySource = String(source || "cache");
+  }
+}
+
+function readMarketDelayFromResponse(response) {
+  if (!response || !response.headers || typeof response.headers.get !== "function") {
+    return;
+  }
+  if (String(response.headers.get("x-market-data-delayed") || "") !== "1") {
+    return;
+  }
+  markMarketDataDelayed(response.headers.get("x-market-data-source") || "cache");
+}
 const QUOTE_REFRESH_MS = 60_000;
-const KLINE_DATALEN = 1023;
+const KLINE_DATALEN = 120;
 const CHART_FALLBACK_DAYS = 90;
 const STATE_SYNC_KEYS = [
   "route",
@@ -193,6 +210,8 @@ const state = {
   klineMap: {},
   nameMap: {},
   quoteTime: "--",
+  marketDataDelayed: false,
+  marketDataDelaySource: "",
   marketLoading: false,
   editingTradeId: null,
   editingAccountId: null,
@@ -1223,92 +1242,6 @@ function getTradingDateKey(baseDate = new Date()) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-async function fetchQuoteNames(symbols) {
-  const targets = [...new Set(symbols.filter(Boolean).map((symbol) => normalizeSymbol(symbol)))].filter((symbol) => {
-    const alias = symbol.replace(/^gb_/i, "");
-    const existing = (state.nameMap[symbol] || state.nameMap[alias] || "").trim();
-    const m = inferMarket(symbol);
-    if (m === "A股" || m === "港股") {
-      return !hasCnNameLabel(existing);
-    }
-    return !existing;
-  });
-  if (!targets.length) {
-    return;
-  }
-  const requestToSource = new Map();
-  targets.forEach((symbol) => {
-    const requestSymbol = toQuoteRequestSymbol(symbol);
-    if (!requestToSource.has(requestSymbol)) {
-      requestToSource.set(requestSymbol, symbol);
-    }
-  });
-  try {
-    const quotes = await fetchRealtimeQuotes([...requestToSource.keys()]);
-    Object.entries(quotes || {}).forEach(([requestSymbol, quote]) => {
-      const sourceSymbol = normalizeSymbol(requestToSource.get(requestSymbol) || requestSymbol.replace(/^gb_/i, ""));
-      const name = String(quote?.name || "").trim();
-      const display = quoteNameForDisplay(sourceSymbol, name);
-      if (display) {
-        state.nameMap[sourceSymbol] = display;
-        state.nameMap[sourceSymbol.replace(/^gb_/i, "")] = display;
-      }
-    });
-  } catch {
-    // ignore quote-name failures, keep existing display names
-  }
-}
-
-/** A股/港股：新浪腾讯未返回简称时，由服务端走东方财富 f14 兜底（无需用户改代码）。 */
-async function enrichNamesFromEastmoney(symbols) {
-  if (!apiReady) {
-    return;
-  }
-  const uniq = [...new Set(symbols.map((s) => normalizeSymbol(s)).filter(Boolean))];
-  const need = uniq.filter((sym) => {
-    const m = inferMarket(sym);
-    if (m !== "A股" && m !== "港股") {
-      return false;
-    }
-    const alias = sym.replace(/^gb_/i, "");
-    const fromMap = (state.nameMap[sym] || state.nameMap[alias] || "").trim();
-    const fromQuote = String(getQuoteBySymbol(sym)?.name || "").trim();
-    if (hasCnNameLabel(fromMap) || hasCnNameLabel(fromQuote)) {
-      return false;
-    }
-    return true;
-  });
-  if (!need.length) {
-    return;
-  }
-  await Promise.all(
-    need.map(async (sym) => {
-      try {
-        const response = await apiFetch(`${API_BASE}/stock/name?symbol=${encodeURIComponent(sym)}`, {
-          cache: "no-store",
-        });
-        const result = await response.json();
-        const name = String(result?.name || "").trim();
-        if (!name) {
-          return;
-        }
-        const normalized = normalizeSymbol(sym);
-        const alias = normalized.replace(/^gb_/i, "");
-        state.nameMap[normalized] = name;
-        state.nameMap[alias] = name;
-        const q = getQuoteBySymbol(normalized);
-        if (q && typeof q === "object") {
-          const merged = { ...q, name };
-          state.quoteMap[normalized] = merged;
-          state.quoteMap[alias] = merged;
-        }
-      } catch {
-        // ignore single-symbol failures
-      }
-    })
-  );
-}
-
 /**
  * 腾讯 qt.gtimg.cn / fqkline：沪深 sh/sz、港股 hk、美股 **usTICKER**（大写、无 .OQ 后缀）。
  * 实测 usFUTU.OQ 会返回 v_pv_none_match；usFUTU、usGOOG、usTSM 可正常取价。
@@ -1340,46 +1273,6 @@ function toTencentQuoteSymbol(symbol) {
     return `us${raw.toUpperCase()}`;
   }
   return raw;
-}
-
-const SINA_KLINE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Referer: "https://quotes.sina.cn/",
-};
-
-/** 本机 / 局域网打开页面时也走同源代理：浏览器直连新浪会因 CORS 失败；勿仅依赖 /api/health（apiReady）。 */
-function isLikelyLanOrLocalHost() {
-  if (typeof window === "undefined" || !window.location) {
-    return false;
-  }
-  const { protocol, hostname } = window.location;
-  if (protocol === "file:" || (protocol !== "http:" && protocol !== "https:")) {
-    return false;
-  }
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") {
-    return true;
-  }
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
-  if (!m) {
-    return false;
-  }
-  const a = Number(m[1]);
-  const b = Number(m[2]);
-  if (a === 10) {
-    return true;
-  }
-  if (a === 172 && b >= 16 && b <= 31) {
-    return true;
-  }
-  if (a === 192 && b === 168) {
-    return true;
-  }
-  return false;
-}
-
-function shouldUseSinaKlineProxy() {
-  return apiReady || isLikelyLanOrLocalHost();
 }
 
 /** 统一映射到新浪 DailyK_Batch：cn_sh/sz、hk_hk、us_、fx_。 */
@@ -1489,29 +1382,6 @@ function parseTencentForexQuotePayload(rawText) {
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
     time: time || "--",
   };
-}
-
-function readTencentQuoteWindowPayload(sourceSymbol) {
-  const keys = [
-    `v_${sourceSymbol}`,
-    `v_${sourceSymbol.replace(/\./g, "_")}`,
-    `v_${sourceSymbol.replace(/\./g, "")}`,
-  ];
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(window, key)) {
-      const payload = window[key];
-      if (payload != null) {
-        return { key, payload };
-      }
-    }
-  }
-  for (const key of keys) {
-    const payload = window[key];
-    if (payload != null) {
-      return { key, payload };
-    }
-  }
-  return { key: keys[0], payload: undefined };
 }
 
 function toQuoteRequestSymbol(symbol) {
@@ -4359,6 +4229,16 @@ function renderOverviewAndStockTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
   }
+  if (quoteTime) {
+    const timeText = state.quoteTime && state.quoteTime !== "--" ? `更新 ${state.quoteTime}` : "更新 --";
+    quoteTime.textContent = state.marketDataDelayed
+      ? `延迟数据 · ${timeText}`
+      : `实时数据 · ${timeText}`;
+    quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
+    quoteTime.setAttribute("title", state.marketDataDelayed && state.marketDataDelaySource
+      ? `已使用缓存数据（${state.marketDataDelaySource}）`
+      : "数据来自实时接口");
+  }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const vis = portfolio.visiblePositions;
@@ -5983,7 +5863,6 @@ async function ensureSymbolData(symbol) {
         state.klineMap[alias] = fallback;
       }
     }
-    await supplementKlineForMonthBoundary(symbol);
   } catch (error) {
     console.error("加载个股K线失败", error);
     if (!getKlineBySymbol(symbol).length) {
@@ -7240,13 +7119,18 @@ async function refreshMarketData(opts = {}) {
     return;
   }
   state.marketLoading = true;
+  state.marketDataDelayed = false;
+  state.marketDataDelaySource = "";
 
   try {
     await hydrateKlineFromLocalDb();
 
-    const fxSpot = await fetchRealtimeForexSpot().catch(() => ({}));
-    if (fxSpot && typeof fxSpot === "object") {
-      Object.assign(state.fxSpot, fxSpot);
+    const fxSpotRes = await fetchRealtimeForexSpot().catch(() => ({ rates: {}, delayed: true }));
+    if (fxSpotRes?.delayed) {
+      markMarketDataDelayed("fx-cache");
+    }
+    if (fxSpotRes?.rates && typeof fxSpotRes.rates === "object") {
+      Object.assign(state.fxSpot, fxSpotRes.rates);
     }
 
     const symbols = collectSymbolsForMarket();
@@ -7257,8 +7141,6 @@ async function refreshMarketData(opts = {}) {
       }
       return;
     }
-    await fetchQuoteNames(symbols);
-
     let quoteMap = {};
     try {
       quoteMap = await fetchRealtimeQuotes(symbols);
@@ -7284,37 +7166,37 @@ async function refreshMarketData(opts = {}) {
       state.quoteTime = times[0] || state.quoteTime;
     }
 
-    const klineSymbols = symbols.filter(supportsKline);
-    const klineSettled = await Promise.allSettled(
-      klineSymbols.map(async (symbol) => {
-        const needDaily = !getKlineBySymbol(symbol).length;
-        if (needDaily) {
-          const list = await fetchKlineData(symbol);
-          if (list.length) {
-            const normalized = normalizeSymbol(symbol);
-            const alias = normalized.replace(/^gb_/i, "");
-            state.klineMap[normalized] = list;
-            state.klineMap[alias] = list;
+    const klineSymbols = collectKlineSymbolsForMarket();
+    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
+    if (needKlineSymbols.length) {
+      try {
+        const batch = await fetchKlineDataSinaBatch(needKlineSymbols, KLINE_DATALEN);
+        for (const sym of needKlineSymbols) {
+          const list = batch[sym];
+          if (!Array.isArray(list) || !list.length) {
+            continue;
           }
+          const normalized = normalizeSymbol(sym);
+          const alias = normalized.replace(/^gb_/i, "");
+          state.klineMap[normalized] = list;
+          state.klineMap[alias] = list;
         }
-        await supplementKlineForMonthBoundary(symbol);
-        // Fallback "realtime": use minute-kline last point when realtime endpoint is blocked.
-        if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
-          const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
-          if (latest) {
-            const normalized = normalizeSymbol(symbol);
-            const alias = normalized.replace(/^gb_/i, "");
-            state.quoteMap[normalized] = latest;
-            state.quoteMap[alias] = latest;
-          }
-        }
-      })
-    );
-    klineSettled.forEach((result, i) => {
-      if (result.status === "rejected") {
-        console.warn(`K线拉取失败 ${klineSymbols[i]}`, result.reason);
+      } catch (error) {
+        console.warn("批量K线拉取失败", error);
       }
-    });
+    }
+    for (const symbol of klineSymbols) {
+      // Fallback "realtime": use daily-kline last point when quote endpoint misses.
+      if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
+        const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
+        if (latest) {
+          const normalized = normalizeSymbol(symbol);
+          const alias = normalized.replace(/^gb_/i, "");
+          state.quoteMap[normalized] = latest;
+          state.quoteMap[alias] = latest;
+        }
+      }
+    }
 
     // 名称由腾讯实时批量结果填充；停用东财兜底，避免产生与行情无关的超时红项。
   } catch (error) {
@@ -7368,6 +7250,9 @@ async function fetchRealtimeQuotes(symbols) {
   const uniqSymbols = [...new Set(symbols.filter(Boolean))];
   const tRes = await fetchRealtimeQuotesTencent(uniqSymbols).catch(() => null);
   const fromTencent = tRes?.parsed ?? {};
+  if (tRes?.delayed) {
+    markMarketDataDelayed("quote-cache");
+  }
   const merged = {};
 
   uniqSymbols.forEach((sym) => {
@@ -7416,7 +7301,10 @@ function pickSinaDailyBatchRows(payload, requestSymbol) {
   if (Array.isArray(payload)) {
     return payload;
   }
-  const root = payload?.result?.data || payload?.data || {};
+  const root =
+    payload?.result?.data ||
+    payload?.data ||
+    (payload && typeof payload === "object" ? payload : {});
   return (
     root?.[requestSymbol] ||
     root?.[String(requestSymbol).toLowerCase()] ||
@@ -7425,32 +7313,14 @@ function pickSinaDailyBatchRows(payload, requestSymbol) {
   );
 }
 
-/**
- * 优先浏览器直连新浪 DailyK_Batch（用户本地网络可达时更快更稳）；
- * 若失败再退回本站 /api/sina-kline 代理，避免 CORS 或网络差异导致不可用。
- */
+/** 前端仅请求同源 API：由后端统一访问新浪 DailyK_Batch 并负责回退缓存。 */
 async function fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, asc = "0") {
+  if (!apiReady) {
+    throw new Error("api not ready");
+  }
   const lenSafe = Math.min(5000, Math.max(2, Number(len) || KLINE_DATALEN));
   const ascSafe = String(asc) === "1" ? "1" : "0";
-  const directUrl = `https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?symbols=${encodeURIComponent(
-    requestSymbol
-  )}&len=${encodeURIComponent(String(lenSafe))}&asc=${encodeURIComponent(ascSafe)}`;
   let lastErr = null;
-
-  try {
-    const directResp = await apiFetch(directUrl, { cache: "no-store", timeoutMs: 25_000 });
-    if (directResp.ok) {
-      return await directResp.json();
-    }
-    lastErr = new Error(`sina direct ${directResp.status}`);
-  } catch (error) {
-    lastErr = error;
-  }
-
-  if (!shouldUseSinaKlineProxy()) {
-    throw lastErr || new Error("sina direct failed");
-  }
-
   const apiB = getApiBaseForFetch();
   const proxyUrls = [
     `${apiB}/sina-kline?symbol=${encodeURIComponent(requestSymbol)}&len=${encodeURIComponent(
@@ -7464,6 +7334,7 @@ async function fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, asc = 
     try {
       const r = await apiFetch(u, { cache: "no-store", timeoutMs: 35_000 });
       if (r.ok) {
+        readMarketDelayFromResponse(r);
         return await r.json();
       }
       lastErr = new Error(`sina proxy ${r.status}`);
@@ -7472,6 +7343,63 @@ async function fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, asc = 
     }
   }
   throw lastErr || new Error("sina dailyk failed");
+}
+
+async function fetchKlineDataSinaBatch(symbols, datalen = KLINE_DATALEN) {
+  if (!apiReady) {
+    return {};
+  }
+  const unique = [...new Set((symbols || []).map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!unique.length) {
+    return {};
+  }
+  const reqToLocal = new Map();
+  for (const sym of unique) {
+    const req = toSinaKlineSymbol(sym);
+    if (req) {
+      reqToLocal.set(req, sym);
+    }
+  }
+  if (!reqToLocal.size) {
+    return {};
+  }
+  const len = Math.min(5000, Math.max(2, Number(datalen) || KLINE_DATALEN));
+  const apiB = getApiBaseForFetch();
+  const urls = [
+    `${apiB}/sina-kline?symbols=${encodeURIComponent([...reqToLocal.keys()].join(","))}&len=${encodeURIComponent(
+      String(len)
+    )}&asc=0`,
+    `${apiB}/sina_kline?symbols=${encodeURIComponent([...reqToLocal.keys()].join(","))}&len=${encodeURIComponent(
+      String(len)
+    )}&asc=0`,
+  ];
+  let payload = null;
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      const r = await apiFetch(url, { cache: "no-store", timeoutMs: 45_000 });
+      if (!r.ok) {
+        lastErr = new Error(`sina batch ${r.status}`);
+        continue;
+      }
+      readMarketDelayFromResponse(r);
+      payload = await r.json();
+      break;
+    } catch (error) {
+      lastErr = error;
+    }
+  }
+  if (!payload) {
+    if (lastErr) {
+      throw lastErr;
+    }
+    return {};
+  }
+  const out = {};
+  for (const [requestSymbol, localSymbol] of reqToLocal.entries()) {
+    out[localSymbol] = mapSinaKlineRows(pickSinaDailyBatchRows(payload, requestSymbol));
+  }
+  return out;
 }
 
 async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) {
@@ -7489,95 +7417,36 @@ async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) 
   return mapSinaKlineRows(rows);
 }
 
-/** 合并日 K；同一 key（day）后者覆盖前者。 */
-function mergeKlineByDay(a, b) {
-  const m = new Map();
-  [...(a || []), ...(b || [])].forEach((row) => {
-    if (!row?.day || !Number.isFinite(Number(row.close))) {
-      return;
-    }
-    m.set(row.day, row);
-  });
-  return [...m.values()].sort((x, y) => x.day.localeCompare(y.day));
-}
-
-/**
- * 补足「月初前」日 K：主请求若过少则合并一次新浪 1023 日 K；美股再尝试服务端按日期补上一交易日收盘。
- */
-async function supplementKlineForMonthBoundary(symbol) {
-  const normalized = normalizeSymbol(symbol);
-  const alias = normalized.replace(/^gb_/i, "");
-  let list = [...(getKlineBySymbol(symbol) || [])];
-  const firstDate = state.trades.length
-    ? [...state.trades].sort(sortTradeAsc)[0].date
-    : toDateKey(new Date());
-  const monthStartKey = getStageStartKey("month", firstDate);
-  const isUs = inferMarket(symbol) === "美股";
-  // 已覆盖「本月起点」之前的日 K 则不必再拉新浪（含美股；否则每次 refresh / 定时刷新都会重复打满 1023 根）
-  if (list.some((item) => item.day && item.day < monthStartKey)) {
-    return list;
-  }
-
-  let merged = list;
-  try {
-    const extra = await fetchKlineDataSina(symbol, 240, 1023);
-    if (extra.length) {
-      merged = mergeKlineByDay(merged, extra);
-    }
-  } catch {
-    // ignore
-  }
-  if (!isUs && merged.some((item) => item.day && item.day < monthStartKey)) {
-    state.klineMap[normalized] = merged;
-    state.klineMap[alias] = merged;
-    return merged;
-  }
-
-  if (isUs && apiReady) {
-    try {
-      const r = await fetch(
-        `${API_BASE}/us-historical-close?symbol=${encodeURIComponent(normalized)}&before=${encodeURIComponent(monthStartKey)}`,
-        { cache: "no-store" }
-      );
-      if (r.ok) {
-        const y = await r.json();
-        if (y && y.ok && y.day && Number.isFinite(y.close)) {
-          const day = String(y.day).slice(0, 10).replace(/\//g, "-");
-          merged = mergeKlineByDay(merged, [
-            {
-              day,
-              open: y.close,
-              high: y.close,
-              low: y.close,
-              close: y.close,
-              volume: 0,
-            },
-          ]);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-  state.klineMap[normalized] = merged;
-  state.klineMap[alias] = merged;
-  return merged;
-}
-
 async function fetchRealtimeQuotesTencent(symbols) {
   const uniqSymbols = [...new Set(symbols)];
   if (!uniqSymbols.length) {
     return {
       parsed: {},
+      delayed: false,
+    };
+  }
+  if (!apiReady) {
+    return {
+      parsed: {},
+      delayed: true,
     };
   }
   const sourceToTarget = new Map();
   uniqSymbols.forEach((symbol) => {
-    sourceToTarget.set(toTencentQuoteSymbol(symbol), symbol);
+    const key = toTencentQuoteSymbol(symbol);
+    if (key) {
+      sourceToTarget.set(key, symbol);
+    }
   });
+  if (!sourceToTarget.size) {
+    return {
+      parsed: {},
+      delayed: false,
+    };
+  }
   const keysJoined = [...sourceToTarget.keys()].join(",");
-  const url = `https://qt.gtimg.cn/q=${keysJoined}&_=${Date.now()}`;
   const parsed = {};
+  let delayed = false;
 
   const fillFromQuoteText = (text) => {
     if (!text || typeof text !== "string") {
@@ -7599,81 +7468,38 @@ async function fetchRealtimeQuotesTencent(symbols) {
     }
   };
 
-  if (apiReady) {
-    try {
-      const r = await apiFetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(keysJoined)}`, {
-        cache: "no-store",
-      });
-      if (r.ok) {
-        fillFromQuoteText(await r.text());
-      }
-    } catch {
-      // ignore; fall back to JSONP
-    }
-  }
-
-  const needJsonp = !apiReady || uniqSymbols.some((sym) => !parsed[sym]);
-  if (needJsonp) {
-    await loadScript(url, "gbk");
-    sourceToTarget.forEach((target, sourceSymbol) => {
-      if (parsed[target]) {
-        return;
-      }
-      const { key, payload } = readTencentQuoteWindowPayload(sourceSymbol);
-      const record = parseTencentQuoteRecord(target, payload);
-      if (record) {
-        parsed[target] = record;
-      }
-      try {
-        if (key) {
-          delete window[key];
-        }
-      } catch {
-        // ignore cleanup failures on non-configurable globals
-      }
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/quote/tencent?q=${encodeURIComponent(keysJoined)}`, {
+      cache: "no-store",
+      timeoutMs: 20_000,
     });
+    readMarketDelayFromResponse(r);
+    delayed = String(r.headers.get("x-market-data-delayed") || "") === "1";
+    if (r.ok) {
+      fillFromQuoteText(await r.text());
+    }
+  } catch {
+    delayed = true;
   }
-
   return {
     parsed,
+    delayed,
   };
-}
-
-function loadScript(src, charset = "utf-8") {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.charset = charset;
-    script.async = true;
-    const timer = window.setTimeout(() => {
-      script.remove();
-      reject(new Error(`加载超时: ${src}`));
-    }, 12_000);
-
-    script.onload = () => {
-      window.clearTimeout(timer);
-      script.remove();
-      resolve();
-    };
-    script.onerror = () => {
-      window.clearTimeout(timer);
-      script.remove();
-      reject(new Error(`加载失败: ${src}`));
-    };
-    document.head.appendChild(script);
-  });
 }
 
 /** 实时外汇：统一使用腾讯 qt（whUSDCNY / whHKDCNY）。 */
 async function fetchRealtimeForexSpot() {
-  return fetchRealtimeForexTencent().catch(() => ({}));
+  return fetchRealtimeForexTencent().catch(() => ({ rates: {}, delayed: true }));
 }
 
 /** 腾讯 qt 外汇实时：USDCNY / HKDCNY 当前价。 */
 async function fetchRealtimeForexTencent() {
   const out = {};
   const q = TENCENT_FOREX_SPOT_CODES.join(",");
-  const url = `https://qt.gtimg.cn/q=${q}&_=${Date.now()}`;
+  if (!apiReady) {
+    return { rates: out, delayed: true };
+  }
+  let delayed = false;
 
   const fillFromText = (text) => {
     if (!text || typeof text !== "string") {
@@ -7695,66 +7521,85 @@ async function fetchRealtimeForexTencent() {
     }
   };
 
-  if (apiReady) {
-    try {
-      const r = await apiFetch(`${API_BASE}/quote/tencent?q=${encodeURIComponent(q)}`, {
-        cache: "no-store",
-      });
-      if (r.ok) {
-        fillFromText(await r.text());
-      }
-    } catch {
-      // ignore
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/quote/tencent?q=${encodeURIComponent(q)}`, {
+      cache: "no-store",
+      timeoutMs: 20_000,
+    });
+    readMarketDelayFromResponse(r);
+    delayed = String(r.headers.get("x-market-data-delayed") || "") === "1";
+    if (r.ok) {
+      fillFromText(await r.text());
     }
+  } catch {
+    delayed = true;
   }
 
-  const needJsonp = !apiReady || TENCENT_FOREX_SPOT_CODES.some((code) => {
-    const ccy = TENCENT_FOREX_CODE_TO_CCY[code];
-    return !out[ccy];
-  });
-  if (needJsonp) {
-    try {
-      await loadScript(url, "gbk");
-      TENCENT_FOREX_SPOT_CODES.forEach((code) => {
-        const ccy = TENCENT_FOREX_CODE_TO_CCY[code];
-        if (out[ccy]) {
-          return;
-        }
-        const { key, payload } = readTencentQuoteWindowPayload(code);
-        const rec = parseTencentForexQuotePayload(payload);
-        if (rec && Number.isFinite(rec.current) && rec.current > 0) {
-          out[ccy] = rec.current;
-        }
-        try {
-          if (key) {
-            delete window[key];
-          }
-        } catch {
-          // ignore
-        }
-      });
-    } catch {
-      // ignore
-    }
-  }
-
-  return out;
+  return { rates: out, delayed };
 }
 
 function collectSymbolsForMarket() {
-  const fromTrades = state.trades.map((item) => ensureSymbolPrefixForQuote(item.symbol));
-  if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades?.length) {
-    for (const t of state.lastPublicProfileDetail.publicTrades) {
-      fromTrades.push(ensureSymbolPrefixForQuote(t.symbol));
+  const out = [];
+  if (state.route === "community-profile" && state.lastPublicProfileDetail) {
+    const detail = state.lastPublicProfileDetail;
+    for (const p of detail.positions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+    for (const p of detail.topPositions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+  } else {
+    const scope = getPortfolioScope(state.selectedAccountId);
+    const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+    for (const p of portfolio.visiblePositions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+    if (state.activeRecordSymbol) {
+      out.push(ensureSymbolPrefixForQuote(state.activeRecordSymbol));
     }
   }
   if (state.benchmark !== "none") {
-    fromTrades.push(state.benchmark);
+    out.push(state.benchmark);
   }
-  if (!fromTrades.length) {
-    fromTrades.push("sz300750", "sh601899", "sh000001", "sz399001");
+  return [...new Set(out.filter(Boolean))];
+}
+
+function collectKlineSymbolsForMarket() {
+  const out = [];
+  if (state.route === "community-profile" && state.lastPublicProfileDetail) {
+    const detail = state.lastPublicProfileDetail;
+    for (const p of detail.positions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+    for (const p of detail.topPositions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+  } else {
+    const scope = getPortfolioScope(state.selectedAccountId);
+    const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+    for (const p of portfolio.visiblePositions || []) {
+      if (p?.symbol) {
+        out.push(ensureSymbolPrefixForQuote(p.symbol));
+      }
+    }
+    if (state.activeRecordSymbol) {
+      out.push(ensureSymbolPrefixForQuote(state.activeRecordSymbol));
+    }
   }
-  return [...new Set(fromTrades)];
+  if (state.benchmark !== "none") {
+    out.push(state.benchmark);
+  }
+  return [...new Set(out.filter((sym) => supportsKline(sym)))];
 }
 
 function supportsKline(symbol) {
