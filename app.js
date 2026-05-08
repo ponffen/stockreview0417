@@ -137,7 +137,9 @@ const FX_RATE_FALLBACK = {
 /** 腾讯财经外汇实时：与主行情接口同源 qt.gtimg.cn */
 const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
 const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
-const FX_HISTORY_DAYS = 420;
+const FX_HISTORY_DAYS = 120;
+const FX_DAYK_LEN_MIN = 60;
+const FX_DAYK_LEN_MAX = 140;
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
@@ -715,15 +717,17 @@ async function initializeFxRates(opts = {}) {
 
 function resolveFxRangeBounds() {
   const today = new Date();
-  const defaultStart = new Date(today);
-  defaultStart.setDate(defaultStart.getDate() - FX_HISTORY_DAYS);
-  let minDate = toDateKey(defaultStart);
+  const cappedStartDate = new Date(today);
+  cappedStartDate.setDate(cappedStartDate.getDate() - FX_HISTORY_DAYS);
+  const cappedStart = toDateKey(cappedStartDate);
+  let minTradeDate = "";
   for (const trade of state.trades) {
-    if (trade?.date && trade.date < minDate) {
-      minDate = trade.date;
+    if (trade?.date && (!minTradeDate || trade.date < minTradeDate)) {
+      minTradeDate = trade.date;
     }
   }
-  return { start: minDate, end: toDateKey(today) };
+  const start = minTradeDate && minTradeDate > cappedStart ? minTradeDate : cappedStart;
+  return { start, end: toDateKey(today) };
 }
 
 async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
@@ -763,7 +767,8 @@ async function fetchSinaForexDayKSeries(currency, startDate, endDate) {
     return {};
   }
   const symbol = currency === "USD" ? "fx_USDCNY" : "fx_HKDCNY";
-  const len = Math.max(64, Math.min(5000, estimateRangeDays(startDate, endDate) + 32));
+  const requestedLen = estimateRangeDays(startDate, endDate) + 16;
+  const len = Math.max(FX_DAYK_LEN_MIN, Math.min(FX_DAYK_LEN_MAX, requestedLen));
   const payload = await fetchSinaDailyBatchPayloadWithFallback(symbol, len, "0");
   const rows = pickSinaDailyBatchRows(payload, symbol);
   const out = {};
@@ -5834,7 +5839,7 @@ async function ensureSymbolData(symbol) {
     console.error("加载个股实时行情失败", error);
   }
   if (!getQuoteBySymbol(symbol)?.current || !Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
-    const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
+    const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: true });
     if (latest) {
       const normalizedSymbol = normalizeSymbol(symbol);
       const alias = normalizedSymbol.replace(/^gb_/i, "");
@@ -7186,9 +7191,9 @@ async function refreshMarketData(opts = {}) {
       }
     }
     for (const symbol of klineSymbols) {
-      // Fallback "realtime": use daily-kline last point when quote endpoint misses.
+      // Fallback "realtime": use local daily-kline only; do not fan out remote single-symbol requests.
       if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
-        const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
+        const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: false });
         if (latest) {
           const normalized = normalizeSymbol(symbol);
           const alias = normalized.replace(/^gb_/i, "");
@@ -7219,10 +7224,11 @@ async function refreshMarketData(opts = {}) {
  * 实时行情失败时的兜底：用日 K 最后两根 K 线算现价与昨收。
  * 勿用分钟线相邻两根代替昨收，否则涨跌幅会变成「几分钟内波动」，出现约 0.08% 这类与当日真实涨跌严重不符的数。
  */
-async function fetchLatestQuoteFromDailyKlineFallback(symbol) {
+async function fetchLatestQuoteFromDailyKlineFallback(symbol, options = {}) {
+  const allowRemote = options.allowRemote === true;
   try {
     let list = getKlineBySymbol(symbol);
-    if (!Array.isArray(list) || list.length < 2) {
+    if ((!Array.isArray(list) || list.length < 2) && allowRemote) {
       list = await fetchKlineData(symbol);
     }
     if (!Array.isArray(list) || list.length < 2) {
