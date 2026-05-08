@@ -7,28 +7,173 @@ const iconv = require("iconv-lite");
 const {
   fetchSinaKlineJsonFromUpstream,
   fetchSinaDailyKBatchFromUpstream,
+  toSinaDailyKBatchSymbol,
 } = require("./src/sina-kline-upstream");
 const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill");
 
+const MARKET_KLINE_DEFAULT_LEN = 120;
+const MARKET_CACHE_TTL_MS = 30 * 60 * 1000;
+const sinaKlineMemoryCache = new Map();
+const tencentQuoteMemoryCache = new Map();
+
+function cacheSet(map, key, value) {
+  map.set(String(key), { value, updatedAt: Date.now() });
+}
+
+function cacheGet(map, key) {
+  const hit = map.get(String(key));
+  if (!hit) {
+    return null;
+  }
+  if (Date.now() - Number(hit.updatedAt || 0) > MARKET_CACHE_TTL_MS) {
+    map.delete(String(key));
+    return null;
+  }
+  return hit.value;
+}
+
+function normalizeLenParam(input, fallback = MARKET_KLINE_DEFAULT_LEN) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(5000, Math.max(2, Math.floor(n)));
+}
+
+function dateKeyDaysFromToday(deltaDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + Number(deltaDays || 0));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function mapSinaDailySymbolToDbSymbol(symbol) {
+  const canonical = toSinaDailyKBatchSymbol(symbol);
+  if (!canonical) {
+    return "";
+  }
+  if (/^cn_sh\d{6}$/i.test(canonical)) {
+    return `sh${canonical.slice(-6)}`;
+  }
+  if (/^cn_sz\d{6}$/i.test(canonical)) {
+    return `sz${canonical.slice(-6)}`;
+  }
+  if (/^hk_hk\d{5}$/i.test(canonical)) {
+    return `hk${canonical.slice(-5)}`;
+  }
+  if (/^us_[A-Z0-9._-]+$/i.test(canonical)) {
+    return `gb_${canonical.slice(3).toLowerCase()}`;
+  }
+  return "";
+}
+
+function mapDailyCloseRowsToSinaBars(rows) {
+  return (rows || [])
+    .map((r) => {
+      const day = String(r?.date || "").slice(0, 10);
+      const close = Number(r?.close);
+      if (!day || !Number.isFinite(close) || close <= 0) {
+        return null;
+      }
+      return {
+        day,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+function clipRowsByRangeAndLen(rows, { len, start, end }) {
+  let out = Array.isArray(rows) ? [...rows] : [];
+  if (start) {
+    out = out.filter((r) => String(r?.day || "").slice(0, 10) >= start);
+  }
+  if (end) {
+    out = out.filter((r) => String(r?.day || "").slice(0, 10) <= end);
+  }
+  out.sort((a, b) => String(a.day).localeCompare(String(b.day)));
+  if (out.length > len) {
+    return out.slice(out.length - len);
+  }
+  return out;
+}
+
+async function loadSinaFallbackRows(requestSymbol, { len, start, end }) {
+  const dbSymbol = mapSinaDailySymbolToDbSymbol(requestSymbol);
+  if (dbSymbol) {
+    const to = end || dateKeyDaysFromToday(0);
+    const from = start || dateKeyDaysFromToday(-Math.max(30, len * 4));
+    try {
+      const dbRows = await getSymbolDailyCloseRange(dbSymbol, from, to);
+      if (Array.isArray(dbRows) && dbRows.length) {
+        return {
+          rows: clipRowsByRangeAndLen(mapDailyCloseRowsToSinaBars(dbRows), { len, start, end }),
+          source: "db-cache",
+        };
+      }
+    } catch {
+      // ignore DB fallback failure and continue to memory cache
+    }
+  }
+  const memoryRows = cacheGet(sinaKlineMemoryCache, requestSymbol);
+  if (Array.isArray(memoryRows) && memoryRows.length) {
+    return {
+      rows: clipRowsByRangeAndLen(memoryRows, { len, start, end }),
+      source: "memory-cache",
+    };
+  }
+  return { rows: [], source: "" };
+}
+
+function setDelayedHeaders(res, source) {
+  res.setHeader("X-Market-Data-Delayed", "1");
+  res.setHeader("X-Market-Data-Source", String(source || "cache"));
+}
+
+function parseTencentQuoteTextToMap(text) {
+  const out = new Map();
+  const re = /v_([A-Za-z0-9._]+)="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(String(text || ""))) !== null) {
+    out.set(String(m[1] || "").toLowerCase(), String(m[2] || ""));
+  }
+  return out;
+}
+
+function buildTencentQuoteTextFromMap(reqKeys, payloadMap) {
+  const lines = [];
+  for (const key of reqKeys) {
+    const payload = payloadMap.get(String(key || "").toLowerCase());
+    if (payload == null) {
+      continue;
+    }
+    lines.push(`v_${key}="${payload}";`);
+  }
+  return lines.join("\n");
+}
+
 /**
- * 新浪 DailyK_Batch 代理。兼容老参数（symbol / datalen），统一转发至 MarketCenterService.getDailyK_Batch。
+ * 新浪 DailyK_Batch 代理：优先上游实时，失败时回退 DB/内存缓存并显式标记延迟数据。
  */
 async function handleSinaKlineProxy(req, res) {
   const symbol = req.query.symbol != null ? String(req.query.symbol) : "";
   const symbolsRaw = req.query.symbols != null ? String(req.query.symbols) : "";
-  const datalen = req.query.datalen != null ? String(req.query.datalen) : "1023";
-  const len = req.query.len != null ? String(req.query.len) : datalen;
+  const datalen = req.query.datalen != null ? String(req.query.datalen) : String(MARKET_KLINE_DEFAULT_LEN);
+  const lenRaw = req.query.len != null ? String(req.query.len) : datalen;
   const asc = req.query.asc != null ? String(req.query.asc) : "0";
   const start = req.query.start != null ? String(req.query.start) : "";
   const end = req.query.end != null ? String(req.query.end) : "";
-  const symbols = (symbolsRaw ? symbolsRaw.split(",") : [symbol])
+  const inputSymbols = (symbolsRaw ? symbolsRaw.split(",") : [symbol])
     .map((s) => String(s || "").trim())
     .filter(Boolean);
-  if (!symbols.length || symbols.some((sym) => sym.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(sym))) {
+  if (!inputSymbols.length || inputSymbols.some((sym) => sym.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(sym))) {
     res.status(400).json({ ok: false, error: "invalid symbol" });
     return;
   }
-  if (!/^\d+$/.test(len) || !/^[01]$/.test(asc)) {
+  if (!/^\d+$/.test(lenRaw) || !/^[01]$/.test(asc)) {
     res.status(400).json({ ok: false, error: "invalid len or asc" });
     return;
   }
@@ -36,32 +181,55 @@ async function handleSinaKlineProxy(req, res) {
     res.status(400).json({ ok: false, error: "invalid start or end" });
     return;
   }
+  const symbols = [...new Set(inputSymbols.map((s) => toSinaDailyKBatchSymbol(s)).filter(Boolean))];
+  if (!symbols.length) {
+    res.status(400).json({ ok: false, error: "invalid symbol mapping" });
+    return;
+  }
+  const isBatch = symbolsRaw || symbols.length > 1;
+  const len = normalizeLenParam(lenRaw, MARKET_KLINE_DEFAULT_LEN);
+
   try {
-    if (symbols.length > 1 || symbolsRaw) {
-      const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
-      if (!result.ok) {
-        res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
-        return;
+    const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
+    if (result.ok) {
+      const payload = result.data || {};
+      for (const sym of symbols) {
+        const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
+        if (rows.length) {
+          cacheSet(sinaKlineMemoryCache, sym, rows);
+        }
       }
       res.setHeader("Cache-Control", "no-store");
-      res.json(result.data || {});
+      if (isBatch) {
+        res.json(payload);
+      } else {
+        res.json(payload[symbols[0]] || []);
+      }
       return;
     }
-    const result = await fetchSinaKlineJsonFromUpstream({
-      symbol: symbols[0],
-      len,
-      asc,
-      start,
-      end,
-    });
-    if (!result.ok) {
-      res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
-      return;
+  } catch {
+    // ignore and continue to cache fallback
+  }
+
+  const fallback = {};
+  const delayedSources = new Set();
+  for (const sym of symbols) {
+    const { rows, source } = await loadSinaFallbackRows(sym, { len, start, end });
+    if (rows.length) {
+      fallback[sym] = rows;
+      delayedSources.add(source || "cache");
     }
-    res.setHeader("Cache-Control", "no-store");
-    res.json(result.data == null ? [] : result.data);
-  } catch (error) {
-    res.status(502).json({ ok: false, error: error?.message || "sina kline failed" });
+  }
+  if (!Object.keys(fallback).length) {
+    res.status(502).json({ ok: false, error: "sina kline failed and no cache" });
+    return;
+  }
+  setDelayedHeaders(res, [...delayedSources].join(","));
+  res.setHeader("Cache-Control", "no-store");
+  if (isBatch) {
+    res.json(fallback);
+  } else {
+    res.json(fallback[symbols[0]] || []);
   }
 }
 
@@ -793,23 +961,75 @@ app.get("/api/quote/tencent", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid q" });
     return;
   }
+  const reqKeys = [...new Set(q.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!reqKeys.length) {
+    res.status(400).json({ ok: false, error: "invalid q keys" });
+    return;
+  }
+  let payloadMap = new Map();
+  let usedCache = false;
   try {
     const url = `https://qt.gtimg.cn/q=${encodeURIComponent(q)}&_=${Date.now()}`;
     const r = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
+      signal: AbortSignal.timeout(20_000),
     });
-    if (!r.ok) {
-      res.status(502).json({ ok: false, error: `tencent ${r.status}` });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const text = iconv.decode(buf, "gbk");
+      const liveMap = parseTencentQuoteTextToMap(text);
+      for (const [k, payload] of liveMap.entries()) {
+        cacheSet(tencentQuoteMemoryCache, k, payload);
+      }
+      for (const key of reqKeys) {
+        const k = String(key).toLowerCase();
+        if (liveMap.has(k)) {
+          payloadMap.set(k, liveMap.get(k));
+          continue;
+        }
+        const cached = cacheGet(tencentQuoteMemoryCache, k);
+        if (cached != null) {
+          payloadMap.set(k, cached);
+          usedCache = true;
+        }
+      }
+    } else {
+      for (const key of reqKeys) {
+        const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+        if (cached != null) {
+          payloadMap.set(String(key).toLowerCase(), cached);
+          usedCache = true;
+        }
+      }
+    }
+  } catch (error) {
+    for (const key of reqKeys) {
+      const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+      if (cached != null) {
+        payloadMap.set(String(key).toLowerCase(), cached);
+        usedCache = true;
+      }
+    }
+    if (!payloadMap.size) {
+      res.status(502).json({ ok: false, error: error.message || "tencent quote failed" });
       return;
     }
-    const buf = Buffer.from(await r.arrayBuffer());
-    const text = iconv.decode(buf, "gbk");
-    res.setHeader("Cache-Control", "no-store");
-    res.type("text/plain; charset=utf-8");
-    res.send(text);
-  } catch (error) {
-    res.status(502).json({ ok: false, error: error.message || "tencent quote failed" });
   }
+  if (!payloadMap.size) {
+    res.status(502).json({ ok: false, error: "tencent quote failed and no cache" });
+    return;
+  }
+  const text = buildTencentQuoteTextFromMap(reqKeys, payloadMap);
+  if (!text) {
+    res.status(502).json({ ok: false, error: "no quote payload available" });
+    return;
+  }
+  if (usedCache) {
+    setDelayedHeaders(res, "memory-cache");
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.type("text/plain; charset=utf-8");
+  res.send(text);
 });
 
 /**
