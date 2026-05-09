@@ -101,6 +101,9 @@ function readMarketDelayFromResponse(response) {
 }
 const QUOTE_REFRESH_MS = 60_000;
 const KLINE_DATALEN = 120;
+const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
+const DAILY_CLOSE_HYDRATE_TTL_MS = 90_000;
+const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const CHART_FALLBACK_DAYS = 90;
 const STATE_SYNC_KEYS = [
   "route",
@@ -247,6 +250,12 @@ const state = {
 };
 let apiReady = false;
 let tradeSearchSuggestController = null;
+let dailyCloseHydrateInFlight = null;
+let dailyCloseHydrateCacheKey = "";
+let dailyCloseHydrateAt = 0;
+let analysisRenderRequestSeq = 0;
+const analysisDailyResponseCache = new Map();
+const analysisDailyInFlight = new Map();
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -1161,44 +1170,116 @@ function getKlineBySymbol(symbol) {
   return state.klineMap[normalized] || state.klineMap[alias] || [];
 }
 
+function shiftDateKeyByDays(dateKey, deltaDays) {
+  if (!dateKey) {
+    return toDateKey(new Date());
+  }
+  const t = new Date(`${String(dateKey).slice(0, 10)}T12:00:00`);
+  if (!Number.isFinite(t.getTime())) {
+    return toDateKey(new Date());
+  }
+  t.setDate(t.getDate() + Number(deltaDays || 0));
+  return toDateKey(t);
+}
+
+function buildAnalysisDailyFetchRange(scope, history) {
+  const today = toDateKey(new Date());
+  const to = shiftDateKeyByDays(today, 1);
+  const trades = Array.isArray(scope?.trades) ? scope.trades : [];
+  const earliestTradeDate = trades
+    .map((trade) => toDateKey(trade?.date))
+    .filter(Boolean)
+    .sort()[0];
+  if (state.analysisRangeMode === "custom") {
+    const customStart = state.customRangeStart || history?.[0]?.date || earliestTradeDate || shiftDateKeyByDays(today, -365);
+    return {
+      from: shiftDateKeyByDays(customStart, -20),
+      to,
+    };
+  }
+  if (isAnalysisMtdPreset()) {
+    return { from: shiftDateKeyByDays(monthToDateStartKey(), -10), to };
+  }
+  if (isAnalysisYtdPreset()) {
+    return { from: shiftDateKeyByDays(ytdStartDateKey(), -20), to };
+  }
+  if (state.analysisRangeMode === "all") {
+    return {
+      from: shiftDateKeyByDays(earliestTradeDate || history?.[0]?.date || today, -20),
+      to,
+    };
+  }
+  return {
+    from: shiftDateKeyByDays(today, -(Math.max(Number(state.rangeDays) || 30, 7) + 20)),
+    to,
+  };
+}
+
 /** 从 SQLite 日收盘价表灌入 state.klineMap，优先于实时拉日 K */
-async function hydrateKlineFromLocalDb() {
+async function hydrateKlineFromLocalDb(symbols = []) {
   if (!apiReady) {
     return;
   }
+  const pickedSymbols = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))].sort();
+  if (!pickedSymbols.length) {
+    return;
+  }
+  const cacheKey = `${pickedSymbols.join(",")}|${DAILY_CLOSE_HYDRATE_WINDOW_DAYS}`;
+  const now = Date.now();
+  if (cacheKey === dailyCloseHydrateCacheKey && now - dailyCloseHydrateAt < DAILY_CLOSE_HYDRATE_TTL_MS) {
+    return;
+  }
+  if (dailyCloseHydrateInFlight && cacheKey === dailyCloseHydrateCacheKey) {
+    await dailyCloseHydrateInFlight;
+    return;
+  }
   try {
-    const r = await apiFetch(`${API_BASE}/daily-close/for-trades`, { cache: "no-store" });
-    if (!r.ok) {
-      return;
-    }
-    const j = await r.json();
-    if (!j?.ok || !j.data || typeof j.data !== "object") {
-      return;
-    }
-    const toKlineRows = (arr) =>
-      (Array.isArray(arr) ? arr : [])
-        .map((row) => ({
-          day: String(row.date || "").slice(0, 10),
-          open: Number(row.close),
-          high: Number(row.close),
-          low: Number(row.close),
-          close: Number(row.close),
-          volume: 0,
-        }))
-        .filter((x) => x.day && Number.isFinite(x.close))
-        .sort((a, b) => a.day.localeCompare(b.day));
-    Object.entries(j.data).forEach(([sym, rows]) => {
-      const list = toKlineRows(rows);
-      if (!list.length) {
+    dailyCloseHydrateCacheKey = cacheKey;
+    dailyCloseHydrateInFlight = (async () => {
+      const r = await apiFetch(
+        `${API_BASE}/daily-close/for-trades?days=${encodeURIComponent(
+          String(DAILY_CLOSE_HYDRATE_WINDOW_DAYS)
+        )}&symbols=${encodeURIComponent(pickedSymbols.join(","))}`,
+        { cache: "no-store", timeoutMs: 18_000 }
+      );
+      if (!r.ok) {
         return;
       }
-      const normalized = normalizeSymbol(sym);
-      const alias = normalized.replace(/^gb_/i, "");
-      state.klineMap[normalized] = list;
-      state.klineMap[alias] = list;
-    });
+      const j = await r.json();
+      if (!j?.ok || !j.data || typeof j.data !== "object") {
+        return;
+      }
+      const toKlineRows = (arr) =>
+        (Array.isArray(arr) ? arr : [])
+          .map((row) => ({
+            day: String(row.date || "").slice(0, 10),
+            open: Number(row.close),
+            high: Number(row.close),
+            low: Number(row.close),
+            close: Number(row.close),
+            volume: 0,
+          }))
+          .filter((x) => x.day && Number.isFinite(x.close))
+          .sort((a, b) => a.day.localeCompare(b.day));
+      Object.entries(j.data).forEach(([sym, rows]) => {
+        const list = toKlineRows(rows);
+        if (!list.length) {
+          return;
+        }
+        const normalized = normalizeSymbol(sym);
+        const alias = normalized.replace(/^gb_/i, "");
+        state.klineMap[normalized] = list;
+        state.klineMap[alias] = list;
+      });
+      dailyCloseHydrateAt = Date.now();
+    })();
+    await dailyCloseHydrateInFlight;
   } catch {
     // ignore
+  } finally {
+    if (cacheKey === dailyCloseHydrateCacheKey) {
+      dailyCloseHydrateInFlight = null;
+    }
   }
 }
 
@@ -5479,33 +5560,82 @@ function renderAnalysisFromHistory() {
   renderAnalysisStockRank(history, scope, portfolio);
 }
 
+async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
+  if (!apiReady) {
+    return [];
+  }
+  const aid = accountId === "all" ? "all" : accountId;
+  const key = `aid:${aid || "all"}|from:${from}|to:${to}`;
+  const now = Date.now();
+  const cached = analysisDailyResponseCache.get(key);
+  if (cached && now - Number(cached.updatedAt || 0) < ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS) {
+    return Array.isArray(cached.rows) ? cached.rows : [];
+  }
+  if (analysisDailyInFlight.has(key)) {
+    return analysisDailyInFlight.get(key);
+  }
+  const fetchPromise = (async () => {
+    try {
+      const res = await apiFetch(
+        `${API_BASE}/analysis-daily?accountId=${encodeURIComponent(aid)}&from=${encodeURIComponent(
+          from
+        )}&to=${encodeURIComponent(to)}`,
+        { cache: "no-store", timeoutMs: 18_000 }
+      );
+      if (!res.ok) {
+        return [];
+      }
+      const j = await res.json().catch(() => ({}));
+      const rows = j?.ok && Array.isArray(j.data) ? j.data : [];
+      analysisDailyResponseCache.set(key, { rows, updatedAt: Date.now() });
+      if (analysisDailyResponseCache.size > 24) {
+        const oldestKey = analysisDailyResponseCache.keys().next().value;
+        if (oldestKey) {
+          analysisDailyResponseCache.delete(oldestKey);
+        }
+      }
+      return rows;
+    } catch {
+      return [];
+    }
+  })();
+  analysisDailyInFlight.set(key, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    analysisDailyInFlight.delete(key);
+  }
+}
+
 async function renderAnalysis() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
   }
+  const renderRequestId = ++analysisRenderRequestSeq;
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const todayKey = toDateKey(new Date());
   const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades);
   const liveModeRate = computeModeSeries(historyFull, state.algoMode).at(-1)?.rate ?? 0;
+  const fetchRange = buildAnalysisDailyFetchRange(scope, historyFull);
 
   let dbRows = [];
   if (apiReady) {
     try {
       const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      const res = await apiFetch(
-        `${API_BASE}/analysis-daily?accountId=${encodeURIComponent(aid)}&from=1970-01-01&to=2099-12-31`,
-        { cache: "no-store" }
-      );
-      const j = await res.json();
-      if (j?.ok && Array.isArray(j.data) && j.data.length) {
-        dbRows = j.data;
-      }
+      dbRows = await fetchAnalysisDailyRowsRemote({
+        accountId: aid,
+        from: fetchRange.from,
+        to: fetchRange.to,
+      });
     } catch (error) {
       console.warn("加载 analysis_daily 失败，回退本地计算", error);
     }
   }
 
+  if (renderRequestId !== analysisRenderRequestSeq) {
+    return;
+  }
   if (!dbRows.length) {
     renderAnalysisFromHistory();
     return;
@@ -7129,9 +7259,9 @@ async function refreshMarketData(opts = {}) {
   state.marketDataDelaySource = "";
 
   try {
-    await hydrateKlineFromLocalDb();
     const symbols = collectSymbolsForMarket();
     const klineSymbols = collectKlineSymbolsForMarket();
+    await hydrateKlineFromLocalDb(klineSymbols);
     if (!symbols.length) {
       state.marketLoading = false;
       if (!skipFinalRender) {
