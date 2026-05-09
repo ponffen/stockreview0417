@@ -39,10 +39,6 @@
       "source": "/api/market/snapshot",
       "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/market/snapshot"
     },
-    {
-      "source": "/api/probe/upstream",
-      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/probe/upstream"
-    },
     { "source": "/api/assets", "destination": "/api/assets" },
     { "source": "/api/assets/", "destination": "/api/assets" },
     { "source": "/favicon.ico", "destination": "/api/assets?file=favicon.ico" },
