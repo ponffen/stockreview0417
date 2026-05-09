@@ -391,6 +391,8 @@ const PROBE_DEFAULT_TIMEOUT_MS = 12_000;
 const PROBE_MAX_TIMEOUT_MS = 30_000;
 const PROBE_DEFAULT_ROUNDS = 1;
 const PROBE_MAX_ROUNDS = 5;
+const DEFAULT_ALIYUN_PROBE_URL =
+  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/probe/upstream";
 
 function parsePositiveInt(input, fallback, min, max) {
   const n = Number(input);
@@ -710,12 +712,34 @@ app.get("/api/health", (_req, res) => {
 });
 
 /**
- * 上游可达性探针：用于验证「当前 Vercel 服务器」访问新浪/腾讯是否稳定。
+ * 上游可达性探针：
+ * - 默认重定向至阿里云 FC 探针（避免 Vercel 下载附件或超时，浏览器可直接展示 JSON）。
+ * - 若需强制探测当前 Vercel 运行时，请加 query: target=vercel。
  * 浏览器可直接访问：
  * /api/probe/upstream
- * /api/probe/upstream?rounds=3&timeoutMs=15000&len=120
+ * /api/probe/upstream?rounds=3&timeoutMs=15000&len=120&target=vercel
  */
 app.get("/api/probe/upstream", async (req, res) => {
+  const target = String(req.query.target || "aliyun").trim().toLowerCase();
+  if (target !== "vercel") {
+    const upstreamBase = String(process.env.ALIYUN_PROBE_UPSTREAM_URL || DEFAULT_ALIYUN_PROBE_URL).trim();
+    const qs = new URLSearchParams();
+    Object.entries(req.query || {}).forEach(([k, v]) => {
+      if (k === "target" || v == null) {
+        return;
+      }
+      if (Array.isArray(v)) {
+        v.forEach((item) => qs.append(k, String(item)));
+      } else {
+        qs.set(k, String(v));
+      }
+    });
+    const redirectUrl = qs.toString() ? `${upstreamBase}?${qs.toString()}` : upstreamBase;
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(307, redirectUrl);
+    return;
+  }
+
   const rounds = parsePositiveInt(req.query.rounds, PROBE_DEFAULT_ROUNDS, 1, PROBE_MAX_ROUNDS);
   const timeoutMs = parsePositiveInt(
     req.query.timeoutMs,
