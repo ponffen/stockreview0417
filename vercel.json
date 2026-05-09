@@ -15,6 +15,34 @@
     { "source": "/api/health", "destination": "/api/health" },
     { "source": "/api/health/", "destination": "/api/health" },
     { "source": "/api/health/db", "destination": "/api/health-db" },
+    {
+      "source": "/api/sina-kline",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/sina-kline"
+    },
+    {
+      "source": "/api/sina-kline/",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/sina-kline"
+    },
+    {
+      "source": "/api/sina_kline",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/sina-kline"
+    },
+    {
+      "source": "/api/sina_kline/",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/sina-kline"
+    },
+    {
+      "source": "/api/quote/tencent",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent"
+    },
+    {
+      "source": "/api/market/snapshot",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/market/snapshot"
+    },
+    {
+      "source": "/api/probe/upstream",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/probe/upstream"
+    },
     { "source": "/api/assets", "destination": "/api/assets" },
     { "source": "/api/assets/", "destination": "/api/assets" },
     { "source": "/favicon.ico", "destination": "/api/assets?file=favicon.ico" },
