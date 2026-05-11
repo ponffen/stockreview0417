@@ -4,7 +4,7 @@
  */
 
 const iconv = require("iconv-lite");
-const { normalizeSymbol } = require("./db");
+const { normalizeSymbol, formatSymbolForDisplay } = require("./db");
 
 function toTencentQuoteKey(rawSymbol) {
   const normalized =
@@ -73,9 +73,7 @@ function parseTencentTildeRecord(payload) {
     return null;
   }
   const tag = marketTagFromTencentFirstField(parts[0]) || "OT";
-  const codeRaw = String(parts[2] || "").trim();
-  const displayCode = displayCodeFromTencentParts2(codeRaw);
-  return { name, marketTag: tag, displayCode: displayCode || codeRaw.toUpperCase() };
+  return { name, marketTag: tag };
 }
 
 const CHUNK = 55;
@@ -134,10 +132,11 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
       }
       const originals = keyToOriginals.get(sourceKey) || [];
       for (const orig of originals) {
+        const displayCode = formatSymbolForDisplay(orig);
         out.set(orig, {
           name: parsed.name,
           marketTag: parsed.marketTag,
-          displayCode: parsed.displayCode,
+          displayCode: displayCode || displayCodeFromTencentParts2(sourceKey),
         });
       }
     }

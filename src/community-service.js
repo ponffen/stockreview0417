@@ -16,6 +16,7 @@ const {
   selectSymbolDailyPositionsOnDate,
   getLatestSymbolDailyClose,
   normalizeSymbol,
+  formatSymbolForDisplay,
   getAnalysisDailySnapshots,
   getSettings,
 } = require("./db");
@@ -74,17 +75,7 @@ function displayStockMeta(symbol) {
   const normalized = normalizeSymbol(symbol) || String(symbol || "").trim().toLowerCase();
   const m = inferMarket(normalized);
   const marketTag = m === "A股" ? "CN" : m === "港股" ? "HK" : m === "美股" ? "US" : "OT";
-  const s = String(normalized || "").toLowerCase();
-  let displayCode = String(symbol || "");
-  if (s.startsWith("sh") || s.startsWith("sz")) {
-    displayCode = s.slice(2).toUpperCase();
-  } else if (s.startsWith("hk")) {
-    displayCode = s.slice(2).toUpperCase();
-  } else if (s.startsWith("gb_")) {
-    displayCode = s.slice(3).toUpperCase();
-  } else {
-    displayCode = s.toUpperCase();
-  }
+  const displayCode = formatSymbolForDisplay(normalized) || normalized;
   return { marketTag, displayCode };
 }
 

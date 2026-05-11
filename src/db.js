@@ -20,6 +20,9 @@ const {
   validNumber,
   normalizeAccountRecords,
   normalizeSymbol,
+  isUsTickerSymbol,
+  getLegacyUsAlias,
+  formatSymbolForDisplay,
   normalizeTrade,
   tradeToRow,
   rowToTrade,
@@ -82,6 +85,10 @@ let initPromise;
 let postInitTasksStarted = false;
 let isBootstrapping = false;
 let symbolNameMapTableReadyPromise = null;
+let symbolNameMapCanonicalizePromise = null;
+let symbolNameMapCanonicalizedAt = 0;
+
+const SYMBOL_MAP_CANONICALIZE_TTL_MS = 5 * 60 * 1000;
 
 function getSslOption() {
   if (process.env.DATABASE_SSL === "0" || process.env.DATABASE_SSL === "false") {
@@ -93,6 +100,19 @@ function getSslOption() {
   }
   // Vercel 部署时连接 Neon 必须带 SSL
   return { rejectUnauthorized: false };
+}
+
+function symbolQueryCandidates(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return [];
+  }
+  const out = [normalized];
+  const legacyUs = getLegacyUsAlias(normalized);
+  if (legacyUs && !out.includes(legacyUs)) {
+    out.push(legacyUs);
+  }
+  return out;
 }
 
 const DDL = [
@@ -1143,31 +1163,54 @@ async function upsertSymbolDailyCloseBatch(rows) {
 }
 
 async function getSymbolDailyCloseRange(symbol, fromDate, toDate) {
-  const sym = normalizeSymbol(symbol);
-  if (!sym) {
+  const candidates = symbolQueryCandidates(symbol);
+  if (!candidates.length) {
     return [];
   }
+  const primary = candidates[0];
   const from = fromDate && String(fromDate).trim() ? String(fromDate).trim() : "1970-01-01";
   const to = toDate && String(toDate).trim() ? String(toDate).trim() : "9999-12-31";
   const { rows } = await q(
-    "SELECT date, close, source FROM symbol_daily_close WHERE symbol = $1 AND date >= $2 AND date <= $3 ORDER BY date ASC",
-    [sym, from, to]
+    `SELECT symbol, date, close, source, updated_at
+     FROM symbol_daily_close
+     WHERE symbol = ANY($1::text[])
+       AND date >= $2
+       AND date <= $3
+     ORDER BY date ASC,
+              CASE WHEN symbol = $4 THEN 0 ELSE 1 END ASC,
+              updated_at DESC`,
+    [candidates, from, to, primary]
   );
-  return rows.map((row) => ({
-    date: row.date,
-    close: Number(row.close),
-    source: row.source || "",
-  }));
+  const dedupByDate = new Map();
+  for (const row of rows) {
+    const date = String(row.date || "").slice(0, 10);
+    if (!date || dedupByDate.has(date)) {
+      continue;
+    }
+    dedupByDate.set(date, {
+      date,
+      close: Number(row.close),
+      source: row.source || "",
+    });
+  }
+  return [...dedupByDate.values()];
 }
 
 async function getLatestSymbolDailyClose(symbol) {
-  const sym = normalizeSymbol(symbol);
-  if (!sym) {
+  const candidates = symbolQueryCandidates(symbol);
+  if (!candidates.length) {
     return null;
   }
+  const primary = candidates[0];
   const { rows } = await q(
-    "SELECT close, date FROM symbol_daily_close WHERE symbol = $1 ORDER BY date DESC LIMIT 1",
-    [sym]
+    `SELECT symbol, close, date
+     FROM symbol_daily_close
+     WHERE symbol = ANY($1::text[])
+     ORDER BY date DESC,
+              CASE WHEN symbol = $2 THEN 0 ELSE 1 END ASC,
+              updated_at DESC
+     LIMIT 1`,
+    [candidates, primary]
   );
   if (!rows[0] || rows[0].close == null) {
     return null;
@@ -1203,6 +1246,40 @@ async function ensureSymbolNameMapTable() {
     throw error;
   });
   return symbolNameMapTableReadyPromise;
+}
+
+async function canonicalizeSymbolNameMapUsAliases(force = false) {
+  const now = nowMs();
+  if (!force && now - symbolNameMapCanonicalizedAt < SYMBOL_MAP_CANONICALIZE_TTL_MS) {
+    return;
+  }
+  if (symbolNameMapCanonicalizePromise) {
+    return symbolNameMapCanonicalizePromise;
+  }
+  symbolNameMapCanonicalizePromise = (async () => {
+    await q(
+      `INSERT INTO symbol_name_map (symbol, name_cn, source, updated_at, last_seen_at)
+       SELECT lower(substr(symbol, 4)), name_cn, source, updated_at, last_seen_at
+       FROM symbol_name_map
+       WHERE symbol ~* '^gb_[a-z0-9._-]+$'
+       ON CONFLICT (symbol) DO UPDATE SET
+         name_cn = CASE
+           WHEN length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.name_cn
+           ELSE symbol_name_map.name_cn
+         END,
+         source = CASE
+           WHEN length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.source
+           ELSE symbol_name_map.source
+         END,
+         updated_at = GREATEST(symbol_name_map.updated_at, EXCLUDED.updated_at),
+         last_seen_at = GREATEST(symbol_name_map.last_seen_at, EXCLUDED.last_seen_at)`
+    );
+    await q("DELETE FROM symbol_name_map WHERE symbol ~* '^gb_[a-z0-9._-]+$'");
+    symbolNameMapCanonicalizedAt = nowMs();
+  })().finally(() => {
+    symbolNameMapCanonicalizePromise = null;
+  });
+  return symbolNameMapCanonicalizePromise;
 }
 
 async function createSymbolNameMapTableNow() {
@@ -1271,7 +1348,12 @@ function normalizeSymbolNameEntry(entry = {}) {
   if (loweredName === symbol.toLowerCase()) {
     return null;
   }
-  if (/^(sh|sz)\d{6}$/i.test(loweredName) || /^hk\d{5}$/i.test(loweredName) || /^gb_[a-z0-9._-]+$/i.test(loweredName)) {
+  if (
+    /^(sh|sz)\d{6}$/i.test(loweredName) ||
+    /^hk\d{5}$/i.test(loweredName) ||
+    /^gb_[a-z0-9._-]+$/i.test(loweredName) ||
+    /^us_[a-z0-9._-]+$/i.test(loweredName)
+  ) {
     return null;
   }
   return { symbol, nameCn, source };
@@ -1283,6 +1365,7 @@ async function upsertSymbolNameMapBatch(rows = []) {
     return 0;
   }
   await ensureSymbolNameMapTable();
+  await canonicalizeSymbolNameMapUsAliases();
   const latestBySymbol = new Map();
   for (const item of list) {
     latestBySymbol.set(item.symbol, item);
@@ -1319,13 +1402,18 @@ async function upsertSymbolNameMapBatch(rows = []) {
 
 async function getSymbolNameMap(symbols = []) {
   await ensureSymbolNameMapTable();
+  await canonicalizeSymbolNameMapUsAliases();
   const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
   if (!uniq.length) {
     return {};
   }
+  const candidates = [...new Set(uniq.flatMap((symbol) => symbolQueryCandidates(symbol)))];
   const { rows } = await q(
-    "SELECT symbol, name_cn FROM symbol_name_map WHERE symbol = ANY($1::text[])",
-    [uniq]
+    `SELECT symbol, name_cn, updated_at
+     FROM symbol_name_map
+     WHERE symbol = ANY($1::text[])
+     ORDER BY updated_at DESC`,
+    [candidates]
   );
   const out = {};
   for (const row of rows || []) {
@@ -1334,7 +1422,9 @@ async function getSymbolNameMap(symbols = []) {
     if (!symbol || !nameCn) {
       continue;
     }
-    out[symbol] = nameCn;
+    if (!out[symbol]) {
+      out[symbol] = nameCn;
+    }
   }
   return out;
 }
@@ -1684,6 +1774,8 @@ module.exports = {
   schemaDdl: DDL,
   SEED_USER_PHONE,
   normalizeSymbol,
+  isUsTickerSymbol,
+  formatSymbolForDisplay,
   normalizeTrade,
   normalizeAccountRecords,
   normalizeDailyReturn,

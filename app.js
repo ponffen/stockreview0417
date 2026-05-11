@@ -1149,14 +1149,15 @@ function quoteNameForDisplay(symbol, rawName) {
 
 function getDisplayName(symbol, fallbackName = "") {
   const normalized = normalizeSymbol(symbol || "");
-  const alias = normalized.replace(/^gb_/i, "");
-  const fromMap = (state.nameMap[normalized] || state.nameMap[alias] || "").trim();
+  const legacyAlias = getLegacyUsAlias(normalized);
+  const fromMap = (state.nameMap[normalized] || (legacyAlias ? state.nameMap[legacyAlias] : "") || "").trim();
   const quoteName = quoteNameForDisplay(symbol, getQuoteBySymbol(symbol)?.name);
   const m = inferMarket(normalized);
+  const fallbackCode = formatSymbolForDisplay(normalized);
   if (m === "A股" || m === "港股") {
-    return (hasCnNameLabel(fromMap) ? fromMap : "") || quoteName || fallbackName || alias.toUpperCase();
+    return (hasCnNameLabel(fromMap) ? fromMap : "") || quoteName || fallbackName || fallbackCode;
   }
-  return fromMap || quoteName || fallbackName || alias.toUpperCase();
+  return fromMap || quoteName || fallbackName || fallbackCode;
 }
 
 function getQuoteBySymbol(symbol) {
@@ -1164,8 +1165,8 @@ function getQuoteBySymbol(symbol) {
   if (!normalized) {
     return {};
   }
-  const alias = normalized.replace(/^gb_/i, "");
-  return state.quoteMap[normalized] || state.quoteMap[alias] || {};
+  const legacyAlias = getLegacyUsAlias(normalized);
+  return state.quoteMap[normalized] || (legacyAlias ? state.quoteMap[legacyAlias] : null) || {};
 }
 
 function getKlineBySymbol(symbol) {
@@ -1173,8 +1174,8 @@ function getKlineBySymbol(symbol) {
   if (!normalized) {
     return [];
   }
-  const alias = normalized.replace(/^gb_/i, "");
-  return state.klineMap[normalized] || state.klineMap[alias] || [];
+  const legacyAlias = getLegacyUsAlias(normalized);
+  return state.klineMap[normalized] || (legacyAlias ? state.klineMap[legacyAlias] : null) || [];
 }
 
 function normalizeSymbolList(input) {
@@ -1196,8 +1197,9 @@ function upsertNameMapEntry(symbol, name) {
     return;
   }
   state.nameMap[normalized] = label;
-  if (/^gb_/i.test(normalized)) {
-    state.nameMap[normalized.replace(/^gb_/i, "")] = label;
+  const legacyAlias = getLegacyUsAlias(normalized);
+  if (legacyAlias) {
+    state.nameMap[legacyAlias] = label;
   }
   markSymbolNameFetched(normalized);
 }
@@ -1394,9 +1396,11 @@ async function hydrateKlineFromLocalDb(symbols = []) {
           return;
         }
         const normalized = normalizeSymbol(sym);
-        const alias = normalized.replace(/^gb_/i, "");
         state.klineMap[normalized] = list;
-        state.klineMap[alias] = list;
+        const legacyAlias = getLegacyUsAlias(normalized);
+        if (legacyAlias) {
+          state.klineMap[legacyAlias] = list;
+        }
       });
       dailyCloseHydrateAt = Date.now();
     })();
@@ -1602,13 +1606,7 @@ function toQuoteRequestSymbol(symbol) {
   if (!symbol) {
     return symbol;
   }
-  if (/^gb_/i.test(symbol) || /^rt_hk/i.test(symbol) || /^sh\d{6}$/i.test(symbol) || /^sz\d{6}$/i.test(symbol) || /^hk\d{5}$/i.test(symbol)) {
-    return symbol;
-  }
-  if (/^[a-z][a-z0-9._-]*$/i.test(symbol)) {
-    return `gb_${symbol.toLowerCase()}`;
-  }
-  return symbol;
+  return normalizeSymbol(symbol) || symbol;
 }
 
 function cycleSortOrder(current) {
@@ -2827,12 +2825,13 @@ async function runTradeSearchSuggestQuery(raw) {
     tradeStockSearchResults.innerHTML = list
       .map((row, i) => {
         const sym = row.symbol != null ? String(row.symbol) : "";
+        const code = formatSymbolForDisplay(sym);
         const name = row.name != null ? String(row.name) : sym;
         const mkt = row.market != null ? String(row.market) : "";
         return `<li role="option" id="tssr-${i}" data-symbol="${escapeHtml(sym)}" data-name="${escapeHtml(name)}">
           <div class="trade-stock-search-name">${escapeHtml(name)}</div>
           <div class="trade-stock-search-meta">
-            <span class="trade-stock-search-code">${escapeHtml(sym)}</span><br />
+            <span class="trade-stock-search-code">${escapeHtml(code || sym)}</span><br />
             <span>${escapeHtml(mkt)}</span>
           </div>
         </li>`;
@@ -3108,7 +3107,7 @@ function buildTop3ListHtml(topPositions) {
       const right = Number.isFinite(w)
         ? `<span class="community-top3-pct">${(w * 100).toFixed(1)}%</span>`
         : "—";
-      const code = escapeHtml(p.displayCode || p.symbol || "");
+      const code = escapeHtml(formatSymbolForDisplay(p.symbol || p.displayCode || ""));
       const tag = escapeHtml(p.marketTag || "OT");
       const tagLower = String(p.marketTag || "ot").toLowerCase();
       const stockName = escapeHtml(getDisplayName(p.symbol, p.name));
@@ -3186,7 +3185,7 @@ function feedRowHtml(t) {
   const uid = escapeHtml(t.userId);
   const tag = escapeHtml(t.marketTag || "OT");
   const tagLower = String(t.marketTag || "ot").toLowerCase();
-  const code = escapeHtml(t.displayCode || t.symbol || "");
+  const code = escapeHtml(formatSymbolForDisplay(t.symbol || t.displayCode || ""));
   const priceStr =
     t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
   const share = t.amountShareOfCurrentTotalMv;
@@ -3543,7 +3542,7 @@ function renderPublicEarningProfileHtml(d) {
           ? `<tr><td colspan="9"><p class="empty">暂无持仓</p></td></tr>`
           : rows
               .map((row) => {
-                const stockCode = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
+                const stockCode = formatSymbolForDisplay(row.symbol);
                 const tag =
                   row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
                 const toBk = (v) => nativeToOverviewBook(row, v, bookCcy);
@@ -4519,7 +4518,7 @@ function renderOverviewAndStockTable() {
 
   stockTableBody.innerHTML = rows
     .map((row) => {
-      const stockCode = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
+      const stockCode = formatSymbolForDisplay(row.symbol);
       const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
       const dayClass = applyFxForOverview(row, row.todayProfitNative) >= 0 ? "up" : "down";
       const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
@@ -5279,7 +5278,7 @@ function renderAnalysisStockRank(
         .map((row, idx) => {
           const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
           const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
-          const code = row.symbol.replace(/^(sh|sz|hk|gb_)/i, "").toUpperCase();
+          const code = formatSymbolForDisplay(row.symbol);
           let profitShareCell = "";
           if (publicRank) {
             const shareText =
@@ -6066,7 +6065,7 @@ async function renderStockRecordPage(symbol) {
   const prev = validNumber(quote.prevClose, position.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
 
-  stockRecordTitle.textContent = `${getDisplayName(symbol, position.name)}(${symbol.toUpperCase()})`;
+  stockRecordTitle.textContent = `${getDisplayName(symbol, position.name)}(${formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = quote.time || state.quoteTime || "--";
   stockRecordPrice.textContent = formatNumber(current, 3);
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
@@ -6142,10 +6141,12 @@ async function ensureSymbolData(symbol) {
   try {
     const quoteMap = await fetchRealtimeQuotes([symbol]);
     const normalizedSymbol = normalizeSymbol(symbol);
-    const alias = normalizedSymbol.replace(/^gb_/i, "");
+    const legacyAlias = getLegacyUsAlias(normalizedSymbol);
     if (quoteMap[symbol]) {
       state.quoteMap[normalizedSymbol] = quoteMap[symbol];
-      state.quoteMap[alias] = quoteMap[symbol];
+      if (legacyAlias) {
+        state.quoteMap[legacyAlias] = quoteMap[symbol];
+      }
       state.quoteTime = pickLatestQuoteTime([state.quoteTime, quoteMap[symbol].time]);
       const nm = String(quoteMap[symbol]?.name || "").trim();
       const display = quoteNameForDisplay(normalizedSymbol, nm);
@@ -6160,9 +6161,11 @@ async function ensureSymbolData(symbol) {
     const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: true });
     if (latest) {
       const normalizedSymbol = normalizeSymbol(symbol);
-      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      const legacyAlias = getLegacyUsAlias(normalizedSymbol);
       state.quoteMap[normalizedSymbol] = latest;
-      state.quoteMap[alias] = latest;
+      if (legacyAlias) {
+        state.quoteMap[legacyAlias] = latest;
+      }
       state.quoteTime = pickLatestQuoteTime([state.quoteTime, latest.time]);
     }
   }
@@ -6175,15 +6178,19 @@ async function ensureSymbolData(symbol) {
       const list = await fetchKlineData(symbol);
       if (list.length) {
         const normalizedSymbol = normalizeSymbol(symbol);
-        const alias = normalizedSymbol.replace(/^gb_/i, "");
+        const legacyAlias = getLegacyUsAlias(normalizedSymbol);
         state.klineMap[normalizedSymbol] = list;
-        state.klineMap[alias] = list;
+        if (legacyAlias) {
+          state.klineMap[legacyAlias] = list;
+        }
       } else {
         const fallback = buildFallbackKlineFromTrades(symbol);
         const normalizedSymbol = normalizeSymbol(symbol);
-        const alias = normalizedSymbol.replace(/^gb_/i, "");
+        const legacyAlias = getLegacyUsAlias(normalizedSymbol);
         state.klineMap[normalizedSymbol] = fallback;
-        state.klineMap[alias] = fallback;
+        if (legacyAlias) {
+          state.klineMap[legacyAlias] = fallback;
+        }
       }
     }
   } catch (error) {
@@ -6191,9 +6198,11 @@ async function ensureSymbolData(symbol) {
     if (!getKlineBySymbol(symbol).length) {
       const fallback = buildFallbackKlineFromTrades(symbol);
       const normalizedSymbol = normalizeSymbol(symbol);
-      const alias = normalizedSymbol.replace(/^gb_/i, "");
+      const legacyAlias = getLegacyUsAlias(normalizedSymbol);
       state.klineMap[normalizedSymbol] = fallback;
-      state.klineMap[alias] = fallback;
+      if (legacyAlias) {
+        state.klineMap[legacyAlias] = fallback;
+      }
     }
   }
 }
@@ -7475,9 +7484,11 @@ async function refreshMarketData(opts = {}) {
       if (Object.keys(quoteMap).length) {
         Object.entries(quoteMap).forEach(([symbol, quote]) => {
           const normalized = normalizeSymbol(symbol);
-          const alias = normalized.replace(/^gb_/i, "");
+          const legacyAlias = getLegacyUsAlias(normalized);
           state.quoteMap[normalized] = quote;
-          state.quoteMap[alias] = quote;
+          if (legacyAlias) {
+            state.quoteMap[legacyAlias] = quote;
+          }
           const nm = String(quote?.name || "").trim();
           const display = quoteNameForDisplay(normalized, nm);
           if (display) {
@@ -7520,9 +7531,11 @@ async function refreshMarketData(opts = {}) {
             return;
           }
           const normalized = normalizeSymbol(symbol);
-          const alias = normalized.replace(/^gb_/i, "");
+          const legacyAlias = getLegacyUsAlias(normalized);
           state.klineMap[normalized] = list;
-          state.klineMap[alias] = list;
+          if (legacyAlias) {
+            state.klineMap[legacyAlias] = list;
+          }
         });
       } catch (error) {
         console.warn("日K快照拉取失败，保留本地数据展示", error);
@@ -7535,9 +7548,11 @@ async function refreshMarketData(opts = {}) {
         const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: false });
         if (latest) {
           const normalized = normalizeSymbol(symbol);
-          const alias = normalized.replace(/^gb_/i, "");
+          const legacyAlias = getLegacyUsAlias(normalized);
           state.quoteMap[normalized] = latest;
-          state.quoteMap[alias] = latest;
+          if (legacyAlias) {
+            state.quoteMap[legacyAlias] = latest;
+          }
         }
       }
     }
@@ -8039,10 +8054,36 @@ function normalizeSymbol(rawSymbol) {
   if (!value) {
     return "";
   }
+  if (value.startsWith("fx_") || /^wh(usd|hkd)cny$/.test(value) || value === "usdcny" || value === "hkdcny") {
+    return value;
+  }
+  if (value.startsWith("us_")) {
+    const ticker = value
+      .slice(3)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    return ticker || "";
+  }
+  if (value.startsWith("gb_")) {
+    const ticker = value
+      .slice(3)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    return ticker || "";
+  }
+  if (/^us[a-z0-9._-]+$/i.test(value)) {
+    const ticker = value
+      .slice(2)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    if (ticker && ticker !== "dcny" && ticker !== "hkdcny") {
+      return ticker;
+    }
+  }
   if (value.startsWith("sh") || value.startsWith("sz") || value.startsWith("hk")) {
     return value;
   }
-  if (value.startsWith("rt_hk") || value.startsWith("gb_")) {
+  if (value.startsWith("rt_hk")) {
     return value;
   }
   if (/^\d{6}$/.test(value)) {
@@ -8063,14 +8104,58 @@ function normalizeSymbol(rawSymbol) {
   return value;
 }
 
+function isUsTickerSymbol(symbol) {
+  const s = String(symbol || "").trim().toLowerCase();
+  if (!s) {
+    return false;
+  }
+  if (
+    s.startsWith("sh") ||
+    s.startsWith("sz") ||
+    s.startsWith("hk") ||
+    s.startsWith("rt_hk") ||
+    s.startsWith("fx_") ||
+    /^wh(usd|hkd)cny$/.test(s) ||
+    s === "usdcny" ||
+    s === "hkdcny"
+  ) {
+    return false;
+  }
+  return /^[a-z][a-z0-9._-]*$/i.test(s);
+}
+
+function getLegacyUsAlias(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!isUsTickerSymbol(normalized)) {
+    return "";
+  }
+  return `gb_${normalized}`;
+}
+
+function formatSymbolForDisplay(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return "";
+  }
+  if (/^rt_hk/i.test(normalized)) {
+    const digits = normalized.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
+    return `hk${digits}`;
+  }
+  return normalized;
+}
+
 function inferMarket(symbol) {
-  if (symbol.startsWith("sh") || symbol.startsWith("sz")) {
+  const s = String(symbol || "").trim().toLowerCase();
+  if (!s) {
+    return "其他";
+  }
+  if (s.startsWith("sh") || s.startsWith("sz")) {
     return "A股";
   }
-  if (symbol.startsWith("hk") || symbol.startsWith("rt_hk")) {
+  if (s.startsWith("hk") || s.startsWith("rt_hk")) {
     return "港股";
   }
-  if (symbol.startsWith("gb_") || /^[a-z]/i.test(symbol)) {
+  if (isUsTickerSymbol(s)) {
     return "美股";
   }
   return "其他";

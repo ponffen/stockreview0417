@@ -99,9 +99,9 @@ async function main() {
   );
 
   const trades = [
-    t(ACC_IB, "gb_tsm", "台积电 TSM", PX.tsm, 95, 36195, "盈透"),
-    t(ACC_IB, "gb_goog", "Alphabet GOOG", PX.goog, 102, 34170, "盈透"),
-    t(ACC_IB, "gb_futu", "富途 FUTU", PX.futu, 119, 18803.19, "盈透 发生额小计对齐 89,168.19"),
+    t(ACC_IB, "tsm", "台积电 TSM", PX.tsm, 95, 36195, "盈透"),
+    t(ACC_IB, "goog", "Alphabet GOOG", PX.goog, 102, 34170, "盈透"),
+    t(ACC_IB, "futu", "富途 FUTU", PX.futu, 119, 18803.19, "盈透 发生额小计对齐 89,168.19"),
     t(ACC_LB, "hk02228", "晶泰控股", PX.jt, 9000, 80910, "长桥 HKD"),
     t(ACC_LB, "hk09992", "泡泡玛特", PX.popHk, 400, 62240, "长桥 HKD"),
     t(ACC_HT, "sz300750", "宁德时代", PX.nd, 100, 43890, "海通"),

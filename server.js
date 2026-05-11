@@ -102,7 +102,7 @@ function mapSinaDailySymbolToDbSymbol(symbol) {
     return `hk${canonical.slice(-5)}`;
   }
   if (/^us_[A-Z0-9._-]+$/i.test(canonical)) {
-    return `gb_${canonical.slice(3).toLowerCase()}`;
+    return canonical.slice(3).toLowerCase();
   }
   return "";
 }
