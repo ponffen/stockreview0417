@@ -15,10 +15,12 @@ const MARKET_KLINE_DEFAULT_LEN = 120;
 const MARKET_CACHE_TTL_MS = 30 * 60 * 1000;
 const ANALYSIS_DAILY_CACHE_TTL_MS = 20 * 1000;
 const DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS = 20 * 1000;
+const REALTIME_PATCH_CACHE_TTL_MS = 10 * 1000;
 const sinaKlineMemoryCache = new Map();
 const tencentQuoteMemoryCache = new Map();
 const analysisDailyMemoryCache = new Map();
 const dailyCloseForTradesMemoryCache = new Map();
+const realtimePatchMemoryCache = new Map();
 
 function cacheSet(map, key, value) {
   map.set(String(key), { value, updatedAt: Date.now() });
@@ -56,6 +58,7 @@ function clearUserScopedCache(map, userId) {
 function invalidateDailyCloseAndAnalysisCache(userId) {
   clearUserScopedCache(analysisDailyMemoryCache, userId);
   clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
+  clearUserScopedCache(realtimePatchMemoryCache, userId);
 }
 
 function sanitizeSymbolList(input) {
@@ -102,7 +105,7 @@ function mapSinaDailySymbolToDbSymbol(symbol) {
     return `hk${canonical.slice(-5)}`;
   }
   if (/^us_[A-Z0-9._-]+$/i.test(canonical)) {
-    return `gb_${canonical.slice(3).toLowerCase()}`;
+    return canonical.slice(3).toLowerCase();
   }
   return "";
 }
@@ -673,10 +676,13 @@ const {
   upsertAnalysisDailySnapshot,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
+  getLatestAnalysisSnapshotDate,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,
+  getSnapshotWatermark,
+  setSnapshotWatermark,
   verifyUserLogin,
   createRegisteredUser,
   updateUserPassword,
@@ -691,6 +697,7 @@ const {
   isCommunityFollowing,
   pingDatabase,
 } = require("./src/db");
+const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
 const {
   maskPhone,
   displayNameForUser,
@@ -782,6 +789,68 @@ function requireAuth(req, res, next) {
   }
   req.userId = userId;
   next();
+}
+
+function parseBooleanInput(input, fallback = false) {
+  if (input == null) {
+    return fallback;
+  }
+  const v = String(input).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(v)) {
+    return false;
+  }
+  return fallback;
+}
+
+function extractBearerToken(req) {
+  const auth = String(req.headers?.authorization || "").trim();
+  if (!auth.toLowerCase().startsWith("bearer ")) {
+    return "";
+  }
+  return auth.slice(7).trim();
+}
+
+function isCronAuthorized(req) {
+  const cronHeader = req.headers?.["x-vercel-cron"];
+  if (cronHeader != null) {
+    return true;
+  }
+  const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+  if (!configuredSecret) {
+    return false;
+  }
+  const bearer = extractBearerToken(req);
+  const queryToken = String(req.query?.token || req.body?.token || "").trim();
+  return bearer === configuredSecret || queryToken === configuredSecret;
+}
+
+async function collectLiveSymbolsForUser(userId, accountId = "all") {
+  const allTrades = await getTrades(userId);
+  const wantedAccount = String(accountId || "all").trim() || "all";
+  const trades =
+    wantedAccount === "all" ? allTrades : allTrades.filter((trade) => String(trade.accountId || "default") === wantedAccount);
+  const holdings = new Map();
+  for (const trade of trades.sort((a, b) => {
+    const ad = new Date(a.date).getTime();
+    const bd = new Date(b.date).getTime();
+    if (ad !== bd) {
+      return ad - bd;
+    }
+    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+  })) {
+    const symbol = normalizeSymbol(trade.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const current = holdings.get(symbol) || 0;
+    holdings.set(symbol, current + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)));
+  }
+  return [...holdings.entries()]
+    .filter(([, qty]) => qty > 1e-6)
+    .map(([symbol]) => symbol);
 }
 
 app.get("/api/health", (_req, res) => {
@@ -1444,6 +1513,345 @@ app.post("/api/analysis-daily", requireAuth, async (req, res) => {
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
+  }
+});
+
+app.all("/api/cron/freeze-eod", async (req, res) => {
+  const sessionUser = readUserIdFromRequest(req);
+  if (!sessionUser && !isCronAuthorized(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized cron request" });
+    return;
+  }
+  try {
+    const forcedDate = req.query?.frozenDate || req.body?.frozenDate;
+    const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
+    const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const result = await runDailyFreeze({
+      frozenDate: forcedDate,
+      force,
+      userIds,
+      logger: console,
+    });
+    analysisDailyMemoryCache.clear();
+    dailyCloseForTradesMemoryCache.clear();
+    realtimePatchMemoryCache.clear();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "freeze failed" });
+  }
+});
+
+app.get("/api/snapshot/watermark", async (_req, res) => {
+  try {
+    const data = await getSnapshotWatermark();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "watermark failed" });
+  }
+});
+
+app.get("/api/snapshot/account-daily", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const cacheKey = `u:${req.userId}:snapshot-account:account=${accountId || "*"}:from=${from}:to=${to}`;
+    const cached = cacheGetWithTtl(analysisDailyMemoryCache, cacheKey, ANALYSIS_DAILY_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: cached, cached: true });
+      return;
+    }
+    const data = await getAnalysisDailySnapshots({ accountId, from, to }, req.userId);
+    cacheSet(analysisDailyMemoryCache, cacheKey, data);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot account failed" });
+  }
+});
+
+app.get("/api/snapshot/symbol-daily", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const symbols = sanitizeSymbolList(req.query.symbols);
+    let rows = [];
+    if (!symbols.length) {
+      rows = await getSymbolDailyPnl({ accountId, from, to, symbol: req.query.symbol }, req.userId);
+    } else {
+      const chunks = await Promise.all(
+        symbols.map((symbol) => getSymbolDailyPnl({ accountId, from, to, symbol }, req.userId))
+      );
+      rows = chunks.flat();
+      rows.sort((a, b) => {
+        if (a.date !== b.date) {
+          return String(a.date).localeCompare(String(b.date));
+        }
+        return String(a.symbol).localeCompare(String(b.symbol));
+      });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot symbol daily failed" });
+  }
+});
+
+app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
+  try {
+    const w = await getTradeWindowForDailyClose(req.userId);
+    if (!w.symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const requested = sanitizeSymbolList(req.query.symbols);
+    const wantedSet = requested.length ? new Set(requested) : null;
+    const symbols = wantedSet ? w.symbols.filter((sym) => wantedSet.has(sym)) : w.symbols;
+    if (!symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const days = parsePositiveInt(req.query.days, 240, 30, 4000);
+    const to = w.to || dateKeyDaysFromToday(0);
+    const floorFrom = dateKeyDaysFromToday(-days);
+    const from = w.from && w.from > floorFrom ? w.from : floorFrom;
+    const cacheKey = `u:${req.userId}:snapshot-close:from=${from}:to=${to}:symbols=${symbols.join(",")}`;
+    const cached = cacheGetWithTtl(dailyCloseForTradesMemoryCache, cacheKey, DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+    const data = {};
+    const rowsBySymbol = await Promise.all(symbols.map(async (sym) => [sym, await getSymbolDailyCloseRange(sym, from, to)]));
+    for (const [sym, rows] of rowsBySymbol) {
+      data[sym] = rows;
+    }
+    const payload = { data, from, to, symbols };
+    cacheSet(dailyCloseForTradesMemoryCache, cacheKey, payload);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot symbol close failed" });
+  }
+});
+
+app.post("/api/realtime/quote", requireAuth, async (req, res) => {
+  try {
+    const symbolsInput = Array.isArray(req.body?.symbols) ? req.body.symbols : sanitizeSymbolList(req.query.symbols);
+    const accountId = req.body?.accountId != null ? String(req.body.accountId) : String(req.query.accountId || "all");
+    const symbols = symbolsInput.length ? [...new Set(symbolsInput.map((s) => normalizeSymbol(s)).filter(Boolean))] : await collectLiveSymbolsForUser(req.userId, accountId);
+    if (!symbols.length) {
+      res.json({ ok: true, quoteMap: {}, quoteTime: "--", missing: [] });
+      return;
+    }
+    const tencentKeyToSymbols = new Map();
+    for (const symbol of symbols) {
+      const key = toTencentQuoteSymbol(symbol);
+      if (!key) {
+        continue;
+      }
+      const list = tencentKeyToSymbols.get(key) || [];
+      list.push(symbol);
+      tencentKeyToSymbols.set(key, list);
+    }
+    const tRes = await fetchTencentQuotePayloadMap([...tencentKeyToSymbols.keys()]);
+    if (!tRes.ok) {
+      res.status(502).json({ ok: false, error: tRes.error || "realtime quote failed" });
+      return;
+    }
+    if (tRes.delayed) {
+      setDelayedHeaders(res, tRes.source || "cache");
+    }
+    const quoteMap = {};
+    const symbolNameRows = [];
+    const missing = [];
+    for (const [key, locals] of tencentKeyToSymbols.entries()) {
+      const payload = tRes.payloadMap.get(String(key).toLowerCase());
+      if (!payload) {
+        missing.push(...locals);
+        continue;
+      }
+      for (const symbol of locals) {
+        const parsed = parseTencentQuoteRecord(symbol, payload);
+        if (parsed) {
+          quoteMap[symbol] = parsed;
+          if (parsed.name) {
+            symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
+          }
+        } else {
+          missing.push(symbol);
+        }
+      }
+    }
+    if (symbolNameRows.length) {
+      void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
+    }
+    const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      quoteMap,
+      quoteTime,
+      delayed: !!tRes.delayed,
+      delaySource: tRes.source || "",
+      missing: [...new Set(missing)],
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime quote failed" });
+  }
+});
+
+app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
+  try {
+    const tRes = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
+    if (!tRes.ok) {
+      res.status(502).json({ ok: false, error: tRes.error || "realtime fx failed" });
+      return;
+    }
+    if (tRes.delayed) {
+      setDelayedHeaders(res, tRes.source || "cache");
+    }
+    const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
+    const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
+    const fxSpot = {};
+    if (usd && Number.isFinite(usd.current) && usd.current > 0) {
+      fxSpot.USD = usd.current;
+    }
+    if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
+      fxSpot.HKD = hkd.current;
+    }
+    const quoteTime = pickLatestQuoteTime([usd?.time, hkd?.time]);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      fxSpot,
+      quoteTime,
+      delayed: !!tRes.delayed,
+      delaySource: tRes.source || "",
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime fx failed" });
+  }
+});
+
+app.post("/api/realtime/patch", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : "all";
+    const cacheKey = `u:${req.userId}:realtime-patch:account=${accountId || "all"}`;
+    const cached = cacheGetWithTtl(realtimePatchMemoryCache, cacheKey, REALTIME_PATCH_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+
+    const latestDate = await getLatestAnalysisSnapshotDate(req.userId, accountId || "all");
+    const baseRows = latestDate
+      ? await getAnalysisDailySnapshots({ accountId, from: latestDate, to: latestDate }, req.userId)
+      : [];
+    const baseSnapshot = baseRows[baseRows.length - 1] || null;
+
+    const symbols = await collectLiveSymbolsForUser(req.userId, accountId || "all");
+    const quoteReq = await fetchTencentQuotePayloadMap(symbols.map((s) => toTencentQuoteSymbol(s)).filter(Boolean));
+    const fxReq = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
+
+    const quoteMap = {};
+    if (quoteReq.ok) {
+      const keyToSymbol = new Map();
+      symbols.forEach((sym) => {
+        const key = toTencentQuoteSymbol(sym);
+        if (key) {
+          keyToSymbol.set(String(key).toLowerCase(), sym);
+        }
+      });
+      for (const [k, payload] of quoteReq.payloadMap.entries()) {
+        const sym = keyToSymbol.get(String(k).toLowerCase());
+        if (!sym) continue;
+        const parsed = parseTencentQuoteRecord(sym, payload);
+        if (parsed) {
+          quoteMap[sym] = parsed;
+        }
+      }
+    }
+
+    const fxSpot = {};
+    const usd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whusdcny")) : null;
+    const hkd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whhkdcny")) : null;
+    if (usd?.current > 0) fxSpot.USD = usd.current;
+    if (hkd?.current > 0) fxSpot.HKD = hkd.current;
+    const fxRate = (currency) => {
+      if (currency === "CNY") return 1;
+      if (currency === "USD") return Number(fxSpot.USD) > 0 ? Number(fxSpot.USD) : 7.2;
+      if (currency === "HKD") return Number(fxSpot.HKD) > 0 ? Number(fxSpot.HKD) : 0.92;
+      return 1;
+    };
+
+    const trades = await getTrades(req.userId);
+    const accountTrades =
+      accountId === "all"
+        ? trades
+        : trades.filter((trade) => String(trade.accountId || "default") === String(accountId));
+    accountTrades.sort((a, b) => {
+      const ad = new Date(a.date).getTime();
+      const bd = new Date(b.date).getTime();
+      if (ad !== bd) return ad - bd;
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+    const holdings = new Map();
+    accountTrades.forEach((trade) => {
+      const symbol = normalizeSymbol(trade.symbol);
+      if (!symbol) return;
+      const entry = holdings.get(symbol) || { quantity: 0 };
+      entry.quantity += trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0);
+      holdings.set(symbol, entry);
+    });
+
+    let liveMarketValue = 0;
+    let todayProfitCny = 0;
+    for (const [symbol, item] of holdings.entries()) {
+      if (!(item.quantity > 1e-6)) {
+        continue;
+      }
+      const quote = quoteMap[symbol];
+      if (!quote) {
+        continue;
+      }
+      const current = Number(quote.current) || 0;
+      const prevClose = Number(quote.prevClose) || current;
+      const currency = symbol.startsWith("hk") || symbol.startsWith("rt_hk") ? "HKD" : symbol.startsWith("sh") || symbol.startsWith("sz") ? "CNY" : "USD";
+      const rate = fxRate(currency);
+      liveMarketValue += item.quantity * current * rate;
+      todayProfitCny += item.quantity * (current - prevClose) * rate;
+    }
+
+    const todayKey = dateKeyDaysFromToday(0);
+    const liveTotalProfit = baseSnapshot
+      ? baseSnapshot.date === todayKey
+        ? Number(baseSnapshot.totalProfit || 0) - Number(baseSnapshot.profitCny || 0) + todayProfitCny
+        : Number(baseSnapshot.totalProfit || 0) + todayProfitCny
+      : todayProfitCny;
+
+    const payload = {
+      accountId,
+      frozenDate: latestDate || null,
+      liveDate: todayKey,
+      baseSnapshot,
+      todayProfitCny,
+      liveMarketValue,
+      liveTotalProfit,
+      quoteTime: pickLatestQuoteTime([usd?.time, hkd?.time, ...Object.values(quoteMap).map((item) => item?.time)]),
+      delayed: !!quoteReq.delayed || !!fxReq.delayed,
+    };
+    cacheSet(realtimePatchMemoryCache, cacheKey, payload);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime patch failed" });
   }
 });
 

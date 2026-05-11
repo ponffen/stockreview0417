@@ -30,7 +30,7 @@ function suggestLineToItem(line, normalizeSymbol) {
     const al = rawCode.toUpperCase().replace(/[^A-Z0-9._]/g, "");
     if (al) {
       const tick = al.replace(/^GB_/i, "");
-      symbol = `gb_${tick.toLowerCase()}`;
+      symbol = tick.toLowerCase();
     }
   } else {
     // 101、111 及 ETF/其他数字代码

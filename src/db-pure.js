@@ -98,12 +98,37 @@ function normalizeSymbol(rawSymbol) {
   if (!value) {
     return "";
   }
+  if (value.startsWith("fx_") || /^wh(usd|hkd)cny$/.test(value) || value === "usdcny" || value === "hkdcny") {
+    return value;
+  }
+  if (value.startsWith("us_")) {
+    const ticker = value
+      .slice(3)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    return ticker || "";
+  }
+  if (value.startsWith("gb_")) {
+    const ticker = value
+      .slice(3)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    return ticker || "";
+  }
+  if (/^us[a-z0-9._-]+$/i.test(value)) {
+    const ticker = value
+      .slice(2)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    if (ticker && ticker !== "dcny" && ticker !== "hkdcny") {
+      return ticker;
+    }
+  }
   if (
     value.startsWith("sh") ||
     value.startsWith("sz") ||
     value.startsWith("hk") ||
-    value.startsWith("rt_hk") ||
-    value.startsWith("gb_")
+    value.startsWith("rt_hk")
   ) {
     return value;
   }
@@ -120,6 +145,46 @@ function normalizeSymbol(rawSymbol) {
     return `hk${value.padStart(5, "0")}`;
   }
   return value;
+}
+
+function isUsTickerSymbol(symbol) {
+  const s = String(symbol || "").trim().toLowerCase();
+  if (!s) {
+    return false;
+  }
+  if (
+    s.startsWith("sh") ||
+    s.startsWith("sz") ||
+    s.startsWith("hk") ||
+    s.startsWith("rt_hk") ||
+    s.startsWith("fx_") ||
+    /^wh(usd|hkd)cny$/.test(s) ||
+    s === "usdcny" ||
+    s === "hkdcny"
+  ) {
+    return false;
+  }
+  return /^[a-z][a-z0-9._-]*$/i.test(s);
+}
+
+function getLegacyUsAlias(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!isUsTickerSymbol(normalized)) {
+    return "";
+  }
+  return `gb_${normalized}`;
+}
+
+function formatSymbolForDisplay(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return "";
+  }
+  if (/^rt_hk/i.test(normalized)) {
+    const digits = normalized.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
+    return `hk${digits}`;
+  }
+  return normalized;
 }
 
 function normalizedSide(type, side) {
@@ -255,7 +320,7 @@ function rowToTrade(row) {
     id: row.id,
     accountId: row.account_id || "default",
     type: row.type,
-    symbol: row.symbol,
+    symbol: normalizeSymbol(row.symbol),
     name: row.name,
     side: row.side,
     price: Number(row.price),
@@ -377,6 +442,9 @@ module.exports = {
   validNumber,
   normalizeAccountRecords,
   normalizeSymbol,
+  isUsTickerSymbol,
+  getLegacyUsAlias,
+  formatSymbolForDisplay,
   normalizedSide,
   parseSide,
   parseType,
