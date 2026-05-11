@@ -368,8 +368,11 @@ const tradeSearchBackBtn = document.getElementById("tradeSearchBackBtn");
 const tradeStockSearchInput = document.getElementById("tradeStockSearchInput");
 const tradeStockSearchResults = document.getElementById("tradeStockSearchResults");
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
+const appRouteLoading = document.getElementById("appRouteLoading");
+const appRouteLoadingText = document.getElementById("appRouteLoadingText");
 
 const chartRuntimeMap = new Map();
+let routeLoadingActiveCount = 0;
 
 function dismissAppBootLoading() {
   const el = document.getElementById("appBootLoading");
@@ -382,6 +385,30 @@ function dismissAppBootLoading() {
     el.remove();
   }, 240);
   document.body.classList.add("app-ready");
+}
+
+function showRouteLoading(message = "数据正在加载中") {
+  if (!appRouteLoading) {
+    return;
+  }
+  routeLoadingActiveCount += 1;
+  if (appRouteLoadingText) {
+    appRouteLoadingText.textContent = message || "数据正在加载中";
+  }
+  appRouteLoading.classList.remove("hidden");
+  appRouteLoading.setAttribute("aria-busy", "true");
+}
+
+function hideRouteLoading() {
+  if (!appRouteLoading) {
+    return;
+  }
+  routeLoadingActiveCount = Math.max(0, routeLoadingActiveCount - 1);
+  if (routeLoadingActiveCount > 0) {
+    return;
+  }
+  appRouteLoading.classList.add("hidden");
+  appRouteLoading.setAttribute("aria-busy", "false");
 }
 
 async function refreshSessionFromServer() {
@@ -3330,6 +3357,7 @@ async function loadCommunityFeed() {
     communityFeedList.innerHTML = `<p class="empty">连接服务端后可查看社区动态</p>`;
     return;
   }
+  showRouteLoading("数据正在加载中");
   communityFeedList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/feed`, { cache: "no-store" });
@@ -3347,6 +3375,8 @@ async function loadCommunityFeed() {
     communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");
   } catch {
     communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
+  } finally {
+    hideRouteLoading();
   }
 }
 
@@ -3358,6 +3388,7 @@ async function loadCommunityFollowing() {
     communityFollowingList.innerHTML = `<p class="empty">连接服务端后可查看</p>`;
     return;
   }
+  showRouteLoading("数据正在加载中");
   communityFollowingList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/following`, { cache: "no-store" });
@@ -3375,6 +3406,8 @@ async function loadCommunityFollowing() {
     communityFollowingList.innerHTML = cards.map((c) => wrapInteractiveCommunityCard(c)).join("");
   } catch {
     communityFollowingList.innerHTML = `<p class="empty">网络错误</p>`;
+  } finally {
+    hideRouteLoading();
   }
 }
 
@@ -3386,6 +3419,7 @@ async function loadCommunityLeaderboard() {
     communityLeaderboardList.innerHTML = `<p class="empty">连接服务端后可查看排行</p>`;
     return;
   }
+  showRouteLoading("数据正在加载中");
   communityLeaderboardList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/leaderboard`, { cache: "no-store" });
@@ -3407,6 +3441,8 @@ async function loadCommunityLeaderboard() {
       .join("");
   } catch {
     communityLeaderboardList.innerHTML = `<p class="empty">网络错误</p>`;
+  } finally {
+    hideRouteLoading();
   }
 }
 
@@ -4127,8 +4163,8 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   if (!useDbRows || !dbRows.length) {
     const history = buildPortfolioHistory(portfolio.positions, scope.trades);
     const selected = resolveAnalysisRange(history);
-    const mySeries = computeModeSeries(selected, state.algoMode);
-    const benchSeries = buildBenchmarkSeries(selected);
+    const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
+    const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
     bindRateOnly(mySeries, benchSeries);
     paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, selected, refresh);
     renderAnalysisStockRank(history, scope, portfolio, pubRank, rankOpts);
@@ -4146,7 +4182,7 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   let sliceRows = sorted.filter((row) => dateSet.has(row.date));
   sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate);
 
-  const mySeries = sliceRows.map((row, idx, arr) => {
+  const mySeriesRaw = sliceRows.map((row, idx, arr) => {
     const isLast = idx === arr.length - 1 && row.date === todayKey;
     let r = row.totalRateCost;
     if (state.algoMode === "time") {
@@ -4160,7 +4196,8 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
     }
     return { date: row.date, rate: r };
   });
-  const benchSeries = buildBenchmarkSeries(selectedPh);
+  const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
+  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   bindRateOnly(mySeries, benchSeries);
   paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, selectedPh, refresh);
   renderAnalysisStockRank(pseudoHistory, scope, portfolio, pubRank, rankOpts);
@@ -4211,6 +4248,7 @@ async function loadCommunityProfileDetail() {
   if (!communityProfileBody || !state.communityProfileUserId) {
     return;
   }
+  showRouteLoading("数据正在加载中");
   const uid = state.communityProfileUserId;
   communityProfileBody.innerHTML = `<p class="empty">加载中…</p>`;
   if (communityProfileFollowSlot) {
@@ -4281,6 +4319,8 @@ async function loadCommunityProfileDetail() {
     }, 0);
   } catch {
     communityProfileBody.innerHTML = `<p class="empty">网络错误</p>`;
+  } finally {
+    hideRouteLoading();
   }
 }
 
@@ -5762,8 +5802,8 @@ function renderAnalysisFromHistory() {
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const history = buildPortfolioHistory(portfolio.positions, scope.trades);
   const selected = resolveAnalysisRange(history);
-  const mySeries = computeModeSeries(selected, state.algoMode);
-  const benchSeries = buildBenchmarkSeries(selected);
+  const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
+  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
   const profitSeries = buildProfitSeries(selected);
   const assetSeries = buildAssetSeries(selected, scope.cashTransfers);
 
@@ -5778,7 +5818,8 @@ function renderAnalysisFromHistory() {
       keyA: "profit",
       labelA: "收益",
       yAxisMode: "left",
-      leftLabel: "收益",
+      leftLabel: "",
+      xLabel: "",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
       yRangePadding: {
@@ -5791,7 +5832,7 @@ function renderAnalysisFromHistory() {
 
   const refreshAnalysisView = () => {
     renderControls();
-    void renderAnalysis();
+    void renderAnalysis({ showLoading: false });
   };
 
   const rateHasBenchmark = state.benchmark !== "none";
@@ -5879,10 +5920,15 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   }
 }
 
-async function renderAnalysis() {
-  if (state.route === "community-profile" || state.route === "stock-record") {
+async function renderAnalysis(options = {}) {
+  if (state.route !== "analysis") {
     return;
   }
+  const showLoading = options.showLoading !== false;
+  if (showLoading) {
+    showRouteLoading("数据正在加载中");
+  }
+  try {
   const renderRequestId = ++analysisRenderRequestSeq;
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
@@ -5924,7 +5970,7 @@ async function renderAnalysis() {
   let sliceRows = sorted.filter((row) => dateSet.has(row.date));
   sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate);
 
-  const mySeries = sliceRows.map((row, idx, arr) => {
+  const mySeriesRaw = sliceRows.map((row, idx, arr) => {
     const isLast = idx === arr.length - 1 && row.date === todayKey;
     let r = row.totalRateCost;
     if (state.algoMode === "time") {
@@ -5938,8 +5984,12 @@ async function renderAnalysis() {
     }
     return { date: row.date, rate: r };
   });
-  const benchSeries = buildBenchmarkSeries(selectedPh);
-  const profitSeries = sliceRows.map((row) => ({ date: row.date, value: row.totalProfit }));
+  const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
+  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
+  const profitSeries = rebaseValueSeriesByFirstDay(
+    sliceRows.map((row) => ({ date: row.date, value: row.totalProfit })),
+    "value",
+  );
   const assetSeries = sliceRows.map((row) => ({
     date: row.date,
     principal: row.principal,
@@ -5957,7 +6007,8 @@ async function renderAnalysis() {
       keyA: "profit",
       labelA: "收益",
       yAxisMode: "left",
-      leftLabel: "收益",
+      leftLabel: "",
+      xLabel: "",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
       yRangePadding: {
@@ -5970,7 +6021,7 @@ async function renderAnalysis() {
 
   const refreshAnalysisView = () => {
     renderControls();
-    void renderAnalysis();
+    void renderAnalysis({ showLoading: false });
   };
 
   const rateHasBenchmark = state.benchmark !== "none";
@@ -6009,6 +6060,11 @@ async function renderAnalysis() {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
   }
   renderAnalysisStockRank(pseudoHistory, scope, portfolio);
+  } finally {
+    if (showLoading) {
+      hideRouteLoading();
+    }
+  }
 }
 
 function resolveAnalysisRange(history) {
@@ -6072,13 +6128,14 @@ function buildProfitSeries(points) {
   }
   const startClose = points[0].value - points[0].flow;
   let sumFlow = 0;
-  return points.map((point) => {
+  const raw = points.map((point) => {
     sumFlow += point.flow;
     return {
       date: point.date,
       value: point.value - startClose - sumFlow,
     };
   });
+  return rebaseValueSeriesByFirstDay(raw, "value");
 }
 
 /** 走势：逐日 Σ发生 与 逐日 Σ资金，本金 = max(二者)（与 computePortfolio 一致） */
@@ -6791,6 +6848,36 @@ function computeModeSeries(historyPoints, mode) {
   return computeCostSeries(historyPoints);
 }
 
+function rebaseRateSeriesByFirstDay(series) {
+  if (!Array.isArray(series) || !series.length) {
+    return [{ date: toDateKey(new Date()), rate: 0 }];
+  }
+  const baseRate = Number(series[0]?.rate) || 0;
+  const denom = 1 + baseRate;
+  return series.map((item, index) => {
+    const raw = Number(item?.rate) || 0;
+    if (!Number.isFinite(denom) || Math.abs(denom) < 1e-9) {
+      return { date: item.date, rate: index === 0 ? 0 : raw - baseRate };
+    }
+    return {
+      date: item.date,
+      // 区间收益率口径：与区间首日相比，(1+r_t)/(1+r_0)-1；首日强制为 0。
+      rate: index === 0 ? 0 : (1 + raw) / denom - 1,
+    };
+  });
+}
+
+function rebaseValueSeriesByFirstDay(series, valueKey = "value") {
+  if (!Array.isArray(series) || !series.length) {
+    return [{ date: toDateKey(new Date()), [valueKey]: 0 }];
+  }
+  const first = Number(series[0]?.[valueKey]) || 0;
+  return series.map((item) => ({
+    ...item,
+    [valueKey]: (Number(item?.[valueKey]) || 0) - first,
+  }));
+}
+
 function computeCostSeries(points) {
   const result = [];
   const startClose = points[0].value - points[0].flow;
@@ -6895,8 +6982,9 @@ function drawLineChart(mySeries, benchmarkSeries, canvas) {
       labelA: "收益率",
       labelB: "基准",
       yAxisMode: state.benchmark === "none" ? "left" : "left-right",
-      leftLabel: "收益率(%)",
-      rightLabel: state.benchmark === "none" ? "" : "基准(%)",
+      leftLabel: "",
+      rightLabel: "",
+      xLabel: "",
       valueFormatter: (value) => `${formatNumber(value, 2)}%`,
       axisFormatter: (value) => `${formatNumber(value, 2)}%`,
       yRangePadding: {
@@ -6937,10 +7025,10 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
         : []),
     ],
     {
-      xMin: 52,
-      xMax: width - 28,
-      yMin: 20,
-      yMax: height - 36,
+      xMin: options.xMin ?? 12,
+      xMax: options.xMax ?? width - 10,
+      yMin: options.yMin ?? 20,
+      yMax: options.yMax ?? height - 36,
       yAxisMode: options.yAxisMode || (seriesB && seriesB.length ? "left-right" : "left"),
       axisByKey: options.axisByKey || {},
       yRangePadding: options.yRangePadding,
@@ -6951,9 +7039,9 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
     drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
   });
   drawAxisLabels(ctx, payload, {
-    leftLabel: options.leftLabel || "",
-    rightLabel: options.rightLabel || "",
-    xLabel: options.xLabel || "日期",
+    leftLabel: options.leftLabel ?? "",
+    rightLabel: options.rightLabel ?? "",
+    xLabel: options.xLabel ?? "日期",
     valueFormatter: options.axisFormatter,
   });
   drawCrosshairOverlay(ctx, payload, canvas.id, options.valueFormatter || options.axisFormatter);
@@ -6980,7 +7068,8 @@ function drawAssetChart(assetSeries, canvas, trendMode) {
       keyA: "market",
       labelA: "总市值",
       yAxisMode: "left",
-      leftLabel: "总市值",
+      leftLabel: "",
+      xLabel: "",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
       ...assetYScale,
@@ -6990,7 +7079,8 @@ function drawAssetChart(assetSeries, canvas, trendMode) {
     keyA: "principal",
     labelA: "本金",
     yAxisMode: "left",
-    leftLabel: "本金",
+    leftLabel: "",
+    xLabel: "",
     valueFormatter: (value) => formatNumber(value, 2),
     axisFormatter: (value) => formatNumber(value, 2),
     ...assetYScale,
@@ -7152,22 +7242,27 @@ function drawAxisLabels(ctx, payload, options = {}) {
   const valueFormatter = options.valueFormatter || ((value) => formatNumber(value, 2));
   const firstSeries = payload.seriesList[0]?.values || [];
   const xDates = firstSeries.map((item) => item.date).filter(Boolean);
-  const leftMax = valueFormatter(payload.leftRange.max, "left");
-  const leftMin = valueFormatter(payload.leftRange.min, "left");
-  const rightMax = valueFormatter(payload.rightRange.max, "right");
-  const rightMin = valueFormatter(payload.rightRange.min, "right");
+  const ticks = 4;
   ctx.save();
   ctx.fillStyle = "#8f99a9";
   ctx.font = "11px sans-serif";
   ctx.textBaseline = "middle";
   // 纵轴刻度标签统一绘制在坐标轴内侧，避免跑到画布外侧。
-  ctx.textAlign = "left";
-  ctx.fillText(leftMax, payload.xMin + 4, payload.yMin + 2);
-  ctx.fillText(leftMin, payload.xMin + 4, payload.yMax - 2);
+  for (let i = 0; i <= ticks; i += 1) {
+    const ratio = i / ticks;
+    const y = payload.yMin + (payload.yMax - payload.yMin) * ratio;
+    const leftValue = payload.leftRange.max - payload.leftRange.range * ratio;
+    ctx.textAlign = "left";
+    ctx.fillText(valueFormatter(leftValue, "left"), payload.xMin + 4, y);
+  }
   if (payload.yAxisMode === "left-right") {
-    ctx.textAlign = "right";
-    ctx.fillText(rightMax, payload.xMax - 4, payload.yMin + 2);
-    ctx.fillText(rightMin, payload.xMax - 4, payload.yMax - 2);
+    for (let i = 0; i <= ticks; i += 1) {
+      const ratio = i / ticks;
+      const y = payload.yMin + (payload.yMax - payload.yMin) * ratio;
+      const rightValue = payload.rightRange.max - payload.rightRange.range * ratio;
+      ctx.textAlign = "right";
+      ctx.fillText(valueFormatter(rightValue, "right"), payload.xMax - 4, y);
+    }
   }
   if (options.leftLabel) {
     ctx.textAlign = "left";

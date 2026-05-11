@@ -1620,7 +1620,7 @@ async function updateUserCommunityProfile(userId, { nickname, communityPublic })
 async function setCommunityFollow(followerId, followeeId) {
   const a = String(followerId || "").trim();
   const b = String(followeeId || "").trim();
-  if (!a || !b || a === b) {
+  if (!a || !b) {
     return false;
   }
   const now = nowMs();
