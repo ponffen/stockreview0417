@@ -3609,7 +3609,7 @@ function renderPublicEarningProfileHtml(d) {
               <th><button type="button" class="th-sort-btn" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
               <th><button type="button" class="th-sort-btn" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
               <th><button type="button" class="th-sort-btn" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="regretRate">后悔率<span class="sort-icon"></span></button></th>
+              <th><button type="button" class="th-sort-btn" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
               <th><span class="th-sort-static">记录</span></th>
             </tr>
           </thead>
@@ -6072,7 +6072,7 @@ async function renderStockRecordPage(symbol) {
   stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
   stockRecordMarket.textContent = stockRecordAccountCaption(scope, symbolTrades);
-  stockRecordRegret.textContent = `后悔率 ${formatPercent(position.regretRate)}`;
+  stockRecordRegret.textContent = `交易间隔 ${formatPercent(position.regretRate)}`;
   stockRecordRegret.className = `${position.regretRate >= 0 ? "up" : "down"}`;
 
   const recTable = stockRecordListBody?.closest("table");
