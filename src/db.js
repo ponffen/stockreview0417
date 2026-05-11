@@ -1180,16 +1180,24 @@ async function ensureSymbolNameMapTable() {
     return symbolNameMapTableReadyPromise;
   }
   symbolNameMapTableReadyPromise = (async () => {
-    await q(
-      `CREATE TABLE IF NOT EXISTS symbol_name_map (
+    const ddl = `
+      SET lock_timeout = '3000ms';
+      SET statement_timeout = '8000ms';
+      CREATE TABLE IF NOT EXISTS symbol_name_map (
         symbol TEXT PRIMARY KEY,
         name_cn TEXT NOT NULL,
         source TEXT NOT NULL DEFAULT 'unknown',
         updated_at BIGINT NOT NULL,
         last_seen_at BIGINT NOT NULL
-      )`
-    );
-    await q("CREATE INDEX IF NOT EXISTS idx_symbol_name_map_updated_at ON symbol_name_map (updated_at DESC)");
+      );
+      CREATE INDEX IF NOT EXISTS idx_symbol_name_map_updated_at ON symbol_name_map (updated_at DESC);
+    `;
+    await Promise.race([
+      q(ddl),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("symbol_name_map ddl timeout")), 12_000);
+      }),
+    ]);
   })().catch((error) => {
     symbolNameMapTableReadyPromise = null;
     throw error;
