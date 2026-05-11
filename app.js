@@ -147,6 +147,8 @@ const FX_DAYK_LEN_MAX = 140;
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
+const STOCK_RECORD_AXIS_MIN_FACTOR = 0.95;
+const STOCK_RECORD_AXIS_MAX_FACTOR = 1.05;
 
 const demoTrades = [
   {
@@ -6330,6 +6332,10 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
       xMax: canvas.width - 28,
       yMin: 20,
       yMax: canvas.height - 36,
+      yRangePadding: {
+        minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
+        maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
+      },
     }
   );
   const ctx = canvas.getContext("2d");

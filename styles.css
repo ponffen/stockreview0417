@@ -1415,18 +1415,30 @@ h2 {
 
 .stock-record-head {
   display: flex;
-  justify-content: flex-start;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
 }
 
-.stock-record-head > div {
+#closeStockRecordDialogBtn {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+
+.stock-record-head-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.stock-record-head-left {
   flex: 1;
   min-width: 0;
 }
 
-#closeStockRecordDialogBtn {
-  order: -1;
+.stock-record-head-right {
+  text-align: right;
   flex-shrink: 0;
 }
 
@@ -1441,12 +1453,8 @@ h2 {
   font-size: 12px;
 }
 
-.stock-record-quote {
-  margin-top: 8px;
-}
-
 .stock-record-price {
-  font-size: 44px;
+  font-size: clamp(42px, 9vw, 56px);
   line-height: 1;
   font-weight: 600;
 }
