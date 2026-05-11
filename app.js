@@ -1784,15 +1784,9 @@ function persistState() {
     stockSortKey: state.stockSortKey,
     stockSortOrder: state.stockSortOrder,
     stockAmountDisplay: state.stockAmountDisplay,
-    trades: state.trades,
-    cashTransfers: state.cashTransfers,
-    tradePanelTab: state.tradePanelTab,
-    dailyReturns: state.dailyReturns,
   };
   if (apiReady) {
     queueSettingsSyncToApi(payload);
-    void pushDailyReturnsToApi(payload.dailyReturns);
-    void pushCashTransfersToApi(payload.cashTransfers);
   }
 }
 
@@ -1844,36 +1838,6 @@ async function pushSettingsToApi(payload) {
     });
   } catch (error) {
     // ignore sync failure; next debounce flush will retry with latest state
-  }
-}
-
-async function pushDailyReturnsToApi(rows) {
-  if (!apiReady || !Array.isArray(rows)) {
-    return;
-  }
-  try {
-    await apiFetch(`${API_BASE}/daily-returns/import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "replace", rows }),
-    });
-  } catch (error) {
-    // ignore sync failure
-  }
-}
-
-async function pushCashTransfersToApi(rows) {
-  if (!apiReady || !Array.isArray(rows)) {
-    return;
-  }
-  try {
-    await apiFetch(`${getApiBaseForFetch()}/cash-transfers/import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "replace", cashTransfers: rows }),
-    });
-  } catch (error) {
-    // ignore sync failure
   }
 }
 
