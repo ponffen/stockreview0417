@@ -6427,8 +6427,8 @@ function drawStockRecordChart(symbol, symbolTrades) {
     {
       labels: { price: "股价", qty: rightLabel },
       yAxisMode: "left-right",
-      xMin: 12,
-      xMax: canvas.width - 10,
+      xMin: 2,
+      xMax: canvas.width - 2,
       yMin: 20,
       yMax: canvas.height - 36,
       yRangePadding: {
@@ -7005,8 +7005,8 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
         : []),
     ],
     {
-      xMin: options.xMin ?? 12,
-      xMax: options.xMax ?? width - 10,
+      xMin: options.xMin ?? 2,
+      xMax: options.xMax ?? width - 2,
       yMin: options.yMin ?? 20,
       yMax: options.yMax ?? height - 36,
       yAxisMode: options.yAxisMode || (seriesB && seriesB.length ? "left-right" : "left"),
