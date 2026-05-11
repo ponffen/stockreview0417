@@ -116,10 +116,13 @@ const FX_DAYK_LEN_MAX = 140;
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
+const CHART_TOUCH_HOLD_MS = 80;
+const CHART_MOUSE_HOLD_MS = 180;
 const STOCK_RECORD_AXIS_MIN_FACTOR = 0.95;
 const STOCK_RECORD_AXIS_MAX_FACTOR = 1.05;
 const ANALYSIS_CHART_AXIS_MIN_FACTOR = 0.95;
 const ANALYSIS_CHART_AXIS_MAX_FACTOR = 1.05;
+const BROWSER_ROUTE_STATE_KEY = "__stockreview_route__";
 
 const demoTrades = [
   {
@@ -235,6 +238,10 @@ let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
 const symbolNameHydrateInFlight = new Map();
 const symbolNameSyncedAt = new Map();
+let browserHistorySeeded = false;
+let browserHistoryListenerBound = false;
+let applyingBrowserRoutePopstate = false;
+let lastBrowserRouteKey = "";
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -657,6 +664,7 @@ initialize();
 async function initialize() {
   bindEvents();
   bindAuthUi();
+  bindBrowserRouteHistory();
   const authed = await tryRestoreSession();
   if (!authed) {
     showAuthShell();
@@ -2813,11 +2821,19 @@ function applyStockSearchPick(symbol, name) {
 function renderAll() {
   renderControls();
   renderRoute();
-  renderOverviewAndStockTable();
-  renderTradeTable();
-  void renderAnalysis();
-  if (state.route === "stock-record" && state.activeRecordSymbol) {
+  if (state.route === "earning") {
+    renderOverviewAndStockTable();
+  } else if (state.route === "analysis") {
+    void renderAnalysis();
+  } else if (state.route === "trade" || state.route === "trade-search") {
+    renderTradeTable();
+  } else if (state.route === "stock-record" && state.activeRecordSymbol) {
     void renderStockRecordPage(state.activeRecordSymbol);
+  } else if (state.route === "community-profile") {
+    refreshPublicProfileEarningPanel();
+    if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
+      void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+    }
   }
 }
 
@@ -2971,6 +2987,103 @@ function isMineRoute(route) {
   );
 }
 
+function buildBrowserRouteSnapshot() {
+  return {
+    route: state.route,
+    appModule: state.appModule,
+    previousRoute: state.previousRoute,
+    communityProfileUserId: state.communityProfileUserId || "",
+    communityProfileReturnRoute: state.communityProfileReturnRoute || "community-feed",
+    communityProfileTab: state.communityProfileTab || "earning",
+    activeRecordSymbol: state.activeRecordSymbol || "",
+    tradeSearchReturnRoute: state.tradeSearchReturnRoute || "trade",
+  };
+}
+
+function buildBrowserRouteKey(snapshot = {}) {
+  return [
+    snapshot.route || "",
+    snapshot.appModule || "",
+    snapshot.communityProfileUserId || "",
+    snapshot.activeRecordSymbol || "",
+    snapshot.communityProfileTab || "",
+  ].join("|");
+}
+
+function applyBrowserRouteSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return false;
+  }
+  const route = String(snapshot.route || "").trim();
+  if (!route) {
+    return false;
+  }
+  const appModule = snapshot.appModule === "community" ? "community" : "holdings";
+  state.appModule = appModule;
+  state.route = route;
+  state.previousRoute = String(snapshot.previousRoute || state.previousRoute || "earning");
+  state.communityProfileReturnRoute = String(
+    snapshot.communityProfileReturnRoute || state.communityProfileReturnRoute || "community-feed",
+  );
+  state.communityProfileUserId = snapshot.communityProfileUserId
+    ? String(snapshot.communityProfileUserId)
+    : null;
+  state.communityProfileTab = ["earning", "analysis", "trade"].includes(snapshot.communityProfileTab)
+    ? snapshot.communityProfileTab
+    : "earning";
+  state.activeRecordSymbol = snapshot.activeRecordSymbol ? normalizeSymbol(snapshot.activeRecordSymbol) : null;
+  state.tradeSearchReturnRoute = String(snapshot.tradeSearchReturnRoute || state.tradeSearchReturnRoute || "trade");
+  if (state.route !== "community-profile") {
+    state.communityProfileUserId = null;
+  }
+  if (state.route !== "stock-record") {
+    state.activeRecordSymbol = null;
+  }
+  return true;
+}
+
+function syncBrowserRouteHistory(mode = "push") {
+  if (typeof window === "undefined" || !window.history) {
+    return;
+  }
+  const snapshot = buildBrowserRouteSnapshot();
+  const key = buildBrowserRouteKey(snapshot);
+  try {
+    if (mode === "replace") {
+      window.history.replaceState({ [BROWSER_ROUTE_STATE_KEY]: snapshot }, "", window.location.href);
+      lastBrowserRouteKey = key;
+      return;
+    }
+    if (applyingBrowserRoutePopstate || key === lastBrowserRouteKey) {
+      lastBrowserRouteKey = key;
+      return;
+    }
+    window.history.pushState({ [BROWSER_ROUTE_STATE_KEY]: snapshot }, "", window.location.href);
+    lastBrowserRouteKey = key;
+  } catch {
+    // ignore browser history failures
+  }
+}
+
+function bindBrowserRouteHistory() {
+  if (browserHistoryListenerBound || typeof window === "undefined") {
+    return;
+  }
+  browserHistoryListenerBound = true;
+  window.addEventListener("popstate", (event) => {
+    const snapshot = event?.state?.[BROWSER_ROUTE_STATE_KEY];
+    if (!snapshot) {
+      return;
+    }
+    applyingBrowserRoutePopstate = true;
+    const applied = applyBrowserRouteSnapshot(snapshot);
+    if (applied) {
+      renderAll();
+    }
+    applyingBrowserRoutePopstate = false;
+  });
+}
+
 function formatTwrSignedHtml(x) {
   if (x == null || !Number.isFinite(Number(x))) {
     return "<strong>—</strong>";
@@ -3031,7 +3144,7 @@ function openCommunityProfile(userId) {
 }
 
 function communityFollowButtonHtml(card) {
-  if (!sessionUserId || card.userId === sessionUserId) {
+  if (!sessionUserId) {
     return "";
   }
   const uid = escapeHtml(card.userId);
@@ -3184,7 +3297,7 @@ function feedRowHtml(t) {
 
 async function toggleFollowCommunity(userId, btnEl) {
   const uid = String(userId || "").trim();
-  if (!uid || !sessionUserId || uid === sessionUserId || !btnEl) {
+  if (!uid || !sessionUserId || !btnEl) {
     return;
   }
   const base = getApiBaseForFetch();
@@ -4141,7 +4254,7 @@ async function loadCommunityProfileDetail() {
       communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
     }
     if (communityProfileFollowSlot) {
-      if (sessionUserId && d.userId !== sessionUserId) {
+      if (sessionUserId) {
         const uidEsc = escapeHtml(d.userId);
         const fu = d.following ? "已关注" : "关注";
         const cl = d.following ? "community-follow-btn is-on" : "community-follow-btn";
@@ -4362,12 +4475,17 @@ function renderRoute() {
     }
     bar.style.display = show ? "grid" : "none";
   });
-  if (state.route === "stock-record" && state.activeRecordSymbol) {
-    void renderStockRecordPage(state.activeRecordSymbol);
-  }
   scheduleCommunityDataLoad();
   if (state.route === "community-profile") {
     syncPublicProfileStockSortControls();
+  }
+  if (!browserHistorySeeded) {
+    syncBrowserRouteHistory("replace");
+    browserHistorySeeded = true;
+  } else if (applyingBrowserRoutePopstate) {
+    syncBrowserRouteHistory("replace");
+  } else {
+    syncBrowserRouteHistory("push");
   }
 }
 
@@ -7042,13 +7160,14 @@ function drawAxisLabels(ctx, payload, options = {}) {
   ctx.fillStyle = "#8f99a9";
   ctx.font = "11px sans-serif";
   ctx.textBaseline = "middle";
-  ctx.textAlign = "right";
-  ctx.fillText(leftMax, payload.xMin - 6, payload.yMin + 2);
-  ctx.fillText(leftMin, payload.xMin - 6, payload.yMax - 2);
+  // 纵轴刻度标签统一绘制在坐标轴内侧，避免跑到画布外侧。
+  ctx.textAlign = "left";
+  ctx.fillText(leftMax, payload.xMin + 4, payload.yMin + 2);
+  ctx.fillText(leftMin, payload.xMin + 4, payload.yMax - 2);
   if (payload.yAxisMode === "left-right") {
-    ctx.textAlign = "left";
-    ctx.fillText(rightMax, payload.xMax + 6, payload.yMin + 2);
-    ctx.fillText(rightMin, payload.xMax + 6, payload.yMax - 2);
+    ctx.textAlign = "right";
+    ctx.fillText(rightMax, payload.xMax - 4, payload.yMin + 2);
+    ctx.fillText(rightMin, payload.xMax - 4, payload.yMax - 2);
   }
   if (options.leftLabel) {
     ctx.textAlign = "left";
@@ -7111,7 +7230,8 @@ function drawCrosshairOverlay(ctx, payload, canvasId, valueFormatter) {
     const side = point.axis === "right" ? "right" : "left";
     const text = formatter(point.value, point.key, point.axis);
     const w = Math.max(40, ctx.measureText(text).width + 10);
-    const x = side === "right" ? payload.xMax + 6 + w / 2 : payload.xMin - 6 - w / 2;
+    const baseX = side === "right" ? payload.xMax - 6 - w / 2 : payload.xMin + 6 + w / 2;
+    const x = Math.max(payload.xMin + w / 2 + 2, Math.min(payload.xMax - w / 2 - 2, baseX));
     ctx.fillStyle = "#4d5769";
     ctx.fillRect(x - w / 2, y - 8, w, 16);
     ctx.fillStyle = "#fff";
@@ -7224,8 +7344,10 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   let activePointerId = null;
   let crossVisible = !!state.chartCrosshairMap[canvas.id];
   let startX = 0;
+  let lastMoveX = 0;
   let moved = false;
   let panStarted = false;
+  let refreshRafId = 0;
   const pointers = new Map();
   const runtime = {
     canvas,
@@ -7235,7 +7357,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       crossVisible = false;
       tooltip.classList.remove("show");
       delete state.chartCrosshairMap[canvas.id];
-      runtime.options.onRefresh?.();
+      requestRefresh();
     },
   };
   chartRuntimeMap.set(canvas.id, runtime);
@@ -7245,6 +7367,16 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       window.clearTimeout(pressTimer);
       pressTimer = null;
     }
+  };
+
+  const requestRefresh = () => {
+    if (refreshRafId) {
+      return;
+    }
+    refreshRafId = window.requestAnimationFrame(() => {
+      refreshRafId = 0;
+      runtime.options.onRefresh?.();
+    });
   };
 
   const updateCrosshair = (clientX, clientY = null) => {
@@ -7280,7 +7412,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         y: point.y,
       })),
     };
-    runtime.options.onRefresh?.();
+    requestRefresh();
     const formatter = runtime.options.valueFormatter || ((value) => formatNumber(value, 2));
     const rows = state.chartCrosshairMap[canvas.id].points
       .map((item) => `<div>${escapeHtml(item.label)}：${formatter(item.value, item.key, item.axis)}</div>`)
@@ -7305,7 +7437,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const maxOffset = Math.max(0, total - Math.max(2, Number(state.rangeDays || 30)));
       state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
     }
-    runtime.options.onRefresh?.();
+    requestRefresh();
   };
 
   canvas.addEventListener("pointerdown", (event) => {
@@ -7317,13 +7449,17 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     moved = false;
     panStarted = false;
     startX = event.clientX;
+    lastMoveX = event.clientX;
+    if (event.pointerType !== "mouse") {
+      updateCrosshair(event.clientX, event.clientY);
+    }
     clearPressTimer();
     pressTimer = window.setTimeout(() => {
-      if (!pressing || moved) {
+      if (!pressing || moved || crossVisible) {
         return;
       }
       updateCrosshair(event.clientX, event.clientY);
-    }, 220);
+    }, event.pointerType === "mouse" ? CHART_MOUSE_HOLD_MS : CHART_TOUCH_HOLD_MS);
   });
 
   canvas.addEventListener("pointermove", (event) => {
@@ -7346,7 +7482,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
           updateAnalysisWindowByScale(scale);
           renderControls();
         }
-        runtime.options.onRefresh?.();
+        requestRefresh();
       }
       state.lastPinchDistanceMap[canvas.id] = distance;
       return;
@@ -7367,7 +7503,9 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       if (moved) {
         clearPressTimer();
         panStarted = true;
-        handlePan(event.movementX, payload);
+        const deltaX = event.clientX - lastMoveX;
+        lastMoveX = event.clientX;
+        handlePan(deltaX, payload);
       }
     }
   });
@@ -7387,6 +7525,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     pressing = false;
     moved = false;
     panStarted = false;
+    lastMoveX = 0;
     clearPressTimer();
     if (event.pointerType !== "mouse" && !crossVisible) {
       tooltip.classList.remove("show");

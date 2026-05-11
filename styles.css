@@ -1247,11 +1247,13 @@ h2 {
 .trade-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 700px;
+  min-width: 560px;
+  table-layout: fixed;
 }
 
 .trade-table--cash {
   min-width: 480px;
+  table-layout: auto;
 }
 
 .trade-table--cash tbody tr {
@@ -1264,15 +1266,15 @@ h2 {
   font-size: 13px;
   font-weight: 500;
   border-bottom: 1px solid var(--line);
-  padding: 8px 10px;
+  padding: 7px 6px;
   white-space: nowrap;
   text-align: left;
 }
 
 .trade-table td {
   border-bottom: 1px solid var(--line);
-  padding: 10px;
-  font-size: 14px;
+  padding: 8px 6px;
+  font-size: 13px;
   white-space: nowrap;
   text-align: left;
 }
@@ -1293,18 +1295,40 @@ h2 {
   font-weight: 500;
 }
 
-/* 持仓收益 / 个人页交易表：交易方向列约为原先默认宽度的一半 */
+/* 持仓收益交易表：按内容收窄列宽，保证信息够用同时减少横向空白。 */
+.trade-table:not(.trade-table--cash) th:nth-child(1),
+.trade-table:not(.trade-table--cash) td:nth-child(1) {
+  width: 92px;
+}
+
+.trade-table:not(.trade-table--cash) th:nth-child(2),
+.trade-table:not(.trade-table--cash) td:nth-child(2) {
+  width: 20%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .trade-table thead th:nth-child(3),
-.trade-table tbody td:nth-child(3),
-.public-profile-trade-table thead th:nth-child(3),
-.public-profile-trade-table tbody td:nth-child(3) {
-  width: 1%;
-  max-width: 4.75rem;
-  min-width: 0;
+.trade-table tbody td:nth-child(3) {
+  width: 48px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  box-sizing: border-box;
+}
+
+.trade-table:not(.trade-table--cash) th:nth-child(4),
+.trade-table:not(.trade-table--cash) td:nth-child(4) {
+  width: 11ch;
+}
+
+.trade-table:not(.trade-table--cash) th:nth-child(5),
+.trade-table:not(.trade-table--cash) td:nth-child(5) {
+  width: 10ch;
+}
+
+.trade-table:not(.trade-table--cash) th:nth-child(6),
+.trade-table:not(.trade-table--cash) td:nth-child(6) {
+  width: 13ch;
 }
 
 .trade-table thead th:nth-child(4),
@@ -2287,11 +2311,10 @@ body.auth-mode {
 }
 
 .trade-table .trade-col-name {
-  width: 16%;
-  max-width: 16%;
   box-sizing: border-box;
-  word-break: break-word;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .public-profile-trade-table .pub-trade-amt-th-inner {
