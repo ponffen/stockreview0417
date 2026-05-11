@@ -104,6 +104,7 @@ const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
 const DAILY_CLOSE_HYDRATE_TTL_MS = 90_000;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
+const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const CHART_FALLBACK_DAYS = 90;
 const STATE_SYNC_KEYS = [
   "route",
@@ -256,6 +257,8 @@ let dailyCloseHydrateAt = 0;
 let analysisRenderRequestSeq = 0;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
+const symbolNameFetchedAt = new Map();
+const symbolNameHydrateInFlight = new Map();
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -646,6 +649,9 @@ async function startAppAfterAuth(options = {}) {
     persistState();
   }
   // 首屏先渲染：汇率/港股行情等外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
+  void hydrateSymbolNameMap(state.trades.map((trade) => trade.symbol)).then(() => {
+    renderAll();
+  });
   renderAll();
   void refreshMarketData({ skipFinalRender: true }).finally(() => {
     renderAll();
@@ -1168,6 +1174,87 @@ function getKlineBySymbol(symbol) {
   }
   const alias = normalized.replace(/^gb_/i, "");
   return state.klineMap[normalized] || state.klineMap[alias] || [];
+}
+
+function normalizeSymbolList(input) {
+  return [...new Set((input || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+}
+
+function markSymbolNameFetched(symbol) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) {
+    return;
+  }
+  symbolNameFetchedAt.set(normalized, Date.now());
+}
+
+function upsertNameMapEntry(symbol, name) {
+  const normalized = normalizeSymbol(symbol);
+  const label = String(name || "").trim();
+  if (!normalized || !label) {
+    return;
+  }
+  state.nameMap[normalized] = label;
+  if (/^gb_/i.test(normalized)) {
+    state.nameMap[normalized.replace(/^gb_/i, "")] = label;
+  }
+  markSymbolNameFetched(normalized);
+}
+
+async function hydrateSymbolNameMap(symbols, options = {}) {
+  if (!apiReady) {
+    return;
+  }
+  const force = options.force === true;
+  const uniq = normalizeSymbolList(symbols);
+  if (!uniq.length) {
+    return;
+  }
+  const now = Date.now();
+  const pending = force
+    ? uniq
+    : uniq.filter((symbol) => {
+        if (state.nameMap[symbol]) {
+          return false;
+        }
+        const lastTs = Number(symbolNameFetchedAt.get(symbol) || 0);
+        return !lastTs || now - lastTs > SYMBOL_NAME_MAP_TTL_MS;
+      });
+  if (!pending.length) {
+    return;
+  }
+  const key = pending.slice().sort().join(",");
+  const inFlight = symbolNameHydrateInFlight.get(key);
+  if (inFlight) {
+    await inFlight;
+    return;
+  }
+  const task = (async () => {
+    try {
+      const response = await apiFetch(
+        `${getApiBaseForFetch()}/symbol-name-map?symbols=${encodeURIComponent(pending.join(","))}`,
+        { cache: "no-store", timeoutMs: 10_000 }
+      );
+      const payload = await response.json().catch(() => ({}));
+      const map = payload?.ok && payload.data && typeof payload.data === "object" ? payload.data : {};
+      for (const symbol of pending) {
+        const name = String(map[symbol] || "").trim();
+        if (name) {
+          upsertNameMapEntry(symbol, name);
+        } else {
+          markSymbolNameFetched(symbol);
+        }
+      }
+    } catch {
+      // ignore network failures; next cycle retries
+    }
+  })();
+  symbolNameHydrateInFlight.set(key, task);
+  try {
+    await task;
+  } finally {
+    symbolNameHydrateInFlight.delete(key);
+  }
 }
 
 function shiftDateKeyByDays(dateKey, deltaDays) {
@@ -2984,10 +3071,11 @@ function buildTop3ListHtml(topPositions) {
       const code = escapeHtml(p.displayCode || p.symbol || "");
       const tag = escapeHtml(p.marketTag || "OT");
       const tagLower = String(p.marketTag || "ot").toLowerCase();
+      const stockName = escapeHtml(getDisplayName(p.symbol, p.name));
       return `<div class="community-top3-row">
         <span class="community-top3-rank">${i + 1}</span>
         <div class="community-top3-mid">
-          <strong>${escapeHtml(p.name)}</strong>
+          <strong>${stockName}</strong>
           <div class="community-top3-stock-sub">
             <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
             <span class="community-top3-code">${code}</span>
@@ -3065,6 +3153,7 @@ function feedRowHtml(t) {
   const shareStr =
     share != null && Number.isFinite(Number(share)) ? formatPercent(Number(share)) : "—";
   const dateDisplay = String(t.date || "—").replace(/-/g, "\u2013");
+  const stockName = escapeHtml(getDisplayName(t.symbol, t.name));
   const noteBlock = t.note
     ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(t.note)}</span></p>`
     : "";
@@ -3077,7 +3166,7 @@ function feedRowHtml(t) {
         </div>
         <div class="community-feed-card__body">
           <div class="community-feed-card__col community-feed-card__col--stock">
-            <strong class="community-feed-stock-name">${escapeHtml(t.name || t.symbol)}</strong>
+            <strong class="community-feed-stock-name">${stockName}</strong>
             <div class="community-feed-stock-sub">
               <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
               <span class="community-feed-stock-code">${code}</span>
@@ -3158,6 +3247,7 @@ async function loadCommunityFeed() {
       communityFeedList.innerHTML = `<p class="empty">暂无已关注用户的交易动态，可在「排行」或他人主页关注用户后查看</p>`;
       return;
     }
+    await hydrateSymbolNameMap(rows.map((row) => row.symbol));
     communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");
   } catch {
     communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
@@ -3185,6 +3275,7 @@ async function loadCommunityFollowing() {
       communityFollowingList.innerHTML = `<p class="empty">还没有关注任何人</p>`;
       return;
     }
+    await hydrateSymbolNameMap(cards.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityFollowingList.innerHTML = cards.map((c) => wrapInteractiveCommunityCard(c)).join("");
   } catch {
     communityFollowingList.innerHTML = `<p class="empty">网络错误</p>`;
@@ -3212,6 +3303,7 @@ async function loadCommunityLeaderboard() {
       communityLeaderboardList.innerHTML = `<p class="empty">暂无排行（需公开社区、满足归一条件并有交易）</p>`;
       return;
     }
+    await hydrateSymbolNameMap(entries.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityLeaderboardList.innerHTML = entries
       .map((c, idx) =>
         wrapInteractiveCommunityCard(c, { showRank: idx + 1 }),
@@ -4054,6 +4146,11 @@ async function loadCommunityProfileDetail() {
       return;
     }
     state.lastPublicProfileDetail = d;
+    await hydrateSymbolNameMap([
+      ...(d?.positions || []).map((row) => row?.symbol),
+      ...(d?.topPositions || []).map((row) => row?.symbol),
+      ...(d?.publicTrades || []).map((row) => row?.symbol),
+    ]);
     seedPublicProfileAnalysisUiFromDetail(d);
     const psr = String(d.publicStageRange || "month");
     state.communityProfileStage = ["month", "ytd", "total"].includes(psr) ? psr : "month";
@@ -6013,8 +6110,7 @@ async function ensureSymbolData(symbol) {
       const nm = String(quoteMap[symbol]?.name || "").trim();
       const display = quoteNameForDisplay(normalizedSymbol, nm);
       if (display) {
-        state.nameMap[normalizedSymbol] = display;
-        state.nameMap[alias] = display;
+        upsertNameMapEntry(normalizedSymbol, display);
       }
     }
   } catch (error) {
@@ -7312,30 +7408,30 @@ async function refreshMarketData(opts = {}) {
   try {
     const symbols = collectSymbolsForMarket();
     const klineSymbols = collectKlineSymbolsForMarket();
-    await hydrateKlineFromLocalDb(klineSymbols);
+    void hydrateSymbolNameMap([...symbols, ...klineSymbols]);
     if (!symbols.length) {
       state.marketLoading = false;
-      if (!skipFinalRender) {
-        renderAll();
-      }
+      renderAll();
       return;
     }
 
-    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
+    // 首屏快路径：优先只拉腾讯实时（quote + fx），不要等本地日K灌入后再发请求。
     try {
-      const snapshot = await fetchMarketSnapshot({
+      const quoteFirstSnapshot = await fetchMarketSnapshot({
         quoteSymbols: symbols,
-        klineSymbols: needKlineSymbols,
-        klineLen: KLINE_DATALEN,
+        klineSymbols: [],
         includeFx: true,
       });
-      if (snapshot?.delayed) {
-        markMarketDataDelayed(snapshot.delaySource || "cache");
+      if (quoteFirstSnapshot?.delayed) {
+        markMarketDataDelayed(quoteFirstSnapshot.delaySource || "cache");
       }
-      if (snapshot?.fxSpot && typeof snapshot.fxSpot === "object") {
-        Object.assign(state.fxSpot, snapshot.fxSpot);
+      if (quoteFirstSnapshot?.fxSpot && typeof quoteFirstSnapshot.fxSpot === "object") {
+        Object.assign(state.fxSpot, quoteFirstSnapshot.fxSpot);
       }
-      const quoteMap = snapshot?.quoteMap && typeof snapshot.quoteMap === "object" ? snapshot.quoteMap : {};
+      const quoteMap =
+        quoteFirstSnapshot?.quoteMap && typeof quoteFirstSnapshot.quoteMap === "object"
+          ? quoteFirstSnapshot.quoteMap
+          : {};
       if (Object.keys(quoteMap).length) {
         Object.entries(quoteMap).forEach(([symbol, quote]) => {
           const normalized = normalizeSymbol(symbol);
@@ -7345,30 +7441,51 @@ async function refreshMarketData(opts = {}) {
           const nm = String(quote?.name || "").trim();
           const display = quoteNameForDisplay(normalized, nm);
           if (display) {
-            state.nameMap[normalized] = display;
-            state.nameMap[alias] = display;
+            upsertNameMapEntry(normalized, display);
           }
         });
       }
       const latestSnapshotQuoteTime = pickLatestQuoteTime([
-        snapshot?.quoteTime,
+        quoteFirstSnapshot?.quoteTime,
         ...Object.values(quoteMap).map((item) => item?.time),
       ]);
       if (latestSnapshotQuoteTime !== "--") {
         state.quoteTime = latestSnapshotQuoteTime;
       }
-      const klineMap = snapshot?.klineMap && typeof snapshot.klineMap === "object" ? snapshot.klineMap : {};
-      Object.entries(klineMap).forEach(([symbol, list]) => {
-        if (!Array.isArray(list) || !list.length) {
-          return;
-        }
-        const normalized = normalizeSymbol(symbol);
-        const alias = normalized.replace(/^gb_/i, "");
-        state.klineMap[normalized] = list;
-        state.klineMap[alias] = list;
-      });
+      if (!skipFinalRender) {
+        renderAll();
+      }
     } catch (error) {
-      console.warn("快照拉取失败，保留本地数据展示", error);
+      console.warn("首屏实时行情拉取失败，保留本地数据展示", error);
+    }
+
+    await hydrateKlineFromLocalDb(klineSymbols);
+    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
+    if (needKlineSymbols.length) {
+      try {
+        const klineSnapshot = await fetchMarketSnapshot({
+          quoteSymbols: [],
+          klineSymbols: needKlineSymbols,
+          klineLen: KLINE_DATALEN,
+          includeFx: false,
+        });
+        if (klineSnapshot?.delayed) {
+          markMarketDataDelayed(klineSnapshot.delaySource || "cache");
+        }
+        const klineMap =
+          klineSnapshot?.klineMap && typeof klineSnapshot.klineMap === "object" ? klineSnapshot.klineMap : {};
+        Object.entries(klineMap).forEach(([symbol, list]) => {
+          if (!Array.isArray(list) || !list.length) {
+            return;
+          }
+          const normalized = normalizeSymbol(symbol);
+          const alias = normalized.replace(/^gb_/i, "");
+          state.klineMap[normalized] = list;
+          state.klineMap[alias] = list;
+        });
+      } catch (error) {
+        console.warn("日K快照拉取失败，保留本地数据展示", error);
+      }
     }
 
     for (const symbol of klineSymbols) {

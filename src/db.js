@@ -81,6 +81,7 @@ let pool;
 let initPromise;
 let postInitTasksStarted = false;
 let isBootstrapping = false;
+let symbolNameMapTableReadyPromise = null;
 
 function getSslOption() {
   if (process.env.DATABASE_SSL === "0" || process.env.DATABASE_SSL === "false") {
@@ -197,6 +198,14 @@ const DDL = [
     PRIMARY KEY (symbol, date)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_symbol_daily_close_date ON symbol_daily_close (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS symbol_name_map (
+    symbol TEXT PRIMARY KEY,
+    name_cn TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'unknown',
+    updated_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_symbol_name_map_updated_at ON symbol_name_map (updated_at DESC)`,
   `CREATE TABLE IF NOT EXISTS community_follows (
     follower_id TEXT NOT NULL,
     followee_id TEXT NOT NULL,
@@ -1166,6 +1175,110 @@ async function getLatestSymbolDailyClose(symbol) {
   return { close: Number(rows[0].close), date: String(rows[0].date) };
 }
 
+async function ensureSymbolNameMapTable() {
+  if (symbolNameMapTableReadyPromise) {
+    return symbolNameMapTableReadyPromise;
+  }
+  symbolNameMapTableReadyPromise = (async () => {
+    await q(
+      `CREATE TABLE IF NOT EXISTS symbol_name_map (
+        symbol TEXT PRIMARY KEY,
+        name_cn TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'unknown',
+        updated_at BIGINT NOT NULL,
+        last_seen_at BIGINT NOT NULL
+      )`
+    );
+    await q("CREATE INDEX IF NOT EXISTS idx_symbol_name_map_updated_at ON symbol_name_map (updated_at DESC)");
+  })().catch((error) => {
+    symbolNameMapTableReadyPromise = null;
+    throw error;
+  });
+  return symbolNameMapTableReadyPromise;
+}
+
+function normalizeSymbolNameEntry(entry = {}) {
+  const symbol = normalizeSymbol(entry.symbol);
+  let nameCn = String(entry.nameCn ?? entry.name ?? "").trim();
+  const source = String(entry.source || "unknown").trim().slice(0, 32) || "unknown";
+  if (!symbol || !nameCn) {
+    return null;
+  }
+  if (nameCn.length > 64) {
+    nameCn = nameCn.slice(0, 64);
+  }
+  const loweredName = nameCn.toLowerCase();
+  if (loweredName === symbol.toLowerCase()) {
+    return null;
+  }
+  if (/^(sh|sz)\d{6}$/i.test(loweredName) || /^hk\d{5}$/i.test(loweredName) || /^gb_[a-z0-9._-]+$/i.test(loweredName)) {
+    return null;
+  }
+  return { symbol, nameCn, source };
+}
+
+async function upsertSymbolNameMapBatch(rows = []) {
+  const list = Array.isArray(rows) ? rows.map(normalizeSymbolNameEntry).filter(Boolean) : [];
+  if (!list.length) {
+    return 0;
+  }
+  await ensureSymbolNameMapTable();
+  const latestBySymbol = new Map();
+  for (const item of list) {
+    latestBySymbol.set(item.symbol, item);
+  }
+  const deduped = [...latestBySymbol.values()];
+  const now = nowMs();
+  await q(
+    `INSERT INTO symbol_name_map (symbol, name_cn, source, updated_at, last_seen_at)
+     SELECT src.symbol, src.name_cn, src.source, $4, $4
+     FROM UNNEST($1::text[], $2::text[], $3::text[]) AS src(symbol, name_cn, source)
+     ON CONFLICT (symbol) DO UPDATE SET
+       name_cn = CASE
+         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.name_cn
+         ELSE symbol_name_map.name_cn
+       END,
+       source = CASE
+         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.source
+         ELSE symbol_name_map.source
+       END,
+       updated_at = CASE
+         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.updated_at
+         ELSE symbol_name_map.updated_at
+       END,
+       last_seen_at = EXCLUDED.last_seen_at`,
+    [
+      deduped.map((x) => x.symbol),
+      deduped.map((x) => x.nameCn),
+      deduped.map((x) => x.source),
+      now,
+    ]
+  );
+  return deduped.length;
+}
+
+async function getSymbolNameMap(symbols = []) {
+  await ensureSymbolNameMapTable();
+  const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+  if (!uniq.length) {
+    return {};
+  }
+  const { rows } = await q(
+    "SELECT symbol, name_cn FROM symbol_name_map WHERE symbol = ANY($1::text[])",
+    [uniq]
+  );
+  const out = {};
+  for (const row of rows || []) {
+    const symbol = normalizeSymbol(row.symbol);
+    const nameCn = String(row.name_cn || "").trim();
+    if (!symbol || !nameCn) {
+      continue;
+    }
+    out[symbol] = nameCn;
+  }
+  return out;
+}
+
 async function getTradeWindowForDailyClose(userId) {
   const trades = await getTrades(userId);
   if (!trades.length) {
@@ -1542,6 +1655,8 @@ module.exports = {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,
+  getSymbolNameMap,
+  upsertSymbolNameMapBatch,
   getTradeWindowForDailyClose,
   addCalendarDays,
   closeDatabase,

@@ -673,6 +673,8 @@ const {
   upsertAnalysisDailySnapshot,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
+  getSymbolNameMap,
+  upsertSymbolNameMapBatch,
   getTradeWindowForDailyClose,
   verifyUserLogin,
   createRegisteredUser,
@@ -1202,6 +1204,11 @@ app.get("/api/stock/name", async (req, res) => {
       res.status(400).json({ ok: false, error: "symbol required" });
       return;
     }
+    const mapped = await getSymbolNameMap([normalized]);
+    if (mapped?.[normalized]) {
+      res.json({ ok: true, name: mapped[normalized], symbol: normalized });
+      return;
+    }
     const input = eastmoneySuggestQueryInput(normalized);
     if (!input) {
       res.json({ ok: true, name: "", symbol: normalized });
@@ -1221,9 +1228,32 @@ app.get("/api/stock/name", async (req, res) => {
     const json = await response.json();
     const row = pickEastmoneySuggestRow(normalized, json);
     const name = String(row?.Name || "").trim();
+    if (name) {
+      void upsertSymbolNameMapBatch([{ symbol: normalized, nameCn: name, source: "eastmoney" }]).catch(() => {});
+    }
     res.json({ ok: true, name, symbol: normalized });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "name lookup failed" });
+  }
+});
+
+app.get("/api/symbol-name-map", requireAuth, async (req, res) => {
+  try {
+    const raw = req.query.symbols != null ? String(req.query.symbols) : "";
+    const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+    if (symbols.length > 600) {
+      res.status(400).json({ ok: false, error: "too many symbols" });
+      return;
+    }
+    if (!symbols.length) {
+      res.json({ ok: true, data: {} });
+      return;
+    }
+    const data = await getSymbolNameMap(symbols);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "symbol name map failed" });
   }
 });
 
@@ -1526,6 +1556,7 @@ app.post("/api/market/snapshot", requireAuth, async (req, res) => {
   const quoteMap = {};
   const fxSpot = {};
   const klineMap = {};
+  const symbolNameRows = [];
   const missingQuotes = [];
   const missingKline = [];
 
@@ -1561,6 +1592,9 @@ app.post("/api/market/snapshot", requireAuth, async (req, res) => {
           const parsed = parseTencentQuoteRecord(symbol, payload);
           if (parsed) {
             quoteMap[symbol] = parsed;
+            if (parsed.name) {
+              symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
+            }
           } else {
             missingQuotes.push(symbol);
           }
@@ -1625,6 +1659,9 @@ app.post("/api/market/snapshot", requireAuth, async (req, res) => {
   const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
   const delayed = delayedSources.size > 0;
   const delaySource = [...delayedSources].filter(Boolean).join(",");
+  if (symbolNameRows.length) {
+    void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
+  }
   if (delayed) {
     setDelayedHeaders(res, delaySource || "cache");
   }
