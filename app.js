@@ -6369,6 +6369,57 @@ function buildFallbackKlineFromTrades(symbol) {
   return rows;
 }
 
+function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
+  const source = Array.isArray(sourceRows) ? sourceRows : [];
+  const trades = Array.isArray(sortedTrades) ? sortedTrades : [];
+  const priceByDate = new Map();
+  const tradePriceByDate = new Map();
+
+  source.forEach((row) => {
+    const date = String(row?.date || "").slice(0, 10);
+    const price = Number(row?.price);
+    if (!date || !Number.isFinite(price) || price <= 0) {
+      return;
+    }
+    priceByDate.set(date, price);
+  });
+  trades.forEach((trade) => {
+    const date = String(trade?.date || "").slice(0, 10);
+    const price = Number(trade?.price);
+    if (!date || !Number.isFinite(price) || price <= 0) {
+      return;
+    }
+    // 同日多笔成交取最后一笔价格。
+    tradePriceByDate.set(date, price);
+  });
+
+  const allDates = [...new Set([...priceByDate.keys(), ...tradePriceByDate.keys()])].sort();
+  if (!allDates.length) {
+    return [];
+  }
+
+  const merged = [];
+  let rollingPrice = 0;
+  allDates.forEach((date) => {
+    const sourcePrice = priceByDate.get(date);
+    const tradePrice = tradePriceByDate.get(date);
+    if (Number.isFinite(sourcePrice) && sourcePrice > 0) {
+      rollingPrice = sourcePrice;
+    } else if (Number.isFinite(tradePrice) && tradePrice > 0) {
+      rollingPrice = tradePrice;
+    }
+    if (!(rollingPrice > 0)) {
+      rollingPrice = Number.isFinite(sourcePrice)
+        ? sourcePrice
+        : Number.isFinite(tradePrice)
+          ? tradePrice
+          : 0;
+    }
+    merged.push({ date, price: rollingPrice });
+  });
+  return merged;
+}
+
 function drawStockRecordChart(symbol, symbolTrades) {
   const canvas = stockRecordChart;
   if (!canvas) {
@@ -6376,10 +6427,11 @@ function drawStockRecordChart(symbol, symbolTrades) {
   }
   const kline = getKlineBySymbol(symbol);
   const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
-  const source =
+  const baseSource =
     kline.length > 1
       ? kline.map((item) => ({ date: item.day, price: Number(item.close) }))
       : sortedTrades.map((item) => ({ date: item.date, price: validNumber(item.price, 0) }));
+  const source = mergeStockRecordPriceSeriesWithTradeDates(baseSource, sortedTrades);
   if (!source.length) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -6400,6 +6452,14 @@ function drawStockRecordChart(symbol, symbolTrades) {
     qtyByDate[trade.date] = qty;
   });
   let rollingQty = 0;
+  const firstVisibleDate = String(visible[0]?.date || "");
+  if (firstVisibleDate) {
+    sortedTrades.forEach((trade) => {
+      if (String(trade.date || "") <= firstVisibleDate) {
+        rollingQty += trade.side === "buy" ? trade.quantity : -trade.quantity;
+      }
+    });
+  }
   const values = visible.map((item) => {
     if (qtyByDate[item.date] != null) {
       rollingQty = qtyByDate[item.date];
