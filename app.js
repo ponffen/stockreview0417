@@ -6411,20 +6411,32 @@ async function ensureSymbolData(symbol) {
   if (!supportsKline(symbol)) {
     return;
   }
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const legacyAlias = getLegacyUsAlias(normalizedSymbol);
+  const sourceTrades =
+    state.stockRecordFromPublicProfile && Array.isArray(state.lastPublicProfileDetail?.publicTrades)
+      ? state.lastPublicProfileDetail.publicTrades
+      : state.trades;
+  const latestTradeDate = sourceTrades
+    .filter((trade) => normalizeSymbol(trade?.symbol) === normalizedSymbol)
+    .reduce((acc, trade) => {
+      const d = String(trade?.date || "").slice(0, 10);
+      return d && (!acc || d > acc) ? d : acc;
+    }, "");
+
   try {
-    if (!getKlineBySymbol(symbol).length) {
+    const currentList = getKlineBySymbol(symbol);
+    const currentLatestDay = latestKlineDay(currentList);
+    const needRefreshKline = !currentList.length || (latestTradeDate && currentLatestDay < latestTradeDate);
+    if (needRefreshKline) {
       const list = await fetchKlineData(symbol);
       if (list.length) {
-        const normalizedSymbol = normalizeSymbol(symbol);
-        const legacyAlias = getLegacyUsAlias(normalizedSymbol);
         state.klineMap[normalizedSymbol] = list;
         if (legacyAlias) {
           state.klineMap[legacyAlias] = list;
         }
-      } else {
+      } else if (!currentList.length) {
         const fallback = buildFallbackKlineFromTrades(symbol);
-        const normalizedSymbol = normalizeSymbol(symbol);
-        const legacyAlias = getLegacyUsAlias(normalizedSymbol);
         state.klineMap[normalizedSymbol] = fallback;
         if (legacyAlias) {
           state.klineMap[legacyAlias] = fallback;
@@ -6435,8 +6447,6 @@ async function ensureSymbolData(symbol) {
     console.error("加载个股K线失败", error);
     if (!getKlineBySymbol(symbol).length) {
       const fallback = buildFallbackKlineFromTrades(symbol);
-      const normalizedSymbol = normalizeSymbol(symbol);
-      const legacyAlias = getLegacyUsAlias(normalizedSymbol);
       state.klineMap[normalizedSymbol] = fallback;
       if (legacyAlias) {
         state.klineMap[legacyAlias] = fallback;
@@ -6483,6 +6493,20 @@ function buildFallbackKlineFromTrades(symbol) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return rows;
+}
+
+function latestKlineDay(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return "";
+  }
+  let latest = "";
+  rows.forEach((row) => {
+    const day = String(row?.day || "").slice(0, 10);
+    if (day && (!latest || day > latest)) {
+      latest = day;
+    }
+  });
+  return latest;
 }
 
 function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
