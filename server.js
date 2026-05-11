@@ -675,6 +675,7 @@ const {
   getSymbolDailyCloseRange,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
+  createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,
   verifyUserLogin,
   createRegisteredUser,
@@ -1254,6 +1255,16 @@ app.get("/api/symbol-name-map", requireAuth, async (req, res) => {
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "symbol name map failed" });
+  }
+});
+
+app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => {
+  try {
+    const created = await createSymbolNameMapTableNow();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, created });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "create symbol_name_map failed" });
   }
 });
 

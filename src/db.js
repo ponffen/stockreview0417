@@ -1205,6 +1205,58 @@ async function ensureSymbolNameMapTable() {
   return symbolNameMapTableReadyPromise;
 }
 
+async function createSymbolNameMapTableNow() {
+  const dbUrl = getPgConnectionString();
+  if (!dbUrl) {
+    throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
+  }
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+  const hardTimeoutMs = Math.max(1000, Number(process.env.DATABASE_PING_HARD_TIMEOUT_MS || connectMs + 4000));
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: getSslOption(),
+    connectionTimeoutMillis: connectMs,
+    query_timeout: connectMs,
+  });
+  let timeoutId = null;
+  const withHardTimeout = (promise, stage) =>
+    new Promise((resolve, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`symbol_name_map ${stage} timeout after ${hardTimeoutMs}ms`)), hardTimeoutMs);
+      promise.then(resolve, reject);
+    });
+  try {
+    await withHardTimeout(client.connect(), "connect");
+    await withHardTimeout(
+      client.query(`
+        SET lock_timeout = '3000ms';
+        SET statement_timeout = '8000ms';
+        CREATE TABLE IF NOT EXISTS symbol_name_map (
+          symbol TEXT PRIMARY KEY,
+          name_cn TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'unknown',
+          updated_at BIGINT NOT NULL,
+          last_seen_at BIGINT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_symbol_name_map_updated_at ON symbol_name_map (updated_at DESC);
+      `),
+      "ddl"
+    );
+    const { rows } = await withHardTimeout(
+      client.query("SELECT to_regclass('public.symbol_name_map') AS table_name, to_regclass('public.idx_symbol_name_map_updated_at') AS index_name"),
+      "verify"
+    );
+    return {
+      table: rows?.[0]?.table_name || null,
+      index: rows?.[0]?.index_name || null,
+    };
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    await client.end().catch(() => {});
+  }
+}
+
 function normalizeSymbolNameEntry(entry = {}) {
   const symbol = normalizeSymbol(entry.symbol);
   let nameCn = String(entry.nameCn ?? entry.name ?? "").trim();
@@ -1665,6 +1717,7 @@ module.exports = {
   getLatestSymbolDailyClose,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
+  createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,
   addCalendarDays,
   closeDatabase,
