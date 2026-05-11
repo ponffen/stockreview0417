@@ -4904,15 +4904,13 @@ function computePositionStageStartState(position, stageRange, trades) {
 }
 
 function computePositionStageProfit(position, stageRange, trades) {
-  const { startQuantity, startClose, stageFlowNative } = computePositionStageStartState(
-    position,
-    stageRange,
-    trades,
-  );
-  const startMarketValueNative = startQuantity * startClose;
-  const marketValueNative =
-    position.marketValueNative ?? position.quantity * validNumber(position.currentPrice, 0);
-  return marketValueNative - startMarketValueNative - stageFlowNative;
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const firstTradeDate = tradeList.length
+    ? [...tradeList].sort(sortTradeAsc)[0].date
+    : toDateKey(new Date());
+  const startKey = getStageStartKey(stageRange, firstTradeDate);
+  const endKey = toDateKey(new Date());
+  return computePositionProfitInDateRange(position, startKey, endKey, tradeList);
 }
 
 function getSymbolCloseBeforeDate(symbol, dateKey, fallbackPrice) {
