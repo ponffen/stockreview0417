@@ -4837,6 +4837,27 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
   return quoteKey === tradingKey;
 }
 
+function getPositionDayTradeContext(symbol, dateKey, trades = state.trades) {
+  const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const symbolTrades = tradeList.filter((trade) => trade.symbol === symbol).sort(sortTradeAsc);
+  let startQuantity = 0;
+  let endQuantity = 0;
+  let dayFlowNative = 0;
+  for (const trade of symbolTrades) {
+    const deltaQty = trade.side === "buy" ? trade.quantity : -trade.quantity;
+    if (trade.date < dateKey) {
+      startQuantity += deltaQty;
+    }
+    if (trade.date <= dateKey) {
+      endQuantity += deltaQty;
+    }
+    if (trade.date === dateKey) {
+      dayFlowNative += signedAmount(trade);
+    }
+  }
+  return { startQuantity, endQuantity, dayFlowNative };
+}
+
 /** 总览与个股人民币列：非人民币标的按当前汇率折算；原币种展示时不乘汇率。（仅个股表，受列表上的 ¥ 切换控制） */
 function applyFxForOverview(row, nativeVal) {
   const cnyBook = row.currency === "CNY" || row.market === "A股";
@@ -6416,8 +6437,11 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     const profitRate =
       Math.abs(sigmaAmountNative) > 0 ? totalProfitNative / Math.abs(sigmaAmountNative) : 0;
     const countTodayPnl = shouldCountTodayPositionPnlFromQuote(quote);
+    const todayKey = toDateKey(new Date());
+    const dayCtx = getPositionDayTradeContext(item.symbol, todayKey, tradeList);
+    const todayStartMarketValueNative = dayCtx.startQuantity * prevClose;
     const todayProfitNative = countTodayPnl
-      ? item.quantity * (currentPrice - prevClose)
+      ? dayCtx.endQuantity * currentPrice - todayStartMarketValueNative - dayCtx.dayFlowNative
       : 0;
     const dayChangeRate = prevClose > 0 ? (currentPrice - prevClose) / prevClose : 0;
     const regretRate =
@@ -6438,6 +6462,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
       cost,
       totalProfitNative,
       profitRate,
+      todayStartMarketValueNative,
       todayProfitNative,
       dayChangeRate,
       regretRate,
@@ -6504,7 +6529,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   const totalMarketValue = visiblePositions.reduce((sum, item) => sum + toBook(item, item.marketValueNative), 0);
   const todayProfit = sumBookByCurrency((item) => item.todayProfitNative);
   const yesterdayMarketValueForRate = visiblePositions.reduce(
-    (sum, item) => sum + toBook(item, item.quantity * item.prevClose),
+    (sum, item) => sum + toBook(item, item.todayStartMarketValueNative),
     0
   );
   const todayRate = yesterdayMarketValueForRate !== 0 ? todayProfit / yesterdayMarketValueForRate : 0;
