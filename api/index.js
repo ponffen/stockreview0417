@@ -188,6 +188,47 @@ module.exports = async function handler(req, res) {
     (req.method === "PATCH" && pathOnly === "/api/me/community-profile") ||
     ((req.method === "POST" || req.method === "DELETE") && communityFollowMatch);
 
+  const isCreateSymbolNameMapDirect =
+    req.method === "POST" && pathOnly === "/api/admin/create-symbol-name-map";
+  const isSymbolNameMapDirect =
+    req.method === "GET" && pathOnly === "/api/symbol-name-map";
+
+  if (isCreateSymbolNameMapDirect || isSymbolNameMapDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const { createSymbolNameMapTableNow, getSymbolNameMap, normalizeSymbol } = require("../src/db");
+      if (isCreateSymbolNameMapDirect) {
+        const created = await createSymbolNameMapTableNow();
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, created }));
+        return;
+      }
+      const raw = req.query?.symbols != null ? String(req.query.symbols) : "";
+      const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+      if (!symbols.length) {
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: {} }));
+        return;
+      }
+      const data = await getSymbolNameMap(symbols);
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data }));
+      return;
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));
+      return;
+    }
+  }
+
   if (isStateOrCommunityDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
