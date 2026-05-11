@@ -242,6 +242,7 @@ let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
 let lastBrowserRouteKey = "";
+let lastRenderedRouteForScrollReset = "";
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -1562,6 +1563,87 @@ function parseTencentPriceField(segment) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function nthWeekdayOfMonth(year, month, weekday, nth) {
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  return 1 + ((7 + weekday - firstDow) % 7) + (Math.max(1, nth) - 1) * 7;
+}
+
+function isUsEasternDstByLocalParts(parts) {
+  if (!parts) {
+    return false;
+  }
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour || 0);
+  if (![year, month, day, hour].every(Number.isFinite)) {
+    return false;
+  }
+  if (month < 3 || month > 11) {
+    return false;
+  }
+  if (month > 3 && month < 11) {
+    return true;
+  }
+  const secondSundayInMarch = nthWeekdayOfMonth(year, 3, 0, 2);
+  const firstSundayInNovember = nthWeekdayOfMonth(year, 11, 0, 1);
+  if (month === 3) {
+    if (day > secondSundayInMarch) {
+      return true;
+    }
+    if (day < secondSundayInMarch) {
+      return false;
+    }
+    return hour >= 2;
+  }
+  if (day < firstSundayInNovember) {
+    return true;
+  }
+  if (day > firstSundayInNovember) {
+    return false;
+  }
+  return hour < 2;
+}
+
+function convertUsEasternTimeToBeijing(timeStr) {
+  const parts = parseQuoteTimeParts(timeStr);
+  if (!parts) {
+    return "";
+  }
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour || 0);
+  const minute = Number(parts.minute || 0);
+  const second = Number(parts.second || 0);
+  if (![year, month, day, hour, minute, second].every(Number.isFinite)) {
+    return "";
+  }
+  const diffHours = isUsEasternDstByLocalParts(parts) ? 12 : 13;
+  const baseMs = Date.UTC(year, month - 1, day, hour, minute, second);
+  const bj = new Date(baseMs + diffHours * 60 * 60 * 1000);
+  return [
+    String(bj.getUTCFullYear()).padStart(4, "0"),
+    String(bj.getUTCMonth() + 1).padStart(2, "0"),
+    String(bj.getUTCDate()).padStart(2, "0"),
+    String(bj.getUTCHours()).padStart(2, "0"),
+    String(bj.getUTCMinutes()).padStart(2, "0"),
+    String(bj.getUTCSeconds()).padStart(2, "0"),
+  ].join("");
+}
+
+function normalizeQuoteTimeToBeijingBySymbol(timeStr, symbol) {
+  const raw = String(timeStr || "").trim();
+  if (!raw || raw === "--") {
+    return "--";
+  }
+  const normalized = normalizeSymbol(symbol || "");
+  if (!isUsTickerSymbol(normalized)) {
+    return raw;
+  }
+  return convertUsEasternTimeToBeijing(raw) || raw;
+}
+
 /**
  * 腾讯 qt.gtimg.cn 实时：`~` 分段。文档：1 名称、2 代码、3 当前价、4 昨收、30 时间（均为 1-based 序号，对应 parts[1]…parts[4]）。
  */
@@ -1576,7 +1658,8 @@ function parseTencentQuoteRecord(symbol, rawText) {
   const name = String(parts[1] || "").trim() || symbol;
   const current = parseTencentPriceField(parts[3]);
   const prevClose = parseTencentPriceField(parts[4]);
-  const time = String(parts[30] || parts[31] || "--").trim();
+  const rawTime = String(parts[30] || parts[31] || "--").trim();
+  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, symbol);
   const quoteDate = parseQuoteTimeToDateKey(time);
   if (!Number.isFinite(current) || current <= 0) {
     return null;
@@ -4428,6 +4511,31 @@ async function saveMineCommunityProfile() {
   }
 }
 
+function resetViewportScrollTop() {
+  try {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+  if (document.documentElement) {
+    document.documentElement.scrollTop = 0;
+  }
+  if (document.body) {
+    document.body.scrollTop = 0;
+  }
+}
+
+function resetRoutePaneScrollTop(route) {
+  const activePane = routePanes.find((pane) => String(pane.id || "").replace(/^route-/, "") === String(route || ""));
+  if (!activePane) {
+    return;
+  }
+  activePane.scrollTop = 0;
+  activePane.querySelectorAll(".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap").forEach((el) => {
+    el.scrollTop = 0;
+  });
+}
+
 function renderRoute() {
   const validRoutes = new Set([
     "earning",
@@ -4449,6 +4557,7 @@ function renderRoute() {
   if (!validRoutes.has(state.route)) {
     state.route = state.appModule === "community" ? "community-feed" : "earning";
   }
+  const routeChanged = state.route !== lastRenderedRouteForScrollReset;
   if (appHeaderTitle) {
     if (state.route === "trade-search") {
       appHeaderTitle.textContent = "搜索股票";
@@ -4526,6 +4635,13 @@ function renderRoute() {
   } else {
     syncBrowserRouteHistory("push");
   }
+  if (routeChanged) {
+    requestAnimationFrame(() => {
+      resetViewportScrollTop();
+      resetRoutePaneScrollTop(state.route);
+    });
+  }
+  lastRenderedRouteForScrollReset = state.route;
 }
 
 function syncPublicProfileStockSortControls() {
