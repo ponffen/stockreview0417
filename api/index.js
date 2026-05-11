@@ -1,4 +1,4 @@
-console.log("[api/index.js] module-load start build=v5");
+console.log("[api/index.js] module-load start build=v6");
 
 // 懒加载：不在模块顶层 require server.js，避免 server.js 顶层任何副作用
 // 导致整个函数在冷启动阶段就 hang 300s。改为第一次业务请求时才加载。
@@ -33,6 +33,71 @@ function getServerlessApp() {
 function urlPathOnly(u) {
   const p = String(u || "").split("?")[0];
   return p || "/";
+}
+
+function getSearchParam(req, key) {
+  try {
+    const u = new URL(String(req.url || "/"), "http://localhost");
+    return u.searchParams.get(String(key || "")) || "";
+  } catch {
+    return "";
+  }
+}
+
+function parsePositiveInt(input, fallback, min, max) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  const v = Math.floor(n);
+  return Math.min(max, Math.max(min, v));
+}
+
+function parseBooleanInput(input, fallback = false) {
+  if (input == null || input === "") {
+    return fallback;
+  }
+  const v = String(input).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(v)) {
+    return false;
+  }
+  return fallback;
+}
+
+function sanitizeSymbolList(raw, normalizeSymbol) {
+  const src = String(raw || "").trim();
+  if (!src) {
+    return [];
+  }
+  return [...new Set(src.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+}
+
+async function readJsonBody(req) {
+  const bodyStr = await new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+  if (!bodyStr) {
+    return {};
+  }
+  try {
+    return JSON.parse(bodyStr);
+  } catch {
+    return {};
+  }
+}
+
+function extractBearerToken(req) {
+  const auth = String(req.headers?.authorization || "").trim();
+  if (!auth.toLowerCase().startsWith("bearer ")) {
+    return "";
+  }
+  return auth.slice(7).trim();
 }
 
 // 最外层 handler：先处理"不依赖 server.js"的自证端点，再异步加载 Express app
@@ -194,6 +259,11 @@ module.exports = async function handler(req, res) {
     req.method === "POST" && pathOnly === "/api/admin/upsert-symbol-name-map";
   const isSymbolNameMapDirect =
     req.method === "GET" && pathOnly === "/api/symbol-name-map";
+  const isSnapshotWatermarkDirect = req.method === "GET" && pathOnly === "/api/snapshot/watermark";
+  const isSnapshotAccountDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/account-daily";
+  const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
+  const isSnapshotSymbolCloseDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-close";
+  const isCronFreezeDirect = (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/freeze-eod";
 
   if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect || isSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -247,6 +317,147 @@ module.exports = async function handler(req, res) {
     } catch (error) {
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));
+      return;
+    }
+  }
+
+  if (
+    isSnapshotWatermarkDirect ||
+    isSnapshotAccountDailyDirect ||
+    isSnapshotSymbolDailyDirect ||
+    isSnapshotSymbolCloseDirect ||
+    isCronFreezeDirect
+  ) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const {
+        normalizeSymbol,
+        getSnapshotWatermark,
+        getAnalysisDailySnapshots,
+        getSymbolDailyPnl,
+        getTradeWindowForDailyClose,
+        getSymbolDailyCloseRange,
+      } = require("../src/db");
+      const { runDailyFreeze } = require("../src/eod-freeze-service");
+
+      if (isSnapshotWatermarkDirect) {
+        const data = await getSnapshotWatermark();
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isCronFreezeDirect) {
+        const body = req.method === "POST" ? await readJsonBody(req) : {};
+        const cronHeader = req.headers?.["x-vercel-cron"];
+        const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+        const tokenFromBearer = extractBearerToken(req);
+        const tokenFromQuery = getSearchParam(req, "token");
+        const tokenFromBody = String(body?.token || "").trim();
+        const secretMatched =
+          !!configuredSecret &&
+          (tokenFromBearer === configuredSecret ||
+            tokenFromQuery === configuredSecret ||
+            tokenFromBody === configuredSecret);
+        const sessionUserId = readUserIdFromRequest(req);
+        if (!sessionUserId && cronHeader == null && !secretMatched) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "unauthorized cron request" }));
+          return;
+        }
+        const frozenDate = getSearchParam(req, "frozenDate") || body?.frozenDate;
+        const force = parseBooleanInput(getSearchParam(req, "force") || body?.force, false);
+        const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+        const data = await runDailyFreeze({ frozenDate, force, userIds, logger: console });
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+
+      if (isSnapshotAccountDailyDirect) {
+        const accountId = getSearchParam(req, "accountId");
+        const from = getSearchParam(req, "from") || "1970-01-01";
+        const to = getSearchParam(req, "to") || "9999-12-31";
+        const data = await getAnalysisDailySnapshots({ accountId, from, to }, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isSnapshotSymbolDailyDirect) {
+        const accountId = getSearchParam(req, "accountId");
+        const from = getSearchParam(req, "from") || "1970-01-01";
+        const to = getSearchParam(req, "to") || "9999-12-31";
+        const symbols = sanitizeSymbolList(getSearchParam(req, "symbols"), normalizeSymbol);
+        let data = [];
+        if (!symbols.length) {
+          const symbol = getSearchParam(req, "symbol");
+          data = await getSymbolDailyPnl({ accountId, from, to, symbol }, userId);
+        } else {
+          const chunks = await Promise.all(
+            symbols.map((symbol) => getSymbolDailyPnl({ accountId, from, to, symbol }, userId))
+          );
+          data = chunks.flat();
+          data.sort((a, b) => {
+            if (a.date !== b.date) {
+              return String(a.date).localeCompare(String(b.date));
+            }
+            return String(a.symbol).localeCompare(String(b.symbol));
+          });
+        }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isSnapshotSymbolCloseDirect) {
+        const w = await getTradeWindowForDailyClose(userId);
+        if (!w.symbols.length) {
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data: {}, from: null, to: null, symbols: [] }));
+          return;
+        }
+        const requested = sanitizeSymbolList(getSearchParam(req, "symbols"), normalizeSymbol);
+        const wantedSet = requested.length ? new Set(requested) : null;
+        const symbols = wantedSet ? w.symbols.filter((sym) => wantedSet.has(sym)) : w.symbols;
+        if (!symbols.length) {
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data: {}, from: null, to: null, symbols: [] }));
+          return;
+        }
+        const days = parsePositiveInt(getSearchParam(req, "days"), 240, 30, 4000);
+        const dateKeyDaysFromToday = (delta) => {
+          const d = new Date();
+          d.setDate(d.getDate() + Number(delta || 0));
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        };
+        const to = w.to || dateKeyDaysFromToday(0);
+        const floorFrom = dateKeyDaysFromToday(-days);
+        const from = w.from && w.from > floorFrom ? w.from : floorFrom;
+        const data = {};
+        const rowsBySymbol = await Promise.all(
+          symbols.map(async (sym) => [sym, await getSymbolDailyCloseRange(sym, from, to)])
+        );
+        for (const [sym, rows] of rowsBySymbol) {
+          data[sym] = rows;
+        }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data, from, to, symbols }));
+        return;
+      }
+    } catch (error) {
+      console.error("[api/index.js] direct snapshot/cron error:", error);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "snapshot/cron direct handler failed" }));
       return;
     }
   }
@@ -421,7 +632,7 @@ module.exports = async function handler(req, res) {
     res.end(
       JSON.stringify({
         ok: true,
-        build: "v5",
+        build: "v6",
         where: "api/index.js (before server.js require)",
         node: process.version,
         env: process.env.VERCEL ? "vercel" : "local",
