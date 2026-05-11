@@ -149,6 +149,8 @@ const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
 const STOCK_RECORD_AXIS_MIN_FACTOR = 0.95;
 const STOCK_RECORD_AXIS_MAX_FACTOR = 1.05;
+const ANALYSIS_CHART_AXIS_MIN_FACTOR = 0.95;
+const ANALYSIS_CHART_AXIS_MAX_FACTOR = 1.05;
 
 const demoTrades = [
   {
@@ -5721,6 +5723,10 @@ function renderAnalysisFromHistory() {
       leftLabel: "收益",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
+      yRangePadding: {
+        minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
+        maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
+      },
     }
   );
   const assetPayload = drawAssetChart(assetSeries);
@@ -5896,6 +5902,10 @@ async function renderAnalysis() {
       leftLabel: "收益",
       valueFormatter: (value) => formatNumber(value, 2),
       axisFormatter: (value) => formatNumber(value, 2),
+      yRangePadding: {
+        minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
+        maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
+      },
     }
   );
   const assetPayload = drawAssetChart(assetSeries);
@@ -6831,6 +6841,10 @@ function drawLineChart(mySeries, benchmarkSeries, canvas) {
       rightLabel: state.benchmark === "none" ? "" : "基准(%)",
       valueFormatter: (value) => `${formatNumber(value, 2)}%`,
       axisFormatter: (value) => `${formatNumber(value, 2)}%`,
+      yRangePadding: {
+        minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
+        maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
+      },
     }
   );
 }

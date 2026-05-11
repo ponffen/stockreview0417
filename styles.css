@@ -791,7 +791,7 @@ h2 {
 }
 
 .analysis-stock-rank-table {
-  min-width: 680px;
+  min-width: 740px;
   --stock-rank-col-rank: 28px;
   --stock-rank-col-gap: 8px;
 }
@@ -934,7 +934,7 @@ h2 {
 .analysis-stock-rank-head,
 .analysis-stock-rank-row {
   display: grid;
-  grid-template-columns: var(--stock-rank-col-rank) minmax(40px, 0.55fr) 104px 86px 70px minmax(200px, 1.45fr);
+  grid-template-columns: var(--stock-rank-col-rank) minmax(40px, 0.55fr) 112px 102px 82px minmax(200px, 1.45fr);
   align-items: center;
   /* column-gap is transparent — scrolling cells show through; use cell padding for spacing */
   gap: 0;
