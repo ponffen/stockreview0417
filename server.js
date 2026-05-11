@@ -1268,6 +1268,17 @@ app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => 
   }
 });
 
+app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const count = await upsertSymbolNameMapBatch(rows);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, count });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "upsert symbol_name_map failed" });
+  }
+});
+
 app.get("/api/state", requireAuth, async (req, res) => {
   res.json({ ok: true, data: await getState(req.userId) });
 });

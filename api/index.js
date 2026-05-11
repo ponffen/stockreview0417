@@ -190,10 +190,12 @@ module.exports = async function handler(req, res) {
 
   const isCreateSymbolNameMapDirect =
     req.method === "POST" && pathOnly === "/api/admin/create-symbol-name-map";
+  const isUpsertSymbolNameMapDirect =
+    req.method === "POST" && pathOnly === "/api/admin/upsert-symbol-name-map";
   const isSymbolNameMapDirect =
     req.method === "GET" && pathOnly === "/api/symbol-name-map";
 
-  if (isCreateSymbolNameMapDirect || isSymbolNameMapDirect) {
+  if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect || isSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     try {
@@ -209,6 +211,26 @@ module.exports = async function handler(req, res) {
         const created = await createSymbolNameMapTableNow();
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, created }));
+        return;
+      }
+      if (isUpsertSymbolNameMapDirect) {
+        const { upsertSymbolNameMapBatch } = require("../src/db");
+        const bodyStr = await new Promise((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => (data += chunk));
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+        let body = {};
+        if (bodyStr) {
+          try {
+            body = JSON.parse(bodyStr);
+          } catch (_) {}
+        }
+        const rows = Array.isArray(body?.rows) ? body.rows : [];
+        const count = await upsertSymbolNameMapBatch(rows);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, count }));
         return;
       }
       const raw = req.query?.symbols != null ? String(req.query.symbols) : "";

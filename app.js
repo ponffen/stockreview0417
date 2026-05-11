@@ -259,6 +259,7 @@ const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
 const symbolNameFetchedAt = new Map();
 const symbolNameHydrateInFlight = new Map();
+const symbolNameSyncedAt = new Map();
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -1254,6 +1255,45 @@ async function hydrateSymbolNameMap(symbols, options = {}) {
     await task;
   } finally {
     symbolNameHydrateInFlight.delete(key);
+  }
+}
+
+async function syncSymbolNamesFromQuotes(quoteMap = {}) {
+  if (!apiReady || !quoteMap || typeof quoteMap !== "object") {
+    return;
+  }
+  const now = Date.now();
+  const rows = [];
+  for (const [symbol, quote] of Object.entries(quoteMap)) {
+    const normalized = normalizeSymbol(symbol);
+    if (!normalized) {
+      continue;
+    }
+    const display = quoteNameForDisplay(normalized, quote?.name);
+    if (!display) {
+      continue;
+    }
+    const syncKey = `${normalized}|${display}`;
+    const lastTs = Number(symbolNameSyncedAt.get(syncKey) || 0);
+    if (lastTs && now - lastTs < SYMBOL_NAME_MAP_TTL_MS) {
+      continue;
+    }
+    rows.push({ symbol: normalized, nameCn: display, source: "tencent" });
+    symbolNameSyncedAt.set(syncKey, now);
+  }
+  if (!rows.length) {
+    return;
+  }
+  try {
+    await apiFetch(`${getApiBaseForFetch()}/admin/upsert-symbol-name-map`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows }),
+      cache: "no-store",
+      timeoutMs: 10_000,
+    });
+  } catch {
+    // ignore write-back failures
   }
 }
 
@@ -7444,6 +7484,7 @@ async function refreshMarketData(opts = {}) {
             upsertNameMapEntry(normalized, display);
           }
         });
+        void syncSymbolNamesFromQuotes(quoteMap);
       }
       const latestSnapshotQuoteTime = pickLatestQuoteTime([
         quoteFirstSnapshot?.quoteTime,
