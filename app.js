@@ -6090,9 +6090,9 @@ async function renderStockRecordPage(symbol) {
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
   stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
-  stockRecordMarket.textContent = stockRecordAccountCaption(scope, symbolTrades);
-  stockRecordRegret.textContent = `交易间隔 ${formatPercent(position.regretRate)}`;
-  stockRecordRegret.className = `${position.regretRate >= 0 ? "up" : "down"}`;
+  stockRecordMarket.textContent = `交易间隔 ${formatPercent(position.regretRate)}`;
+  stockRecordRegret.textContent = "";
+  stockRecordRegret.className = "hidden";
 
   const recTable = stockRecordListBody?.closest("table");
   const headRow = recTable?.querySelector("thead tr");
