@@ -4318,9 +4318,7 @@ function renderOverviewAndStockTable() {
   }
   if (quoteTime) {
     const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
-    quoteTime.textContent = state.marketDataDelayed
-      ? `延迟数据 · ${timeText}`
-      : `实时数据 · ${timeText}`;
+    quoteTime.textContent = timeText;
     quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
     quoteTime.setAttribute("title", state.marketDataDelayed && state.marketDataDelaySource
       ? `已使用缓存数据（${state.marketDataDelaySource}）`
