@@ -1454,7 +1454,7 @@ h2 {
 }
 
 .stock-record-price {
-  font-size: clamp(42px, 9vw, 56px);
+  font-size: 18px;
   line-height: 1;
   font-weight: 600;
 }

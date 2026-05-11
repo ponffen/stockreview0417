@@ -264,6 +264,10 @@ module.exports = async function handler(req, res) {
   const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
   const isSnapshotSymbolCloseDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-close";
   const isCronFreezeDirect = (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/freeze-eod";
+  const isSettingsGetDirect = req.method === "GET" && pathOnly === "/api/settings";
+  const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
+  const isTradesImportDirect = req.method === "POST" && pathOnly === "/api/trades/import";
+  const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
 
   if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect || isSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -317,6 +321,81 @@ module.exports = async function handler(req, res) {
     } catch (error) {
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));
+      return;
+    }
+  }
+
+  if (
+    isSettingsGetDirect ||
+    isSettingsPatchDirect ||
+    isTradesImportDirect ||
+    isCashTransfersImportDirect
+  ) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const {
+        DEFAULT_SETTINGS,
+        getSettings,
+        setSettings,
+        normalizeTrade,
+        importTrades,
+        importCashTransfers,
+      } = require("../src/db");
+
+      if (isSettingsGetDirect) {
+        const data = await getSettings(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isSettingsPatchDirect) {
+        const body = await readJsonBody(req);
+        const patch = body && typeof body === "object" ? body : {};
+        const sanitized = {};
+        for (const key of Object.keys(DEFAULT_SETTINGS || {})) {
+          if (Object.hasOwn(patch, key)) {
+            sanitized[key] = patch[key];
+          }
+        }
+        const data = await setSettings(sanitized, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isTradesImportDirect) {
+        const body = await readJsonBody(req);
+        const mode = body?.mode === "replace" ? "replace" : "append";
+        const trades = Array.isArray(body?.trades) ? body.trades : [];
+        const normalized = trades.map((item) => normalizeTrade(item));
+        const data = await importTrades(normalized, mode, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, count: data.length, data }));
+        return;
+      }
+
+      if (isCashTransfersImportDirect) {
+        const body = await readJsonBody(req);
+        const mode = body?.mode === "replace" ? "replace" : "append";
+        const rows = Array.isArray(body?.cashTransfers) ? body.cashTransfers : [];
+        const data = await importCashTransfers(rows, mode, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, count: data.length, data }));
+        return;
+      }
+    } catch (error) {
+      console.error("[api/index.js] direct settings/import error:", error);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "direct settings/import failed" }));
       return;
     }
   }

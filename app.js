@@ -1,4 +1,3 @@
-const STORAGE_KEY = "earning-clone-state-v2";
 const SESSION_TAB_KEY = "stockreview_session_tabs_seeded";
 const API_BASE = "/api";
 const API_GET_TIMEOUT_MS = 12_000;
@@ -34,37 +33,6 @@ let sessionProfile = {
 let authSubmitting = false;
 let quoteIntervalStarted = false;
 let analysisStockRankHelpListenersBound = false;
-
-/** 登录后按手机号隔离本地缓存，避免切换账号仍读到上一账号的 localStorage */
-function getSessionStateStorageKey() {
-  const phone = String(sessionPhone || "").trim();
-  return phone ? `${STORAGE_KEY}::${phone}` : STORAGE_KEY;
-}
-
-/**
- * 旧版未按用户区分的 localStorage 仅一份。
- * 一次性写入 earning-clone-state-v2::18310270720（与当前登录谁无关，避免先登录别的号导致误绑）。
- * 应用启动即执行；若 183 的 scoped 已有内容则跳过，不覆盖。
- */
-const LEGACY_STATE_OWNER_PHONE = "18310270720";
-
-function migrateLegacyGlobalStateTo183ScopedOnce() {
-  const scopedKey = `${STORAGE_KEY}::${LEGACY_STATE_OWNER_PHONE}`;
-  if (localStorage.getItem(scopedKey)) {
-    return;
-  }
-  const legacyRaw = localStorage.getItem(STORAGE_KEY);
-  if (!legacyRaw) {
-    return;
-  }
-  try {
-    JSON.parse(legacyRaw);
-    localStorage.setItem(scopedKey, legacyRaw);
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // 损坏的全局缓存不迁移
-  }
-}
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
 function getApiBaseForFetch() {
@@ -106,6 +74,7 @@ const DAILY_CLOSE_HYDRATE_TTL_MS = 90_000;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const CHART_FALLBACK_DAYS = 90;
+const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 const STATE_SYNC_KEYS = [
   "route",
   "useDemoData",
@@ -261,6 +230,8 @@ let dailyCloseHydrateAt = 0;
 let analysisRenderRequestSeq = 0;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
+let pendingSettingsSyncPayload = null;
+let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
 const symbolNameHydrateInFlight = new Map();
 const symbolNameSyncedAt = new Map();
@@ -684,7 +655,6 @@ async function startAppAfterAuth(options = {}) {
 initialize();
 
 async function initialize() {
-  migrateLegacyGlobalStateTo183ScopedOnce();
   bindEvents();
   bindAuthUi();
   const authed = await tryRestoreSession();
@@ -1638,7 +1608,6 @@ async function fetchStaticSiteState() {
 async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
-  let localParsed = null;
   let staticParsed = null;
   apiReady = await checkApiHealth();
   if (apiReady) {
@@ -1649,35 +1618,9 @@ async function hydrateState() {
   if (!apiReady) {
     staticParsed = await fetchStaticSiteState();
   }
-  const raw = localStorage.getItem(getSessionStateStorageKey());
-  if (raw) {
-    try {
-      localParsed = JSON.parse(raw);
-    } catch (error) {
-      console.error("读取本地数据失败，已使用默认配置", error);
-    }
-  }
-  // 服务端已鉴权时：始终以当前用户的 /api/state 为准（含空持仓），避免新账号落到未隔离的本地缓存
+  // 服务端可用时：始终以当前用户的 /api/state 为准（含空持仓）。
   if (remoteParsed && typeof remoteParsed === "object") {
     parsed = remoteParsed;
-  } else if (localParsed) {
-    parsed = localParsed;
-    // Auto-migrate local state to DB-backed API when backend is available.
-    if (apiReady) {
-      const localTrades = Array.isArray(localParsed.trades) ? localParsed.trades : [];
-      if (localTrades.length) {
-        void importTradesToApi(localTrades, "replace");
-      }
-      const localCash = Array.isArray(localParsed.cashTransfers) ? localParsed.cashTransfers : [];
-      if (localCash.length) {
-        void importCashTransfersToApi(localCash, "replace");
-      }
-      void pushSettingsToApi(localParsed);
-      const localDaily = Array.isArray(localParsed.dailyReturns) ? localParsed.dailyReturns : [];
-      if (localDaily.length) {
-        void importDailyReturnsToApi(localDaily, "replace");
-      }
-    }
   } else if (staticParsed && Array.isArray(staticParsed.trades) && staticParsed.trades.length) {
     parsed = staticParsed;
   }
@@ -1789,6 +1732,37 @@ async function hydrateState() {
   }
 }
 
+function pickSettingsPayload(payload = {}) {
+  return STATE_SYNC_KEYS.reduce((acc, key) => {
+    if (Object.hasOwn(payload, key)) {
+      acc[key] = payload[key];
+    }
+    return acc;
+  }, {});
+}
+
+function queueSettingsSyncToApi(payload) {
+  if (!apiReady) {
+    return;
+  }
+  const patch = pickSettingsPayload(payload);
+  if (!Object.keys(patch).length) {
+    return;
+  }
+  pendingSettingsSyncPayload = { ...(pendingSettingsSyncPayload || {}), ...patch };
+  if (pendingSettingsSyncTimer) {
+    window.clearTimeout(pendingSettingsSyncTimer);
+  }
+  pendingSettingsSyncTimer = window.setTimeout(() => {
+    const merged = pendingSettingsSyncPayload;
+    pendingSettingsSyncPayload = null;
+    pendingSettingsSyncTimer = null;
+    if (merged && Object.keys(merged).length) {
+      void pushSettingsToApi(merged);
+    }
+  }, SETTINGS_SYNC_DEBOUNCE_MS);
+}
+
 function persistState() {
   const payload = {
     route: state.route === "trade-search" ? "trade" : state.route,
@@ -1815,9 +1789,8 @@ function persistState() {
     tradePanelTab: state.tradePanelTab,
     dailyReturns: state.dailyReturns,
   };
-  localStorage.setItem(getSessionStateStorageKey(), JSON.stringify(payload));
   if (apiReady) {
-    void pushSettingsToApi(payload);
+    queueSettingsSyncToApi(payload);
     void pushDailyReturnsToApi(payload.dailyReturns);
     void pushCashTransfersToApi(payload.cashTransfers);
   }
@@ -1856,18 +1829,21 @@ async function fetchRemoteState() {
 }
 
 async function pushSettingsToApi(payload) {
+  if (!apiReady) {
+    return;
+  }
   try {
-    const body = STATE_SYNC_KEYS.reduce((acc, key) => {
-      acc[key] = payload[key];
-      return acc;
-    }, {});
+    const body = pickSettingsPayload(payload);
+    if (!Object.keys(body).length) {
+      return;
+    }
     await apiFetch(`${API_BASE}/settings`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   } catch (error) {
-    // keep localStorage as fallback when backend is unavailable
+    // ignore sync failure; next debounce flush will retry with latest state
   }
 }
 
@@ -1882,7 +1858,7 @@ async function pushDailyReturnsToApi(rows) {
       body: JSON.stringify({ mode: "replace", rows }),
     });
   } catch (error) {
-    // localStorage remains source of truth when API is down
+    // ignore sync failure
   }
 }
 
@@ -1897,7 +1873,7 @@ async function pushCashTransfersToApi(rows) {
       body: JSON.stringify({ mode: "replace", cashTransfers: rows }),
     });
   } catch (error) {
-    // 离线时以 localStorage 为准
+    // ignore sync failure
   }
 }
 
@@ -6147,7 +6123,7 @@ async function renderStockRecordPage(symbol) {
     try {
       const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
       const res = await apiFetch(
-        `${API_BASE}/symbol-daily?accountId=${encodeURIComponent(aid)}&symbol=${encodeURIComponent(
+        `${API_BASE}/snapshot/symbol-daily?accountId=${encodeURIComponent(aid)}&symbol=${encodeURIComponent(
           normalizeSymbol(symbol)
         )}&from=2000-01-01&to=2099-12-31`,
         { cache: "no-store" }
