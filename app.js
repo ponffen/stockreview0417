@@ -3144,12 +3144,6 @@ function openCommunityProfile(userId) {
   if (!uid) {
     return;
   }
-  if (uid === sessionUserId) {
-    state.route = "mine";
-    persistState();
-    renderAll();
-    return;
-  }
   if (state.route.startsWith("community-") && state.route !== "community-profile") {
     state.communityProfileReturnRoute = state.route;
   } else {
@@ -4272,13 +4266,6 @@ async function loadCommunityProfileDetail() {
       return;
     }
     const d = j.data;
-    if (d.isSelf) {
-      state.route = "mine";
-      state.communityProfileUserId = null;
-      persistState();
-      renderAll();
-      return;
-    }
     state.lastPublicProfileDetail = d;
     await hydrateSymbolNameMap([
       ...(d?.positions || []).map((row) => row?.symbol),
@@ -6453,8 +6440,8 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
     {
       labels: { price: "股价", qty: rightLabel },
       yAxisMode: "left-right",
-      xMin: 52,
-      xMax: canvas.width - 28,
+      xMin: 12,
+      xMax: canvas.width - 10,
       yMin: 20,
       yMax: canvas.height - 36,
       yRangePadding: {
@@ -6486,10 +6473,13 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
     ctx.fill();
     ctx.stroke();
   });
+  if (payload.seriesMap?.price?.values?.length) {
+    drawSeriesExtrema(ctx, payload, payload.seriesMap.price, (value) => formatNumber(value, 2));
+  }
   drawAxisLabels(ctx, payload, {
-    leftLabel: "股价",
-    rightLabel: useDbPnl ? rightLabel : "股数",
-    xLabel: "日期",
+    leftLabel: "",
+    rightLabel: "",
+    xLabel: "",
     valueFormatter: (value, axis, key) => {
       if (key === "qty" || axis === "right") {
         return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
@@ -7038,6 +7028,14 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
   payload.seriesList.forEach((series) => {
     drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
   });
+  const extremaSeries = payload.seriesList[0];
+  if (extremaSeries?.values?.length) {
+    const extremaFormatter =
+      options.axisFormatter || options.valueFormatter || ((value) => formatNumber(value, 2));
+    drawSeriesExtrema(ctx, payload, extremaSeries, (value, key, axis) =>
+      extremaFormatter(value, axis, key),
+    );
+  }
   drawAxisLabels(ctx, payload, {
     leftLabel: options.leftLabel ?? "",
     rightLabel: options.rightLabel ?? "",
@@ -7127,6 +7125,63 @@ function drawSeries(ctx, series, mapX, mapY, color) {
     }
   });
   ctx.stroke();
+}
+
+function pickSeriesExtremaPoints(seriesValues) {
+  if (!Array.isArray(seriesValues) || !seriesValues.length) {
+    return { minPoint: null, maxPoint: null };
+  }
+  let minPoint = seriesValues[0];
+  let maxPoint = seriesValues[0];
+  for (const point of seriesValues) {
+    if (!Number.isFinite(Number(point?.value))) {
+      continue;
+    }
+    if (!minPoint || Number(point.value) < Number(minPoint.value)) {
+      minPoint = point;
+    }
+    if (!maxPoint || Number(point.value) > Number(maxPoint.value)) {
+      maxPoint = point;
+    }
+  }
+  return { minPoint, maxPoint };
+}
+
+function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
+  if (!ctx || !payload || !series?.values?.length) {
+    return;
+  }
+  const formatter = valueFormatter || ((value) => formatNumber(value, 2));
+  const { minPoint, maxPoint } = pickSeriesExtremaPoints(series.values);
+  const points = [maxPoint, minPoint].filter(Boolean);
+  const samePoint =
+    points.length === 2 &&
+    points[0].date === points[1].date &&
+    Number(points[0].value) === Number(points[1].value);
+  const uniquePoints = samePoint ? [points[0]] : points;
+  ctx.save();
+  ctx.font = "11px sans-serif";
+  ctx.textBaseline = "middle";
+  uniquePoints.forEach((point, idx) => {
+    const rawText = formatter(point.value, point.key || series.key, point.axis || series.axis || "left");
+    const text = String(rawText || "");
+    const textWidth = Math.max(38, ctx.measureText(text).width + 10);
+    const preferRight = point.x <= (payload.xMin + payload.xMax) / 2;
+    let x = preferRight ? point.x + textWidth / 2 + 8 : point.x - textWidth / 2 - 8;
+    x = Math.max(payload.xMin + textWidth / 2 + 2, Math.min(payload.xMax - textWidth / 2 - 2, x));
+    let y = point.y + (idx === 0 ? -14 : 14);
+    y = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, y));
+    ctx.fillStyle = series.color || "#2f80f6";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgb(33 41 54 / 86%)";
+    ctx.fillRect(x - textWidth / 2, y - 8, textWidth, 16);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.fillText(text, x, y);
+  });
+  ctx.restore();
 }
 
 function buildChartPayload(seriesList, options = {}) {
@@ -7622,8 +7677,8 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     panStarted = false;
     lastMoveX = 0;
     clearPressTimer();
-    if (event.pointerType !== "mouse" && !crossVisible) {
-      tooltip.classList.remove("show");
+    if (event.pointerType !== "mouse" && pointers.size === 0) {
+      runtime.hideCrosshair();
     }
   };
   canvas.addEventListener("pointerup", clearPointer);
