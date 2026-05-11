@@ -255,6 +255,39 @@ function parseQuoteTimeToDateKey(timeStr) {
   return null;
 }
 
+function quoteTimeSortKey(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") {
+    return 0;
+  }
+  const raw = String(timeStr).trim();
+  if (!raw || raw === "--") {
+    return 0;
+  }
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 14) {
+    return Number(digits.slice(0, 14)) || 0;
+  }
+  if (digits.length >= 8) {
+    return Number(`${digits.slice(0, 8)}000000`) || 0;
+  }
+  return 0;
+}
+
+function pickLatestQuoteTime(times) {
+  const list = Array.isArray(times) ? times : [];
+  let best = "";
+  let bestKey = 0;
+  for (const item of list) {
+    const time = String(item || "").trim();
+    const key = quoteTimeSortKey(time);
+    if (key > bestKey) {
+      best = time;
+      bestKey = key;
+    }
+  }
+  return best || "--";
+}
+
 function parseTencentQuoteRecord(symbol, rawText) {
   if (!rawText || typeof rawText !== "string") {
     return null;
@@ -1589,9 +1622,7 @@ app.post("/api/market/snapshot", requireAuth, async (req, res) => {
     }
   }
 
-  const quoteTime = Object.values(quoteMap)
-    .map((item) => item?.time)
-    .find(Boolean) || "--";
+  const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
   const delayed = delayedSources.size > 0;
   const delaySource = [...delayedSources].filter(Boolean).join(",");
   if (delayed) {

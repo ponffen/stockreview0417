@@ -4317,7 +4317,7 @@ function renderOverviewAndStockTable() {
     return;
   }
   if (quoteTime) {
-    const timeText = state.quoteTime && state.quoteTime !== "--" ? `更新 ${state.quoteTime}` : "更新 --";
+    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
     quoteTime.textContent = state.marketDataDelayed
       ? `延迟数据 · ${timeText}`
       : `实时数据 · ${timeText}`;
@@ -4567,27 +4567,80 @@ function formatStockTableMarketValueBook(row, bookCcy) {
   return formatOverviewPlainMoney(v, bookCcy);
 }
 
+function parseQuoteTimeParts(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") {
+    return null;
+  }
+  const raw = String(timeStr).trim();
+  if (!raw || raw === "--") {
+    return null;
+  }
+  const compact = raw.replace(/\D/g, "");
+  if (compact.length >= 14) {
+    return {
+      year: compact.slice(0, 4),
+      month: compact.slice(4, 6),
+      day: compact.slice(6, 8),
+      hour: compact.slice(8, 10),
+      minute: compact.slice(10, 12),
+      second: compact.slice(12, 14),
+    };
+  }
+  const iso = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:\D+(\d{1,2})[:：](\d{1,2})(?:[:：](\d{1,2}))?)?/.exec(raw);
+  if (iso) {
+    return {
+      year: iso[1],
+      month: String(Number(iso[2])).padStart(2, "0"),
+      day: String(Number(iso[3])).padStart(2, "0"),
+      hour: String(Number(iso[4] || 0)).padStart(2, "0"),
+      minute: String(Number(iso[5] || 0)).padStart(2, "0"),
+      second: String(Number(iso[6] || 0)).padStart(2, "0"),
+    };
+  }
+  return null;
+}
+
+function quoteTimeSortKey(timeStr) {
+  const parts = parseQuoteTimeParts(timeStr);
+  if (!parts) {
+    return 0;
+  }
+  return Number(`${parts.year}${parts.month}${parts.day}${parts.hour}${parts.minute}${parts.second}`) || 0;
+}
+
+function pickLatestQuoteTime(times) {
+  const list = Array.isArray(times) ? times : [];
+  let best = "";
+  let bestKey = 0;
+  for (const item of list) {
+    const current = String(item || "").trim();
+    const key = quoteTimeSortKey(current);
+    if (key > bestKey) {
+      best = current;
+      bestKey = key;
+    }
+  }
+  return best || "--";
+}
+
+function formatQuoteTimeForStatus(timeStr) {
+  const parts = parseQuoteTimeParts(timeStr);
+  if (!parts) {
+    return "--";
+  }
+  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 /**
  * 从腾讯实时行情时间串解析日历日期（YYYY-MM-DD）。常见格式 YYYYMMDDHHMMSS。
  * 无法解析时返回 null。
  */
 function parseQuoteTimeToDateKey(timeStr) {
-  if (!timeStr || typeof timeStr !== "string") {
+  const parts = parseQuoteTimeParts(timeStr);
+  if (!parts || !parts.year) {
     return null;
   }
-  const t = timeStr.trim();
-  if (!t || t === "--") {
-    return null;
-  }
-  const compact = /^(\d{4})(\d{2})(\d{2})/.exec(t.replace(/\s/g, ""));
-  if (compact && compact[0].length >= 8) {
-    return `${compact[1]}-${compact[2]}-${compact[3]}`;
-  }
-  const iso = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/.exec(t);
-  if (iso) {
-    return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}-${String(Number(iso[3])).padStart(2, "0")}`;
-  }
-  return null;
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 /**
@@ -5958,8 +6011,8 @@ async function ensureSymbolData(symbol) {
     if (quoteMap[symbol]) {
       state.quoteMap[normalizedSymbol] = quoteMap[symbol];
       state.quoteMap[alias] = quoteMap[symbol];
-      state.quoteTime = quoteMap[symbol].time || state.quoteTime;
-        const nm = String(quoteMap[symbol]?.name || "").trim();
+      state.quoteTime = pickLatestQuoteTime([state.quoteTime, quoteMap[symbol].time]);
+      const nm = String(quoteMap[symbol]?.name || "").trim();
       const display = quoteNameForDisplay(normalizedSymbol, nm);
       if (display) {
         state.nameMap[normalizedSymbol] = display;
@@ -5976,7 +6029,7 @@ async function ensureSymbolData(symbol) {
       const alias = normalizedSymbol.replace(/^gb_/i, "");
       state.quoteMap[normalizedSymbol] = latest;
       state.quoteMap[alias] = latest;
-      state.quoteTime = latest.time || state.quoteTime;
+      state.quoteTime = pickLatestQuoteTime([state.quoteTime, latest.time]);
     }
   }
 
@@ -7299,8 +7352,12 @@ async function refreshMarketData(opts = {}) {
           }
         });
       }
-      if (snapshot?.quoteTime) {
-        state.quoteTime = String(snapshot.quoteTime);
+      const latestSnapshotQuoteTime = pickLatestQuoteTime([
+        snapshot?.quoteTime,
+        ...Object.values(quoteMap).map((item) => item?.time),
+      ]);
+      if (latestSnapshotQuoteTime !== "--") {
+        state.quoteTime = latestSnapshotQuoteTime;
       }
       const klineMap = snapshot?.klineMap && typeof snapshot.klineMap === "object" ? snapshot.klineMap : {};
       Object.entries(klineMap).forEach(([symbol, list]) => {
