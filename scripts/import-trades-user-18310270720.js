@@ -2,6 +2,9 @@
 /**
  * 将 scripts/import-trades-18310270720.json 导入手机 18310270720 对应用户（全部写入默认账户）。
  *
+ * 使用 importTrades(..., "append")：只新增/更新本 JSON 中的记录（按 id upsert），
+ * 不会清空或删除该用户原有的其它交易。不要用 "replace" 模式。
+ *
  * 用法（需 DATABASE_URL 或 POSTGRES_URL）：
  *   node scripts/import-trades-user-18310270720.js
  */
@@ -40,6 +43,7 @@ async function main() {
   const raw = JSON.parse(fs.readFileSync(TRADES_JSON, "utf8"));
   const trades = raw.map((item) => normalizeTrade(item));
 
+  /** append：保留已有交易，仅插入或按 id 覆盖 JSON 内这 21 条 */
   await importTrades(trades, "append", uid);
 
   const list = await getTrades(uid);
