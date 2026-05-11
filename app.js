@@ -1366,7 +1366,7 @@ async function hydrateKlineFromLocalDb(symbols = []) {
     dailyCloseHydrateCacheKey = cacheKey;
     dailyCloseHydrateInFlight = (async () => {
       const r = await apiFetch(
-        `${API_BASE}/daily-close/for-trades?days=${encodeURIComponent(
+        `${API_BASE}/snapshot/symbol-close?days=${encodeURIComponent(
           String(DAILY_CLOSE_HYDRATE_WINDOW_DAYS)
         )}&symbols=${encodeURIComponent(pickedSymbols.join(","))}`,
         { cache: "no-store", timeoutMs: 18_000 }
@@ -5764,7 +5764,7 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   const fetchPromise = (async () => {
     try {
       const res = await apiFetch(
-        `${API_BASE}/analysis-daily?accountId=${encodeURIComponent(aid)}&from=${encodeURIComponent(
+        `${API_BASE}/snapshot/account-daily?accountId=${encodeURIComponent(aid)}&from=${encodeURIComponent(
           from
         )}&to=${encodeURIComponent(to)}`,
         { cache: "no-store", timeoutMs: 18_000 }
@@ -7464,23 +7464,15 @@ async function refreshMarketData(opts = {}) {
       return;
     }
 
-    // 首屏快路径：优先只拉腾讯实时（quote + fx），不要等本地日K灌入后再发请求。
+    // 仅拉实时：腾讯 quote + 腾讯外汇；历史日K由离线快照落库后读取 snapshot/symbol-close。
     try {
-      const quoteFirstSnapshot = await fetchMarketSnapshot({
-        quoteSymbols: symbols,
-        klineSymbols: [],
-        includeFx: true,
-      });
-      if (quoteFirstSnapshot?.delayed) {
-        markMarketDataDelayed(quoteFirstSnapshot.delaySource || "cache");
+      const [quoteMap, fxRes] = await Promise.all([fetchRealtimeQuotes(symbols), fetchRealtimeForexSpot()]);
+      if (fxRes?.delayed) {
+        markMarketDataDelayed("fx-cache");
       }
-      if (quoteFirstSnapshot?.fxSpot && typeof quoteFirstSnapshot.fxSpot === "object") {
-        Object.assign(state.fxSpot, quoteFirstSnapshot.fxSpot);
+      if (fxRes?.rates && typeof fxRes.rates === "object") {
+        Object.assign(state.fxSpot, fxRes.rates);
       }
-      const quoteMap =
-        quoteFirstSnapshot?.quoteMap && typeof quoteFirstSnapshot.quoteMap === "object"
-          ? quoteFirstSnapshot.quoteMap
-          : {};
       if (Object.keys(quoteMap).length) {
         Object.entries(quoteMap).forEach(([symbol, quote]) => {
           const normalized = normalizeSymbol(symbol);
@@ -7498,7 +7490,7 @@ async function refreshMarketData(opts = {}) {
         void syncSymbolNamesFromQuotes(quoteMap);
       }
       const latestSnapshotQuoteTime = pickLatestQuoteTime([
-        quoteFirstSnapshot?.quoteTime,
+        state.quoteTime,
         ...Object.values(quoteMap).map((item) => item?.time),
       ]);
       if (latestSnapshotQuoteTime !== "--") {
@@ -7512,35 +7504,6 @@ async function refreshMarketData(opts = {}) {
     }
 
     await hydrateKlineFromLocalDb(klineSymbols);
-    const needKlineSymbols = klineSymbols.filter((symbol) => !getKlineBySymbol(symbol).length);
-    if (needKlineSymbols.length) {
-      try {
-        const klineSnapshot = await fetchMarketSnapshot({
-          quoteSymbols: [],
-          klineSymbols: needKlineSymbols,
-          klineLen: KLINE_DATALEN,
-          includeFx: false,
-        });
-        if (klineSnapshot?.delayed) {
-          markMarketDataDelayed(klineSnapshot.delaySource || "cache");
-        }
-        const klineMap =
-          klineSnapshot?.klineMap && typeof klineSnapshot.klineMap === "object" ? klineSnapshot.klineMap : {};
-        Object.entries(klineMap).forEach(([symbol, list]) => {
-          if (!Array.isArray(list) || !list.length) {
-            return;
-          }
-          const normalized = normalizeSymbol(symbol);
-          const legacyAlias = getLegacyUsAlias(normalized);
-          state.klineMap[normalized] = list;
-          if (legacyAlias) {
-            state.klineMap[legacyAlias] = list;
-          }
-        });
-      } catch (error) {
-        console.warn("日K快照拉取失败，保留本地数据展示", error);
-      }
-    }
 
     for (const symbol of klineSymbols) {
       // Fallback "realtime": use local daily-kline only; do not fan out remote single-symbol requests.

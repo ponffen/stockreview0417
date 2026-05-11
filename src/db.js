@@ -87,8 +87,29 @@ let isBootstrapping = false;
 let symbolNameMapTableReadyPromise = null;
 let symbolNameMapCanonicalizePromise = null;
 let symbolNameMapCanonicalizedAt = 0;
+let snapshotWatermarkTableReadyPromise = null;
 
 const SYMBOL_MAP_CANONICALIZE_TTL_MS = 5 * 60 * 1000;
+
+async function ensureSnapshotWatermarkTable() {
+  if (snapshotWatermarkTableReadyPromise) {
+    return snapshotWatermarkTableReadyPromise;
+  }
+  snapshotWatermarkTableReadyPromise = (async () => {
+    await q(
+      `CREATE TABLE IF NOT EXISTS snapshot_watermark (
+         id INTEGER PRIMARY KEY CHECK (id = 1),
+         frozen_date TEXT NOT NULL,
+         status TEXT NOT NULL,
+         message TEXT,
+         updated_at BIGINT NOT NULL
+       )`
+    );
+  })().finally(() => {
+    snapshotWatermarkTableReadyPromise = null;
+  });
+  return snapshotWatermarkTableReadyPromise;
+}
 
 function getSslOption() {
   if (process.env.DATABASE_SSL === "0" || process.env.DATABASE_SSL === "false") {
@@ -236,6 +257,13 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS community_leaderboard_cache (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     payload TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS snapshot_watermark (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    frozen_date TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
     updated_at BIGINT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS cash_transfers (
@@ -1700,6 +1728,62 @@ async function selectLatestSymbolDailyDate(userId, accountId) {
   return rows[0]?.d ? String(rows[0].d) : null;
 }
 
+async function getLatestAnalysisSnapshotDate(userId, accountId = "all") {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const acc = String(accountId || "all").trim() || "all";
+  const { rows } = await q(
+    "SELECT MAX(date) AS d FROM analysis_daily_snapshot WHERE user_id = $1 AND account_id = $2",
+    [uid, acc]
+  );
+  return rows[0]?.d ? String(rows[0].d) : null;
+}
+
+async function listAllUserIds() {
+  const { rows } = await q("SELECT id FROM users ORDER BY created_at ASC");
+  return rows.map((row) => String(row.id || "").trim()).filter(Boolean);
+}
+
+async function getSnapshotWatermark() {
+  await ensureSnapshotWatermarkTable();
+  const { rows } = await q("SELECT frozen_date, status, message, updated_at FROM snapshot_watermark WHERE id = 1");
+  if (!rows[0]) {
+    return null;
+  }
+  return {
+    frozenDate: String(rows[0].frozen_date || ""),
+    status: String(rows[0].status || ""),
+    message: rows[0].message == null ? "" : String(rows[0].message),
+    updatedAt: Number(rows[0].updated_at) || 0,
+  };
+}
+
+async function setSnapshotWatermark(input = {}) {
+  await ensureSnapshotWatermarkTable();
+  const now = nowMs();
+  const frozenDate = toDateKey(input.frozenDate || new Date());
+  const status = String(input.status || "success").trim().slice(0, 32) || "success";
+  const message = String(input.message || "").trim().slice(0, 400) || null;
+  await q(
+    `INSERT INTO snapshot_watermark (id, frozen_date, status, message, updated_at)
+     VALUES (1, $1, $2, $3, $4)
+     ON CONFLICT (id) DO UPDATE SET
+       frozen_date = EXCLUDED.frozen_date,
+       status = EXCLUDED.status,
+       message = EXCLUDED.message,
+       updated_at = EXCLUDED.updated_at`,
+    [frozenDate, status, message, now]
+  );
+  return {
+    frozenDate,
+    status,
+    message: message || "",
+    updatedAt: now,
+  };
+}
+
 async function selectTopSymbolDailyByDate(userId, accountId, date, limit) {
   const uid = String(userId || "").trim();
   const acc = String(accountId || "all");
@@ -1832,10 +1916,14 @@ module.exports = {
   setCommunityLeaderboardCache,
   selectAnalysisSnapshotsFrom,
   selectAnalysisSnapshotsForPublicMetrics,
+  getLatestAnalysisSnapshotDate,
   selectLatestSymbolDailyDate,
   selectTopSymbolDailyByDate,
   getCommunityFeedTradesRecent,
   listPublicCommunityUserIds,
+  listAllUserIds,
   selectSymbolDailyPositionsOnDate,
+  getSnapshotWatermark,
+  setSnapshotWatermark,
   pingDatabase,
 };
