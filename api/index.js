@@ -343,6 +343,10 @@ module.exports = async function handler(req, res) {
   const isCronFreezeDirect = (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/freeze-eod";
   const isSettingsGetDirect = req.method === "GET" && pathOnly === "/api/settings";
   const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
+  const tradesDeleteMatch = pathOnly.match(/^\/api\/trades\/([^/]+)$/) || null;
+  const isTradesGetDirect = req.method === "GET" && pathOnly === "/api/trades";
+  const isTradesPostDirect = req.method === "POST" && pathOnly === "/api/trades";
+  const isTradesDeleteDirect = req.method === "DELETE" && !!tradesDeleteMatch;
   const isTradesImportDirect = req.method === "POST" && pathOnly === "/api/trades/import";
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
   const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
@@ -436,6 +440,60 @@ module.exports = async function handler(req, res) {
     } catch (error) {
       res.statusCode = 502;
       res.end(JSON.stringify({ ok: false, error: error?.message || "sina suggest failed" }));
+      return;
+    }
+  }
+
+  if (isTradesGetDirect || isTradesPostDirect || isTradesDeleteDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const { getTrades, normalizeTrade, upsertTrade, deleteTradeById } = require("../src/db");
+
+      if (isTradesGetDirect) {
+        const data = await getTrades(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isTradesPostDirect) {
+        const body = await readJsonBody(req);
+        const trade = normalizeTrade(body || {});
+        if (!trade.symbol) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "symbol is required" }));
+          return;
+        }
+        const saved = await upsertTrade(trade, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: saved }));
+        return;
+      }
+
+      if (isTradesDeleteDirect) {
+        const tradeId = decodeURIComponent(String(tradesDeleteMatch?.[1] || "").trim());
+        if (!tradeId) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "invalid trade id" }));
+          return;
+        }
+        const ok = await deleteTradeById(tradeId, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, deleted: ok }));
+        return;
+      }
+    } catch (error) {
+      console.error("[api/index.js] direct trades error:", error);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "direct trades failed" }));
       return;
     }
   }
