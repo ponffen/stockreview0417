@@ -7,8 +7,8 @@ let loadError = null;
 const DIRECT_SINA_SUGGEST_TIMEOUT_MS = 6500;
 const ALIYUN_SINA_SUGGEST_TIMEOUT_MS = 4500;
 const DIRECT_SINA_SUGGEST_CACHE_TTL_MS = 12 * 1000;
-const DEFAULT_ALIYUN_MARKET_PROXY_BASE =
-  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
+const DEFAULT_ALIYUN_SINA_SUGGEST_PROXY_BASE =
+  "https://market-suggest-akylmuviow.cn-hangzhou.fcapp.run";
 const sinaSuggestCache = new Map();
 
 function getCacheHit(map, key, ttlMs) {
@@ -58,7 +58,7 @@ async function fetchSinaSuggestFromUpstream(key) {
 }
 
 async function fetchSinaSuggestFromAliyun(key) {
-  const base = String(process.env.ALIYUN_MARKET_PROXY_BASE_URL || DEFAULT_ALIYUN_MARKET_PROXY_BASE)
+  const base = String(process.env.ALIYUN_SINA_SUGGEST_PROXY_BASE_URL || DEFAULT_ALIYUN_SINA_SUGGEST_PROXY_BASE)
     .trim()
     .replace(/\/+$/, "");
   if (!base) {
