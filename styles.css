@@ -1334,10 +1334,10 @@ h2 {
 
 .trade-table thead th:nth-child(3),
 .trade-table tbody td:nth-child(3) {
-  width: 48px;
+  width: 56px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(4),
@@ -1469,7 +1469,7 @@ h2 {
 }
 
 #closeStockRecordDialogBtn {
-  align-self: flex-start;
+  align-self: center;
   flex-shrink: 0;
 }
 
@@ -1730,15 +1730,44 @@ h2 {
 }
 
 .mine-sub-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .mine-sub-head h2 {
   margin: 0;
   font-size: 17px;
+  justify-self: center;
+  text-align: center;
+}
+
+.secondary-head-spacer {
+  width: 56px;
+  min-width: 56px;
+  visibility: hidden;
+}
+
+.mine-back-btn,
+#tradeSearchBackBtn,
+.community-profile-back-btn {
+  min-width: 56px;
+}
+
+.secondary-page-topbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.secondary-page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  justify-self: center;
 }
 
 .empty {
@@ -2237,9 +2266,9 @@ body.auth-mode {
 }
 
 .community-profile-top-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 0 2px 0 0;
 }
@@ -2273,7 +2302,7 @@ body.auth-mode {
 }
 
 .community-profile-follow-slot:empty {
-  min-width: 0;
+  min-width: 56px;
 }
 
 .community-profile-disclaimer {
@@ -2698,7 +2727,8 @@ body.auth-mode {
 }
 
 .trade-search-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 12px;
 }
@@ -2707,6 +2737,8 @@ body.auth-mode {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+  justify-self: center;
+  text-align: center;
 }
 
 .trade-search-hint {

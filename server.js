@@ -2277,7 +2277,10 @@ app.get("/api/sina/suggest", async (req, res) => {
     key
   )}&type=111,41,31,101&name=suggest&num=50`;
   try {
-    const r = await fetch(url, { headers: { "user-agent": "stockreview/1" } });
+    const r = await fetch(url, {
+      headers: { "user-agent": "stockreview/1" },
+      signal: AbortSignal.timeout(6500),
+    });
     if (!r.ok) {
       res.status(502).json({ ok: false, error: "sina suggest http error" });
       return;

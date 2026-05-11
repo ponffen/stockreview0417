@@ -42,6 +42,14 @@
       "source": "/api/market/snapshot",
       "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/market/snapshot"
     },
+    {
+      "source": "/api/sina/suggest",
+      "destination": "https://market-suggest-akylmuviow.cn-hangzhou.fcapp.run/api/sina/suggest"
+    },
+    {
+      "source": "/api/sina/suggest/",
+      "destination": "https://market-suggest-akylmuviow.cn-hangzhou.fcapp.run/api/sina/suggest"
+    },
     { "source": "/api/assets", "destination": "/api/assets" },
     { "source": "/api/assets/", "destination": "/api/assets" },
     { "source": "/favicon.ico", "destination": "/api/assets?file=favicon.ico" },

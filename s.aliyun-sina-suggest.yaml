@@ -1,0 +1,27 @@
+edition: 3.0.0
+name: higcc-aliyun-sina-suggest
+access: aliyun-fc
+
+resources:
+  sinaSuggestProxy:
+    component: fc3
+    props:
+      region: cn-hangzhou
+      functionName: market-proxy-sina-suggest
+      description: "Sina suggest proxy for higcc.com"
+      runtime: nodejs20
+      handler: index.handler
+      code: ./deploy/aliyun-sina-suggest-proxy
+      timeout: 10
+      memorySize: 256
+      internetAccess: true
+      triggers:
+        - triggerName: httpTrigger
+          triggerType: http
+          qualifier: LATEST
+          triggerConfig:
+            authType: anonymous
+            disableURLInternet: false
+            methods:
+              - GET
+              - OPTIONS

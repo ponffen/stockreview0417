@@ -242,6 +242,7 @@ let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
 let lastBrowserRouteKey = "";
+let lastRenderedRouteForScrollReset = "";
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -279,6 +280,7 @@ const mineLogoutBtn = document.getElementById("mineLogoutBtn");
 const appMenuBtn = document.getElementById("appMenuBtn");
 const appDrawer = document.getElementById("appDrawer");
 const appDrawerBackdrop = document.getElementById("appDrawerBackdrop");
+const appTopBar = document.querySelector(".app-top-bar");
 const appHeaderTitle = document.getElementById("appHeaderTitle");
 const mineNicknameInput = document.getElementById("mineNicknameInput");
 const mineNicknameDisplay = document.getElementById("mineNicknameDisplay");
@@ -1561,6 +1563,87 @@ function parseTencentPriceField(segment) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function nthWeekdayOfMonth(year, month, weekday, nth) {
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  return 1 + ((7 + weekday - firstDow) % 7) + (Math.max(1, nth) - 1) * 7;
+}
+
+function isUsEasternDstByLocalParts(parts) {
+  if (!parts) {
+    return false;
+  }
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour || 0);
+  if (![year, month, day, hour].every(Number.isFinite)) {
+    return false;
+  }
+  if (month < 3 || month > 11) {
+    return false;
+  }
+  if (month > 3 && month < 11) {
+    return true;
+  }
+  const secondSundayInMarch = nthWeekdayOfMonth(year, 3, 0, 2);
+  const firstSundayInNovember = nthWeekdayOfMonth(year, 11, 0, 1);
+  if (month === 3) {
+    if (day > secondSundayInMarch) {
+      return true;
+    }
+    if (day < secondSundayInMarch) {
+      return false;
+    }
+    return hour >= 2;
+  }
+  if (day < firstSundayInNovember) {
+    return true;
+  }
+  if (day > firstSundayInNovember) {
+    return false;
+  }
+  return hour < 2;
+}
+
+function convertUsEasternTimeToBeijing(timeStr) {
+  const parts = parseQuoteTimeParts(timeStr);
+  if (!parts) {
+    return "";
+  }
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour || 0);
+  const minute = Number(parts.minute || 0);
+  const second = Number(parts.second || 0);
+  if (![year, month, day, hour, minute, second].every(Number.isFinite)) {
+    return "";
+  }
+  const diffHours = isUsEasternDstByLocalParts(parts) ? 12 : 13;
+  const baseMs = Date.UTC(year, month - 1, day, hour, minute, second);
+  const bj = new Date(baseMs + diffHours * 60 * 60 * 1000);
+  return [
+    String(bj.getUTCFullYear()).padStart(4, "0"),
+    String(bj.getUTCMonth() + 1).padStart(2, "0"),
+    String(bj.getUTCDate()).padStart(2, "0"),
+    String(bj.getUTCHours()).padStart(2, "0"),
+    String(bj.getUTCMinutes()).padStart(2, "0"),
+    String(bj.getUTCSeconds()).padStart(2, "0"),
+  ].join("");
+}
+
+function normalizeQuoteTimeToBeijingBySymbol(timeStr, symbol) {
+  const raw = String(timeStr || "").trim();
+  if (!raw || raw === "--") {
+    return "--";
+  }
+  const normalized = normalizeSymbol(symbol || "");
+  if (!isUsTickerSymbol(normalized)) {
+    return raw;
+  }
+  return convertUsEasternTimeToBeijing(raw) || raw;
+}
+
 /**
  * 腾讯 qt.gtimg.cn 实时：`~` 分段。文档：1 名称、2 代码、3 当前价、4 昨收、30 时间（均为 1-based 序号，对应 parts[1]…parts[4]）。
  */
@@ -1575,7 +1658,8 @@ function parseTencentQuoteRecord(symbol, rawText) {
   const name = String(parts[1] || "").trim() || symbol;
   const current = parseTencentPriceField(parts[3]);
   const prevClose = parseTencentPriceField(parts[4]);
-  const time = String(parts[30] || parts[31] || "--").trim();
+  const rawTime = String(parts[30] || parts[31] || "--").trim();
+  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, symbol);
   const quoteDate = parseQuoteTimeToDateKey(time);
   if (!Number.isFinite(current) || current <= 0) {
     return null;
@@ -4427,6 +4511,31 @@ async function saveMineCommunityProfile() {
   }
 }
 
+function resetViewportScrollTop() {
+  try {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+  if (document.documentElement) {
+    document.documentElement.scrollTop = 0;
+  }
+  if (document.body) {
+    document.body.scrollTop = 0;
+  }
+}
+
+function resetRoutePaneScrollTop(route) {
+  const activePane = routePanes.find((pane) => String(pane.id || "").replace(/^route-/, "") === String(route || ""));
+  if (!activePane) {
+    return;
+  }
+  activePane.scrollTop = 0;
+  activePane.querySelectorAll(".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap").forEach((el) => {
+    el.scrollTop = 0;
+  });
+}
+
 function renderRoute() {
   const validRoutes = new Set([
     "earning",
@@ -4448,6 +4557,7 @@ function renderRoute() {
   if (!validRoutes.has(state.route)) {
     state.route = state.appModule === "community" ? "community-feed" : "earning";
   }
+  const routeChanged = state.route !== lastRenderedRouteForScrollReset;
   if (appHeaderTitle) {
     if (state.route === "trade-search") {
       appHeaderTitle.textContent = "搜索股票";
@@ -4460,6 +4570,17 @@ function renderRoute() {
     } else {
       appHeaderTitle.textContent = "持仓收益";
     }
+  }
+  const secondaryToplessRoutes = new Set([
+    "trade-search",
+    "mine-accounts",
+    "mine-algo",
+    "mine-community",
+    "community-profile",
+    "stock-record",
+  ]);
+  if (appTopBar) {
+    appTopBar.style.display = secondaryToplessRoutes.has(state.route) ? "none" : "flex";
   }
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
@@ -4514,6 +4635,13 @@ function renderRoute() {
   } else {
     syncBrowserRouteHistory("push");
   }
+  if (routeChanged) {
+    requestAnimationFrame(() => {
+      resetViewportScrollTop();
+      resetRoutePaneScrollTop(state.route);
+    });
+  }
+  lastRenderedRouteForScrollReset = state.route;
 }
 
 function syncPublicProfileStockSortControls() {
@@ -6244,30 +6372,7 @@ async function renderStockRecordPage(symbol) {
     })
     .join("");
 
-  let pnlByDate = {};
-  if (apiReady && !usePub) {
-    try {
-      const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      const res = await apiFetch(
-        `${API_BASE}/snapshot/symbol-daily?accountId=${encodeURIComponent(aid)}&symbol=${encodeURIComponent(
-          normalizeSymbol(symbol)
-        )}&from=2000-01-01&to=2099-12-31`,
-        { cache: "no-store" }
-      );
-      const j = await res.json();
-      if (j?.ok && Array.isArray(j.data)) {
-        for (const row of j.data) {
-          if (row.symbol === normalizeSymbol(symbol)) {
-            pnlByDate[row.date] = Number(row.dayPnlNative) || 0;
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("symbol-daily fetch failed", error);
-    }
-  }
-
-  drawStockRecordChart(symbol, symbolTrades, pnlByDate);
+  drawStockRecordChart(symbol, symbolTrades);
 }
 
 async function ensureSymbolData(symbol) {
@@ -6380,17 +6485,69 @@ function buildFallbackKlineFromTrades(symbol) {
   return rows;
 }
 
-function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
+function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
+  const source = Array.isArray(sourceRows) ? sourceRows : [];
+  const trades = Array.isArray(sortedTrades) ? sortedTrades : [];
+  const priceByDate = new Map();
+  const tradePriceByDate = new Map();
+
+  source.forEach((row) => {
+    const date = String(row?.date || "").slice(0, 10);
+    const price = Number(row?.price);
+    if (!date || !Number.isFinite(price) || price <= 0) {
+      return;
+    }
+    priceByDate.set(date, price);
+  });
+  trades.forEach((trade) => {
+    const date = String(trade?.date || "").slice(0, 10);
+    const price = Number(trade?.price);
+    if (!date || !Number.isFinite(price) || price <= 0) {
+      return;
+    }
+    // 同日多笔成交取最后一笔价格。
+    tradePriceByDate.set(date, price);
+  });
+
+  const allDates = [...new Set([...priceByDate.keys(), ...tradePriceByDate.keys()])].sort();
+  if (!allDates.length) {
+    return [];
+  }
+
+  const merged = [];
+  let rollingPrice = 0;
+  allDates.forEach((date) => {
+    const sourcePrice = priceByDate.get(date);
+    const tradePrice = tradePriceByDate.get(date);
+    if (Number.isFinite(sourcePrice) && sourcePrice > 0) {
+      rollingPrice = sourcePrice;
+    } else if (Number.isFinite(tradePrice) && tradePrice > 0) {
+      rollingPrice = tradePrice;
+    }
+    if (!(rollingPrice > 0)) {
+      rollingPrice = Number.isFinite(sourcePrice)
+        ? sourcePrice
+        : Number.isFinite(tradePrice)
+          ? tradePrice
+          : 0;
+    }
+    merged.push({ date, price: rollingPrice });
+  });
+  return merged;
+}
+
+function drawStockRecordChart(symbol, symbolTrades) {
   const canvas = stockRecordChart;
   if (!canvas) {
     return;
   }
   const kline = getKlineBySymbol(symbol);
   const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
-  const source =
+  const baseSource =
     kline.length > 1
       ? kline.map((item) => ({ date: item.day, price: Number(item.close) }))
       : sortedTrades.map((item) => ({ date: item.date, price: validNumber(item.price, 0) }));
+  const source = mergeStockRecordPriceSeriesWithTradeDates(baseSource, sortedTrades);
   if (!source.length) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -6411,15 +6568,21 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
     qtyByDate[trade.date] = qty;
   });
   let rollingQty = 0;
-  const useDbPnl = Object.keys(pnlByDate).length > 0;
+  const firstVisibleDate = String(visible[0]?.date || "");
+  if (firstVisibleDate) {
+    sortedTrades.forEach((trade) => {
+      if (String(trade.date || "") <= firstVisibleDate) {
+        rollingQty += trade.side === "buy" ? trade.quantity : -trade.quantity;
+      }
+    });
+  }
   const values = visible.map((item) => {
     if (qtyByDate[item.date] != null) {
       rollingQty = qtyByDate[item.date];
     }
-    const pnlVal = useDbPnl ? validNumber(pnlByDate[item.date], 0) : rollingQty;
-    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty, pnl: pnlVal };
+    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty };
   });
-  const rightLabel = useDbPnl ? "日收益(原币)" : "持仓股数";
+  const rightLabel = "持仓股数";
   const payload = buildChartPayload(
     [
       {
@@ -6434,14 +6597,14 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
         label: rightLabel,
         color: "#ff4d4f",
         axis: "right",
-        values: values.map((item) => ({ date: item.date, value: useDbPnl ? item.pnl : item.qty })),
+        values: values.map((item) => ({ date: item.date, value: item.qty })),
       },
     ],
     {
       labels: { price: "股价", qty: rightLabel },
       yAxisMode: "left-right",
-      xMin: 12,
-      xMax: canvas.width - 10,
+      xMin: 2,
+      xMax: canvas.width - 2,
       yMin: 20,
       yMax: canvas.height - 36,
       yRangePadding: {
@@ -6476,29 +6639,32 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
   if (payload.seriesMap?.price?.values?.length) {
     drawSeriesExtrema(ctx, payload, payload.seriesMap.price, (value) => formatNumber(value, 2));
   }
+  if (payload.seriesMap?.qty?.values?.length) {
+    drawSeriesExtrema(ctx, payload, payload.seriesMap.qty, (value) => formatNumber(value, 0));
+  }
   drawAxisLabels(ctx, payload, {
     leftLabel: "",
     rightLabel: "",
     xLabel: "",
     valueFormatter: (value, axis, key) => {
       if (key === "qty" || axis === "right") {
-        return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+        return formatNumber(value, 0);
       }
       return formatNumber(value, 2);
     },
   });
   drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
     if (key === "qty" || axis === "right") {
-      return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+      return formatNumber(value, 0);
     }
     return formatNumber(value, 2);
   });
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
-    onRefresh: () => drawStockRecordChart(symbol, symbolTrades, pnlByDate),
+    onRefresh: () => drawStockRecordChart(symbol, symbolTrades),
     valueFormatter: (value, key, axis) => {
       if (key === "qty" || axis === "right") {
-        return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+        return formatNumber(value, 0);
       }
       return formatNumber(value, 2);
     },
@@ -7015,8 +7181,8 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
         : []),
     ],
     {
-      xMin: options.xMin ?? 12,
-      xMax: options.xMax ?? width - 10,
+      xMin: options.xMin ?? 2,
+      xMax: options.xMax ?? width - 2,
       yMin: options.yMin ?? 20,
       yMax: options.yMax ?? height - 36,
       yAxisMode: options.yAxisMode || (seriesB && seriesB.length ? "left-right" : "left"),
@@ -7028,13 +7194,14 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
   payload.seriesList.forEach((series) => {
     drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
   });
-  const extremaSeries = payload.seriesList[0];
-  if (extremaSeries?.values?.length) {
-    const extremaFormatter =
-      options.axisFormatter || options.valueFormatter || ((value) => formatNumber(value, 2));
-    drawSeriesExtrema(ctx, payload, extremaSeries, (value, key, axis) =>
-      extremaFormatter(value, axis, key),
-    );
+  const extremaFormatter =
+    options.axisFormatter || options.valueFormatter || ((value) => formatNumber(value, 2));
+  for (const extremaSeries of payload.seriesList || []) {
+    if (extremaSeries?.values?.length) {
+      drawSeriesExtrema(ctx, payload, extremaSeries, (value, key, axis) =>
+        extremaFormatter(value, axis, key),
+      );
+    }
   }
   drawAxisLabels(ctx, payload, {
     leftLabel: options.leftLabel ?? "",
@@ -8374,9 +8541,9 @@ function formatSymbolForDisplay(symbol) {
   }
   if (/^rt_hk/i.test(normalized)) {
     const digits = normalized.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `hk${digits}`;
+    return `HK${digits}`;
   }
-  return normalized;
+  return normalized.toUpperCase();
 }
 
 function inferMarket(symbol) {
