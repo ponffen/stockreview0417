@@ -352,9 +352,9 @@ async function buildTopPositions(userId, factor) {
 }
 
 async function buildUserCard(targetId, viewerId, options = {}) {
-  const { applyScale = true } = options;
+  const { applyScale = true, allowHidden = false } = options;
   const row = await getUserCommunityRow(targetId);
-  if (!row || !Number(row.community_public)) {
+  if (!row || (!allowHidden && !Number(row.community_public))) {
     return null;
   }
   const norm = await getNormalizationMeta(targetId);
@@ -481,14 +481,12 @@ async function getPublicProfileDetail(viewerId, targetId) {
   if (!vid || !tid) {
     return { error: "unauthorized" };
   }
-  if (vid === tid) {
-    return { isSelf: true, userId: tid };
-  }
+  const isSelf = vid === tid;
   const row = await getUserCommunityRow(tid);
-  if (!row || !Number(row.community_public)) {
+  if (!row || (!isSelf && !Number(row.community_public))) {
     return { error: "hidden" };
   }
-  const card = await buildUserCard(tid, vid, { applyScale: true });
+  const card = await buildUserCard(tid, vid, { applyScale: true, allowHidden: isSelf });
   if (!card) {
     return { error: "hidden" };
   }
@@ -519,6 +517,49 @@ async function getPublicProfileDetail(viewerId, targetId) {
       currency: r.currency || "CNY",
       weight: sumMv > 0 ? mv / sumMv : 0,
     }));
+  }
+  if (!positions.length && isSelf) {
+    const qtyMap = netQtyBySymbolFromTrades(trades);
+    const staged = [];
+    let sumMv = 0;
+    for (const [symNorm, rawQty] of qtyMap.entries()) {
+      if (!isActiveHoldQty(symNorm, rawQty)) {
+        continue;
+      }
+      const closeRow = await getLatestSymbolDailyClose(symNorm);
+      const px = closeRow?.close ?? lastTradePriceForSymbol(trades, symNorm);
+      if (!Number.isFinite(px) || px <= 0) {
+        continue;
+      }
+      const mv = Math.abs(Number(rawQty)) * Number(px);
+      sumMv += mv;
+      const meta = displayStockMeta(symNorm);
+      staged.push({
+        symbol: symNorm,
+        name: resolveNameForSymbol(trades, symNorm),
+        quantity: Number(rawQty),
+        close: Number(px),
+        marketValueRaw: mv,
+        dayPnlRaw: 0,
+        currency: bookCurrencyForSymbolNorm(symNorm),
+        marketTag: meta.marketTag,
+        displayCode: meta.displayCode,
+      });
+    }
+    positions = staged
+      .sort((a, b) => b.marketValueRaw - a.marketValueRaw)
+      .map((item) => ({
+        symbol: item.symbol,
+        name: item.name,
+        quantity: item.quantity,
+        close: item.close,
+        marketValue: item.marketValueRaw * norm.factor,
+        dayPnl: item.dayPnlRaw * norm.factor,
+        currency: item.currency || "CNY",
+        weight: sumMv > 0 ? item.marketValueRaw / sumMv : 0,
+        marketTag: item.marketTag,
+        displayCode: item.displayCode,
+      }));
   }
   const snaps = await selectAnalysisSnapshotsForPublicMetrics(tid);
   const lastSnap = snaps.length ? snaps[snaps.length - 1] : null;
@@ -554,7 +595,7 @@ async function getPublicProfileDetail(viewerId, targetId) {
   }));
 
   return {
-    isSelf: false,
+    isSelf,
     userId: tid,
     displayName: card.displayName,
     todayTwr: card.todayTwr,

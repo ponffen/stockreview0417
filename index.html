@@ -367,6 +367,7 @@
           <div class="trade-search-head">
             <button type="button" class="btn btn-ghost" id="tradeSearchBackBtn" aria-label="返回">返回</button>
             <h2>搜索股票</h2>
+            <span class="secondary-head-spacer" aria-hidden="true"></span>
           </div>
           <p class="form-hint trade-search-hint">输入代码、简称或拼音首字母，选择标的后进入新增交易</p>
           <div class="trade-search-input-wrap">
@@ -447,6 +448,7 @@
           <div class="panel-head mine-sub-head">
             <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back-community>返回</button>
             <h2>社区资料</h2>
+            <span class="secondary-head-spacer" aria-hidden="true"></span>
           </div>
           <div class="form-row mine-nickname-row">
             <label for="mineNicknameInput">昵称</label>
@@ -470,6 +472,7 @@
           <div class="panel-head mine-sub-head">
             <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back>返回</button>
             <h2>收益率算法</h2>
+            <span class="secondary-head-spacer" aria-hidden="true"></span>
           </div>
           <div class="form-row">
             <label for="algoModeSelectMine">计算方式</label>
@@ -487,6 +490,7 @@
           <div class="panel-head mine-sub-head">
             <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back>返回</button>
             <h2>股票账户</h2>
+            <span class="secondary-head-spacer" aria-hidden="true"></span>
           </div>
           <form id="accountForm">
             <div class="form-row">
@@ -764,7 +768,11 @@
     <section id="route-stock-record" class="route-pane stock-detail-page">
       <div class="stock-record-wrap">
         <div class="stock-record-head">
-          <button type="button" id="closeStockRecordDialogBtn" class="btn btn-ghost">返回</button>
+          <div class="secondary-page-topbar">
+            <button type="button" id="closeStockRecordDialogBtn" class="btn btn-ghost">返回</button>
+            <h2 class="secondary-page-title">个股交易记录</h2>
+            <span class="secondary-head-spacer" aria-hidden="true"></span>
+          </div>
           <div class="stock-record-head-main">
             <div class="stock-record-head-left">
               <h3 id="stockRecordTitle" class="stock-record-title">--</h3>

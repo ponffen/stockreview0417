@@ -182,9 +182,9 @@ function formatSymbolForDisplay(symbol) {
   }
   if (/^rt_hk/i.test(normalized)) {
     const digits = normalized.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `hk${digits}`;
+    return `HK${digits}`;
   }
-  return normalized;
+  return normalized.toUpperCase();
 }
 
 function normalizedSide(type, side) {

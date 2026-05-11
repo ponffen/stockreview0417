@@ -279,6 +279,7 @@ const mineLogoutBtn = document.getElementById("mineLogoutBtn");
 const appMenuBtn = document.getElementById("appMenuBtn");
 const appDrawer = document.getElementById("appDrawer");
 const appDrawerBackdrop = document.getElementById("appDrawerBackdrop");
+const appTopBar = document.querySelector(".app-top-bar");
 const appHeaderTitle = document.getElementById("appHeaderTitle");
 const mineNicknameInput = document.getElementById("mineNicknameInput");
 const mineNicknameDisplay = document.getElementById("mineNicknameDisplay");
@@ -4461,6 +4462,17 @@ function renderRoute() {
       appHeaderTitle.textContent = "持仓收益";
     }
   }
+  const secondaryToplessRoutes = new Set([
+    "trade-search",
+    "mine-accounts",
+    "mine-algo",
+    "mine-community",
+    "community-profile",
+    "stock-record",
+  ]);
+  if (appTopBar) {
+    appTopBar.style.display = secondaryToplessRoutes.has(state.route) ? "none" : "flex";
+  }
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
     if (r) {
@@ -6244,30 +6256,7 @@ async function renderStockRecordPage(symbol) {
     })
     .join("");
 
-  let pnlByDate = {};
-  if (apiReady && !usePub) {
-    try {
-      const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      const res = await apiFetch(
-        `${API_BASE}/snapshot/symbol-daily?accountId=${encodeURIComponent(aid)}&symbol=${encodeURIComponent(
-          normalizeSymbol(symbol)
-        )}&from=2000-01-01&to=2099-12-31`,
-        { cache: "no-store" }
-      );
-      const j = await res.json();
-      if (j?.ok && Array.isArray(j.data)) {
-        for (const row of j.data) {
-          if (row.symbol === normalizeSymbol(symbol)) {
-            pnlByDate[row.date] = Number(row.dayPnlNative) || 0;
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("symbol-daily fetch failed", error);
-    }
-  }
-
-  drawStockRecordChart(symbol, symbolTrades, pnlByDate);
+  drawStockRecordChart(symbol, symbolTrades);
 }
 
 async function ensureSymbolData(symbol) {
@@ -6380,7 +6369,7 @@ function buildFallbackKlineFromTrades(symbol) {
   return rows;
 }
 
-function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
+function drawStockRecordChart(symbol, symbolTrades) {
   const canvas = stockRecordChart;
   if (!canvas) {
     return;
@@ -6411,15 +6400,13 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
     qtyByDate[trade.date] = qty;
   });
   let rollingQty = 0;
-  const useDbPnl = Object.keys(pnlByDate).length > 0;
   const values = visible.map((item) => {
     if (qtyByDate[item.date] != null) {
       rollingQty = qtyByDate[item.date];
     }
-    const pnlVal = useDbPnl ? validNumber(pnlByDate[item.date], 0) : rollingQty;
-    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty, pnl: pnlVal };
+    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty };
   });
-  const rightLabel = useDbPnl ? "日收益(原币)" : "持仓股数";
+  const rightLabel = "持仓股数";
   const payload = buildChartPayload(
     [
       {
@@ -6434,7 +6421,7 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
         label: rightLabel,
         color: "#ff4d4f",
         axis: "right",
-        values: values.map((item) => ({ date: item.date, value: useDbPnl ? item.pnl : item.qty })),
+        values: values.map((item) => ({ date: item.date, value: item.qty })),
       },
     ],
     {
@@ -6476,29 +6463,32 @@ function drawStockRecordChart(symbol, symbolTrades, pnlByDate = {}) {
   if (payload.seriesMap?.price?.values?.length) {
     drawSeriesExtrema(ctx, payload, payload.seriesMap.price, (value) => formatNumber(value, 2));
   }
+  if (payload.seriesMap?.qty?.values?.length) {
+    drawSeriesExtrema(ctx, payload, payload.seriesMap.qty, (value) => formatNumber(value, 0));
+  }
   drawAxisLabels(ctx, payload, {
     leftLabel: "",
     rightLabel: "",
     xLabel: "",
     valueFormatter: (value, axis, key) => {
       if (key === "qty" || axis === "right") {
-        return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+        return formatNumber(value, 0);
       }
       return formatNumber(value, 2);
     },
   });
   drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
     if (key === "qty" || axis === "right") {
-      return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+      return formatNumber(value, 0);
     }
     return formatNumber(value, 2);
   });
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
-    onRefresh: () => drawStockRecordChart(symbol, symbolTrades, pnlByDate),
+    onRefresh: () => drawStockRecordChart(symbol, symbolTrades),
     valueFormatter: (value, key, axis) => {
       if (key === "qty" || axis === "right") {
-        return useDbPnl ? formatNumber(value, 2) : formatNumber(value, 0);
+        return formatNumber(value, 0);
       }
       return formatNumber(value, 2);
     },
@@ -7028,13 +7018,14 @@ function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {
   payload.seriesList.forEach((series) => {
     drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
   });
-  const extremaSeries = payload.seriesList[0];
-  if (extremaSeries?.values?.length) {
-    const extremaFormatter =
-      options.axisFormatter || options.valueFormatter || ((value) => formatNumber(value, 2));
-    drawSeriesExtrema(ctx, payload, extremaSeries, (value, key, axis) =>
-      extremaFormatter(value, axis, key),
-    );
+  const extremaFormatter =
+    options.axisFormatter || options.valueFormatter || ((value) => formatNumber(value, 2));
+  for (const extremaSeries of payload.seriesList || []) {
+    if (extremaSeries?.values?.length) {
+      drawSeriesExtrema(ctx, payload, extremaSeries, (value, key, axis) =>
+        extremaFormatter(value, axis, key),
+      );
+    }
   }
   drawAxisLabels(ctx, payload, {
     leftLabel: options.leftLabel ?? "",
@@ -8374,9 +8365,9 @@ function formatSymbolForDisplay(symbol) {
   }
   if (/^rt_hk/i.test(normalized)) {
     const digits = normalized.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `hk${digits}`;
+    return `HK${digits}`;
   }
-  return normalized;
+  return normalized.toUpperCase();
 }
 
 function inferMarket(symbol) {
