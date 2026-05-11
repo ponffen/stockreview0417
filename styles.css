@@ -1415,9 +1415,19 @@ h2 {
 
 .stock-record-head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
   gap: 8px;
+}
+
+.stock-record-head > div {
+  flex: 1;
+  min-width: 0;
+}
+
+#closeStockRecordDialogBtn {
+  order: -1;
+  flex-shrink: 0;
 }
 
 .stock-record-title {
