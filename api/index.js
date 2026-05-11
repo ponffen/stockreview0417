@@ -4,6 +4,83 @@ console.log("[api/index.js] module-load start build=v6");
 // 导致整个函数在冷启动阶段就 hang 300s。改为第一次业务请求时才加载。
 let appPromise = null;
 let loadError = null;
+const DIRECT_SINA_SUGGEST_TIMEOUT_MS = 6500;
+const ALIYUN_SINA_SUGGEST_TIMEOUT_MS = 4500;
+const DIRECT_SINA_SUGGEST_CACHE_TTL_MS = 12 * 1000;
+const DEFAULT_ALIYUN_MARKET_PROXY_BASE =
+  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
+const sinaSuggestCache = new Map();
+
+function getCacheHit(map, key, ttlMs) {
+  const hit = map.get(String(key));
+  if (!hit) {
+    return null;
+  }
+  if (Date.now() - Number(hit.at || 0) > Number(ttlMs || 0)) {
+    map.delete(String(key));
+    return null;
+  }
+  return hit.value;
+}
+
+function setCacheValue(map, key, value) {
+  map.set(String(key), { at: Date.now(), value });
+}
+
+async function fetchSinaSuggestFromUpstream(key) {
+  const iconv = require("iconv-lite");
+  const { parseSinaSuggestText, suggestLineToItem } = require("../src/sina-suggest");
+  const { normalizeSymbol } = require("../src/db");
+  const url = `https://suggest3.sinajs.cn/suggest/?key=${encodeURIComponent(
+    key
+  )}&type=111,41,31,101&name=suggest&num=50`;
+  const response = await fetch(url, {
+    headers: { "user-agent": "stockreview/1" },
+    signal: AbortSignal.timeout(DIRECT_SINA_SUGGEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`sina suggest http ${response.status}`);
+  }
+  const buf = Buffer.from(await response.arrayBuffer());
+  let text = iconv.decode(buf, "gbk");
+  if (!/var suggest\s*=/.test(text) && /var suggest/.test(buf.toString("utf8"))) {
+    text = buf.toString("utf8");
+  }
+  const lines = parseSinaSuggestText(text);
+  const results = [];
+  for (const line of lines) {
+    const item = suggestLineToItem(line, normalizeSymbol);
+    if (item) {
+      results.push(item);
+    }
+  }
+  return results;
+}
+
+async function fetchSinaSuggestFromAliyun(key) {
+  const base = String(process.env.ALIYUN_MARKET_PROXY_BASE_URL || DEFAULT_ALIYUN_MARKET_PROXY_BASE)
+    .trim()
+    .replace(/\/+$/, "");
+  if (!base) {
+    return null;
+  }
+  const url = `${base}/api/sina/suggest?key=${encodeURIComponent(key)}`;
+  const response = await fetch(url, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(ALIYUN_SINA_SUGGEST_TIMEOUT_MS),
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`aliyun suggest http ${response.status}`);
+  }
+  const json = await response.json().catch(() => ({}));
+  if (!json?.ok || !Array.isArray(json.results)) {
+    throw new Error("aliyun suggest payload invalid");
+  }
+  return json.results;
+}
 
 function getServerlessApp() {
   if (appPromise) return appPromise;
@@ -268,6 +345,7 @@ module.exports = async function handler(req, res) {
   const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
   const isTradesImportDirect = req.method === "POST" && pathOnly === "/api/trades/import";
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
+  const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
 
   if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect || isSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -321,6 +399,43 @@ module.exports = async function handler(req, res) {
     } catch (error) {
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));
+      return;
+    }
+  }
+
+  if (isSinaSuggestDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    const key = String(getSearchParam(req, "key") || "").trim();
+    if (!key || key.length > 64) {
+      res.statusCode = 400;
+      res.end(JSON.stringify({ ok: false, error: "invalid key" }));
+      return;
+    }
+    const cacheKey = key.toLowerCase();
+    const cached = getCacheHit(sinaSuggestCache, cacheKey, DIRECT_SINA_SUGGEST_CACHE_TTL_MS);
+    if (Array.isArray(cached)) {
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, results: cached, source: "cache" }));
+      return;
+    }
+    try {
+      let results = null;
+      try {
+        results = await fetchSinaSuggestFromAliyun(key);
+      } catch (error) {
+        console.warn("[api/index.js] aliyun suggest failed:", error?.message || error);
+      }
+      if (!Array.isArray(results)) {
+        results = await fetchSinaSuggestFromUpstream(key);
+      }
+      setCacheValue(sinaSuggestCache, cacheKey, results);
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, results }));
+      return;
+    } catch (error) {
+      res.statusCode = 502;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "sina suggest failed" }));
       return;
     }
   }
