@@ -13,23 +13,64 @@ const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill"
 
 const MARKET_KLINE_DEFAULT_LEN = 120;
 const MARKET_CACHE_TTL_MS = 30 * 60 * 1000;
+const ANALYSIS_DAILY_CACHE_TTL_MS = 20 * 1000;
+const DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS = 20 * 1000;
 const sinaKlineMemoryCache = new Map();
 const tencentQuoteMemoryCache = new Map();
+const analysisDailyMemoryCache = new Map();
+const dailyCloseForTradesMemoryCache = new Map();
 
 function cacheSet(map, key, value) {
   map.set(String(key), { value, updatedAt: Date.now() });
 }
 
-function cacheGet(map, key) {
+function cacheGetWithTtl(map, key, ttlMs) {
   const hit = map.get(String(key));
   if (!hit) {
     return null;
   }
-  if (Date.now() - Number(hit.updatedAt || 0) > MARKET_CACHE_TTL_MS) {
+  if (Date.now() - Number(hit.updatedAt || 0) > ttlMs) {
     map.delete(String(key));
     return null;
   }
   return hit.value;
+}
+
+function cacheGet(map, key) {
+  return cacheGetWithTtl(map, key, MARKET_CACHE_TTL_MS);
+}
+
+function clearUserScopedCache(map, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const prefix = `u:${uid}:`;
+  for (const key of map.keys()) {
+    if (String(key).startsWith(prefix)) {
+      map.delete(key);
+    }
+  }
+}
+
+function invalidateDailyCloseAndAnalysisCache(userId) {
+  clearUserScopedCache(analysisDailyMemoryCache, userId);
+  clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
+}
+
+function sanitizeSymbolList(input) {
+  const raw = String(input || "").trim();
+  if (!raw) {
+    return [];
+  }
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((s) => normalizeSymbol(String(s || "")))
+        .filter(Boolean)
+    ),
+  ];
 }
 
 function normalizeLenParam(input, fallback = MARKET_KLINE_DEFAULT_LEN) {
@@ -1169,6 +1210,7 @@ app.post("/api/trades", requireAuth, async (req, res) => {
       return;
     }
     const saved = await upsertTrade(trade, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
     res.json({ ok: true, data: saved });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save trade failed" });
@@ -1177,6 +1219,9 @@ app.post("/api/trades", requireAuth, async (req, res) => {
 
 app.delete("/api/trades/:id", requireAuth, async (req, res) => {
   const ok = await deleteTradeById(req.params.id, req.userId);
+  if (ok) {
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+  }
   res.json({ ok: true, deleted: ok });
 });
 
@@ -1187,6 +1232,7 @@ app.get("/api/cash-transfers", requireAuth, async (req, res) => {
 app.post("/api/cash-transfers", requireAuth, async (req, res) => {
   try {
     const row = await upsertCashTransfer(req.body || {}, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save cash transfer failed" });
@@ -1195,6 +1241,9 @@ app.post("/api/cash-transfers", requireAuth, async (req, res) => {
 
 app.delete("/api/cash-transfers/:id", requireAuth, async (req, res) => {
   const ok = await deleteCashTransferById(req.params.id, req.userId);
+  if (ok) {
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+  }
   res.json({ ok: true, deleted: ok });
 });
 
@@ -1204,6 +1253,7 @@ app.post("/api/cash-transfers/import", requireAuth, async (req, res) => {
     const mode = payload.mode === "replace" ? "replace" : "append";
     const rows = Array.isArray(payload.cashTransfers) ? payload.cashTransfers : [];
     const data = await importCashTransfers(rows, mode, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
@@ -1217,6 +1267,7 @@ app.post("/api/trades/import", requireAuth, async (req, res) => {
     const trades = Array.isArray(payload.trades) ? payload.trades : [];
     const normalized = trades.map((item) => normalizeTrade(item));
     const data = await importTrades(normalized, mode, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
@@ -1275,14 +1326,26 @@ app.post("/api/symbol-daily/batch", requireAuth, async (req, res) => {
 
 app.get("/api/analysis-daily", requireAuth, async (req, res) => {
   try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const cacheKey = `u:${req.userId}:analysis:account=${accountId || "*"}:from=${from}:to=${to}`;
+    const cached = cacheGetWithTtl(analysisDailyMemoryCache, cacheKey, ANALYSIS_DAILY_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: cached, cached: true });
+      return;
+    }
     const data = await getAnalysisDailySnapshots(
       {
-        accountId: req.query.accountId,
-        from: req.query.from,
-        to: req.query.to,
+        accountId,
+        from,
+        to,
       },
       req.userId
     );
+    cacheSet(analysisDailyMemoryCache, cacheKey, data);
+    res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily failed" });
@@ -1292,6 +1355,7 @@ app.get("/api/analysis-daily", requireAuth, async (req, res) => {
 app.post("/api/analysis-daily", requireAuth, async (req, res) => {
   try {
     const row = await upsertAnalysisDailySnapshot(req.body || {}, req.userId);
+    clearUserScopedCache(analysisDailyMemoryCache, req.userId);
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
@@ -1640,12 +1704,35 @@ app.get("/api/daily-close/for-trades", requireAuth, async (req, res) => {
       res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
       return;
     }
-    const data = {};
-    for (const sym of w.symbols) {
-      data[sym] = await getSymbolDailyCloseRange(sym, w.from, w.to);
+    const requested = sanitizeSymbolList(req.query.symbols);
+    const wantedSet = requested.length ? new Set(requested) : null;
+    const symbols = wantedSet ? w.symbols.filter((sym) => wantedSet.has(sym)) : w.symbols;
+    if (!symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
     }
+    const days = parsePositiveInt(req.query.days, 240, 30, 1460);
+    const to = w.to || dateKeyDaysFromToday(0);
+    const floorFrom = dateKeyDaysFromToday(-days);
+    const from = w.from && w.from > floorFrom ? w.from : floorFrom;
+    const cacheKey = `u:${req.userId}:daily-close:from=${from}:to=${to}:symbols=${symbols.join(",")}`;
+    const cached = cacheGetWithTtl(dailyCloseForTradesMemoryCache, cacheKey, DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+    const data = {};
+    const rowsBySymbol = await Promise.all(
+      symbols.map(async (sym) => [sym, await getSymbolDailyCloseRange(sym, from, to)])
+    );
+    for (const [sym, rows] of rowsBySymbol) {
+      data[sym] = rows;
+    }
+    const payload = { data, from, to, symbols };
+    cacheSet(dailyCloseForTradesMemoryCache, cacheKey, payload);
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, data, from: w.from, to: w.to, symbols: w.symbols });
+    res.json({ ok: true, ...payload });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
   }
@@ -1671,6 +1758,7 @@ app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
       counts[sym] = rows.length;
       await new Promise((r) => setTimeout(r, 200));
     }
+    clearUserScopedCache(dailyCloseForTradesMemoryCache, req.userId);
     res.json({ ok: true, from: w.from, to: w.to, counts });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "backfill failed" });
