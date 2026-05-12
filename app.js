@@ -3720,6 +3720,7 @@ function renderPublicEarningProfileHtml(d) {
                 const stockCode = formatSymbolForDisplay(row.symbol);
                 const tag =
                   row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
+                const tagLower = tag.toLowerCase();
                 const toBk = (v) => nativeToOverviewBook(row, v, bookCcy);
                 const monthWPub = monthDenPub !== 0 ? toBk(row.monthProfitNative) / monthDenPub : 0;
                 const yearWPub = yearDenPub !== 0 ? toBk(row.yearProfitNative) / yearDenPub : 0;
@@ -3730,7 +3731,7 @@ function renderPublicEarningProfileHtml(d) {
         <tr>
           <td class="stock-name">
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
-            <span><i class="market-tag">${tag}</i> ${escapeHtml(stockCode)}</span>
+            <span><i class="market-tag market-tag--${tagLower}">${tag}</i> ${escapeHtml(stockCode)}</span>
           </td>
           <td>
             <div class="cell-main">${formatNumber(row.currentPrice, 3)}</div>
@@ -3741,7 +3742,7 @@ function renderPublicEarningProfileHtml(d) {
           <td>${formatPercent(monthWPub)}</td>
           <td>${formatPercent(yearWPub)}</td>
           <td class="${totalRateCls}">${formatPercent(row.totalRate)}</td>
-          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
+          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
           <td><a href="javascript:void(0)" class="record-link" data-stock-record="${symEsc}">记录</a></td>
         </tr>`;
               })
@@ -4741,6 +4742,7 @@ function renderOverviewAndStockTable() {
     .map((row) => {
       const stockCode = formatSymbolForDisplay(row.symbol);
       const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
+      const tagLower = tag.toLowerCase();
       const dayClass = applyFxForOverview(row, row.todayProfitNative) >= 0 ? "up" : "down";
       const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
       const totalClass = applyFxForOverview(row, row.totalProfitNative) >= 0 ? "up" : "down";
@@ -4748,7 +4750,7 @@ function renderOverviewAndStockTable() {
         <tr>
           <td class="stock-name">
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
-            <span><i class="market-tag">${tag}</i> ${stockCode}</span>
+            <span><i class="market-tag market-tag--${tagLower}">${tag}</i> ${stockCode}</span>
           </td>
           <td class="${dayClass}">${formatStockTableMoney(row, row.todayProfitNative, 2)}</td>
           <td>
@@ -4775,7 +4777,7 @@ function renderOverviewAndStockTable() {
           <td>${formatPercent(row.yearWeight)}</td>
           <td class="${totalClass}">${formatStockTableMoney(row, row.totalProfitNative, 2)}</td>
           <td class="${totalClass}">${formatPercent(row.totalRate)}</td>
-          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatPercent(row.regretRate)}</td>
+          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
           <td><a href="javascript:void(0)" class="record-link" data-stock-record="${row.symbol}">记录</a></td>
         </tr>
       `;
@@ -6338,7 +6340,7 @@ async function renderStockRecordPage(symbol) {
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
   stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
-  stockRecordMarket.textContent = `交易间隔 ${formatPercent(position.regretRate)}`;
+  stockRecordMarket.textContent = `交易间隔 ${formatRegretRateWithSide(position.regretRate, position.lastTradeSide)}`;
   stockRecordRegret.textContent = "";
   stockRecordRegret.className = "hidden";
 
@@ -8785,6 +8787,13 @@ function formatPercent(value) {
   const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
   const num = (safe * 100).toFixed(2);
   return `${safe > 0 ? "+" : ""}${num}%`;
+}
+
+function formatRegretRateWithSide(rate, side) {
+  const normalizedSide = String(side || "").trim().toLowerCase();
+  const suffix = normalizedSide === "buy" ? "B" : normalizedSide === "sell" ? "S" : "";
+  const rateText = formatPercent(rate);
+  return suffix ? `${rateText} ${suffix}` : rateText;
 }
 
 function metricValueWithRate(amount, rate) {

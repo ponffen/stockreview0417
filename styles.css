@@ -615,7 +615,7 @@ body {
   font-size: 13px;
   color: #2e3541;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
   max-width: 60px;
 }
@@ -627,12 +627,28 @@ body {
 
 .market-tag {
   display: inline-block;
-  padding: 1px 4px;
-  border-radius: 2px;
-  background: #ff7e4c;
+  padding: 2px 8px;
+  border-radius: 8px;
   color: #fff;
   font-style: normal;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.market-tag--cn {
+  background: #ff7e4c;
+}
+
+.market-tag--hk {
+  background: #4f83f1;
+}
+
+.market-tag--us {
+  background: #2e7d4a;
+}
+
+.market-tag--ot {
+  background: #9aa3b2;
 }
 
 .cell-main {
@@ -1330,7 +1346,7 @@ h2 {
 .trade-table:not(.trade-table--cash) td:nth-child(2) {
   width: 20%;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 
 .trade-table thead th:nth-child(3),
@@ -2369,7 +2385,7 @@ body.auth-mode {
 .trade-table .trade-col-name {
   box-sizing: border-box;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
