@@ -201,6 +201,7 @@ const DDL = [
     eod_shares DOUBLE PRECISION NOT NULL DEFAULT 0,
     day_trade_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
     day_trade_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0,
     day_close_price DOUBLE PRECISION,
     day_pnl_native DOUBLE PRECISION NOT NULL DEFAULT 0,
     currency TEXT NOT NULL DEFAULT 'CNY',
@@ -214,13 +215,11 @@ const DDL = [
     account_id TEXT NOT NULL,
     date TEXT NOT NULL,
     profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
-    rate_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
-    rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-    rate_dietz DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tw_r_daily DOUBLE PRECISION NOT NULL DEFAULT 0,
+    tw_r_cumulative DOUBLE PRECISION NOT NULL DEFAULT 0,
+    external_flow_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    external_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0,
     total_profit DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total_rate_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total_rate_dietz DOUBLE PRECISION NOT NULL DEFAULT 0,
     principal DOUBLE PRECISION NOT NULL DEFAULT 0,
     market_value DOUBLE PRECISION NOT NULL DEFAULT 0,
     fx_hkd_cny DOUBLE PRECISION,
@@ -230,6 +229,19 @@ const DDL = [
     PRIMARY KEY (user_id, account_id, date)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC)`,
+  `CREATE TABLE IF NOT EXISTS performance_series_cache (
+    user_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    as_of_date TEXT NOT NULL,
+    preset TEXT NOT NULL,
+    algo TEXT NOT NULL,
+    period_return DOUBLE PRECISION NOT NULL DEFAULT 0,
+    series_json TEXT,
+    source_frozen_through TEXT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, account_id, as_of_date, preset, algo)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_perf_series_user_asof ON performance_series_cache (user_id, as_of_date DESC)`,
   `CREATE TABLE IF NOT EXISTS symbol_daily_close (
     symbol TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -965,7 +977,7 @@ async function getSymbolDailyPnl(query = {}, userId = null) {
   const symbol =
     query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
   const { rows } = await q(
-    `SELECT account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at
+    `SELECT account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_trade_flow_native, day_close_price, day_pnl_native, currency, created_at
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -980,7 +992,7 @@ async function getSymbolDailyPnl(query = {}, userId = null) {
     date: row.date,
     eodShares: Number(row.eod_shares),
     dayTradeQty: Number(row.day_trade_qty),
-    dayTradeAmount: Number(row.day_trade_amount),
+    dayTradeFlowNative: Number(row.day_trade_flow_native),
     dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
     dayPnlNative: Number(row.day_pnl_native),
     currency: row.currency,
@@ -1000,10 +1012,11 @@ async function upsertSymbolDailyPnlBatch(rows, userId = null) {
       const r = raw || {};
       await client.query(
         `INSERT INTO symbol_daily_pnl (
-           user_id, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_close_price, day_pnl_native, currency, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           user_id, account_id, symbol, date, eod_shares, day_trade_qty, day_trade_amount, day_trade_flow_native, day_close_price, day_pnl_native, currency, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (user_id, account_id, symbol, date) DO UPDATE SET
            eod_shares = EXCLUDED.eod_shares, day_trade_qty = EXCLUDED.day_trade_qty, day_trade_amount = EXCLUDED.day_trade_amount,
+           day_trade_flow_native = EXCLUDED.day_trade_flow_native,
            day_close_price = EXCLUDED.day_close_price, day_pnl_native = EXCLUDED.day_pnl_native, currency = EXCLUDED.currency, updated_at = EXCLUDED.updated_at`,
         [
           uid,
@@ -1013,6 +1026,7 @@ async function upsertSymbolDailyPnlBatch(rows, userId = null) {
           validNumber(r.eodShares, r.eod_shares, 0),
           validNumber(r.dayTradeQty, r.day_trade_qty, 0),
           validNumber(r.dayTradeAmount, r.day_trade_amount, 0),
+          validNumber(r.dayTradeFlowNative, r.day_trade_flow_native, 0),
           r.dayClosePrice != null || r.day_close_price != null ? validNumber(r.dayClosePrice, r.day_close_price, 0) : null,
           validNumber(r.dayPnlNative, r.day_pnl_native, 0),
           String(r.currency || "CNY").toUpperCase().slice(0, 3) || "CNY",
@@ -1040,8 +1054,8 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
   const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
   const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
   const { rows } = await q(
-    `SELECT account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz,
-      total_profit, total_rate_cost, total_rate_twr, total_rate_dietz, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at
+    `SELECT account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
+      total_profit, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at
      FROM analysis_daily_snapshot
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1053,13 +1067,11 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
     accountId: row.account_id,
     date: row.date,
     profitCny: Number(row.profit_cny),
-    rateCost: Number(row.rate_cost),
-    rateTwr: Number(row.rate_twr),
-    rateDietz: Number(row.rate_dietz),
+    twRDaily: Number(row.tw_r_daily),
+    twRCumulative: Number(row.tw_r_cumulative),
+    externalFlowCny: Number(row.external_flow_cny),
+    externalFlowNative: Number(row.external_flow_native),
     totalProfit: Number(row.total_profit),
-    totalRateCost: Number(row.total_rate_cost),
-    totalRateTwr: Number(row.total_rate_twr),
-    totalRateDietz: Number(row.total_rate_dietz),
     principal: Number(row.principal),
     marketValue: Number(row.market_value),
     fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
@@ -1077,13 +1089,11 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
     account_id: String(r.accountId || r.account_id || "default").trim() || "default",
     date: toDateKey(r.date),
     profit_cny: validNumber(r.profitCny, r.profit_cny, 0),
-    rate_cost: validNumber(r.rateCost, r.rate_cost, 0),
-    rate_twr: validNumber(r.rateTwr, r.rate_twr, 0),
-    rate_dietz: validNumber(r.rateDietz, r.rate_dietz, 0),
+    tw_r_daily: validNumber(r.twRDaily, r.tw_r_daily, 0),
+    tw_r_cumulative: validNumber(r.twRCumulative, r.tw_r_cumulative, 0),
+    external_flow_cny: validNumber(r.externalFlowCny, r.external_flow_cny, 0),
+    external_flow_native: validNumber(r.externalFlowNative, r.external_flow_native, 0),
     total_profit: validNumber(r.totalProfit, r.total_profit, 0),
-    total_rate_cost: validNumber(r.totalRateCost, r.total_rate_cost, 0),
-    total_rate_twr: validNumber(r.totalRateTwr, r.total_rate_twr, 0),
-    total_rate_dietz: validNumber(r.totalRateDietz, r.total_rate_dietz, 0),
     principal: validNumber(r.principal, 0),
     market_value: validNumber(r.marketValue, r.market_value, 0),
     fx_hkd_cny: r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
@@ -1093,25 +1103,24 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
   };
   await q(
     `INSERT INTO analysis_daily_snapshot (
-       user_id, account_id, date, profit_cny, rate_cost, rate_twr, rate_dietz, total_profit, total_rate_cost, total_rate_twr, total_rate_dietz,
-       principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       user_id, account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
+       total_profit, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (user_id, account_id, date) DO UPDATE SET
-       profit_cny = EXCLUDED.profit_cny, rate_cost = EXCLUDED.rate_cost, rate_twr = EXCLUDED.rate_twr, rate_dietz = EXCLUDED.rate_dietz,
-       total_profit = EXCLUDED.total_profit, total_rate_cost = EXCLUDED.total_rate_cost, total_rate_twr = EXCLUDED.total_rate_twr, total_rate_dietz = EXCLUDED.total_rate_dietz,
-       principal = EXCLUDED.principal, market_value = EXCLUDED.market_value, fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
+       profit_cny = EXCLUDED.profit_cny, tw_r_daily = EXCLUDED.tw_r_daily, tw_r_cumulative = EXCLUDED.tw_r_cumulative,
+       external_flow_cny = EXCLUDED.external_flow_cny, external_flow_native = EXCLUDED.external_flow_native,
+       total_profit = EXCLUDED.total_profit, principal = EXCLUDED.principal, market_value = EXCLUDED.market_value,
+       fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
     [
       row.user_id,
       row.account_id,
       row.date,
       row.profit_cny,
-      row.rate_cost,
-      row.rate_twr,
-      row.rate_dietz,
+      row.tw_r_daily,
+      row.tw_r_cumulative,
+      row.external_flow_cny,
+      row.external_flow_native,
       row.total_profit,
-      row.total_rate_cost,
-      row.total_rate_twr,
-      row.total_rate_dietz,
       row.principal,
       row.market_value,
       row.fx_hkd_cny,
@@ -1146,6 +1155,7 @@ async function deleteAllDataForUser(userId) {
     await c.query("DELETE FROM cash_transfers WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM app_settings WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM accounts WHERE user_id = $1", [uid]);
@@ -1519,6 +1529,62 @@ async function getTradeWindowForDailyClose(userId) {
   return { symbols: [...set].sort(), from, to };
 }
 
+let perfSchemaV2Promise = null;
+/** 已有库升级到 TWR 新列、performance_series_cache、symbol 日净流入列（幂等）。 */
+async function ensurePerformanceSchemaV2() {
+  if (perfSchemaV2Promise) {
+    return perfSchemaV2Promise;
+  }
+  perfSchemaV2Promise = (async () => {
+    await q(`CREATE TABLE IF NOT EXISTS performance_series_cache (
+        user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        preset TEXT NOT NULL,
+        algo TEXT NOT NULL,
+        period_return DOUBLE PRECISION NOT NULL DEFAULT 0,
+        series_json TEXT,
+        source_frozen_through TEXT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, account_id, as_of_date, preset, algo)
+      )`).catch(() => {});
+    await q(
+      `CREATE INDEX IF NOT EXISTS idx_perf_series_user_asof ON performance_series_cache (user_id, as_of_date DESC)`
+    ).catch(() => {});
+    await q(
+      `ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`
+    ).catch(() => {});
+
+    const { rows } = await q(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'analysis_daily_snapshot' AND column_name = 'tw_r_daily' LIMIT 1`
+    );
+    if (rows.length) {
+      return;
+    }
+    const stmts = [
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS tw_r_daily DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS tw_r_cumulative DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS external_flow_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS external_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS rate_cost`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS rate_dietz`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS total_rate_cost`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS total_rate_dietz`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS rate_twr`,
+      `ALTER TABLE analysis_daily_snapshot DROP COLUMN IF EXISTS total_rate_twr`,
+    ];
+    for (const sql of stmts) {
+      try {
+        await q(sql);
+      } catch (e) {
+        console.error("[db] ensurePerformanceSchemaV2:", sql.slice(0, 80), e?.message || e);
+      }
+    }
+  })();
+  return perfSchemaV2Promise;
+}
+
 function closeDatabase() {
   if (pool) {
     return pool.end();
@@ -1710,7 +1776,7 @@ async function selectAnalysisSnapshotsFrom(userId, accountId, fromDate) {
   const acc = String(accountId || "all");
   const from = String(fromDate || "1970-01-01");
   const { rows } = await q(
-    `SELECT date, total_rate_twr, total_rate_cost, profit_cny, market_value, fx_hkd_cny, fx_usd_cny
+    `SELECT date, tw_r_cumulative, profit_cny, market_value, fx_hkd_cny, fx_usd_cny
      FROM analysis_daily_snapshot
      WHERE user_id = $1 AND account_id = $2 AND date >= $3
      ORDER BY date ASC`,
@@ -1930,6 +1996,7 @@ module.exports = {
   createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,
   addCalendarDays,
+  ensurePerformanceSchemaV2,
   closeDatabase,
   getCliUserId,
   findUserByPhone,

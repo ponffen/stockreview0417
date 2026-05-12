@@ -413,7 +413,7 @@
             <button type="button" class="mine-nav-row" data-mine-open="algo" aria-label="收益率算法">
               <div class="mine-nav-main">
                 <span class="mine-nav-title">收益率算法</span>
-                <span id="mineAlgoSummary" class="mine-nav-value">成本算法</span>
+                <span id="mineAlgoSummary" class="mine-nav-value">时间加权</span>
               </div>
               <span class="mine-nav-chevron" aria-hidden="true">›</span>
             </button>
@@ -478,9 +478,8 @@
           <div class="form-row">
             <label for="algoModeSelectMine">计算方式</label>
             <select id="algoModeSelectMine">
-              <option value="cost">成本算法</option>
-              <option value="money">资金加权（Modified Dietz）</option>
-              <option value="time">时间加权（TWR）</option>
+              <option value="twr">时间加权（TWR）</option>
+              <option value="mwr">资金加权（MWR）</option>
             </select>
           </div>
         </article>

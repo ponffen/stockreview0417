@@ -17,6 +17,7 @@
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
     "backfill:daily-close:akshare": "python3 scripts/akshare_fill_symbol_daily_close.py",
+    "rebuild:performance": "VERCEL=1 node scripts/rebuild-all-performance.js",
     "test": "echo \"No tests configured\""
   },
   "repository": {

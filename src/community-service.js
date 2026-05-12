@@ -158,15 +158,9 @@ function subperiodCumulativeReturn(rows, startIdx, endIdx, field) {
   return (1 + r1) / (1 + r0) - 1;
 }
 
-/**
- * 区间收益率：优先 TWR，缺失时回落为成本法累计收益率（与仅回填/未开 TWR 时仍可能有列）。
- */
+/** 区间收益率：累计 TWR 截取 (1+R1)/(1+R0)-1 */
 function subperiodForMetrics(rows, startIdx, endIdx) {
-  let s = subperiodCumulativeReturn(rows, startIdx, endIdx, "total_rate_twr");
-  if (s == null) {
-    s = subperiodCumulativeReturn(rows, startIdx, endIdx, "total_rate_cost");
-  }
-  return s;
+  return subperiodCumulativeReturn(rows, startIdx, endIdx, "tw_r_cumulative");
 }
 
 async function metricsFromSnapshots(userId) {
@@ -177,9 +171,9 @@ async function metricsFromSnapshots(userId) {
     return { today: null, mtd: null, ytd: null, total: null };
   }
   const last = rowsAll.length - 1;
-  let total = Number(rowsAll[last].total_rate_twr);
+  let total = Number(rowsAll[last].tw_r_cumulative);
   if (!Number.isFinite(total)) {
-    total = Number(rowsAll[last].total_rate_cost);
+    total = 0;
   }
   let iy = rowsAll.findIndex((r) => r.date >= ytd);
   if (iy < 0) {
@@ -436,11 +430,11 @@ async function getLeaderboard() {
 const ALLOWED_BENCHMARKS = new Set(["none", "sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
 
 function normalizePublicAlgoMode(v) {
-  const s = String(v || "").trim();
-  if (s === "time" || s === "money" || s === "cost") {
-    return s;
-  }
-  return "cost";
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "time" || s === "twr") return "twr";
+  if (s === "money" || s === "mwr") return "mwr";
+  if (s === "cost") return "twr";
+  return "twr";
 }
 
 function normalizePublicBenchmark(v) {

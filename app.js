@@ -161,7 +161,7 @@ const state = {
   communityProfileReturnRoute: "community-feed",
   previousRoute: "earning",
   useDemoData: true,
-  algoMode: "cost",
+  algoMode: "twr",
   benchmark: "none",
   stageRange: "month",
   rangeDays: 30,
@@ -1798,7 +1798,7 @@ async function hydrateState() {
       state.route = "mine";
     }
     state.useDemoData = parsed.useDemoData ?? state.useDemoData;
-    state.algoMode = parsed.algoMode ?? state.algoMode;
+    state.algoMode = normalizeProfitAlgoMode(parsed.algoMode ?? state.algoMode);
     state.benchmark = parsed.benchmark ?? state.benchmark;
     state.stageRange = parsed.stageRange ?? state.stageRange;
     state.rangeDays = parsed.rangeDays ?? state.rangeDays;
@@ -2260,7 +2260,7 @@ function bindEvents() {
   }
 
   algoModeSelectMine?.addEventListener("change", () => {
-    state.algoMode = algoModeSelectMine.value;
+    state.algoMode = normalizeProfitAlgoMode(algoModeSelectMine.value);
     persistState();
     renderOverviewAndStockTable();
     void renderAnalysis();
@@ -3023,11 +3023,11 @@ function renderMineSection() {
     mineCommunityPublicToggle.disabled = !sessionPhone;
   }
   if (mineAlgoSummary) {
-    const labels = { cost: "成本算法", money: "资金加权", time: "时间加权" };
-    mineAlgoSummary.textContent = labels[state.algoMode] || labels.cost;
+    const labels = { twr: "时间加权", mwr: "资金加权", time: "时间加权", money: "资金加权", cost: "时间加权" };
+    mineAlgoSummary.textContent = labels[state.algoMode] || labels.twr;
   }
   if (algoModeSelectMine) {
-    algoModeSelectMine.value = state.algoMode;
+    algoModeSelectMine.value = normalizeProfitAlgoMode(state.algoMode);
   }
 }
 
@@ -3685,10 +3685,7 @@ function withPublicTradesContext(d, fn) {
   const prevAlgo = state.algoMode;
   const prevBook = state._overviewBookCurrencyOverride;
   state.trades = d.publicTrades;
-  const m = String(d.publicAlgoMode ?? "cost");
-  if (m === "cost" || m === "time" || m === "money") {
-    state.algoMode = m;
-  }
+  state.algoMode = "twr";
   const book = d.publicOverviewBookCurrency;
   if (book && typeof book === "string") {
     const c = book.toUpperCase();
@@ -4215,7 +4212,7 @@ function bindPublicProfileAnalysisInteractions(d) {
   });
 }
 
-function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope, todayKey, liveModeRate }) {
+function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope, todayKey, liveByMode }) {
   const pubRate = document.getElementById("pubAnalysisRateChart");
   const pubRateTip = document.getElementById("pubAnalysisRateTooltip");
   const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
@@ -4257,7 +4254,7 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   };
 
   if (!useDbRows || !dbRows.length) {
-    const history = buildPortfolioHistory(portfolio.positions, scope.trades);
+    const history = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
     const selected = resolveAnalysisRange(history);
     const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
     const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
@@ -4271,27 +4268,19 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   const pseudoHistory = sorted.map((row) => ({
     date: row.date,
     value: row.marketValue,
-    flow: row.profitCny,
+    flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
   }));
   const selectedPh = resolveAnalysisRange(pseudoHistory);
   const dateSet = new Set(selectedPh.map((p) => p.date));
   let sliceRows = sorted.filter((row) => dateSet.has(row.date));
-  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate);
+  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode, scope.cashTransfers);
 
-  const mySeriesRaw = sliceRows.map((row, idx, arr) => {
-    const isLast = idx === arr.length - 1 && row.date === todayKey;
-    let r = row.totalRateCost;
-    if (state.algoMode === "time") {
-      r = row.totalRateTwr;
-    }
-    if (state.algoMode === "money") {
-      r = row.totalRateDietz;
-    }
-    if (isLast) {
-      r = liveModeRate;
-    }
-    return { date: row.date, rate: r };
-  });
+  const modePts = sliceRows.map((r) => ({
+    date: r.date,
+    value: r.marketValue,
+    flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
+  }));
+  const mySeriesRaw = computeModeSeries(modePts, state.algoMode);
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   bindRateOnly(mySeries, benchSeries);
@@ -4306,11 +4295,14 @@ async function renderPublicProfileAnalysis(d) {
   }
   ensurePublicProfileAnalysisUi();
   withPublicTradesContext(detail, () => {
-    const scope = { accountId: "all", trades: state.trades };
+    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
     const portfolio = computePortfolio(scope.trades, []);
     const todayKey = toDateKey(new Date());
-    const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades);
-    const liveModeRate = computeModeSeries(historyFull, state.algoMode).at(-1)?.rate ?? 0;
+    const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
+    const liveByMode = {
+      twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
+      mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
+    };
     const dbRows = Array.isArray(detail.analysisDaily) ? detail.analysisDaily : [];
 
     withPublicProfileAnalysisUi(() => {
@@ -4321,7 +4313,7 @@ async function renderPublicProfileAnalysis(d) {
           portfolio,
           scope,
           todayKey,
-          liveModeRate,
+          liveByMode,
         });
       } else {
         paintPublicProfileAnalysisCore(detail, {
@@ -4330,7 +4322,7 @@ async function renderPublicProfileAnalysis(d) {
           portfolio,
           scope,
           todayKey,
-          liveModeRate,
+          liveByMode,
         });
       }
     });
@@ -4816,7 +4808,11 @@ function buildStageHistoryByRange(fullHist, stageRange, firstTradeDate) {
 
 function computeStageOverviewMetrics(portfolio, trades, stageRange = state.stageRange, algoMode = state.algoMode) {
   const tradeList = Array.isArray(trades) ? trades : [];
-  const fullHist = buildPortfolioHistory(portfolio.positions, tradeList);
+  const fullHist = buildPortfolioHistory(
+    portfolio.positions,
+    tradeList,
+    getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId)),
+  );
   const firstTradeDate =
     tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
   const stageHist = buildStageHistoryByRange(fullHist, stageRange, firstTradeDate);
@@ -5902,7 +5898,18 @@ function todayProfitCnyForAnalysisSnapshot(portfolio) {
  * 分析 Tab 最后一行对齐首页总览：总市值、本金、当日 profit_cny（与总览「今日」同口径）。
  * total_profit 仍按库里「日收益累加」延伸：昨日累计 + 今日 profit_cny，避免与历史点混用「持仓成本法 totalProfit」导致曲线断层。
  */
-function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate) {
+function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode = {}, scopeCash) {
+  const cash = Array.isArray(scopeCash)
+    ? scopeCash
+    : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
+  const extToday = cash.reduce((s, r) => {
+    if (String(r.date).slice(0, 10) === todayKey) {
+      return s + cashTransferRowNetCny(r);
+    }
+    return s;
+  }, 0);
+  const twr = Number(liveByMode.twr);
+  const mwr = Number(liveByMode.mwr);
   const mv = portfolio.totalMarketValue;
   const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
   const next = sliceRows.map((r) => ({ ...r }));
@@ -5920,9 +5927,9 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
       principal: portfolio.principal,
       totalProfit: cumFromPrev(hit) + todayP,
       profitCny: todayP,
-      totalRateCost: state.algoMode === "cost" ? liveModeRate : next[hit].totalRateCost,
-      totalRateTwr: state.algoMode === "time" ? liveModeRate : next[hit].totalRateTwr,
-      totalRateDietz: state.algoMode === "money" ? liveModeRate : next[hit].totalRateDietz,
+      externalFlowCny: extToday,
+      twRCumulative: Number.isFinite(twr) ? twr : next[hit].twRCumulative,
+      mwrCumulative: Number.isFinite(mwr) ? mwr : next[hit].mwrCumulative,
     };
     return next;
   }
@@ -5936,9 +5943,9 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
       marketValue: mv,
       principal: portfolio.principal,
       totalProfit: lastCum + todayP,
-      totalRateCost: state.algoMode === "cost" ? liveModeRate : last.totalRateCost,
-      totalRateTwr: state.algoMode === "time" ? liveModeRate : last.totalRateTwr,
-      totalRateDietz: state.algoMode === "money" ? liveModeRate : last.totalRateDietz,
+      externalFlowCny: extToday,
+      twRCumulative: Number.isFinite(twr) ? twr : last.twRCumulative,
+      mwrCumulative: Number.isFinite(mwr) ? mwr : last.mwrCumulative,
       fxHkdCny: last.fxHkdCny,
       fxUsdCny: last.fxUsdCny,
     });
@@ -5949,7 +5956,7 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate
 function renderAnalysisFromHistory() {
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const history = buildPortfolioHistory(portfolio.positions, scope.trades);
+  const history = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
   const selected = resolveAnalysisRange(history);
   const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
@@ -6082,8 +6089,11 @@ async function renderAnalysis(options = {}) {
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const todayKey = toDateKey(new Date());
-  const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades);
-  const liveModeRate = computeModeSeries(historyFull, state.algoMode).at(-1)?.rate ?? 0;
+  const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
+  const liveByMode = {
+    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
+    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
+  };
   const fetchRange = buildAnalysisDailyFetchRange(scope, historyFull);
 
   let dbRows = [];
@@ -6112,27 +6122,19 @@ async function renderAnalysis(options = {}) {
   const pseudoHistory = sorted.map((row) => ({
     date: row.date,
     value: row.marketValue,
-    flow: row.profitCny,
+    flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
   }));
   const selectedPh = resolveAnalysisRange(pseudoHistory);
   const dateSet = new Set(selectedPh.map((p) => p.date));
   let sliceRows = sorted.filter((row) => dateSet.has(row.date));
-  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveModeRate);
+  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode, scope.cashTransfers);
 
-  const mySeriesRaw = sliceRows.map((row, idx, arr) => {
-    const isLast = idx === arr.length - 1 && row.date === todayKey;
-    let r = row.totalRateCost;
-    if (state.algoMode === "time") {
-      r = row.totalRateTwr;
-    }
-    if (state.algoMode === "money") {
-      r = row.totalRateDietz;
-    }
-    if (isLast) {
-      r = liveModeRate;
-    }
-    return { date: row.date, rate: r };
-  });
+  const modePts = sliceRows.map((r) => ({
+    date: r.date,
+    value: r.marketValue,
+    flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
+  }));
+  const mySeriesRaw = computeModeSeries(modePts, state.algoMode);
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   const profitSeries = rebaseValueSeriesByFirstDay(
@@ -6816,7 +6818,7 @@ function computeSymbolTotalRateByMode(position, symbolTrades, mode) {
   if (!position) {
     return 0;
   }
-  const resolvedMode = mode === "time" || mode === "money" ? mode : "cost";
+  const resolvedMode = normalizeProfitAlgoMode(mode);
   const trades = Array.isArray(symbolTrades) ? symbolTrades : [];
   if (!trades.length) {
     return Number.isFinite(position.profitRate) ? position.profitRate : 0;
@@ -6834,7 +6836,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   const grouped = new Map();
   const sortedTrades = [...tradeList].sort(sortTradeAsc);
   const groupedTrades = new Map();
-  const activeAlgoMode = state.algoMode === "time" || state.algoMode === "money" ? state.algoMode : "cost";
+  const activeAlgoMode = normalizeProfitAlgoMode(state.algoMode);
 
   for (const trade of sortedTrades) {
     if (!groupedTrades.has(trade.symbol)) {
@@ -7070,8 +7072,11 @@ function dumpMonthlyReturnAudit() {
   return { rows, tsv: "" };
 }
 
-function buildPortfolioHistory(positions, trades = state.trades) {
+function buildPortfolioHistory(positions, trades = state.trades, cashTransfers = null) {
   const tradeList = Array.isArray(trades) ? trades : state.trades;
+  const ctf = Array.isArray(cashTransfers)
+    ? cashTransfers
+    : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
   const end = new Date();
   const endMid = new Date(toDateKey(end) + "T12:00:00");
   let startMid;
@@ -7112,6 +7117,14 @@ function buildPortfolioHistory(positions, trades = state.trades) {
     fxRateMap[symbol] = getFxRateForSymbol(symbol, inferMarket(symbol));
   });
 
+  const extByDate = new Map();
+  for (const r of ctf || []) {
+    const d = String(r.date || "").slice(0, 10);
+    const net = cashTransferRowNetCny(r);
+    if (!d || !Number.isFinite(net) || net === 0) continue;
+    extByDate.set(d, (extByDate.get(d) || 0) + net);
+  }
+
   const tradesByDate = {};
   for (const trade of tradeList) {
     if (!tradesByDate[trade.date]) {
@@ -7135,10 +7148,7 @@ function buildPortfolioHistory(positions, trades = state.trades) {
     }
 
     let value = 0;
-    let flow = 0;
-    for (const trade of dailyTrades) {
-      flow += signedAmount(trade) * getTradeFxRate(trade);
-    }
+    const flow = extByDate.get(dateKey) || 0;
     for (const symbol of symbolSet) {
       const dayClose = klineMap[symbol][dateKey];
       if (Number.isFinite(dayClose) && dayClose > 0) {
@@ -7156,17 +7166,21 @@ function buildPortfolioHistory(positions, trades = state.trades) {
   return points;
 }
 
+function normalizeProfitAlgoMode(mode) {
+  const m = String(mode || "twr").toLowerCase();
+  if (m === "money" || m === "mwr") return "mwr";
+  return "twr";
+}
+
 function computeModeSeries(historyPoints, mode) {
   if (!historyPoints.length) {
     return [{ date: toDateKey(new Date()), rate: 0 }];
   }
-  if (mode === "time") {
+  const m = normalizeProfitAlgoMode(mode);
+  if (m === "twr") {
     return computeTimeWeightedSeries(historyPoints);
   }
-  if (mode === "money") {
-    return computeMoneyWeightedSeries(historyPoints);
-  }
-  return computeCostSeries(historyPoints);
+  return computeMoneyWeightedSeries(historyPoints);
 }
 
 function rebaseRateSeriesByFirstDay(series) {
@@ -7197,20 +7211,6 @@ function rebaseValueSeriesByFirstDay(series, valueKey = "value") {
     ...item,
     [valueKey]: (Number(item?.[valueKey]) || 0) - first,
   }));
-}
-
-function computeCostSeries(points) {
-  const result = [];
-  const startClose = points[0].value - points[0].flow;
-  let sumFlow = 0;
-  points.forEach((point) => {
-    sumFlow += point.flow;
-    const profit = point.value - startClose - sumFlow;
-    const denominator = startClose + sumFlow;
-    const rate = denominator !== 0 ? profit / denominator : 0;
-    result.push({ date: point.date, rate });
-  });
-  return result;
 }
 
 function computeMoneyWeightedSeries(points) {

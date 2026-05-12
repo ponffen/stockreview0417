@@ -10,9 +10,12 @@ const {
   listAllUserIds,
   getLatestAnalysisSnapshotDate,
   setSnapshotWatermark,
+  ensurePerformanceSchemaV2,
 } = require("./db");
 const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 const { fetchSinaForexDayKSeries, toDateKey, enumerateDays, validNumber } = require("../scripts/lib/market-fetch");
+const { buildPortfolioDayPoints, computeTwrFromDayPoints } = require("./return-calcs");
+const { rebuildPerformanceSeriesCache } = require("./performance-cache-service");
 
 const FX_FALLBACK = {
   USD: 7.2,
@@ -152,59 +155,6 @@ function closeBefore(sortedKline, dateKey) {
   return ans;
 }
 
-function computeCostSeries(points) {
-  if (!points.length) return [];
-  const result = [];
-  const startClose = points[0].value - points[0].flow;
-  let sumFlow = 0;
-  points.forEach((point) => {
-    sumFlow += point.flow;
-    const profit = point.value - startClose - sumFlow;
-    const denominator = startClose + sumFlow;
-    const rate = denominator !== 0 ? profit / denominator : 0;
-    result.push({ date: point.date, rate });
-  });
-  return result;
-}
-
-function computeMoneyWeightedSeries(points) {
-  if (!points.length) return [];
-  const result = [];
-  const startClose = points[0].value - points[0].flow;
-  const flows = [];
-  points.forEach((point, index) => {
-    flows.push(point.flow);
-    const totalPeriods = index + 1;
-    let weightedFlow = 0;
-    let sumFlow = 0;
-    flows.forEach((flow, flowIdx) => {
-      const weight = (totalPeriods - flowIdx) / totalPeriods;
-      weightedFlow += flow * weight;
-      sumFlow += flow;
-    });
-    const profit = point.value - startClose - sumFlow;
-    const denominator = startClose + weightedFlow;
-    const rate = denominator !== 0 ? profit / denominator : 0;
-    result.push({ date: point.date, rate });
-  });
-  return result;
-}
-
-function computeTimeWeightedSeries(points) {
-  if (!points.length) return [];
-  const result = [];
-  let compounded = 1;
-  let prevValue = points[0].value - points[0].flow;
-  points.forEach((point) => {
-    const denominator = prevValue + Math.max(point.flow, 0);
-    const dailyRate = denominator !== 0 ? (point.value - prevValue - point.flow) / denominator : 0;
-    compounded *= 1 + dailyRate;
-    result.push({ date: point.date, rate: compounded - 1 });
-    prevValue = point.value;
-  });
-  return result;
-}
-
 function filterTradesForAccount(allTrades, accountId) {
   if (accountId === "all") return [...allTrades].sort(sortTradeAsc);
   return allTrades.filter((t) => t.accountId === accountId).sort(sortTradeAsc);
@@ -245,62 +195,6 @@ function buildFundCumCnyByDate(cashRows, accountId, accounts, allDates, fxUsdMap
     out.set(D, cum);
   }
   return out;
-}
-
-function buildPortfolioHistoryCny(accountTrades, dateKeys, klineBySym, fxUsd, fxHkd) {
-  const symbolSet = [...new Set(accountTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean))];
-  const closeMemo = new Map();
-  const getClose = (sym, dk) => {
-    const key = `${sym}|${dk}`;
-    if (closeMemo.has(key)) return closeMemo.get(key);
-    const kl = klineBySym.get(sym);
-    if (!kl || !kl.length) {
-      closeMemo.set(key, null);
-      return null;
-    }
-    const v = closeOnOrBefore(kl, dk);
-    closeMemo.set(key, v);
-    return v;
-  };
-
-  const tradesByDate = {};
-  for (const tr of accountTrades) {
-    if (!tradesByDate[tr.date]) tradesByDate[tr.date] = [];
-    tradesByDate[tr.date].push(tr);
-  }
-  Object.values(tradesByDate).forEach((list) => list.sort(sortTradeAsc));
-
-  const holdings = {};
-  const points = [];
-  for (const dateKey of dateKeys) {
-    const dailyTrades = tradesByDate[dateKey] || [];
-    for (const tr of dailyTrades) {
-      const sym = normalizeSymbol(tr.symbol);
-      if (!sym) continue;
-      if (holdings[sym] == null) holdings[sym] = 0;
-      holdings[sym] += tr.side === "buy" ? tr.quantity : -tr.quantity;
-    }
-    let flow = 0;
-    for (const tr of dailyTrades) {
-      const m = inferMarket(tr.symbol);
-      const ccy = getSymbolCurrency(tr.symbol, m);
-      const fx = fxToCnyOnDate(fxUsd, fxHkd, ccy, dateKey);
-      flow += signedAmount(tr) * fx;
-    }
-    let value = 0;
-    for (const sym of symbolSet) {
-      const q = holdings[sym] || 0;
-      if (q === 0) continue;
-      const c = getClose(sym, dateKey);
-      if (!(c > 0)) continue;
-      const m = inferMarket(sym);
-      const ccy = getSymbolCurrency(sym, m);
-      const fx = fxToCnyOnDate(fxUsd, fxHkd, ccy, dateKey);
-      value += q * c * fx;
-    }
-    points.push({ date: dateKey, value, flow });
-  }
-  return points;
 }
 
 async function syncSymbolDailyCloseForWindow(symbols, fromDate, toDate, logger = console) {
@@ -357,6 +251,8 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   if (!uid) {
     return { userId: "", skipped: true, reason: "missing-user" };
   }
+
+  await ensurePerformanceSchemaV2();
 
   const latestAllSnapshotDate = await getLatestAnalysisSnapshotDate(uid, "all");
   if (!options.force && latestAllSnapshotDate && latestAllSnapshotDate >= frozenDate) {
@@ -457,6 +353,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
           eodShares: qEod,
           dayTradeQty: dayTurnoverQty,
           dayTradeAmount: dayAmt,
+          dayTradeFlowNative: dayFlow,
           dayClosePrice: closeD,
           dayPnlNative: pnlNative,
           currency: ccy,
@@ -482,25 +379,17 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     if (!accTrades.length) continue;
 
     const fundCumByDate = buildFundCumCnyByDate(allCash, accountId, accounts, allDates, fxUsdMap, fxHkdMap);
-    const points = buildPortfolioHistoryCny(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap);
-    if (!points.length) continue;
+    const dayPoints = buildPortfolioDayPoints(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap, allCash, accountId, accounts);
+    if (!dayPoints.length) continue;
 
-    const costS = computeCostSeries(points);
-    const twrS = computeTimeWeightedSeries(points);
-    const dietzS = computeMoneyWeightedSeries(points);
+    const twrArr = computeTwrFromDayPoints(dayPoints);
 
     let cumProfit = 0;
-    let prevMv = 0;
-    for (let i = 0; i < points.length; i += 1) {
-      const p = points[i];
+    for (let i = 0; i < dayPoints.length; i += 1) {
+      const p = dayPoints[i];
+      const tw = twrArr[i] || { twRDaily: 0, twRCumulative: 0 };
       const dk = p.date;
       const profitCny = profitCnyByAccDate.get(`${accountId}|${dk}`) ?? 0;
-      const beginNav = i === 0 ? Math.max(validNumber(points[0].value - points[0].flow, 0), 1e-9) : prevMv;
-      const rateCostD = beginNav > 0 ? profitCny / beginNav : 0;
-      const twrDaily =
-        i === 0 ? twrS[0]?.rate ?? 0 : (1 + (twrS[i]?.rate ?? 0)) / (1 + (twrS[i - 1]?.rate ?? 0)) - 1;
-      const dietzDaily =
-        i === 0 ? dietzS[0]?.rate ?? 0 : (1 + (dietzS[i]?.rate ?? 0)) / (1 + (dietzS[i - 1]?.rate ?? 0)) - 1;
 
       let sigmaCny = 0;
       for (const tr of accTrades) {
@@ -518,25 +407,28 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
           accountId,
           date: dk,
           profitCny,
-          rateCost: rateCostD,
-          rateTwr: twrDaily,
-          rateDietz: dietzDaily,
+          twRDaily: tw.twRDaily,
+          twRCumulative: tw.twRCumulative,
+          externalFlowCny: p.extFlow,
+          externalFlowNative: p.externalFlowNative,
           totalProfit: cumProfit,
-          totalRateCost: costS[i]?.rate ?? 0,
-          totalRateTwr: twrS[i]?.rate ?? 0,
-          totalRateDietz: dietzS[i]?.rate ?? 0,
           principal,
-          marketValue: p.value,
+          marketValue: p.nav,
           fxHkdCny: fxHkdMap[dk] ?? null,
           fxUsdCny: fxUsdMap[dk] ?? null,
           createdAt: Date.now(),
         },
         uid
       );
-      prevMv = p.value;
       analysisRowsWritten += 1;
     }
   }
+
+  await rebuildPerformanceSeriesCache({
+    userId: uid,
+    asOfDate: frozenDate,
+    accountIds,
+  });
 
   return {
     userId: uid,

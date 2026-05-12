@@ -5,7 +5,7 @@ const SEED_USER_PHONE = "18310270720";
 const DEFAULT_SETTINGS = {
   route: "earning",
   useDemoData: true,
-  algoMode: "cost",
+  algoMode: "twr",
   benchmark: "none",
   stageRange: "month",
   rangeDays: 30,
