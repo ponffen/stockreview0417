@@ -1142,6 +1142,40 @@ async function deleteAllAnalysisDailySnapshot(userId = null) {
   await q("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
 }
 
+async function deletePerformanceSeriesCacheForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  await q("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
+}
+
+async function upsertPerformanceSeriesCacheRow(input) {
+  const r = input || {};
+  const now = nowMs();
+  await q(
+    `INSERT INTO performance_series_cache (
+       user_id, account_id, as_of_date, preset, algo, period_return, series_json, source_frozen_through, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (user_id, account_id, as_of_date, preset, algo) DO UPDATE SET
+       period_return = EXCLUDED.period_return,
+       series_json = EXCLUDED.series_json,
+       source_frozen_through = EXCLUDED.source_frozen_through,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      String(r.user_id || "").trim(),
+      String(r.account_id || "default").trim() || "default",
+      String(r.as_of_date || "").slice(0, 10),
+      String(r.preset || "").trim(),
+      String(r.algo || "").trim(),
+      validNumber(r.period_return, 0),
+      r.series_json == null ? null : String(r.series_json),
+      String(r.source_frozen_through || "").slice(0, 10),
+      now,
+    ]
+  );
+}
+
 async function deleteAllDataForUser(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -1986,6 +2020,8 @@ module.exports = {
   upsertAnalysisDailySnapshot,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
+  deletePerformanceSeriesCacheForUser,
+  upsertPerformanceSeriesCacheRow,
   deleteAllDataForUser,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,

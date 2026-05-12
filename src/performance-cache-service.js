@@ -1,4 +1,8 @@
-const { getAnalysisDailySnapshots, q } = require("./db");
+const {
+  getAnalysisDailySnapshots,
+  deletePerformanceSeriesCacheForUser,
+  upsertPerformanceSeriesCacheRow,
+} = require("./db");
 
 const PRESETS = ["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"];
 const ALGOS = ["twr", "mwr"];
@@ -151,34 +155,7 @@ function mwrPeriodFromSnapshots(rows, start, end) {
 }
 
 async function deletePerformanceSeriesForUser(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) return;
-  await q("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
-}
-
-async function upsertPerformanceSeriesRow(row) {
-  const now = Date.now();
-  await q(
-    `INSERT INTO performance_series_cache (
-       user_id, account_id, as_of_date, preset, algo, period_return, series_json, source_frozen_through, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     ON CONFLICT (user_id, account_id, as_of_date, preset, algo) DO UPDATE SET
-       period_return = EXCLUDED.period_return,
-       series_json = EXCLUDED.series_json,
-       source_frozen_through = EXCLUDED.source_frozen_through,
-       updated_at = EXCLUDED.updated_at`,
-    [
-      row.user_id,
-      row.account_id,
-      row.as_of_date,
-      row.preset,
-      row.algo,
-      row.period_return,
-      row.series_json,
-      row.source_frozen_through,
-      now,
-    ]
-  );
+  return deletePerformanceSeriesCacheForUser(userId);
 }
 
 /**
@@ -221,7 +198,7 @@ async function rebuildPerformanceSeriesCache(opts) {
         } else {
           pr = mwrPeriodFromSnapshots(rows, start, end);
         }
-        await upsertPerformanceSeriesRow({
+        await upsertPerformanceSeriesCacheRow({
           user_id: userId,
           account_id: accountId,
           as_of_date: asOf,
