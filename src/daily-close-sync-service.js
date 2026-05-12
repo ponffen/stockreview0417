@@ -11,6 +11,8 @@ const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 
 const POSITION_EPSILON = 1e-6;
 const KEEP_AFTER_FLAT_DAYS = 365;
+const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
+const FX_DAILY_LOOKBACK_DAYS = 7;
 
 function normalizeLifecycleTrade(raw) {
   const symbol = normalizeSymbol(raw?.symbol);
@@ -136,6 +138,26 @@ async function buildGlobalDailyClosePlan(asOfDate) {
         prev.latestTradeDate = lifecycle.lastTradeDate;
       }
     }
+  }
+  const fxFrom = addCalendarDays(dateKey, -FX_DAILY_LOOKBACK_DAYS);
+  for (const fxSymbol of FX_DAILY_SYNC_SYMBOLS) {
+    const prev = bySymbol.get(fxSymbol);
+    if (!prev) {
+      bySymbol.set(fxSymbol, {
+        symbol: fxSymbol,
+        from: fxFrom,
+        to: dateKey,
+        active: true,
+        userCount: 0,
+        currentHolderUsers: 0,
+        latestTradeDate: null,
+      });
+      continue;
+    }
+    // 即使该 symbol 已由交易生命周期计划覆盖，也强制把范围延伸到 asOfDate，确保每日外汇更新。
+    prev.from = prev.from < fxFrom ? prev.from : fxFrom;
+    prev.to = prev.to > dateKey ? prev.to : dateKey;
+    prev.active = true;
   }
   return [...bySymbol.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
