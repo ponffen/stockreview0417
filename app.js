@@ -679,7 +679,7 @@ async function startAppAfterAuth(options = {}) {
   });
   // 历史汇率延后拉取，避免与首屏快照并发请求。
   window.setTimeout(() => {
-    void initializeFxRates({ skipFinalRender: true });
+    void initializeFxRates();
   }, 1_200);
   if (!quoteIntervalStarted) {
     quoteIntervalStarted = true;
@@ -768,6 +768,15 @@ async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
     result[endDate] = 1;
     return result;
   }
+  // 优先用本库已落地的历史汇率，避免外部源超时时回退固定汇率导致现金/本金口径偏差。
+  try {
+    const fromApi = await fetchFxSeriesFromDailyCloseApi(currency, startDate, endDate);
+    if (fromApi && Object.keys(fromApi).length) {
+      return fromApi;
+    }
+  } catch {
+    // fallback to upstream
+  }
   try {
     const full = await fetchSinaForexDayKSeries(currency, startDate, endDate);
     if (full && Object.keys(full).length) {
@@ -791,6 +800,36 @@ async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return result;
+}
+
+async function fetchFxSeriesFromDailyCloseApi(currency, startDate, endDate) {
+  if (!apiReady || (currency !== "USD" && currency !== "HKD")) {
+    return {};
+  }
+  const symbol = currency === "USD" ? "fx_usdcny" : "fx_hkdcny";
+  const response = await apiFetch(
+    `${getApiBaseForFetch()}/daily-close?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(
+      startDate
+    )}&to=${encodeURIComponent(endDate)}`,
+    {
+      cache: "no-store",
+      timeoutMs: 15_000,
+    }
+  );
+  if (!response.ok) {
+    return {};
+  }
+  const payload = await response.json().catch(() => ({}));
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  const out = {};
+  for (const row of rows) {
+    const day = String(row?.date || row?.day || "").slice(0, 10);
+    const close = Number(row?.close);
+    if (day && Number.isFinite(close) && close > 0 && day >= startDate && day <= endDate) {
+      out[day] = close;
+    }
+  }
+  return out;
 }
 
 async function fetchSinaForexDayKSeries(currency, startDate, endDate) {
