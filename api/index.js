@@ -350,6 +350,10 @@ module.exports = async function handler(req, res) {
   const isTradesPostDirect = req.method === "POST" && pathOnly === "/api/trades";
   const isTradesDeleteDirect = req.method === "DELETE" && !!tradesDeleteMatch;
   const isTradesImportDirect = req.method === "POST" && pathOnly === "/api/trades/import";
+  const cashTransfersDeleteMatch = pathOnly.match(/^\/api\/cash-transfers\/([^/]+)$/) || null;
+  const isCashTransfersGetDirect = req.method === "GET" && pathOnly === "/api/cash-transfers";
+  const isCashTransfersPostDirect = req.method === "POST" && pathOnly === "/api/cash-transfers";
+  const isCashTransfersDeleteDirect = req.method === "DELETE" && !!cashTransfersDeleteMatch;
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
   const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
 
@@ -496,6 +500,54 @@ module.exports = async function handler(req, res) {
       console.error("[api/index.js] direct trades error:", error);
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "direct trades failed" }));
+      return;
+    }
+  }
+
+  if (isCashTransfersGetDirect || isCashTransfersPostDirect || isCashTransfersDeleteDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const { getCashTransfers, upsertCashTransfer, deleteCashTransferById } = require("../src/db");
+
+      if (isCashTransfersGetDirect) {
+        const data = await getCashTransfers(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isCashTransfersPostDirect) {
+        const body = await readJsonBody(req);
+        const saved = await upsertCashTransfer(body || {}, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: saved }));
+        return;
+      }
+
+      if (isCashTransfersDeleteDirect) {
+        const cashId = decodeURIComponent(String(cashTransfersDeleteMatch?.[1] || "").trim());
+        if (!cashId) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "invalid cash transfer id" }));
+          return;
+        }
+        const ok = await deleteCashTransferById(cashId, userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, deleted: ok }));
+        return;
+      }
+    } catch (error) {
+      console.error("[api/index.js] direct cash transfers error:", error);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "direct cash transfers failed" }));
       return;
     }
   }
