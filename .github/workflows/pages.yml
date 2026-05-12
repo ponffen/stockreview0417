@@ -38,7 +38,14 @@ jobs:
           cache: npm
 
       - name: Build static site state snapshot
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
         run: |
+          if [ -z "$DATABASE_URL" ] && [ -z "$POSTGRES_URL" ]; then
+            echo "::error::Missing DATABASE_URL/POSTGRES_URL secret for Pages workflow"
+            exit 1
+          fi
           npm ci
           npm run build:site-state
 
