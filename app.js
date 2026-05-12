@@ -3677,25 +3677,7 @@ function renderPublicEarningProfileHtml(d) {
     let stageInner = "";
     let stageCls = "profit-main";
     try {
-      let stageProfitOv = 0;
-      if (state.stageRange === "month") {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.monthProfitNative), 0);
-      } else if (state.stageRange === "ytd") {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.yearProfitNative), 0);
-      } else {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.totalProfitNative), 0);
-      }
-      let stageRateOv =
-        portfolio.overviewPrincipal > 0 ? stageProfitOv / portfolio.overviewPrincipal : 0;
-      if (state.algoMode === "time" || state.algoMode === "money") {
-        const fullHist = buildPortfolioHistory(portfolio.positions, scope.trades);
-        const firstTradeDate =
-          scope.trades.length > 0 ? [...scope.trades].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
-        const startKey = getStageStartKey(state.stageRange, firstTradeDate);
-        const stageHist = fullHist.filter((p) => p.date >= startKey);
-        const histForMode = stageHist.length ? stageHist : fullHist;
-        stageRateOv = computeModeSeries(histForMode, state.algoMode).at(-1)?.rate ?? 0;
-      }
+      const { stageRate: stageRateOv } = computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode);
       todayInner = formatPublicProfileRateOnlyHtml(portfolio.todayRate);
       todayCls = `profit-main ${twrColorClass(portfolio.todayRate)}`;
       stageInner = formatPublicProfileRateOnlyHtml(stageRateOv);
@@ -3828,31 +3810,10 @@ function syncPublicProfileStageRow() {
   withPublicTradesContext(d, () => {
     const scope = { accountId: "all", trades: state.trades };
     const portfolio = computePortfolio(scope.trades, []);
-    const vis = portfolio.visiblePositions;
-    const bookCcy = portfolio.overviewBookCurrency || "CNY";
-    const toOb = (p, v) => nativeToOverviewBook(p, v, bookCcy);
     const prevSr = state.stageRange;
     state.stageRange = sr;
     try {
-      let stageProfitOv = 0;
-      if (state.stageRange === "month") {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.monthProfitNative), 0);
-      } else if (state.stageRange === "ytd") {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.yearProfitNative), 0);
-      } else {
-        stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.totalProfitNative), 0);
-      }
-      let stageRateOv =
-        portfolio.overviewPrincipal > 0 ? stageProfitOv / portfolio.overviewPrincipal : 0;
-      if (state.algoMode === "time" || state.algoMode === "money") {
-        const fullHist = buildPortfolioHistory(portfolio.positions, scope.trades);
-        const firstTradeDate =
-          scope.trades.length > 0 ? [...scope.trades].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
-        const startKey = getStageStartKey(state.stageRange, firstTradeDate);
-        const stageHist = fullHist.filter((p) => p.date >= startKey);
-        const histForMode = stageHist.length ? stageHist : fullHist;
-        stageRateOv = computeModeSeries(histForMode, state.algoMode).at(-1)?.rate ?? 0;
-      }
+      const { stageRate: stageRateOv } = computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode);
       main.innerHTML = formatPublicProfileRateOnlyHtml(stageRateOv);
       main.className = `profit-main ${twrColorClass(stageRateOv)}`;
     } finally {
@@ -4686,26 +4647,12 @@ function renderOverviewAndStockTable() {
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const vis = portfolio.visiblePositions;
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const toOb = (p, v) => nativeToOverviewBook(p, v, bookCcy);
-  let stageProfitOv = 0;
-  if (state.stageRange === "month") {
-    stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.monthProfitNative), 0);
-  } else if (state.stageRange === "ytd") {
-    stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.yearProfitNative), 0);
-  } else {
-    stageProfitOv = vis.reduce((s, p) => s + toOb(p, p.totalProfitNative), 0);
-  }
-  let stageRateOv =
-    portfolio.overviewPrincipal > 0 ? stageProfitOv / portfolio.overviewPrincipal : 0;
-  if (state.algoMode === "time" || state.algoMode === "money") {
-    const fullHist = buildPortfolioHistory(portfolio.positions, scope.trades);
-    const firstTradeDate =
-      scope.trades.length > 0 ? [...scope.trades].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
-    const startKey = getStageStartKey(state.stageRange, firstTradeDate);
-    const stageHist = fullHist.filter((p) => p.date >= startKey);
-    const histForMode = stageHist.length ? stageHist : fullHist;
-    stageRateOv = computeModeSeries(histForMode, state.algoMode).at(-1)?.rate ?? 0;
-  }
+  const { stageProfit: stageProfitOv, stageRate: stageRateOv } = computeStageOverviewMetrics(
+    portfolio,
+    scope.trades,
+    state.stageRange,
+    state.algoMode,
+  );
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
     { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
@@ -4800,6 +4747,30 @@ function getStageStartKey(stageRange, firstDate) {
     return firstDate;
   }
   return toDateKey(start);
+}
+
+function buildStageHistoryByRange(fullHist, stageRange, firstTradeDate) {
+  const history = Array.isArray(fullHist) ? fullHist : [];
+  if (!history.length) {
+    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  if (stageRange === "total") {
+    return history;
+  }
+  const startKey = getStageStartKey(stageRange, firstTradeDate);
+  const filtered = history.filter((point) => point.date >= startKey);
+  return filtered.length ? filtered : history;
+}
+
+function computeStageOverviewMetrics(portfolio, trades, stageRange = state.stageRange, algoMode = state.algoMode) {
+  const tradeList = Array.isArray(trades) ? trades : [];
+  const fullHist = buildPortfolioHistory(portfolio.positions, tradeList);
+  const firstTradeDate =
+    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
+  const stageHist = buildStageHistoryByRange(fullHist, stageRange, firstTradeDate);
+  const stageProfit = buildProfitSeries(stageHist).at(-1)?.value ?? 0;
+  const stageRate = computeModeSeries(stageHist, algoMode).at(-1)?.rate ?? 0;
+  return { stageProfit, stageRate };
 }
 
 /** 分析页「年初至今」：本年 1 月 1 日起（analysisPreset=ytd，兼容旧数据 rangeDays=365）。 */
@@ -6169,9 +6140,12 @@ async function renderAnalysis(options = {}) {
     valueFormatter: (value) => formatNumber(value, 2),
   });
 
-  const lastMy = mySeries.at(-1)?.rate ?? 0;
+  const selectedLive = resolveAnalysisRange(historyFull);
+  const liveRateSeries = rebaseRateSeriesByFirstDay(computeModeSeries(selectedLive, state.algoMode));
+  const liveProfitSeries = buildProfitSeries(selectedLive);
+  const lastMy = liveRateSeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
-  const lastProfit = profitSeries.at(-1)?.value ?? 0;
+  const lastProfit = liveProfitSeries.at(-1)?.value ?? 0;
   const excess = lastMy - lastBench;
   if (analysisRateSummary) {
     analysisRateSummary.textContent =
