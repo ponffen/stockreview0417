@@ -352,6 +352,7 @@ async function buildFxMaps(allDates, logger = console) {
 
 async function freezeUserToDate(userId, frozenDate, options = {}) {
   const logger = options.logger || console;
+  const syncDailyClose = options.syncDailyClose === true;
   const uid = String(userId || "").trim();
   if (!uid) {
     return { userId: "", skipped: true, reason: "missing-user" };
@@ -380,7 +381,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   const allDates = enumerateDays(minD, frozenDate);
   const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
 
-  const syncedDailyCloseRows = await syncSymbolDailyCloseForWindow(symbols, minD, frozenDate, logger);
+  const syncedDailyCloseRows = syncDailyClose ? await syncSymbolDailyCloseForWindow(symbols, minD, frozenDate, logger) : 0;
 
   const klineBySym = new Map();
   for (const sym of symbols) {
@@ -543,6 +544,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     frozenDate,
     symbols: symbols.length,
     syncedDailyCloseRows,
+    dailyCloseSyncedInFreeze: syncDailyClose,
     symbolRowsWritten,
     analysisRowsWritten,
   };
@@ -552,6 +554,7 @@ async function runDailyFreeze(options = {}) {
   const logger = options.logger || console;
   const frozenDate = resolveFrozenDate(options.frozenDate);
   const force = options.force === true;
+  const syncDailyClose = options.syncDailyClose === true;
   const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
   const userIds = userIdsInput.length
     ? [...new Set(userIdsInput.map((u) => String(u || "").trim()).filter(Boolean))]
@@ -560,7 +563,7 @@ async function runDailyFreeze(options = {}) {
   const results = [];
   try {
     for (const uid of userIds) {
-      const one = await freezeUserToDate(uid, frozenDate, { logger, force });
+      const one = await freezeUserToDate(uid, frozenDate, { logger, force, syncDailyClose });
       results.push(one);
     }
     const successCount = results.filter((r) => !r.skipped).length;

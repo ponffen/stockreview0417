@@ -1,41 +1,21 @@
 #!/usr/bin/env node
 /**
- * 按成交区间从新浪 DailyK_Batch 回填日收盘价到 symbol_daily_close。
+ * 按全体用户持仓生命周期规则回填 symbol_daily_close。
  * 用法：node scripts/backfill-symbol-daily-close.js
  */
 const path = require("node:path");
 
-const {
-  getTradeWindowForDailyClose,
-  upsertSymbolDailyCloseBatch,
-  getCliUserId,
-} = require(path.join(__dirname, "..", "src", "db"));
-const { fetchRemoteDailyClosesForSymbol } = require(path.join(__dirname, "..", "src", "daily-close-backfill"));
+const { runDailyCloseSync } = require(path.join(__dirname, "..", "src", "daily-close-sync-service"));
 
 async function main() {
-  const uid = await getCliUserId();
-  const w = await getTradeWindowForDailyClose(uid);
-  if (!w.symbols.length) {
-    console.log("[daily-close] 无成交，退出。");
-    process.exit(0);
-  }
-  console.log(`[daily-close] 区间 ${w.from} ~ ${w.to}，共 ${w.symbols.length} 个标的`);
-  const counts = {};
-  for (let i = 0; i < w.symbols.length; i += 1) {
-    const sym = w.symbols[i];
-    process.stdout.write(`  [${i + 1}/${w.symbols.length}] ${sym} … `);
-    try {
-      const rows = await fetchRemoteDailyClosesForSymbol(sym, w.from, w.to);
-      await upsertSymbolDailyCloseBatch(rows);
-      counts[sym] = rows.length;
-      console.log(rows.length, "行");
-    } catch (e) {
-      console.log("失败", e.message || e);
-      counts[sym] = 0;
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  console.log("[daily-close] 完成", counts);
+  const asOfDate = process.argv[2] ? String(process.argv[2]).slice(0, 10) : "";
+  const result = await runDailyCloseSync({
+    asOfDate: asOfDate || undefined,
+    logger: console,
+  });
+  console.log(
+    `[daily-close] asOf=${result.asOfDate} planned=${result.symbolsPlanned} synced=${result.symbolsSynced} skipped=${result.symbolsSkipped} failed=${result.symbolsFailed} rowsFetched=${result.rowsFetched} rowsWritten=${result.rowsWritten}`
+  );
 }
 
 main().catch((e) => {

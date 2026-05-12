@@ -712,6 +712,7 @@ const {
 } = require("./src/community-service");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
+const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
@@ -1525,10 +1526,12 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
   try {
     const forcedDate = req.query?.frozenDate || req.body?.frozenDate;
     const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
+    const syncDailyClose = parseBooleanInput(req.query?.syncDailyClose ?? req.body?.syncDailyClose, false);
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
     const result = await runDailyFreeze({
       frozenDate: forcedDate,
       force,
+      syncDailyClose,
       userIds,
       logger: console,
     });
@@ -1539,6 +1542,31 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     res.json({ ok: true, data: result });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "freeze failed" });
+  }
+});
+
+app.all("/api/cron/sync-daily-close", async (req, res) => {
+  const sessionUser = readUserIdFromRequest(req);
+  if (!sessionUser && !isCronAuthorized(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized cron request" });
+    return;
+  }
+  try {
+    const asOfDate = req.query?.asOfDate || req.body?.asOfDate;
+    const bodySymbols = Array.isArray(req.body?.symbols) ? req.body.symbols : [];
+    const querySymbols = sanitizeSymbolList(req.query?.symbols);
+    const symbols = [...new Set([...bodySymbols, ...querySymbols].map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+    const result = await runDailyCloseSync({
+      asOfDate,
+      symbols,
+      logger: console,
+    });
+    dailyCloseForTradesMemoryCache.clear();
+    realtimePatchMemoryCache.clear();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "sync daily close failed" });
   }
 });
 
