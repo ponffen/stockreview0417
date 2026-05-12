@@ -5639,6 +5639,7 @@ function renderTradeTable() {
   }
   syncTradePanelTabUi();
   if (!tradeTableBody) {
+    renderCashTransferTable();
     return;
   }
   const trades = getFilteredTrades(state.tradeFilterAccountId);
@@ -5648,6 +5649,7 @@ function renderTradeTable() {
         <td colspan="6"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
       </tr>
     `;
+    renderCashTransferTable();
     return;
   }
   const sorted = [...trades].sort(sortTradeDesc);
