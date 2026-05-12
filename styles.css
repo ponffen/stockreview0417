@@ -1288,7 +1288,7 @@ h2 {
 .trade-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 560px;
+  min-width: 640px;
   table-layout: fixed;
 }
 
@@ -1372,6 +1372,11 @@ h2 {
   width: 13ch;
 }
 
+.trade-table:not(.trade-table--cash) th:nth-child(7),
+.trade-table:not(.trade-table--cash) td:nth-child(7) {
+  width: 24%;
+}
+
 .trade-table thead th:nth-child(4),
 .trade-table thead th:nth-child(5),
 .trade-table thead th:nth-child(6) {
@@ -1382,6 +1387,16 @@ h2 {
 .trade-table td:nth-child(5),
 .trade-table td:nth-child(6) {
   text-align: right;
+}
+
+.trade-note-head,
+.trade-note-cell {
+  text-align: left !important;
+}
+
+.trade-table--cash thead th:last-child,
+.trade-table--cash tbody td:last-child {
+  text-align: left !important;
 }
 
 .trade-row--clickable,
@@ -1582,6 +1597,16 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.stock-record-subhead-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stock-record-account-wrap {
+  min-width: 148px;
 }
 
 .stock-record-table {
@@ -2423,6 +2448,11 @@ body.auth-mode {
 .stock-record-table--pub th:nth-child(4),
 .stock-record-table--pub td:nth-child(4) {
   text-align: right;
+}
+
+.stock-record-table--pub th:nth-child(5),
+.stock-record-table--pub td:nth-child(5) {
+  text-align: left;
 }
 
 .community-profile-toolbar {

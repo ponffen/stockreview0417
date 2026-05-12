@@ -91,6 +91,7 @@ const STATE_SYNC_KEYS = [
   "accounts",
   "selectedAccountId",
   "tradeFilterAccountId",
+  "stockRecordAccountId",
   "stockSortKey",
   "stockSortOrder",
   "stockAmountDisplay",
@@ -177,6 +178,7 @@ const state = {
   accounts: [DEFAULT_ACCOUNT],
   selectedAccountId: "all",
   tradeFilterAccountId: "all",
+  stockRecordAccountId: "all",
   stockSortKey: "default",
   stockSortOrder: "default",
   stockAmountDisplay: "native",
@@ -335,6 +337,7 @@ const stockRecordChange = document.getElementById("stockRecordChange");
 const stockRecordChart = document.getElementById("stockRecordChart");
 const stockRecordMarket = document.getElementById("stockRecordMarket");
 const stockRecordRegret = document.getElementById("stockRecordRegret");
+const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
@@ -1770,6 +1773,7 @@ async function hydrateState() {
     state.accounts = normalizeAccounts(parsed.accounts);
     state.selectedAccountId = parsed.selectedAccountId ?? state.selectedAccountId;
     state.tradeFilterAccountId = parsed.tradeFilterAccountId ?? state.tradeFilterAccountId;
+    state.stockRecordAccountId = parsed.stockRecordAccountId ?? state.stockRecordAccountId;
     state.stockSortKey = parsed.stockSortKey ?? state.stockSortKey;
     state.stockSortOrder = parsed.stockSortOrder ?? state.stockSortOrder;
     state.stockAmountDisplay =
@@ -1833,6 +1837,7 @@ async function hydrateState() {
   });
   state.selectedAccountId = resolveValidAccountFilter(state.selectedAccountId);
   state.tradeFilterAccountId = resolveValidAccountFilter(state.tradeFilterAccountId);
+  state.stockRecordAccountId = resolveValidAccountFilter(state.stockRecordAccountId);
   state.customRangeDraftStart = state.customRangeStart;
   state.customRangeDraftEnd = state.customRangeEnd;
   if (!["holdings", "community"].includes(state.appModule)) {
@@ -2282,6 +2287,13 @@ function bindEvents() {
     persistState();
     renderTradeTable();
     renderControls();
+  });
+  stockRecordAccountSelect?.addEventListener("change", () => {
+    state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
+    persistState();
+    if (state.route === "stock-record" && state.activeRecordSymbol) {
+      void renderStockRecordPage(state.activeRecordSymbol);
+    }
   });
   stockSortButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -3065,6 +3077,7 @@ function syncAccountSelectOptions() {
   setSelect(accountFilterSelect, state.selectedAccountId, true);
   setSelect(analysisAccountSelect, state.selectedAccountId, true);
   setSelect(tradeAccountFilterSelect, state.tradeFilterAccountId, true);
+  setSelect(stockRecordAccountSelect, state.stockRecordAccountId, true);
   setSelect(tradeAccountInput, resolveTradeFormDefaultAccountId(), false);
   setSelect(cashTransferAccount, resolveTradeFormDefaultAccountId(), false);
 }
@@ -5626,7 +5639,7 @@ function renderCashTransferTable() {
           <td>${escapeHtml(acc.name || row.accountId)}</td>
           <td>${dirLabel}</td>
           <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)} ${ccy}</td>
-          <td>${escapeHtml(row.note || "—")}</td>
+          <td class="trade-note-cell">${escapeHtml(row.note || "—")}</td>
         </tr>
       `;
     })
@@ -5646,7 +5659,7 @@ function renderTradeTable() {
   if (!trades.length) {
     tradeTableBody.innerHTML = `
       <tr>
-        <td colspan="6"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
+        <td colspan="7"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
       </tr>
     `;
     renderCashTransferTable();
@@ -5665,6 +5678,7 @@ function renderTradeTable() {
           <td class="num ${trade.side === "buy" ? "down" : "up"}">${
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>
+          <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
         </tr>
       `;
     })
@@ -6261,6 +6275,7 @@ function buildAssetSeries(points, ctf) {
 async function openStockRecordDialog(symbol, opts = {}) {
   state.stockRecordFromPublicProfile = opts.fromPublicProfile === true;
   state.activeRecordSymbol = symbol;
+  state.stockRecordAccountId = "all";
   state.previousRoute = state.route;
   state.route = "stock-record";
   state.stockRecordWindow = 30;
@@ -6278,6 +6293,10 @@ async function openStockRecordDialog(symbol, opts = {}) {
 async function renderStockRecordPage(symbol) {
   const detail = state.lastPublicProfileDetail;
   const usePub = state.stockRecordFromPublicProfile && detail?.publicTrades;
+  const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
+  if (!usePub && activeAccountId !== state.stockRecordAccountId) {
+    state.stockRecordAccountId = activeAccountId;
+  }
   let portfolio;
   let scope;
   if (usePub) {
@@ -6286,7 +6305,7 @@ async function renderStockRecordPage(symbol) {
       portfolio = computePortfolio(scope.trades, []);
     });
   } else {
-    scope = getPortfolioScope();
+    scope = getPortfolioScope(activeAccountId);
     portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   }
   const symKey = normalizeSymbol(symbol);
@@ -6294,7 +6313,7 @@ async function renderStockRecordPage(symbol) {
   const symbolTrades = scope.trades
     .filter((item) => normalizeSymbol(item.symbol) === symKey)
     .sort(sortTradeDesc);
-  if (!position) {
+  if (!position && !symbolTrades.length && !usePub && activeAccountId === "all") {
     if (state.route === "stock-record" && state.activeRecordSymbol === symbol) {
       state.route = state.previousRoute || "earning";
       state.activeRecordSymbol = null;
@@ -6306,19 +6325,28 @@ async function renderStockRecordPage(symbol) {
     return;
   }
   const quote = getQuoteBySymbol(symbol);
-  const current = validNumber(quote.current, position.currentPrice);
-  const prev = validNumber(quote.prevClose, position.prevClose, current);
+  const current = validNumber(quote.current, position?.currentPrice, 0);
+  const prev = validNumber(quote.prevClose, position?.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
+  const positionName = position?.name || symbolTrades[0]?.name || quote?.name || symbol;
 
-  stockRecordTitle.textContent = `${getDisplayName(symbol, position.name)}(${formatSymbolForDisplay(symbol)})`;
+  stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = quote.time || state.quoteTime || "--";
   stockRecordPrice.textContent = formatNumber(current, 3);
   stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
   stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
-  stockRecordMarket.textContent = `交易间隔 ${formatRegretRateWithSide(position.regretRate, position.lastTradeSide)}`;
+  const intervalText = position
+    ? formatRegretRateWithSide(position.regretRate, position.lastTradeSide)
+    : "--";
+  stockRecordMarket.textContent = `交易间隔 ${intervalText}`;
   stockRecordRegret.textContent = "";
   stockRecordRegret.className = "hidden";
+  if (stockRecordAccountSelect) {
+    stockRecordAccountSelect.value = activeAccountId;
+    stockRecordAccountSelect.disabled = usePub;
+    stockRecordAccountSelect.closest(".stock-record-account-wrap")?.classList.toggle("hidden", usePub);
+  }
 
   const recTable = stockRecordListBody?.closest("table");
   const headRow = recTable?.querySelector("thead tr");
@@ -6327,8 +6355,8 @@ async function renderStockRecordPage(symbol) {
   }
   if (headRow) {
     headRow.innerHTML = usePub
-      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th>`
-      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th>";
+      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th class="trade-note-head">备注</th>`
+      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th class=\"trade-note-head\">备注</th>";
   }
 
   stockRecordListBody.innerHTML = symbolTrades
@@ -6344,6 +6372,7 @@ async function renderStockRecordPage(symbol) {
           share != null && Number.isFinite(share) ? formatPercent(share) : "—";
         return `${rowCore}
         <td class="num">${shareCell}</td>
+        <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
       </tr>`;
       }
       return `${rowCore}
@@ -6352,6 +6381,7 @@ async function renderStockRecordPage(symbol) {
           trade.amount,
           2,
         )}</td>
+        <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
       </tr>`;
     })
     .join("");
