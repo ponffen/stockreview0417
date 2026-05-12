@@ -1660,7 +1660,8 @@ function parseTencentQuoteRecord(symbol, rawText) {
   const prevClose = parseTencentPriceField(parts[4]);
   const rawTime = String(parts[30] || parts[31] || "--").trim();
   const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, symbol);
-  const quoteDate = parseQuoteTimeToDateKey(time);
+  // 计算口径必须使用腾讯原始行情日期（市场日），展示时间才使用北京时间。
+  const marketDate = parseQuoteTimeToDateKey(rawTime) || parseQuoteTimeToDateKey(time);
   if (!Number.isFinite(current) || current <= 0) {
     return null;
   }
@@ -1669,7 +1670,10 @@ function parseTencentQuoteRecord(symbol, rawText) {
     current,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
     time: time || "--",
-    quoteDate,
+    rawTime: rawTime || "--",
+    marketDate,
+    // 兼容旧字段：保持 quoteDate 存在，值与 marketDate 一致。
+    quoteDate: marketDate,
   };
 }
 
@@ -5045,7 +5049,9 @@ function getBeijingTradingDateKey(now = new Date()) {
 function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
   const tradingKey = getBeijingTradingDateKey(now);
   const quoteKey =
+    (quote && quote.marketDate) ||
     (quote && quote.quoteDate) ||
+    (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
     (quote && parseQuoteTimeToDateKey(quote.time)) ||
     null;
   if (!quoteKey) {

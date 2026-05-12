@@ -258,6 +258,46 @@ function parseQuoteTimeToDateKey(timeStr) {
   return null;
 }
 
+function getShanghaiWallClockParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return {
+    y: Number(get("year")),
+    m: Number(get("month")),
+    d: Number(get("day")),
+    h: Number(get("hour")),
+    min: Number(get("minute")),
+  };
+}
+
+function getTradingDateKeyBy0830(baseDate = new Date()) {
+  const { y, m, d, h, min } = getShanghaiWallClockParts(baseDate);
+  const current = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  if (h < 8 || (h === 8 && min < 30)) {
+    return addCalendarDays(current, -1);
+  }
+  return current;
+}
+
+function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
+  const tradingKey = getTradingDateKeyBy0830(now);
+  const quoteKey =
+    (quote && quote.marketDate) ||
+    (quote && quote.quoteDate) ||
+    (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
+    (quote && parseQuoteTimeToDateKey(quote.time)) ||
+    null;
+  return !!quoteKey && quoteKey === tradingKey;
+}
+
 function quoteTimeSortKey(timeStr) {
   if (!timeStr || typeof timeStr !== "string") {
     return 0;
@@ -302,8 +342,9 @@ function parseTencentQuoteRecord(symbol, rawText) {
   const name = String(parts[1] || "").trim() || symbol;
   const current = parseTencentPriceField(parts[3]);
   const prevClose = parseTencentPriceField(parts[4]);
-  const time = String(parts[30] || parts[31] || "--").trim();
-  const quoteDate = parseQuoteTimeToDateKey(time);
+  const rawTime = String(parts[30] || parts[31] || "--").trim();
+  const time = rawTime;
+  const marketDate = parseQuoteTimeToDateKey(rawTime) || parseQuoteTimeToDateKey(time);
   if (!Number.isFinite(current) || current <= 0) {
     return null;
   }
@@ -312,7 +353,9 @@ function parseTencentQuoteRecord(symbol, rawText) {
     current,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
     time: time || "--",
-    quoteDate,
+    rawTime: rawTime || "--",
+    marketDate,
+    quoteDate: marketDate,
   };
 }
 
@@ -1854,7 +1897,9 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
       const currency = symbol.startsWith("hk") || symbol.startsWith("rt_hk") ? "HKD" : symbol.startsWith("sh") || symbol.startsWith("sz") ? "CNY" : "USD";
       const rate = fxRate(currency);
       liveMarketValue += item.quantity * current * rate;
-      todayProfitCny += item.quantity * (current - prevClose) * rate;
+      if (shouldCountTodayPositionPnlFromQuote(quote)) {
+        todayProfitCny += item.quantity * (current - prevClose) * rate;
+      }
     }
 
     const todayKey = dateKeyDaysFromToday(0);
