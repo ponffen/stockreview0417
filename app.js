@@ -6677,6 +6677,84 @@ function drawStockRecordChart(symbol, symbolTrades) {
   });
 }
 
+function buildSymbolHistoryPoints(symbol, symbolTrades, fallbackPrice = 0) {
+  const trades = Array.isArray(symbolTrades) ? symbolTrades : [];
+  if (!trades.length) {
+    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  const todayKey = toDateKey(new Date());
+  const startDate = String(trades[0].date || todayKey).slice(0, 10);
+  const startMidParsed = new Date(`${startDate}T12:00:00`);
+  const endMid = new Date(`${todayKey}T12:00:00`);
+  const startMid = Number.isNaN(startMidParsed.getTime()) ? new Date(endMid) : startMidParsed;
+
+  const dateKeys = [];
+  const cursor = new Date(startMid);
+  while (cursor <= endMid) {
+    dateKeys.push(toDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const byDate = Object.create(null);
+  for (const trade of trades) {
+    if (!byDate[trade.date]) {
+      byDate[trade.date] = [];
+    }
+    byDate[trade.date].push(trade);
+  }
+
+  const kline = getKlineBySymbol(symbol);
+  const klineMap = Object.fromEntries(kline.map((item) => [item.day, Number(item.close)]));
+  const quote = getQuoteBySymbol(symbol);
+  let lastPrice = validNumber(
+    quote.prevClose,
+    trades[trades.length - 1]?.price,
+    trades[0]?.price,
+    fallbackPrice,
+    0,
+  );
+  let quantity = 0;
+  const points = [];
+
+  for (const dateKey of dateKeys) {
+    const dailyTrades = byDate[dateKey] || [];
+    let flow = 0;
+    for (const trade of dailyTrades) {
+      quantity += trade.side === "buy" ? trade.quantity : -trade.quantity;
+      flow += signedAmount(trade);
+    }
+    const dayClose = Number(klineMap[dateKey]);
+    if (Number.isFinite(dayClose) && dayClose > 0) {
+      lastPrice = dayClose;
+    } else if (dateKey === todayKey) {
+      const current = validNumber(quote.current, 0);
+      if (current > 0) {
+        lastPrice = current;
+      }
+    }
+    points.push({
+      date: dateKey,
+      value: quantity * validNumber(lastPrice, 0),
+      flow,
+    });
+  }
+  return points;
+}
+
+function computeSymbolTotalRateByMode(position, symbolTrades, mode) {
+  if (!position) {
+    return 0;
+  }
+  const resolvedMode = mode === "time" || mode === "money" ? mode : "cost";
+  const trades = Array.isArray(symbolTrades) ? symbolTrades : [];
+  if (!trades.length) {
+    return Number.isFinite(position.profitRate) ? position.profitRate : 0;
+  }
+  const points = buildSymbolHistoryPoints(position.symbol, trades, position.currentPrice);
+  const rate = computeModeSeries(points, resolvedMode).at(-1)?.rate;
+  return Number.isFinite(rate) ? rate : Number.isFinite(position.profitRate) ? position.profitRate : 0;
+}
+
 function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   const tradeList = Array.isArray(trades) ? trades : state.trades;
   const ctf = Array.isArray(cashTransfersForScope)
@@ -6684,8 +6762,14 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
   const grouped = new Map();
   const sortedTrades = [...tradeList].sort(sortTradeAsc);
+  const groupedTrades = new Map();
+  const activeAlgoMode = state.algoMode === "time" || state.algoMode === "money" ? state.algoMode : "cost";
 
   for (const trade of sortedTrades) {
+    if (!groupedTrades.has(trade.symbol)) {
+      groupedTrades.set(trade.symbol, []);
+    }
+    groupedTrades.get(trade.symbol).push(trade);
     if (!grouped.has(trade.symbol)) {
       grouped.set(trade.symbol, {
         symbol: trade.symbol,
@@ -6761,6 +6845,10 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
       totalProfit: totalProfitNative,
       todayProfit: todayProfitNative,
     };
+  });
+
+  positions.forEach((item) => {
+    item.totalRate = computeSymbolTotalRateByMode(item, groupedTrades.get(item.symbol), activeAlgoMode);
   });
 
   positions.forEach((item) => {
@@ -7320,6 +7408,11 @@ function pickSeriesExtremaPoints(seriesValues) {
   return { minPoint, maxPoint };
 }
 
+const CHART_AXIS_FONT = "13px sans-serif";
+const CHART_EXTREMA_FONT = "13px sans-serif";
+const CHART_CROSSHAIR_FONT = "13px sans-serif";
+const CHART_LABEL_BOX_HEIGHT = 20;
+
 function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   if (!ctx || !payload || !series?.values?.length) {
     return;
@@ -7333,23 +7426,23 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
     Number(points[0].value) === Number(points[1].value);
   const uniquePoints = samePoint ? [points[0]] : points;
   ctx.save();
-  ctx.font = "11px sans-serif";
+  ctx.font = CHART_EXTREMA_FONT;
   ctx.textBaseline = "middle";
   uniquePoints.forEach((point, idx) => {
     const rawText = formatter(point.value, point.key || series.key, point.axis || series.axis || "left");
     const text = String(rawText || "");
-    const textWidth = Math.max(38, ctx.measureText(text).width + 10);
+    const textWidth = Math.max(44, ctx.measureText(text).width + 12);
     const preferRight = point.x <= (payload.xMin + payload.xMax) / 2;
     let x = preferRight ? point.x + textWidth / 2 + 8 : point.x - textWidth / 2 - 8;
     x = Math.max(payload.xMin + textWidth / 2 + 2, Math.min(payload.xMax - textWidth / 2 - 2, x));
-    let y = point.y + (idx === 0 ? -14 : 14);
+    let y = point.y + (idx === 0 ? -16 : 16);
     y = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, y));
     ctx.fillStyle = series.color || "#2f80f6";
     ctx.beginPath();
-    ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "rgb(33 41 54 / 86%)";
-    ctx.fillRect(x - textWidth / 2, y - 8, textWidth, 16);
+    ctx.fillRect(x - textWidth / 2, y - CHART_LABEL_BOX_HEIGHT / 2, textWidth, CHART_LABEL_BOX_HEIGHT);
     ctx.fillStyle = "#fff";
     ctx.textAlign = "center";
     ctx.fillText(text, x, y);
@@ -7473,7 +7566,7 @@ function drawAxisLabels(ctx, payload, options = {}) {
   const ticks = 4;
   ctx.save();
   ctx.fillStyle = "#8f99a9";
-  ctx.font = "11px sans-serif";
+  ctx.font = CHART_AXIS_FONT;
   ctx.textBaseline = "middle";
   // 纵轴刻度标签统一绘制在坐标轴内侧，避免跑到画布外侧。
   for (let i = 0; i <= ticks; i += 1) {
@@ -7505,14 +7598,14 @@ function drawAxisLabels(ctx, payload, options = {}) {
   const endDate = xDates[xDates.length - 1] || startDate;
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
-  ctx.fillText(startDate, payload.xMin, payload.yMax + 8);
+  ctx.fillText(startDate, payload.xMin, payload.yMax + 10);
   ctx.textAlign = "center";
-  ctx.fillText(midDate, (payload.xMin + payload.xMax) / 2, payload.yMax + 8);
+  ctx.fillText(midDate, (payload.xMin + payload.xMax) / 2, payload.yMax + 10);
   ctx.textAlign = "right";
-  ctx.fillText(endDate, payload.xMax, payload.yMax + 8);
+  ctx.fillText(endDate, payload.xMax, payload.yMax + 10);
   if (options.xLabel) {
     ctx.textAlign = "right";
-    ctx.fillText(options.xLabel, payload.xMax, payload.yMax + 22);
+    ctx.fillText(options.xLabel, payload.xMax, payload.yMax + 26);
   }
   ctx.restore();
 }
@@ -7538,25 +7631,25 @@ function drawCrosshairOverlay(ctx, payload, canvasId, valueFormatter) {
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "#4d5769";
-  ctx.font = "11px sans-serif";
+  ctx.font = CHART_CROSSHAIR_FONT;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const dateText = cross.date || "--";
-  const dateWidth = Math.max(42, ctx.measureText(dateText).width + 10);
+  const dateWidth = Math.max(48, ctx.measureText(dateText).width + 12);
   const dateX = Math.max(payload.xMin + dateWidth / 2, Math.min(payload.xMax - dateWidth / 2, cross.x));
-  const dateY = payload.yMax + 16;
-  ctx.fillRect(dateX - dateWidth / 2, dateY - 8, dateWidth, 16);
+  const dateY = payload.yMax + 18;
+  ctx.fillRect(dateX - dateWidth / 2, dateY - CHART_LABEL_BOX_HEIGHT / 2, dateWidth, CHART_LABEL_BOX_HEIGHT);
   ctx.fillStyle = "#fff";
   ctx.fillText(dateText, dateX, dateY);
   cross.points.forEach((point, index) => {
     const y = point.y;
     const side = point.axis === "right" ? "right" : "left";
     const text = formatter(point.value, point.key, point.axis);
-    const w = Math.max(40, ctx.measureText(text).width + 10);
+    const w = Math.max(46, ctx.measureText(text).width + 12);
     const baseX = side === "right" ? payload.xMax - 6 - w / 2 : payload.xMin + 6 + w / 2;
     const x = Math.max(payload.xMin + w / 2 + 2, Math.min(payload.xMax - w / 2 - 2, baseX));
     ctx.fillStyle = "#4d5769";
-    ctx.fillRect(x - w / 2, y - 8, w, 16);
+    ctx.fillRect(x - w / 2, y - CHART_LABEL_BOX_HEIGHT / 2, w, CHART_LABEL_BOX_HEIGHT);
     ctx.fillStyle = "#fff";
     ctx.textAlign = "center";
     ctx.fillText(text, x, y);
