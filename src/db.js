@@ -1246,6 +1246,39 @@ async function getLatestSymbolDailyClose(symbol) {
   return { close: Number(rows[0].close), date: String(rows[0].date) };
 }
 
+async function getSymbolDailyCloseBounds(symbol, fromDate, toDate) {
+  const candidates = symbolQueryCandidates(symbol);
+  if (!candidates.length) {
+    return null;
+  }
+  const primary = candidates[0];
+  const from = fromDate && String(fromDate).trim() ? String(fromDate).trim() : "1970-01-01";
+  const to = toDate && String(toDate).trim() ? String(toDate).trim() : "9999-12-31";
+  const { rows } = await q(
+    `SELECT MIN(d.date) AS min_date, MAX(d.date) AS max_date, COUNT(*)::int AS c
+     FROM (
+       SELECT DISTINCT ON (date) date
+       FROM symbol_daily_close
+       WHERE symbol = ANY($1::text[])
+         AND date >= $2
+         AND date <= $3
+       ORDER BY date ASC,
+                CASE WHEN symbol = $4 THEN 0 ELSE 1 END ASC,
+                updated_at DESC
+     ) AS d`,
+    [candidates, from, to, primary]
+  );
+  const row = rows[0];
+  if (!row || Number(row.c) <= 0) {
+    return null;
+  }
+  return {
+    minDate: String(row.min_date || "").slice(0, 10),
+    maxDate: String(row.max_date || "").slice(0, 10),
+    count: Number(row.c) || 0,
+  };
+}
+
 async function ensureSymbolNameMapTable() {
   if (symbolNameMapTableReadyPromise) {
     return symbolNameMapTableReadyPromise;
@@ -1891,6 +1924,7 @@ module.exports = {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,
+  getSymbolDailyCloseBounds,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,

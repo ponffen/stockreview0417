@@ -341,6 +341,8 @@ module.exports = async function handler(req, res) {
   const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
   const isSnapshotSymbolCloseDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-close";
   const isCronFreezeDirect = (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/freeze-eod";
+  const isCronDailyCloseDirect =
+    (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/sync-daily-close";
   const isSettingsGetDirect = req.method === "GET" && pathOnly === "/api/settings";
   const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
   const tradesDeleteMatch = pathOnly.match(/^\/api\/trades\/([^/]+)$/) || null;
@@ -578,7 +580,8 @@ module.exports = async function handler(req, res) {
     isSnapshotAccountDailyDirect ||
     isSnapshotSymbolDailyDirect ||
     isSnapshotSymbolCloseDirect ||
-    isCronFreezeDirect
+    isCronFreezeDirect ||
+    isCronDailyCloseDirect
   ) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -593,6 +596,7 @@ module.exports = async function handler(req, res) {
         getSymbolDailyCloseRange,
       } = require("../src/db");
       const { runDailyFreeze } = require("../src/eod-freeze-service");
+      const { runDailyCloseSync } = require("../src/daily-close-sync-service");
 
       if (isSnapshotWatermarkDirect) {
         const data = await getSnapshotWatermark();
@@ -621,8 +625,39 @@ module.exports = async function handler(req, res) {
         }
         const frozenDate = getSearchParam(req, "frozenDate") || body?.frozenDate;
         const force = parseBooleanInput(getSearchParam(req, "force") || body?.force, false);
+        const syncDailyClose = parseBooleanInput(getSearchParam(req, "syncDailyClose") || body?.syncDailyClose, false);
         const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
-        const data = await runDailyFreeze({ frozenDate, force, userIds, logger: console });
+        const data = await runDailyFreeze({ frozenDate, force, syncDailyClose, userIds, logger: console });
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isCronDailyCloseDirect) {
+        const body = req.method === "POST" ? await readJsonBody(req) : {};
+        const cronHeader = req.headers?.["x-vercel-cron"];
+        const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+        const tokenFromBearer = extractBearerToken(req);
+        const tokenFromQuery = getSearchParam(req, "token");
+        const tokenFromBody = String(body?.token || "").trim();
+        const secretMatched =
+          !!configuredSecret &&
+          (tokenFromBearer === configuredSecret ||
+            tokenFromQuery === configuredSecret ||
+            tokenFromBody === configuredSecret);
+        const sessionUserId = readUserIdFromRequest(req);
+        if (!sessionUserId && cronHeader == null && !secretMatched) {
+          res.statusCode = 401;
+          res.end(JSON.stringify({ ok: false, error: "unauthorized cron request" }));
+          return;
+        }
+        const asOfDate = getSearchParam(req, "asOfDate") || body?.asOfDate;
+        const symbolsFromBody = Array.isArray(body?.symbols) ? body.symbols : [];
+        const symbolsFromQuery = sanitizeSymbolList(getSearchParam(req, "symbols"), normalizeSymbol);
+        const symbols = [...new Set([...symbolsFromBody, ...symbolsFromQuery])]
+          .map((symbol) => normalizeSymbol(symbol))
+          .filter(Boolean);
+        const data = await runDailyCloseSync({ asOfDate, symbols, logger: console });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;
