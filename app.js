@@ -5678,7 +5678,7 @@ function renderCashTransferTable() {
           <td>${escapeHtml(acc.name || row.accountId)}</td>
           <td>${dirLabel}</td>
           <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)} ${ccy}</td>
-          <td class="trade-note-cell">${escapeHtml(row.note || "—")}</td>
+          <td class="trade-note-cell">${row.note ? escapeHtml(row.note) : ""}</td>
         </tr>
       `;
     })
@@ -5717,7 +5717,7 @@ function renderTradeTable() {
           <td class="num ${trade.side === "buy" ? "down" : "up"}">${
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>
-          <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
+          <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
         </tr>
       `;
     })
@@ -6411,7 +6411,7 @@ async function renderStockRecordPage(symbol) {
           share != null && Number.isFinite(share) ? formatPercent(share) : "—";
         return `${rowCore}
         <td class="num">${shareCell}</td>
-        <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
+        <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
       }
       return `${rowCore}
@@ -6420,7 +6420,7 @@ async function renderStockRecordPage(symbol) {
           trade.amount,
           2,
         )}</td>
-        <td class="trade-note-cell">${escapeHtml(trade.note || "—")}</td>
+        <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
     })
     .join("");

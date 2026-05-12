@@ -1288,7 +1288,7 @@ h2 {
 .trade-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 640px;
+  min-width: 620px;
   table-layout: fixed;
 }
 
@@ -1310,6 +1310,10 @@ h2 {
   padding: 7px 6px;
   white-space: nowrap;
   text-align: left;
+}
+
+.trade-table thead {
+  background: #f6f8fb;
 }
 
 .trade-table td {
@@ -1374,7 +1378,8 @@ h2 {
 
 .trade-table:not(.trade-table--cash) th:nth-child(7),
 .trade-table:not(.trade-table--cash) td:nth-child(7) {
-  width: 24%;
+  width: 10ch;
+  max-width: 10ch;
 }
 
 .trade-table thead th:nth-child(4),
@@ -1397,6 +1402,18 @@ h2 {
 .trade-table--cash thead th:last-child,
 .trade-table--cash tbody td:last-child {
   text-align: left !important;
+}
+
+.trade-table--cash th:nth-child(5),
+.trade-table--cash td:nth-child(5) {
+  width: 10ch;
+  max-width: 10ch;
+}
+
+.trade-note-cell {
+  white-space: normal !important;
+  word-break: break-all;
+  line-height: 1.35;
 }
 
 .trade-row--clickable,
@@ -1609,10 +1626,16 @@ h2 {
   min-width: 148px;
 }
 
+.stock-record-table-wrap {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
 .stock-record-table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 8px;
+  margin-top: 0;
+  min-width: 660px;
 }
 
 .stock-record-table th,
@@ -1621,6 +1644,7 @@ h2 {
   padding: 8px 6px;
   text-align: left;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .stock-record-table th:nth-child(3),
@@ -1630,6 +1654,27 @@ h2 {
 .stock-record-table td:nth-child(4),
 .stock-record-table td:nth-child(5) {
   text-align: right;
+}
+
+.stock-record-table th:nth-child(2),
+.stock-record-table td:nth-child(2) {
+  min-width: 64px;
+}
+
+.stock-record-table th:nth-child(4),
+.stock-record-table td:nth-child(4) {
+  min-width: 72px;
+}
+
+.stock-record-table th:nth-child(6),
+.stock-record-table td:nth-child(6) {
+  text-align: left;
+  min-width: 10ch;
+  max-width: 10ch;
+}
+
+.stock-record-table .trade-note-cell {
+  white-space: normal !important;
 }
 
 .account-table {
@@ -1651,6 +1696,7 @@ h2 {
   z-index: 60;
   background: #f1f3f7;
   overflow-y: auto;
+  overflow-x: hidden;
   display: none;
 }
 
