@@ -3711,7 +3711,7 @@ function renderPublicEarningProfileHtml(d) {
     return `<p class="empty">暂无脱敏持仓数据</p>`;
   }
   return withPublicTradesContext(d, () => {
-    const scope = { accountId: "all", trades: state.trades };
+    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
     const portfolio = computePortfolio(scope.trades, []);
     const vis = portfolio.visiblePositions;
     const bookCcy = portfolio.overviewBookCurrency || "CNY";
@@ -3726,7 +3726,14 @@ function renderPublicEarningProfileHtml(d) {
     let stageInner = "";
     let stageCls = "profit-main";
     try {
-      const { stageRate: stageRateOv } = computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode);
+      const snap =
+        Array.isArray(d.analysisDaily) && d.analysisDaily.length
+          ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, state.stageRange, state.algoMode)
+          : null;
+      const stageRateOv =
+        snap && Number.isFinite(Number(snap.stageRate))
+          ? Number(snap.stageRate)
+          : computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode).stageRate;
       todayInner = formatPublicProfileRateOnlyHtml(portfolio.todayRate);
       todayCls = `profit-main ${twrColorClass(portfolio.todayRate)}`;
       stageInner = formatPublicProfileRateOnlyHtml(stageRateOv);
@@ -3857,12 +3864,19 @@ function syncPublicProfileStageRow() {
     return;
   }
   withPublicTradesContext(d, () => {
-    const scope = { accountId: "all", trades: state.trades };
+    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
     const portfolio = computePortfolio(scope.trades, []);
     const prevSr = state.stageRange;
     state.stageRange = sr;
     try {
-      const { stageRate: stageRateOv } = computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode);
+      const snap =
+        Array.isArray(d.analysisDaily) && d.analysisDaily.length
+          ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, sr, state.algoMode)
+          : null;
+      const stageRateOv =
+        snap && Number.isFinite(Number(snap.stageRate))
+          ? Number(snap.stageRate)
+          : computeStageOverviewMetrics(portfolio, scope.trades, sr, state.algoMode).stageRate;
       main.innerHTML = formatPublicProfileRateOnlyHtml(stageRateOv);
       main.className = `profit-main ${twrColorClass(stageRateOv)}`;
     } finally {
@@ -5957,11 +5971,12 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
 let overviewStageMetricsRefreshSeq = 0;
 
 /**
- * 与 renderAnalysis 一致：读 analysis_daily_snapshot，merge 今日实时，再截取总览「阶段」区间
- * 用 buildProfitSeries / computeModeSeries 得到阶段收益与收益率（与「分析」页同链）。
+ * 与 renderAnalysis / paintPublicProfileAnalysisCore 同链：日快照序列 + mergeAnalysisSliceWithLive（今日市值与 TWR/MWR 尾）
+ * 再截取总览「阶段」区间，用 buildProfitSeries / computeModeSeries 得到阶段收益与收益率。
+ * dbRows 可为本人接口拉取结果，或社区资料接口内嵌的 analysisDaily（已按对方设置脱敏缩放）。
  */
-async function computeStageOverviewFromDbMerged(portfolio, scope, stageRange, algoMode) {
-  if (!apiReady) {
+function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRange, algoMode) {
+  if (!Array.isArray(dbRows) || !dbRows.length) {
     return null;
   }
   const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
@@ -5977,22 +5992,6 @@ async function computeStageOverviewFromDbMerged(portfolio, scope, stageRange, al
     twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
     mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
   };
-  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-  const fetchTo = shiftDateKeyByDays(todayKey, 1);
-  const fetchFrom = shiftDateKeyByDays(startKey, -20);
-  let dbRows = [];
-  try {
-    dbRows = await fetchAnalysisDailyRowsRemote({
-      accountId: aid,
-      from: fetchFrom,
-      to: fetchTo,
-    });
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(dbRows) || !dbRows.length) {
-    return null;
-  }
   const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
   const start = String(startKey || "").slice(0, 10);
   const windowSorted = sorted.filter((row) => String(row.date || "").slice(0, 10) >= start);
@@ -6017,6 +6016,35 @@ async function computeStageOverviewFromDbMerged(portfolio, scope, stageRange, al
     stageProfit: profitSeries.at(-1)?.value ?? 0,
     stageRate: modeSeries.at(-1)?.rate ?? 0,
   };
+}
+
+async function computeStageOverviewFromDbMerged(portfolio, scope, stageRange, algoMode) {
+  if (!apiReady) {
+    return null;
+  }
+  const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
+  const firstTradeDate =
+    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
+  const startKey = getStageStartKey(stageRange, firstTradeDate);
+  const todayKey = toDateKey(new Date());
+  const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
+  if (!historyFull.length) {
+    return null;
+  }
+  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const fetchTo = shiftDateKeyByDays(todayKey, 1);
+  const fetchFrom = shiftDateKeyByDays(startKey, -20);
+  let dbRows = [];
+  try {
+    dbRows = await fetchAnalysisDailyRowsRemote({
+      accountId: aid,
+      from: fetchFrom,
+      to: fetchTo,
+    });
+  } catch {
+    return null;
+  }
+  return computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRange, algoMode);
 }
 
 async function refreshOverviewStageMetricsFromServer() {
