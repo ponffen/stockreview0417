@@ -4705,23 +4705,14 @@ function renderOverviewAndStockTable() {
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const vis = portfolio.visiblePositions;
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const { stageProfit: stageProfitOv, stageRate: stageRateOv } = computeStageOverviewMetrics(
-    portfolio,
-    scope.trades,
-    state.stageRange,
-    state.algoMode,
-  );
+  setOverviewProfitKpisDash();
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
     { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
     { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
     { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
   ];
-  todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
-  todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
-  monthProfitMain.innerHTML = metricValueWithRate(stageProfitOv, stageRateOv);
-  monthProfitMain.className = `profit-main ${stageProfitOv >= 0 ? "up" : "down"}`;
-  void refreshOverviewStageMetricsFromServer();
+  void refreshOverviewProfitRowFromSnapshots();
 
   overviewGrid.innerHTML = cards
     .map(
@@ -5968,44 +5959,92 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
   return next;
 }
 
-let overviewStageMetricsRefreshSeq = 0;
-
-/**
- * 与 renderAnalysis / paintPublicProfileAnalysisCore 同链：日快照序列 + mergeAnalysisSliceWithLive（今日市值与 TWR/MWR 尾）
- * 再截取总览「阶段」区间，用 buildProfitSeries / computeModeSeries 得到阶段收益与收益率。
- * dbRows 可为本人接口拉取结果，或社区资料接口内嵌的 analysisDaily（已按对方设置脱敏缩放）。
- */
-function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRange, algoMode) {
-  if (!Array.isArray(dbRows) || !dbRows.length) {
-    return null;
+function clearCanvasChart(canvas) {
+  if (!canvas || typeof canvas.getContext !== "function") {
+    return;
   }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function setOverviewProfitKpisDash() {
+  if (!todayProfitMain || !monthProfitMain) {
+    return;
+  }
+  todayProfitMain.textContent = "–";
+  todayProfitMain.className = "profit-main";
+  monthProfitMain.textContent = "–";
+  monthProfitMain.className = "profit-main";
+}
+
+function setAnalysisSummariesDash() {
+  if (analysisRateSummary) {
+    analysisRateSummary.textContent =
+      state.benchmark === "none" ? "我的收益率 –" : "我的 – / 基准 – / 对比 –";
+  }
+  if (analysisProfitSummary) {
+    analysisProfitSummary.textContent = "累计收益 –";
+  }
+}
+
+function clearAnalysisChartsToEmpty() {
+  clearCanvasChart(analysisRateChart);
+  clearCanvasChart(analysisProfitChart);
+  clearCanvasChart(analysisAssetChart);
+}
+
+/** 拉取日快照的左边界：覆盖阶段起点、月初、年初与首笔交易，避免合并缺段。 */
+function overviewAccountDailyFetchBounds(scope, stageRange) {
   const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
   const firstTradeDate =
     tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-  const startKey = getStageStartKey(stageRange, firstTradeDate);
   const todayKey = toDateKey(new Date());
-  const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
-  if (!historyFull.length) {
-    return null;
-  }
-  const liveByMode = {
-    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
-    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
-  };
-  const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-  const start = String(startKey || "").slice(0, 10);
-  const windowSorted = sorted.filter((row) => String(row.date || "").slice(0, 10) >= start);
-  if (!windowSorted.length) {
-    return null;
-  }
-  const merged = mergeAnalysisSliceWithLive(
-    windowSorted.map((row) => ({ ...row })),
-    portfolio,
+  const keys = [
+    String(firstTradeDate).slice(0, 10),
+    monthToDateStartKey(),
+    ytdStartDateKey(),
+    String(getStageStartKey(stageRange, firstTradeDate) || "").slice(0, 10),
+  ].filter(Boolean);
+  keys.sort();
+  const earliest = keys[0] || String(todayKey).slice(0, 10);
+  return {
+    from: shiftDateKeyByDays(earliest, -25),
+    to: shiftDateKeyByDays(todayKey, 1),
+    firstTradeDate,
     todayKey,
-    liveByMode,
-    scope.cashTransfers,
-  );
-  const modePts = merged.map((r) => ({
+  };
+}
+
+function todayProfitRateCnyFromMergedRows(mergedRows, todayKey) {
+  const tk = String(todayKey || "").slice(0, 10);
+  const idx = mergedRows.findIndex((r) => String(r.date || "").slice(0, 10) === tk);
+  if (idx < 0) {
+    return null;
+  }
+  const row = mergedRows[idx];
+  const todayP = Number(row.profitCny ?? row.profit_cny) || 0;
+  let prevMv = 0;
+  if (idx > 0) {
+    prevMv = Number(mergedRows[idx - 1].marketValue) || 0;
+  }
+  const rate = prevMv > 0 ? todayP / prevMv : 0;
+  return { todayProfitCny: todayP, todayRate: rate };
+}
+
+/** 已对「今日」做完 merge 的日序列上，截取总览阶段算阶段收益/收益率（人民币口径）。 */
+function computeStageOverviewFromMergedRows(mergedRows, stageRange, algoMode, firstTradeDate) {
+  if (!Array.isArray(mergedRows) || !mergedRows.length) {
+    return null;
+  }
+  const startKey = String(getStageStartKey(stageRange, firstTradeDate) || "").slice(0, 10);
+  const windowRows = mergedRows.filter((r) => String(r.date || "").slice(0, 10) >= startKey);
+  if (!windowRows.length) {
+    return null;
+  }
+  const modePts = windowRows.map((r) => ({
     date: r.date,
     value: Number(r.marketValue),
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
@@ -6019,135 +6058,123 @@ function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRan
   };
 }
 
-async function computeStageOverviewFromDbMerged(portfolio, scope, stageRange, algoMode) {
-  if (!apiReady) {
+let overviewProfitRefreshSeq = 0;
+
+/**
+ * 与 renderAnalysis 同链：全日快照 merge 今日后，再截阶段；dbRows 可为接口或社区内嵌 analysisDaily。
+ */
+function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRange, algoMode) {
+  if (!Array.isArray(dbRows) || !dbRows.length) {
     return null;
   }
   const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
   const firstTradeDate =
     tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-  const startKey = getStageStartKey(stageRange, firstTradeDate);
   const todayKey = toDateKey(new Date());
   const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
   if (!historyFull.length) {
     return null;
   }
-  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-  const fetchTo = shiftDateKeyByDays(todayKey, 1);
-  const fetchFrom = shiftDateKeyByDays(startKey, -20);
-  let dbRows = [];
-  try {
-    dbRows = await fetchAnalysisDailyRowsRemote({
-      accountId: aid,
-      from: fetchFrom,
-      to: fetchTo,
-    });
-  } catch {
-    return null;
-  }
-  return computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRange, algoMode);
+  const liveByMode = {
+    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
+    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
+  };
+  const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const merged = mergeAnalysisSliceWithLive(
+    sorted.map((row) => ({ ...row })),
+    portfolio,
+    todayKey,
+    liveByMode,
+    scope.cashTransfers,
+  );
+  return computeStageOverviewFromMergedRows(merged, stageRange, algoMode, firstTradeDate);
 }
 
-async function refreshOverviewStageMetricsFromServer() {
+async function refreshOverviewProfitRowFromSnapshots() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
   }
-  if (!monthProfitMain) {
+  if (!todayProfitMain || !monthProfitMain) {
+    return;
+  }
+  const seq = ++overviewProfitRefreshSeq;
+  if (!apiReady) {
+    setOverviewProfitKpisDash();
     return;
   }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const seq = ++overviewStageMetricsRefreshSeq;
-  const out = await computeStageOverviewFromDbMerged(portfolio, scope, state.stageRange, state.algoMode);
-  if (seq !== overviewStageMetricsRefreshSeq) {
+  const bookCcy = portfolio.overviewBookCurrency || "CNY";
+  const bounds = overviewAccountDailyFetchBounds(scope, state.stageRange);
+  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  let dbRows = [];
+  try {
+    dbRows = await fetchAnalysisDailyRowsRemote({
+      accountId: aid,
+      from: bounds.from,
+      to: bounds.to,
+    });
+  } catch {
+    dbRows = [];
+  }
+  if (seq !== overviewProfitRefreshSeq) {
     return;
   }
-  if (!out) {
-    return;
-  }
-  const sp = Number(out.stageProfit);
-  const sr = Number(out.stageRate);
-  if (!Number.isFinite(sp) || !Number.isFinite(sr)) {
-    return;
-  }
-  monthProfitMain.innerHTML = metricValueWithRate(sp, sr);
-  monthProfitMain.className = `profit-main ${sp >= 0 ? "up" : "down"}`;
-}
-
-function renderAnalysisFromHistory() {
-  const scope = getPortfolioScope();
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const history = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
-  const selected = resolveAnalysisRange(history);
-  const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
-  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
-  const profitSeries = buildProfitSeries(selected);
-  const assetSeries = buildAssetSeries(selected, scope.cashTransfers);
-
-  const ratePayload = drawLineChart(mySeries, benchSeries);
-  const profitPayload = drawDualLineChart(
-    analysisProfitChart,
-    profitSeries.map((item) => ({ date: item.date, value: item.value })),
-    null,
-    "#f45a68",
-    null,
-    {
-      keyA: "profit",
-      labelA: "收益",
-      yAxisMode: "left",
-      leftLabel: "",
-      xLabel: "",
-      valueFormatter: (value) => formatNumber(value, 2),
-      axisFormatter: (value) => formatNumber(value, 2),
-      yRangePadding: {
-        minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
-        maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
-      },
+  if (!Array.isArray(dbRows) || !dbRows.length) {
+    if (seq === overviewProfitRefreshSeq) {
+      setOverviewProfitKpisDash();
     }
-  );
-  const assetPayload = drawAssetChart(assetSeries);
-
-  const refreshAnalysisView = () => {
-    renderControls();
-    void renderAnalysis({ showLoading: false });
+    return;
+  }
+  const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
+  const firstTradeDate =
+    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
+  const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
+  if (!historyFull.length) {
+    if (seq === overviewProfitRefreshSeq) {
+      setOverviewProfitKpisDash();
+    }
+    return;
+  }
+  const liveByMode = {
+    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
+    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
   };
-
-  const rateHasBenchmark = state.benchmark !== "none";
-  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    valueFormatter: (_value, key) => {
-      if (key === "benchmark" && !rateHasBenchmark) {
-        return "--";
-      }
-      return `${formatNumber(_value, 2)}%`;
-    },
-  });
-  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    valueFormatter: (value) => formatNumber(value, 2),
-  });
-  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    valueFormatter: (value) => formatNumber(value, 2),
-  });
-
-  const lastMy = mySeries.at(-1)?.rate ?? 0;
-  const lastBench = benchSeries.at(-1)?.rate ?? 0;
-  const lastProfit = profitSeries.at(-1)?.value ?? 0;
-  const excess = lastMy - lastBench;
-  if (analysisRateSummary) {
-    analysisRateSummary.textContent =
-      state.benchmark === "none"
-        ? `我的收益率 ${formatPercent(lastMy)}`
-        : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+  const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const merged = mergeAnalysisSliceWithLive(
+    sorted.map((row) => ({ ...row })),
+    portfolio,
+    bounds.todayKey,
+    liveByMode,
+    scope.cashTransfers,
+  );
+  const stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
+  const todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
+  if (seq !== overviewProfitRefreshSeq) {
+    return;
   }
-  if (analysisProfitSummary) {
-    analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
+  if (
+    !stageOut ||
+    !todayOut ||
+    !Number.isFinite(Number(stageOut.stageProfit)) ||
+    !Number.isFinite(Number(stageOut.stageRate)) ||
+    !Number.isFinite(Number(todayOut.todayProfitCny)) ||
+    !Number.isFinite(Number(todayOut.todayRate))
+  ) {
+    if (seq === overviewProfitRefreshSeq) {
+      setOverviewProfitKpisDash();
+    }
+    return;
   }
-  renderAnalysisStockRank(history, scope, portfolio);
+  const sp = Number(stageOut.stageProfit);
+  const sr = Number(stageOut.stageRate);
+  const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);
+  const stageBook = amountBookFromCny(sp, bookCcy);
+  const tr = Number(todayOut.todayRate);
+  todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
+  todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
+  monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
+  monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
 }
 
 async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
@@ -6207,6 +6234,8 @@ async function renderAnalysis(options = {}) {
   }
   try {
   const renderRequestId = ++analysisRenderRequestSeq;
+  setAnalysisSummariesDash();
+  clearAnalysisChartsToEmpty();
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const todayKey = toDateKey(new Date());
@@ -6227,7 +6256,7 @@ async function renderAnalysis(options = {}) {
         to: fetchRange.to,
       });
     } catch (error) {
-      console.warn("加载 analysis_daily 失败，回退本地计算", error);
+      console.warn("加载 analysis_daily 失败", error);
     }
   }
 
@@ -6235,7 +6264,9 @@ async function renderAnalysis(options = {}) {
     return;
   }
   if (!dbRows.length) {
-    renderAnalysisFromHistory();
+    if (renderRequestId === analysisRenderRequestSeq) {
+      renderAnalysisStockRank([], scope, portfolio);
+    }
     return;
   }
 
