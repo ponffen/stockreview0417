@@ -4703,6 +4703,7 @@ function renderOverviewAndStockTable() {
   }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const bookCcy = portfolio.overviewBookCurrency || "CNY";
   setOverviewProfitKpisDash();
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
