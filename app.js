@@ -4703,8 +4703,6 @@ function renderOverviewAndStockTable() {
   }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const vis = portfolio.visiblePositions;
-  const bookCcy = portfolio.overviewBookCurrency || "CNY";
   setOverviewProfitKpisDash();
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
@@ -4725,61 +4723,7 @@ function renderOverviewAndStockTable() {
     )
     .join("");
 
-  const rows = sortPositions(portfolio.visiblePositions);
-  if (!rows.length) {
-    stockTableBody.innerHTML = `
-      <tr>
-        <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
-      </tr>
-    `;
-    return;
-  }
-
-  stockTableBody.innerHTML = rows
-    .map((row) => {
-      const stockCode = formatSymbolForDisplay(row.symbol);
-      const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
-      const tagLower = tag.toLowerCase();
-      const dayClass = applyFxForOverview(row, row.todayProfitNative) >= 0 ? "up" : "down";
-      const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
-      const totalClass = applyFxForOverview(row, row.totalProfitNative) >= 0 ? "up" : "down";
-      return `
-        <tr>
-          <td class="stock-name">
-            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
-            <span><i class="market-tag market-tag--${tagLower}">${tag}</i> ${stockCode}</span>
-          </td>
-          <td class="${dayClass}">${formatStockTableMoney(row, row.todayProfitNative, 2)}</td>
-          <td>
-            <div class="cell-main">${formatNumber(row.currentPrice, 3)}</div>
-            <div class="cell-sub ${changeClass}">${formatPercent(row.dayChangeRate)}</div>
-          </td>
-          <td>
-            <div class="cell-main">${formatStockTableMarketValue(row)}</div>
-            <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
-          </td>
-          <td>${formatPercent(row.weight)}</td>
-          <td>${formatNumber(row.cost, 3)}</td>
-          <td class="${applyFxForOverview(row, row.monthProfitNative) >= 0 ? "up" : "down"}">${formatStockTableMoney(
-            row,
-            row.monthProfitNative,
-            2,
-          )}</td>
-          <td>${formatPercent(row.monthWeight)}</td>
-          <td class="${applyFxForOverview(row, row.yearProfitNative) >= 0 ? "up" : "down"}">${formatStockTableMoney(
-            row,
-            row.yearProfitNative,
-            2,
-          )}</td>
-          <td>${formatPercent(row.yearWeight)}</td>
-          <td class="${totalClass}">${formatStockTableMoney(row, row.totalProfitNative, 2)}</td>
-          <td class="${totalClass}">${formatPercent(row.totalRate)}</td>
-          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
-          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${row.symbol}">记录</a></td>
-        </tr>
-      `;
-    })
-    .join("");
+  paintOverviewStockTableFromSnapshots(portfolio, null);
 }
 
 function getStageStartKey(stageRange, firstDate) {
@@ -6090,6 +6034,156 @@ function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRan
   return computeStageOverviewFromMergedRows(merged, stageRange, algoMode, firstTradeDate);
 }
 
+function indexSymbolDailyPnlBySymbol(rows) {
+  const m = new Map();
+  for (const r of rows || []) {
+    const s = normalizeSymbol(r.symbol);
+    if (!s) {
+      continue;
+    }
+    if (!m.has(s)) {
+      m.set(s, []);
+    }
+    m.get(s).push(r);
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  }
+  return m;
+}
+
+/** 库内日终 day_pnl 累计到昨日 + 今日持仓上的 todayProfitNative。 */
+function buildSymbolSnapshotProfitMap(positions, symbolPnlRows, trades, todayKey) {
+  const tk = String(todayKey || "").slice(0, 10);
+  const tradeList = Array.isArray(trades) ? trades : [];
+  const firstTradeDate =
+    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : tk;
+  const monthStart = String(getStageStartKey("month", firstTradeDate) || "").slice(0, 10);
+  const ytdStart = String(ytdStartDateKey() || "").slice(0, 10);
+  const bySym = indexSymbolDailyPnlBySymbol(symbolPnlRows);
+  const map = new Map();
+  for (const row of positions || []) {
+    const sym = normalizeSymbol(row.symbol);
+    const arr = bySym.get(sym) || [];
+    let monthHist = 0;
+    let yearHist = 0;
+    let totalHist = 0;
+    for (const r of arr) {
+      const d = String(r.date || "").slice(0, 10);
+      if (!d || d >= tk) {
+        continue;
+      }
+      const p = Number(r.dayPnlNative ?? r.day_pnl_native) || 0;
+      totalHist += p;
+      if (d >= ytdStart) {
+        yearHist += p;
+      }
+      if (d >= monthStart) {
+        monthHist += p;
+      }
+    }
+    const todayN = Number.isFinite(Number(row.todayProfitNative)) ? Number(row.todayProfitNative) : 0;
+    map.set(sym, {
+      todayNative: todayN,
+      monthNative: monthHist + todayN,
+      yearNative: yearHist + todayN,
+      totalNative: totalHist + todayN,
+    });
+  }
+  return map;
+}
+
+function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
+  if (!stockTableBody) {
+    return;
+  }
+  const rows = sortPositions(portfolio.visiblePositions);
+  if (!rows.length) {
+    stockTableBody.innerHTML = `
+      <tr>
+        <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+      </tr>
+    `;
+    return;
+  }
+  const dash = snapMap == null;
+  let monthDen = 0;
+  let yearDen = 0;
+  if (!dash) {
+    for (const row of rows) {
+      const sym = normalizeSymbol(row.symbol);
+      const s = snapMap.get(sym);
+      if (!s) {
+        continue;
+      }
+      monthDen += Math.abs(applyFxForOverview(row, s.monthNative));
+      yearDen += Math.abs(applyFxForOverview(row, s.yearNative));
+    }
+  }
+  stockTableBody.innerHTML = rows
+    .map((row) => {
+      const stockCode = formatSymbolForDisplay(row.symbol);
+      const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
+      const tagLower = tag.toLowerCase();
+      const sym = normalizeSymbol(row.symbol);
+      const s = dash ? null : snapMap.get(sym);
+      const hasSnap = Boolean(s);
+      const todayN = hasSnap ? s.todayNative : null;
+      const monthN = hasSnap ? s.monthNative : null;
+      const yearN = hasSnap ? s.yearNative : null;
+      const totalN = hasSnap ? s.totalNative : null;
+      const monthW =
+        hasSnap && monthDen > 0 ? applyFxForOverview(row, monthN) / monthDen : hasSnap ? 0 : null;
+      const yearW = hasSnap && yearDen > 0 ? applyFxForOverview(row, yearN) / yearDen : hasSnap ? 0 : null;
+      const sigmaAbs = Math.abs(Number(row.sigmaAmountNative) || 0);
+      const totalRateSnap = hasSnap && sigmaAbs > 1e-9 ? totalN / sigmaAbs : hasSnap ? 0 : null;
+
+      const dayClass = hasSnap ? (applyFxForOverview(row, todayN) >= 0 ? "up" : "down") : "";
+      const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
+      const monthClass = hasSnap ? (applyFxForOverview(row, monthN) >= 0 ? "up" : "down") : "";
+      const yearClass = hasSnap ? (applyFxForOverview(row, yearN) >= 0 ? "up" : "down") : "";
+      const totalClass = hasSnap ? (applyFxForOverview(row, totalN) >= 0 ? "up" : "down") : "";
+      const totalRateClass = hasSnap ? (totalRateSnap >= 0 ? "up" : "down") : "";
+
+      const tdToday = hasSnap ? formatStockTableMoney(row, todayN, 2) : "–";
+      const tdMonth = hasSnap ? formatStockTableMoney(row, monthN, 2) : "–";
+      const tdMonthW = hasSnap ? formatPercent(monthW) : "–";
+      const tdYear = hasSnap ? formatStockTableMoney(row, yearN, 2) : "–";
+      const tdYearW = hasSnap ? formatPercent(yearW) : "–";
+      const tdTotal = hasSnap ? formatStockTableMoney(row, totalN, 2) : "–";
+      const tdTotalR = hasSnap ? formatPercent(totalRateSnap) : "–";
+
+      return `
+        <tr>
+          <td class="stock-name">
+            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
+            <span><i class="market-tag market-tag--${tagLower}">${tag}</i> ${stockCode}</span>
+          </td>
+          <td class="${dayClass}">${tdToday}</td>
+          <td>
+            <div class="cell-main">${formatNumber(row.currentPrice, 3)}</div>
+            <div class="cell-sub ${changeClass}">${formatPercent(row.dayChangeRate)}</div>
+          </td>
+          <td>
+            <div class="cell-main">${formatStockTableMarketValue(row)}</div>
+            <div class="cell-sub">${formatNumber(row.quantity, 0)}</div>
+          </td>
+          <td>${formatPercent(row.weight)}</td>
+          <td>${formatNumber(row.cost, 3)}</td>
+          <td class="${monthClass}">${tdMonth}</td>
+          <td>${tdMonthW}</td>
+          <td class="${yearClass}">${tdYear}</td>
+          <td>${tdYearW}</td>
+          <td class="${totalClass}">${tdTotal}</td>
+          <td class="${totalRateClass}">${tdTotalR}</td>
+          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
+          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(row.symbol)}">记录</a></td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 async function refreshOverviewProfitRowFromSnapshots() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -6098,24 +6192,39 @@ async function refreshOverviewProfitRowFromSnapshots() {
     return;
   }
   const seq = ++overviewProfitRefreshSeq;
-  if (!apiReady) {
-    setOverviewProfitKpisDash();
-    return;
-  }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const vis = portfolio.visiblePositions;
+  if (!apiReady) {
+    setOverviewProfitKpisDash();
+    paintOverviewStockTableFromSnapshots(portfolio, null);
+    return;
+  }
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
   const bounds = overviewAccountDailyFetchBounds(scope, state.stageRange);
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const symList = [...new Set(vis.map((p) => normalizeSymbol(p.symbol)).filter(Boolean))];
   let dbRows = [];
+  let symRows = [];
   try {
-    dbRows = await fetchAnalysisDailyRowsRemote({
+    const accP = fetchAnalysisDailyRowsRemote({
       accountId: aid,
       from: bounds.from,
       to: bounds.to,
     });
+    const symP =
+      symList.length > 0
+        ? fetchSymbolDailyRowsRemote({
+            accountId: aid,
+            symbols: symList,
+            from: bounds.from,
+            to: bounds.to,
+          })
+        : Promise.resolve([]);
+    [dbRows, symRows] = await Promise.all([accP, symP]);
   } catch {
     dbRows = [];
+    symRows = [];
   }
   if (seq !== overviewProfitRefreshSeq) {
     return;
@@ -6123,6 +6232,14 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (!Array.isArray(dbRows) || !dbRows.length) {
     if (seq === overviewProfitRefreshSeq) {
       setOverviewProfitKpisDash();
+      paintOverviewStockTableFromSnapshots(portfolio, null);
+    }
+    return;
+  }
+  if (symList.length && (!Array.isArray(symRows) || !symRows.length)) {
+    if (seq === overviewProfitRefreshSeq) {
+      setOverviewProfitKpisDash();
+      paintOverviewStockTableFromSnapshots(portfolio, null);
     }
     return;
   }
@@ -6133,6 +6250,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (!historyFull.length) {
     if (seq === overviewProfitRefreshSeq) {
       setOverviewProfitKpisDash();
+      paintOverviewStockTableFromSnapshots(portfolio, null);
     }
     return;
   }
@@ -6163,18 +6281,24 @@ async function refreshOverviewProfitRowFromSnapshots() {
   ) {
     if (seq === overviewProfitRefreshSeq) {
       setOverviewProfitKpisDash();
+      paintOverviewStockTableFromSnapshots(portfolio, null);
     }
     return;
   }
+  const snapMap =
+    symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
   const sp = Number(stageOut.stageProfit);
   const sr = Number(stageOut.stageRate);
   const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);
   const stageBook = amountBookFromCny(sp, bookCcy);
   const tr = Number(todayOut.todayRate);
-  todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
-  todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
-  monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
-  monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
+  if (seq === overviewProfitRefreshSeq) {
+    todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
+    todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
+    monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
+    monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
+    paintOverviewStockTableFromSnapshots(portfolio, snapMap);
+  }
 }
 
 async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
@@ -6222,6 +6346,44 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   } finally {
     analysisDailyInFlight.delete(key);
   }
+}
+
+const SYMBOL_SNAPSHOT_CHUNK = 14;
+
+async function fetchSymbolDailyRowsRemote({ accountId, symbols, from, to }) {
+  if (!apiReady) {
+    return [];
+  }
+  const aid = accountId === "all" ? "all" : accountId;
+  const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
+  if (!uniq.length) {
+    return [];
+  }
+  const out = [];
+  for (let i = 0; i < uniq.length; i += SYMBOL_SNAPSHOT_CHUNK) {
+    const part = uniq.slice(i, i + SYMBOL_SNAPSHOT_CHUNK);
+    const qs = new URLSearchParams({
+      accountId: aid,
+      from: String(from || "").slice(0, 10),
+      to: String(to || "").slice(0, 10),
+      symbols: part.join(","),
+    });
+    try {
+      const res = await apiFetch(`${API_BASE}/snapshot/symbol-daily?${qs.toString()}`, {
+        cache: "no-store",
+        timeoutMs: 22_000,
+      });
+      if (!res.ok) {
+        return [];
+      }
+      const j = await res.json().catch(() => ({}));
+      const rows = j?.ok && Array.isArray(j.data) ? j.data : [];
+      out.push(...rows);
+    } catch {
+      return [];
+    }
+  }
+  return out;
 }
 
 async function renderAnalysis(options = {}) {
