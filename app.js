@@ -234,6 +234,11 @@ const state = {
     monthInnerHTML: "",
     monthClass: "",
   },
+  /**
+   * 持仓首页：日快照 KPI 与个股表展示完成后，停止定时行情与总览 DOM 刷新；
+   * 离开收益 Tab 再进入会解冻并重新拉行情（见 renderAll）。
+   */
+  earningLiveQuotesFrozen: false,
 };
 let apiReady = false;
 let tradeSearchSuggestController = null;
@@ -255,6 +260,8 @@ let lastBrowserRouteKey = "";
 let lastRenderedRouteForScrollReset = "";
 /** 用于离开/重新进入「收益」时失效首页日快照 UI 缓存 */
 let previousRenderAllRouteForOverviewSnapshot = null;
+/** 与上一变量配合：检测从其它 route 回到 earning 以解冻行情 */
+let previousRouteForQuoteFreeze = null;
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -747,7 +754,9 @@ async function initializeFxRates(opts = {}) {
     state.fxRatesToCnyByDate = map;
     state.fxLoaded = true;
     if (!skipFinalRender) {
-      renderAll();
+      if (!(state.earningLiveQuotesFrozen && state.route === "earning")) {
+        renderAll();
+      }
     }
   } catch (error) {
     console.error("加载历史汇率失败（新浪 DailyK_Batch），已回退固定汇率", error);
@@ -2265,7 +2274,7 @@ function bindEvents() {
       }
       persistState();
       renderAll();
-      refreshMarketData();
+      void refreshMarketData({ force: true });
     });
   }
 
@@ -2310,7 +2319,7 @@ function bindEvents() {
     state.benchmark = benchmarkSelect.value;
     persistState();
     void renderAnalysis();
-    refreshMarketData();
+    void refreshMarketData({ force: true });
   });
 
   stageRangeSelect?.addEventListener("change", () => {
@@ -2323,13 +2332,13 @@ function bindEvents() {
     state.selectedAccountId = resolveValidAccountFilter(accountFilterSelect.value);
     persistState();
     renderAll();
-    refreshMarketData();
+    void refreshMarketData({ force: true });
   });
   analysisAccountSelect?.addEventListener("change", () => {
     state.selectedAccountId = resolveValidAccountFilter(analysisAccountSelect.value);
     persistState();
     renderAll();
-    refreshMarketData();
+    void refreshMarketData({ force: true });
   });
   tradeAccountFilterSelect?.addEventListener("change", () => {
     state.tradeFilterAccountId = resolveValidAccountFilter(tradeAccountFilterSelect.value);
@@ -2627,7 +2636,7 @@ function bindEvents() {
     clearEditState();
     tradeDialog.close();
     renderAll();
-    refreshMarketData();
+    void refreshMarketData({ force: true });
   });
 
   if (setCapitalBtn) {
@@ -2995,15 +3004,22 @@ function applyStockSearchPick(symbol, name) {
 
 
 function renderAll() {
+  const prevSnap = previousRenderAllRouteForOverviewSnapshot;
   if (
-    (previousRenderAllRouteForOverviewSnapshot === "earning" && state.route !== "earning") ||
-    (state.route === "earning" &&
-      previousRenderAllRouteForOverviewSnapshot != null &&
-      previousRenderAllRouteForOverviewSnapshot !== "earning")
+    (prevSnap === "earning" && state.route !== "earning") ||
+    (state.route === "earning" && prevSnap != null && prevSnap !== "earning")
   ) {
     invalidateOverviewSnapshotUi();
   }
+  const prevFreeze = previousRouteForQuoteFreeze;
+  if (state.route === "earning" && prevFreeze !== "earning") {
+    state.earningLiveQuotesFrozen = false;
+    if (prevFreeze != null) {
+      void refreshMarketData();
+    }
+  }
   previousRenderAllRouteForOverviewSnapshot = state.route;
+  previousRouteForQuoteFreeze = state.route;
   renderControls();
   renderRoute();
   if (state.route === "earning") {
@@ -4750,6 +4766,18 @@ function renderOverviewAndStockTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
   }
+  if (state.route === "earning" && state.earningLiveQuotesFrozen) {
+    const ck = buildOverviewSnapshotCacheKey();
+    if (
+      state.overviewSnapshotUi.ready &&
+      state.overviewSnapshotUi.cacheKey === ck &&
+      state.overviewSnapshotUi.snapBySym &&
+      todayProfitMain &&
+      monthProfitMain
+    ) {
+      return;
+    }
+  }
   if (quoteTime) {
     const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
     quoteTime.textContent = timeText;
@@ -5904,7 +5932,7 @@ async function removeTradeById(tradeId) {
   }
   persistState();
   renderAll();
-  refreshMarketData();
+  void refreshMarketData({ force: true });
 }
 
 /** 与 analysis_daily_snapshot.profit_cny 口径一致：今日各标的当日盈亏按即期汇率折算人民币 */
@@ -6388,6 +6416,9 @@ async function refreshOverviewProfitRowFromSnapshots() {
     );
     state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
     state.overviewSnapshotUi.monthClass = monthProfitMain.className;
+    if (state.route === "earning") {
+      state.earningLiveQuotesFrozen = true;
+    }
   }
 }
 
@@ -8456,6 +8487,10 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
 
 async function refreshMarketData(opts = {}) {
   const skipFinalRender = opts.skipFinalRender === true;
+  const force = opts.force === true;
+  if (state.route === "earning" && state.earningLiveQuotesFrozen && !force) {
+    return;
+  }
   if (state.marketLoading) {
     return;
   }
