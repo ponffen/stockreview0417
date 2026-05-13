@@ -6011,10 +6011,11 @@ function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRan
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
   }));
   const profitSeries = buildProfitSeries(modePts);
-  const modeSeries = computeModeSeries(modePts, algoMode);
+  const modeSeriesRaw = computeModeSeries(modePts, algoMode);
+  const modeSeriesRebased = rebaseRateSeriesByFirstDay(modeSeriesRaw);
   return {
     stageProfit: profitSeries.at(-1)?.value ?? 0,
-    stageRate: modeSeries.at(-1)?.rate ?? 0,
+    stageRate: modeSeriesRebased.at(-1)?.rate ?? 0,
   };
 }
 
@@ -6257,10 +6258,8 @@ async function renderAnalysis(options = {}) {
   const mySeriesRaw = computeModeSeries(modePts, state.algoMode);
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
-  const profitSeries = rebaseValueSeriesByFirstDay(
-    sliceRows.map((row) => ({ date: row.date, value: row.totalProfit })),
-    "value",
-  );
+  /** 与收益率曲线同源：由市值+出入金序列推盈亏；勿用库里 totalProfit 另画一条，否则标题与「我的收益率」口径不一致。 */
+  const profitSeries = buildProfitSeries(modePts);
   const assetSeries = sliceRows.map((row) => ({
     date: row.date,
     principal: row.principal,
