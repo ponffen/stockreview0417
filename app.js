@@ -226,6 +226,14 @@ const state = {
   stockRecordFromPublicProfile: false,
   /** 进入「搜索股票」页面前的 route，用于返回 */
   tradeSearchReturnRoute: "trade",
+  /** 首页快照区：避免仅因行情 tick 重复拉日快照接口 */
+  overviewSnapshotUi: {
+    ready: false,
+    cacheKey: "",
+    snapBySym: null,
+    monthInnerHTML: "",
+    monthClass: "",
+  },
 };
 let apiReady = false;
 let tradeSearchSuggestController = null;
@@ -245,6 +253,8 @@ let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
 let lastBrowserRouteKey = "";
 let lastRenderedRouteForScrollReset = "";
+/** 用于离开/重新进入「收益」时失效首页日快照 UI 缓存 */
+let previousRenderAllRouteForOverviewSnapshot = null;
 
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
@@ -2985,6 +2995,15 @@ function applyStockSearchPick(symbol, name) {
 
 
 function renderAll() {
+  if (
+    (previousRenderAllRouteForOverviewSnapshot === "earning" && state.route !== "earning") ||
+    (state.route === "earning" &&
+      previousRenderAllRouteForOverviewSnapshot != null &&
+      previousRenderAllRouteForOverviewSnapshot !== "earning")
+  ) {
+    invalidateOverviewSnapshotUi();
+  }
+  previousRenderAllRouteForOverviewSnapshot = state.route;
   renderControls();
   renderRoute();
   if (state.route === "earning") {
@@ -4689,6 +4708,44 @@ function refreshPublicProfileEarningPanel() {
   syncPublicProfileStockSortControls();
 }
 
+function invalidateOverviewSnapshotUi() {
+  state.overviewSnapshotUi.ready = false;
+  state.overviewSnapshotUi.cacheKey = "";
+  state.overviewSnapshotUi.snapBySym = null;
+  state.overviewSnapshotUi.monthInnerHTML = "";
+  state.overviewSnapshotUi.monthClass = "";
+}
+
+function overviewTradesLedgerKey() {
+  let maxD = "";
+  for (const t of state.trades) {
+    const d = String(t.date || "").slice(0, 10);
+    if (d > maxD) {
+      maxD = d;
+    }
+  }
+  return `${state.trades.length}|${state.cashTransfers.length}|${maxD}`;
+}
+
+function buildOverviewSnapshotCacheKey() {
+  return [
+    sessionUserId || "",
+    state.selectedAccountId,
+    state.stageRange,
+    state.algoMode,
+    state.stockAmountDisplay,
+    overviewTradesLedgerKey(),
+  ].join("::");
+}
+
+function overviewSnapshotSnapMapFromState() {
+  const o = state.overviewSnapshotUi.snapBySym;
+  if (!o || typeof o !== "object") {
+    return null;
+  }
+  return new Map(Object.entries(o));
+}
+
 function renderOverviewAndStockTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -4704,14 +4761,12 @@ function renderOverviewAndStockTable() {
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  setOverviewProfitKpisDash();
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
     { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
     { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
     { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
   ];
-  void refreshOverviewProfitRowFromSnapshots();
 
   overviewGrid.innerHTML = cards
     .map(
@@ -4724,6 +4779,24 @@ function renderOverviewAndStockTable() {
     )
     .join("");
 
+  const snapCk = buildOverviewSnapshotCacheKey();
+  if (
+    state.overviewSnapshotUi.ready &&
+    state.overviewSnapshotUi.cacheKey === snapCk &&
+    state.overviewSnapshotUi.snapBySym &&
+    todayProfitMain &&
+    monthProfitMain
+  ) {
+    todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
+    todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
+    monthProfitMain.innerHTML = state.overviewSnapshotUi.monthInnerHTML;
+    monthProfitMain.className = state.overviewSnapshotUi.monthClass;
+    paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
+    return;
+  }
+
+  setOverviewProfitKpisDash();
+  void refreshOverviewProfitRowFromSnapshots();
   paintOverviewStockTableFromSnapshots(portfolio, null);
 }
 
@@ -6053,7 +6126,7 @@ function indexSymbolDailyPnlBySymbol(rows) {
   return m;
 }
 
-/** 库内日终 day_pnl 累计到昨日 + 今日持仓上的 todayProfitNative。 */
+/** 库内「日终 day_pnl」累计到昨日；展示时再加当日 todayProfitNative（随行情变）。 */
 function buildSymbolSnapshotProfitMap(positions, symbolPnlRows, trades, todayKey) {
   const tk = String(todayKey || "").slice(0, 10);
   const tradeList = Array.isArray(trades) ? trades : [];
@@ -6083,12 +6156,10 @@ function buildSymbolSnapshotProfitMap(positions, symbolPnlRows, trades, todayKey
         monthHist += p;
       }
     }
-    const todayN = Number.isFinite(Number(row.todayProfitNative)) ? Number(row.todayProfitNative) : 0;
     map.set(sym, {
-      todayNative: todayN,
-      monthNative: monthHist + todayN,
-      yearNative: yearHist + todayN,
-      totalNative: totalHist + todayN,
+      monthHistNative: monthHist,
+      yearHistNative: yearHist,
+      totalHistNative: totalHist,
     });
   }
   return map;
@@ -6117,8 +6188,11 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
       if (!s) {
         continue;
       }
-      monthDen += Math.abs(applyFxForOverview(row, s.monthNative));
-      yearDen += Math.abs(applyFxForOverview(row, s.yearNative));
+      const liveToday = Number.isFinite(Number(row.todayProfitNative)) ? Number(row.todayProfitNative) : 0;
+      const mN = Number(s.monthHistNative) + liveToday;
+      const yN = Number(s.yearHistNative) + liveToday;
+      monthDen += Math.abs(applyFxForOverview(row, mN));
+      yearDen += Math.abs(applyFxForOverview(row, yN));
     }
   }
   stockTableBody.innerHTML = rows
@@ -6129,10 +6203,11 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
       const sym = normalizeSymbol(row.symbol);
       const s = dash ? null : snapMap.get(sym);
       const hasSnap = Boolean(s);
-      const todayN = hasSnap ? s.todayNative : null;
-      const monthN = hasSnap ? s.monthNative : null;
-      const yearN = hasSnap ? s.yearNative : null;
-      const totalN = hasSnap ? s.totalNative : null;
+      const liveToday = Number.isFinite(Number(row.todayProfitNative)) ? Number(row.todayProfitNative) : 0;
+      const todayN = liveToday;
+      const monthN = hasSnap ? Number(s.monthHistNative) + liveToday : null;
+      const yearN = hasSnap ? Number(s.yearHistNative) + liveToday : null;
+      const totalN = hasSnap ? Number(s.totalHistNative) + liveToday : null;
       const monthW =
         hasSnap && monthDen > 0 ? applyFxForOverview(row, monthN) / monthDen : hasSnap ? 0 : null;
       const yearW = hasSnap && yearDen > 0 ? applyFxForOverview(row, yearN) / yearDen : hasSnap ? 0 : null;
@@ -6299,6 +6374,20 @@ async function refreshOverviewProfitRowFromSnapshots() {
     monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
     monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
     paintOverviewStockTableFromSnapshots(portfolio, snapMap);
+    state.overviewSnapshotUi.ready = true;
+    state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
+    state.overviewSnapshotUi.snapBySym = Object.fromEntries(
+      [...snapMap.entries()].map(([k, v]) => [
+        k,
+        {
+          monthHistNative: Number(v.monthHistNative) || 0,
+          yearHistNative: Number(v.yearHistNative) || 0,
+          totalHistNative: Number(v.totalHistNative) || 0,
+        },
+      ]),
+    );
+    state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
+    state.overviewSnapshotUi.monthClass = monthProfitMain.className;
   }
 }
 
