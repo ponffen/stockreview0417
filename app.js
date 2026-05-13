@@ -6197,12 +6197,10 @@ async function renderAnalysis(options = {}) {
     valueFormatter: (value) => formatNumber(value, 2),
   });
 
-  const selectedLive = resolveAnalysisRange(historyFull);
-  const liveRateSeries = rebaseRateSeriesByFirstDay(computeModeSeries(selectedLive, state.algoMode));
-  const liveProfitSeries = buildProfitSeries(selectedLive);
-  const lastMy = liveRateSeries.at(-1)?.rate ?? 0;
+  /** 与曲线、tooltip 同一序列：不得再用 historyFull 另算一套，否则会出现「图上最后一点约 -3% 与标题 -25%」不一致。 */
+  const lastMy = mySeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
-  const lastProfit = liveProfitSeries.at(-1)?.value ?? 0;
+  const lastProfit = profitSeries.at(-1)?.value ?? 0;
   const excess = lastMy - lastBench;
   if (analysisRateSummary) {
     analysisRateSummary.textContent =
