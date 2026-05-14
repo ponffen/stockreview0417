@@ -31,7 +31,7 @@ let sessionProfile = {
   phoneMasked: "",
 };
 let authSubmitting = false;
-/** 定时拉腾讯实时行情；首页快照就绪后停掉，离开后再进「收益」持仓页时重启（见 stop/startMarketQuotePolling） */
+/** 定时拉腾讯实时行情；首页快照就绪后停掉；离开「收益」页（含进入分析等）也停掉，避免分析页被定时整页重算。再进「收益」时重启（见 stop/startMarketQuotePolling） */
 let marketQuoteIntervalId = null;
 let analysisStockRankHelpListenersBound = false;
 
@@ -710,7 +710,9 @@ async function startAppAfterAuth(options = {}) {
       }
     }
   });
-  startMarketQuotePolling();
+  if (state.route === "earning") {
+    startMarketQuotePolling();
+  }
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
@@ -2805,6 +2807,9 @@ function renderAll() {
     (state.route === "earning" && prevSnap != null && prevSnap !== "earning")
   ) {
     invalidateOverviewSnapshotUi();
+  }
+  if (prevSnap === "earning" && state.route !== "earning") {
+    stopMarketQuotePolling();
   }
   if (state.route === "earning" && prevSnap != null && prevSnap !== "earning") {
     startMarketQuotePolling();
@@ -8522,7 +8527,9 @@ async function refreshMarketData(opts = {}) {
     void hydrateSymbolNameMap([...symbols, ...klineSymbols]);
     if (!symbols.length) {
       state.marketLoading = false;
-      renderAll();
+      if (!skipFinalRender && state.route !== "analysis") {
+        renderAll();
+      }
       return;
     }
 
@@ -8558,7 +8565,7 @@ async function refreshMarketData(opts = {}) {
       if (latestSnapshotQuoteTime !== "--") {
         state.quoteTime = latestSnapshotQuoteTime;
       }
-      if (!skipFinalRender) {
+      if (!skipFinalRender && state.route !== "analysis") {
         renderAll();
       }
     } catch (error) {
@@ -8589,7 +8596,7 @@ async function refreshMarketData(opts = {}) {
     console.error("行情拉取失败，保留本地数据展示", error);
   } finally {
     state.marketLoading = false;
-    if (!skipFinalRender) {
+    if (!skipFinalRender && state.route !== "analysis") {
       renderAll();
       if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
         refreshPublicProfileEarningPanel();
