@@ -251,6 +251,10 @@ let tradeSearchSuggestController = null;
 let analysisRenderRequestSeq = 0;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
+/** 与 account-daily 类似：合并并发、短缓存，避免连续 renderAll 打出两条相同 symbol-daily */
+const symbolDailyResponseCache = new Map();
+const symbolDailyInFlight = new Map();
+const SYMBOL_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 let pendingSettingsSyncPayload = null;
 let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
@@ -6312,25 +6316,22 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
 
 const SYMBOL_SNAPSHOT_CHUNK = 14;
 
-async function fetchSymbolDailyRowsRemote({ accountId, symbols, from, to }) {
-  if (!apiReady) {
-    return [];
+async function fetchSymbolDailyChunkOnce(aid, fromKey, toKey, part) {
+  const subKey = `${aid}|${fromKey}|${toKey}|${part.join(",")}`;
+  const now = Date.now();
+  const cached = symbolDailyResponseCache.get(subKey);
+  if (cached && now - Number(cached.updatedAt || 0) < SYMBOL_DAILY_REMOTE_CACHE_TTL_MS) {
+    return Array.isArray(cached.rows) ? cached.rows : [];
   }
-  const aid = accountId === "all" ? "all" : accountId;
-  const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
-  if (!uniq.length) {
-    return [];
-  }
-  const out = [];
-  for (let i = 0; i < uniq.length; i += SYMBOL_SNAPSHOT_CHUNK) {
-    const part = uniq.slice(i, i + SYMBOL_SNAPSHOT_CHUNK);
-    const qs = new URLSearchParams({
-      accountId: aid,
-      from: String(from || "").slice(0, 10),
-      to: String(to || "").slice(0, 10),
-      symbols: part.join(","),
-    });
-    try {
+  let p = symbolDailyInFlight.get(subKey);
+  if (!p) {
+    p = (async () => {
+      const qs = new URLSearchParams({
+        accountId: aid,
+        from: fromKey,
+        to: toKey,
+        symbols: part.join(","),
+      });
       const res = await apiFetch(`${API_BASE}/snapshot/symbol-daily?${qs.toString()}`, {
         cache: "no-store",
         timeoutMs: 22_000,
@@ -6340,12 +6341,67 @@ async function fetchSymbolDailyRowsRemote({ accountId, symbols, from, to }) {
       }
       const j = await res.json().catch(() => ({}));
       const rows = j?.ok && Array.isArray(j.data) ? j.data : [];
+      symbolDailyResponseCache.set(subKey, { rows, updatedAt: Date.now() });
+      if (symbolDailyResponseCache.size > 48) {
+        const oldestKey = symbolDailyResponseCache.keys().next().value;
+        if (oldestKey) {
+          symbolDailyResponseCache.delete(oldestKey);
+        }
+      }
+      return rows;
+    })();
+    symbolDailyInFlight.set(subKey, p);
+    p.finally(() => {
+      symbolDailyInFlight.delete(subKey);
+    });
+  }
+  return p;
+}
+
+async function fetchSymbolDailyRowsRemote({ accountId, symbols, from, to }) {
+  if (!apiReady) {
+    return [];
+  }
+  const aid = accountId === "all" ? "all" : accountId;
+  const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
+  if (!uniq.length) {
+    return [];
+  }
+  const fromKey = String(from || "").slice(0, 10);
+  const toKey = String(to || "").slice(0, 10);
+  const out = [];
+  for (let i = 0; i < uniq.length; i += SYMBOL_SNAPSHOT_CHUNK) {
+    const part = uniq.slice(i, i + SYMBOL_SNAPSHOT_CHUNK);
+    try {
+      const rows = await fetchSymbolDailyChunkOnce(aid, fromKey, toKey, part);
       out.push(...rows);
     } catch {
-      return [];
+      // 单批失败不丢弃其它批次
     }
   }
   return out;
+}
+
+/** 按「收益」总览 overviewAccountDailyFetchBounds 预热日快照，便于分析页与收益页共享缓存、少打重复请求 */
+async function warmOverviewDailySnapshotsForEarning(scope, stageRange = state.stageRange) {
+  if (!apiReady || !scope) {
+    return;
+  }
+  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const vis = portfolio.visiblePositions;
+  const bounds = overviewAccountDailyFetchBounds(scope, stageRange);
+  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const symList = [...new Set(vis.map((p) => normalizeSymbol(p.symbol)).filter(Boolean))];
+  try {
+    await Promise.all([
+      fetchAnalysisDailyRowsRemote({ accountId: aid, from: bounds.from, to: bounds.to }),
+      symList.length
+        ? fetchSymbolDailyRowsRemote({ accountId: aid, symbols: symList, from: bounds.from, to: bounds.to })
+        : Promise.resolve([]),
+    ]);
+  } catch {
+    // 预热失败不影响分析图
+  }
 }
 
 async function renderAnalysis(options = {}) {
@@ -6497,6 +6553,7 @@ async function renderAnalysis(options = {}) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
   }
   renderAnalysisStockRank(pseudoHistory, scope, portfolio);
+  void warmOverviewDailySnapshotsForEarning(scope, state.stageRange);
   } finally {
     if (showLoading) {
       hideRouteLoading();
