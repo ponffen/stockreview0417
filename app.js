@@ -31,8 +31,6 @@ let sessionProfile = {
   phoneMasked: "",
 };
 let authSubmitting = false;
-/** 定时拉腾讯实时行情；首页快照就绪后停掉，离开后再进「收益」持仓页时重启（见 stop/startMarketQuotePolling） */
-let marketQuoteIntervalId = null;
 let analysisStockRankHelpListenersBound = false;
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
@@ -67,23 +65,6 @@ function readMarketDelayFromResponse(response) {
     return;
   }
   markMarketDataDelayed(response.headers.get("x-market-data-source") || "cache");
-}
-const QUOTE_REFRESH_MS = 60_000;
-
-function startMarketQuotePolling() {
-  if (marketQuoteIntervalId != null) {
-    return;
-  }
-  marketQuoteIntervalId = window.setInterval(() => {
-    void refreshMarketData();
-  }, QUOTE_REFRESH_MS);
-}
-
-function stopMarketQuotePolling() {
-  if (marketQuoteIntervalId != null) {
-    window.clearInterval(marketQuoteIntervalId);
-    marketQuoteIntervalId = null;
-  }
 }
 const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
@@ -710,7 +691,6 @@ async function startAppAfterAuth(options = {}) {
       }
     }
   });
-  startMarketQuotePolling();
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
@@ -2807,7 +2787,6 @@ function renderAll() {
     invalidateOverviewSnapshotUi();
   }
   if (state.route === "earning" && prevSnap != null && prevSnap !== "earning") {
-    startMarketQuotePolling();
     void refreshMarketData();
   }
   previousRenderAllRouteForOverviewSnapshot = state.route;
@@ -6464,9 +6443,6 @@ async function refreshOverviewProfitRowFromSnapshots() {
     );
     state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
     state.overviewSnapshotUi.monthClass = monthProfitMain.className;
-    if (state.route === "earning") {
-      stopMarketQuotePolling();
-    }
   }
 }
 
@@ -8522,7 +8498,9 @@ async function refreshMarketData(opts = {}) {
     void hydrateSymbolNameMap([...symbols, ...klineSymbols]);
     if (!symbols.length) {
       state.marketLoading = false;
-      renderAll();
+      if (!skipFinalRender && state.route !== "analysis") {
+        renderAll();
+      }
       return;
     }
 
@@ -8558,7 +8536,7 @@ async function refreshMarketData(opts = {}) {
       if (latestSnapshotQuoteTime !== "--") {
         state.quoteTime = latestSnapshotQuoteTime;
       }
-      if (!skipFinalRender) {
+      if (!skipFinalRender && state.route !== "analysis") {
         renderAll();
       }
     } catch (error) {
@@ -8589,7 +8567,7 @@ async function refreshMarketData(opts = {}) {
     console.error("行情拉取失败，保留本地数据展示", error);
   } finally {
     state.marketLoading = false;
-    if (!skipFinalRender) {
+    if (!skipFinalRender && state.route !== "analysis") {
       renderAll();
       if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
         refreshPublicProfileEarningPanel();
