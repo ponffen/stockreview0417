@@ -7122,7 +7122,6 @@ function drawStockRecordChart(symbol, symbolTrades) {
   if (!canvas) {
     return;
   }
-  syncChartWrapCanvasSize(canvas);
   const kline = getKlineBySymbol(symbol);
   const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
   const baseSource =
@@ -7725,36 +7724,10 @@ function drawLineChart(mySeries, benchmarkSeries, canvas) {
   );
 }
 
-/** 将 .chart-wrap 内 canvas 的位图像素与布局宽度对齐，避免移动端仅靠 CSS 缩放导致首屏不绘、滚动后标题被裁切等问题 */
-function syncChartWrapCanvasSize(canvas) {
-  if (!canvas || typeof canvas.getContext !== "function" || !canvas.closest?.(".chart-wrap")) {
-    return;
-  }
-  const wrap = canvas.closest(".chart-wrap");
-  let cssW = Math.floor(Number(wrap?.clientWidth) || 0);
-  if (!(cssW > 0)) {
-    cssW = Math.floor(Number(canvas.clientWidth) || 0);
-  }
-  if (!(cssW > 0) && typeof document !== "undefined") {
-    cssW = Math.floor(Math.min(900, Math.max(280, (document.documentElement?.clientWidth || 360) - 28)));
-  }
-  cssW = Math.max(200, Math.min(1600, cssW));
-  const cssH = Math.max(160, Math.round((cssW * 320) / 700));
-  if (canvas.width !== cssW || canvas.height !== cssH) {
-    canvas.width = cssW;
-    canvas.height = cssH;
-  }
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }
-}
-
 function drawDualLineChart(canvas, seriesA, seriesB, colorA, colorB, options = {}) {
   if (!canvas) {
     return;
   }
-  syncChartWrapCanvasSize(canvas);
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
@@ -8363,9 +8336,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   };
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "mouse") {
-      event.preventDefault();
-    }
+    event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, event);
     activePointerId = event.pointerId;
@@ -8387,14 +8358,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   });
 
   canvas.addEventListener("pointermove", (event) => {
-    const blockScroll =
-      event.pointerType === "mouse" ||
-      pointers.size >= 2 ||
-      crossVisible ||
-      (pressing && activePointerId === event.pointerId && moved);
-    if (blockScroll) {
-      event.preventDefault();
-    }
+    event.preventDefault();
     const payload = runtime.payloadBuilder?.();
     if (pointers.has(event.pointerId)) {
       pointers.set(event.pointerId, event);
@@ -8442,9 +8406,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   });
 
   const clearPointer = (event) => {
-    if (event.pointerType === "mouse" || pointers.size >= 2 || crossVisible || panStarted) {
-      event.preventDefault();
-    }
+    event.preventDefault();
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
