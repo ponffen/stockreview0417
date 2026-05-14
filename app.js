@@ -128,9 +128,6 @@ const FX_RATE_FALLBACK = {
 /** 腾讯财经外汇实时：与主行情接口同源 qt.gtimg.cn */
 const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
 const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
-const FX_HISTORY_DAYS = 120;
-const FX_DAYK_LEN_MIN = 60;
-const FX_DAYK_LEN_MAX = 140;
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
 const CHART_EDGE_SCROLL_PX = 22;
@@ -226,7 +223,6 @@ const state = {
   /** 腾讯 qt 外汇实时：USD / HKD → 兑 CNY 中间价 */
   fxSpot: {},
   fxLoaded: false,
-  fxLoading: false,
   communityProfileStage: "month",
   communityProfileTab: "earning",
   /** 他人主页个股表排序（不影响首页） */
@@ -690,7 +686,7 @@ async function startAppAfterAuth(options = {}) {
     state.route = state.appModule === "community" ? "community-feed" : "earning";
     persistState();
   }
-  // 首屏先渲染：汇率/港股行情等外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
+  // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   void hydrateSymbolNameMap(state.trades.map((trade) => trade.symbol)).then(() => {
     renderAll();
   });
@@ -704,10 +700,6 @@ async function startAppAfterAuth(options = {}) {
       }
     }
   });
-  // 历史汇率延后拉取，避免与首屏快照并发请求。
-  window.setTimeout(() => {
-    void initializeFxRates();
-  }, 1_200);
   startMarketQuotePolling();
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
@@ -731,153 +723,6 @@ async function initialize() {
   } finally {
     dismissAppBootLoading();
   }
-}
-
-async function initializeFxRates(opts = {}) {
-  const skipFinalRender = opts.skipFinalRender === true;
-  if (state.fxLoaded || state.fxLoading) {
-    return;
-  }
-  state.fxLoading = true;
-  try {
-    const bounds = resolveFxRangeBounds();
-    state.fxRangeStart = bounds.start;
-    state.fxRangeEnd = bounds.end;
-    const [usdSeries, hkdSeries] = await Promise.all([
-      fetchFxSeriesForCurrency("USD", bounds.start, bounds.end),
-      fetchFxSeriesForCurrency("HKD", bounds.start, bounds.end),
-    ]);
-    const map = {};
-    Object.entries(usdSeries).forEach(([date, rate]) => {
-      map[date] = map[date] || {};
-      map[date].USD = rate;
-    });
-    Object.entries(hkdSeries).forEach(([date, rate]) => {
-      map[date] = map[date] || {};
-      map[date].HKD = rate;
-    });
-    state.fxRatesToCnyByDate = map;
-    state.fxLoaded = true;
-    if (!skipFinalRender) {
-      renderAll();
-    }
-  } catch (error) {
-    console.error("加载历史汇率失败（新浪 DailyK_Batch），已回退固定汇率", error);
-  } finally {
-    state.fxLoading = false;
-  }
-}
-
-function resolveFxRangeBounds() {
-  const today = new Date();
-  const cappedStartDate = new Date(today);
-  cappedStartDate.setDate(cappedStartDate.getDate() - FX_HISTORY_DAYS);
-  const cappedStart = toDateKey(cappedStartDate);
-  let minTradeDate = "";
-  for (const trade of state.trades) {
-    if (trade?.date && (!minTradeDate || trade.date < minTradeDate)) {
-      minTradeDate = trade.date;
-    }
-  }
-  const start = minTradeDate && minTradeDate > cappedStart ? minTradeDate : cappedStart;
-  return { start, end: toDateKey(today) };
-}
-
-async function fetchFxSeriesForCurrency(currency, startDate, endDate) {
-  const result = {};
-  if (currency === "CNY") {
-    result[startDate] = 1;
-    result[endDate] = 1;
-    return result;
-  }
-  // 优先用本库已落地的历史汇率，避免外部源超时时回退固定汇率导致现金/本金口径偏差。
-  try {
-    const fromApi = await fetchFxSeriesFromDailyCloseApi(currency, startDate, endDate);
-    if (fromApi && Object.keys(fromApi).length) {
-      return fromApi;
-    }
-  } catch {
-    // fallback to upstream
-  }
-  try {
-    const full = await fetchSinaForexDayKSeries(currency, startDate, endDate);
-    if (full && Object.keys(full).length) {
-      Object.entries(full).forEach(([date, rate]) => {
-        if (date >= startDate && date <= endDate) {
-          result[date] = rate;
-        }
-      });
-      if (Object.keys(result).length) {
-        return result;
-      }
-    }
-  } catch {
-    // use fallback rates
-  }
-  const fallback = FX_RATE_FALLBACK[currency] || 1;
-  const cursor = new Date(startDate);
-  const end = new Date(endDate);
-  while (cursor <= end) {
-    result[toDateKey(cursor)] = fallback;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return result;
-}
-
-async function fetchFxSeriesFromDailyCloseApi(currency, startDate, endDate) {
-  if (!apiReady || (currency !== "USD" && currency !== "HKD")) {
-    return {};
-  }
-  const symbol = currency === "USD" ? "fx_usdcny" : "fx_hkdcny";
-  const response = await apiFetch(
-    `${getApiBaseForFetch()}/daily-close?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(
-      startDate
-    )}&to=${encodeURIComponent(endDate)}`,
-    {
-      cache: "no-store",
-      timeoutMs: 15_000,
-    }
-  );
-  if (!response.ok) {
-    return {};
-  }
-  const payload = await response.json().catch(() => ({}));
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const out = {};
-  for (const row of rows) {
-    const day = String(row?.date || row?.day || "").slice(0, 10);
-    const close = Number(row?.close);
-    if (day && Number.isFinite(close) && close > 0 && day >= startDate && day <= endDate) {
-      out[day] = close;
-    }
-  }
-  return out;
-}
-
-async function fetchSinaForexDayKSeries(currency, startDate, endDate) {
-  if (currency !== "USD" && currency !== "HKD") {
-    return {};
-  }
-  const symbol = currency === "USD" ? "fx_USDCNY" : "fx_HKDCNY";
-  const requestedLen = estimateRangeDays(startDate, endDate) + 16;
-  const len = Math.max(FX_DAYK_LEN_MIN, Math.min(FX_DAYK_LEN_MAX, requestedLen));
-  const payload = await fetchSinaDailyBatchPayloadWithFallback(symbol, len, "0");
-  const rows = pickSinaDailyBatchRows(payload, symbol);
-  const out = {};
-  for (const row of mapSinaKlineRows(rows)) {
-    out[row.day] = row.close;
-  }
-  return out;
-}
-
-function estimateRangeDays(startDate, endDate) {
-  const s = new Date(`${String(startDate || "").slice(0, 10)}T00:00:00+08:00`);
-  const e = new Date(`${String(endDate || "").slice(0, 10)}T00:00:00+08:00`);
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
-    return 365;
-  }
-  const delta = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
-  return Math.max(1, delta);
 }
 
 function normalizeAccounts(rawAccounts) {
@@ -4409,6 +4254,7 @@ async function loadCommunityProfileDetail() {
     }
     const d = j.data;
     state.lastPublicProfileDetail = d;
+    mergeFxRatesFromAnalysisDailyRows(Array.isArray(d?.analysisDaily) ? d.analysisDaily : []);
     await hydrateSymbolNameMap([
       ...(d?.positions || []).map((row) => row?.symbol),
       ...(d?.topPositions || []).map((row) => row?.symbol),
@@ -6418,7 +6264,9 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   const now = Date.now();
   const cached = analysisDailyResponseCache.get(key);
   if (cached && now - Number(cached.updatedAt || 0) < ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS) {
-    return Array.isArray(cached.rows) ? cached.rows : [];
+    const rows = Array.isArray(cached.rows) ? cached.rows : [];
+    mergeFxRatesFromAnalysisDailyRows(rows);
+    return rows;
   }
   if (analysisDailyInFlight.has(key)) {
     return analysisDailyInFlight.get(key);
@@ -6436,6 +6284,7 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
       }
       const j = await res.json().catch(() => ({}));
       const rows = j?.ok && Array.isArray(j.data) ? j.data : [];
+      mergeFxRatesFromAnalysisDailyRows(rows);
       analysisDailyResponseCache.set(key, { rows, updatedAt: Date.now() });
       if (analysisDailyResponseCache.size > 24) {
         const oldestKey = analysisDailyResponseCache.keys().next().value;
@@ -9172,21 +9021,63 @@ function getFxRateToCny(currency) {
   return FX_RATE_FALLBACK[currency] || 1;
 }
 
+/**
+ * 历史 USD/HKD→CNY：只合并 analysis 日快照（服务端已写入的 fxUsdCny / fxHkdCny），
+ * 不再在浏览器请求 /api/daily-close 外汇或新浪日 K。
+ */
+function mergeFxRatesFromAnalysisDailyRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return;
+  }
+  const map = { ...(state.fxRatesToCnyByDate || {}) };
+  for (const row of rows) {
+    const dk = String(row.date || "").slice(0, 10);
+    if (!dk) {
+      continue;
+    }
+    const usdRaw =
+      row.fxUsdCny != null
+        ? Number(row.fxUsdCny)
+        : row.fx_usd_cny != null
+          ? Number(row.fx_usd_cny)
+          : NaN;
+    const hkdRaw =
+      row.fxHkdCny != null
+        ? Number(row.fxHkdCny)
+        : row.fx_hkd_cny != null
+          ? Number(row.fx_hkd_cny)
+          : NaN;
+    const slot = { ...(map[dk] || {}) };
+    if (Number.isFinite(usdRaw) && usdRaw > 0) {
+      slot.USD = usdRaw;
+    }
+    if (Number.isFinite(hkdRaw) && hkdRaw > 0) {
+      slot.HKD = hkdRaw;
+    }
+    if ((slot.USD != null && slot.USD > 0) || (slot.HKD != null && slot.HKD > 0)) {
+      map[dk] = slot;
+    }
+  }
+  state.fxRatesToCnyByDate = map;
+  state.fxLoaded = true;
+}
+
 function getFxRateForDate(currency, dateKey) {
   if (currency === "CNY") {
     return 1;
+  }
+  const dk = String(dateKey || "").slice(0, 10);
+  const today = toDateKey(new Date());
+  if (!dk || dk >= today) {
+    return getFxRateToCny(currency);
   }
   const mapByDate = state.fxRatesToCnyByDate || {};
   const keys = Object.keys(mapByDate).sort();
   if (!keys.length) {
     return getFxRateToCny(currency);
   }
-  if (!dateKey) {
-    const latest = mapByDate[keys[keys.length - 1]];
-    return Number(latest?.[currency]) || getFxRateToCny(currency);
-  }
   for (let i = keys.length - 1; i >= 0; i -= 1) {
-    if (keys[i] <= dateKey) {
+    if (keys[i] <= dk) {
       const hit = Number(mapByDate[keys[i]]?.[currency]);
       if (Number.isFinite(hit) && hit > 0) {
         return hit;
