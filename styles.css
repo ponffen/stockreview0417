@@ -782,12 +782,12 @@ h2 {
 
 .chart-wrap {
   position: relative;
+  z-index: 0;
+  isolation: isolate;
   overflow: hidden;
   width: 100%;
   aspect-ratio: 700 / 320;
   min-height: 168px;
-  /* 防止 canvas 合成层在 iOS 上绘制溢出盖住下方「个股收益排行」 */
-  contain: paint;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -845,11 +845,6 @@ h2 {
 .analysis-stock-rank-panel .analysis-stock-rank-body {
   border-top: 1px solid var(--line);
   overflow-x: auto;
-  overflow-y: visible;
-  -webkit-overflow-scrolling: touch;
-  position: relative;
-  z-index: 1;
-  background: var(--surface-content);
 }
 
 .analysis-stock-rank-table {
@@ -1170,22 +1165,6 @@ h2 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
-}
-
-/*
- * iOS Safari：横向 overflow 容器内对 grid 子项使用 position:sticky 时，首屏常出现「有滚动条但整片白」
- * 直到反复滚动才绘制。窄屏下本人排行表取消 sticky，仅保留横向滚动查看各列。
- */
-@media (max-width: 520px) {
-  .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-rank,
-  .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-rank,
-  .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
-  .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
-    position: static;
-    left: auto;
-    z-index: auto;
-    box-shadow: none;
-  }
 }
 
 .analysis-stock-rank-head .col-hold-interval {

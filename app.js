@@ -5348,29 +5348,6 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
   return qty;
 }
 
-/** iOS WebKit：排行表 DOM 更新后偶发不合成；轻触布局避免整片留白 */
-function nudgeAnalysisRankPaint(el) {
-  if (!el || typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-    return;
-  }
-  window.requestAnimationFrame(() => {
-    try {
-      el.scrollLeft = 0;
-      void el.offsetHeight;
-      void el.getBoundingClientRect();
-    } catch {
-      /* ignore */
-    }
-    window.requestAnimationFrame(() => {
-      try {
-        void el.offsetHeight;
-      } catch {
-        /* ignore */
-      }
-    });
-  });
-}
-
 /**
  * 个股排行：周期 a、b 来自顶部选择；仅展示 [a,b] 内至少有一天日终持仓大于 0 的标的。
  * 有效区间：effStart=A早于a则a否则A；effEnd 默认 B 早于 b 取 B 否则取 b；若周期末日 b 仍持仓则强制 effEnd=b，避免仅一笔买入时 B 停在买入日导致涨跌幅异常。
@@ -5390,7 +5367,6 @@ function renderAnalysisStockRank(
   const publicHoldIntervals = publicRank || rankOpts.publicHoldIntervals === true;
   if (!history.length) {
     targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
-    nudgeAnalysisRankPaint(targetBody);
     return;
   }
   const { a, b } = resolveAnalysisPeriodAB(history);
@@ -5431,7 +5407,6 @@ function renderAnalysisStockRank(
 
   if (!rows.length) {
     targetBody.innerHTML = `<p class="empty">本分析周期内无持仓的标的。</p>`;
-    nudgeAnalysisRankPaint(targetBody);
     return;
   }
 
@@ -5501,7 +5476,6 @@ function renderAnalysisStockRank(
         })
         .join("")}
     </div>`;
-  nudgeAnalysisRankPaint(targetBody);
 }
 
 function syncTradePanelTabUi() {
@@ -6782,9 +6756,6 @@ async function renderAnalysis(options = {}) {
   } finally {
     if (showLoading) {
       hideRouteLoading();
-    }
-    if (state.route === "analysis" && analysisStockRankBody) {
-      nudgeAnalysisRankPaint(analysisStockRankBody);
     }
   }
 }
