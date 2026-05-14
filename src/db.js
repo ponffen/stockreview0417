@@ -165,6 +165,8 @@ const DDL = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades (user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_trades_trade_date_created_at ON trades (trade_date ASC, created_at ASC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trades_user_acc_td_desc ON trades (user_id, account_id, trade_date DESC, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trades_user_sym_td_desc ON trades (user_id, symbol, trade_date DESC, created_at DESC)`,
   `CREATE TABLE IF NOT EXISTS app_settings (
     user_id TEXT NOT NULL,
     key TEXT NOT NULL,
@@ -291,6 +293,7 @@ const DDL = [
     updated_at BIGINT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_date ON cash_transfers (user_id, transfer_date ASC, created_at ASC)`,
+  `CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_acc_td_desc ON cash_transfers (user_id, account_id, transfer_date DESC, created_at DESC)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_nonnull
    ON users (nickname)
    WHERE nickname IS NOT NULL AND length(trim(nickname)) > 0`,
@@ -690,8 +693,28 @@ async function getCashTransfers(userId) {
   return rows.map(rowToCashTransfer);
 }
 
+let ensureListPaginationIndexesPromise = null;
+/** 列表分页 COUNT/OFFSET 走复合索引（幂等，Vercel 冷启动也会执行） */
+async function ensureListPaginationIndexes() {
+  if (ensureListPaginationIndexesPromise) {
+    return ensureListPaginationIndexesPromise;
+  }
+  ensureListPaginationIndexesPromise = (async () => {
+    const stmts = [
+      `CREATE INDEX IF NOT EXISTS idx_cash_transfers_user_acc_td_desc ON cash_transfers (user_id, account_id, transfer_date DESC, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_trades_user_acc_td_desc ON trades (user_id, account_id, trade_date DESC, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_trades_user_sym_td_desc ON trades (user_id, symbol, trade_date DESC, created_at DESC)`,
+    ];
+    for (const sql of stmts) {
+      await q(sql).catch(() => {});
+    }
+  })();
+  return ensureListPaginationIndexesPromise;
+}
+
 /** 交易列表分页（新在前，与前端 sortTradeDesc 一致） */
 async function getTradesPage(userId, opts = {}) {
+  await ensureListPaginationIndexes();
   const uid = String(userId || "").trim();
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
   const page = Math.max(1, Number(opts.page) || 1);
@@ -725,6 +748,7 @@ async function getTradesPage(userId, opts = {}) {
 
 /** 资金记录分页（新在前） */
 async function getCashTransfersPage(userId, opts = {}) {
+  await ensureListPaginationIndexes();
   const uid = String(userId || "").trim();
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
   const page = Math.max(1, Number(opts.page) || 1);
@@ -758,6 +782,7 @@ async function getCashTransfersPage(userId, opts = {}) {
 
 /** 某标的成交分页（新在前） */
 async function getTradesForSymbolPage(userId, opts = {}) {
+  await ensureListPaginationIndexes();
   const uid = String(userId || "").trim();
   const sym = normalizeSymbol(String(opts.symbol || "").trim());
   const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
@@ -768,7 +793,7 @@ async function getTradesForSymbolPage(userId, opts = {}) {
     return { rows: [], total: 0, page, pageSize };
   }
   const params = [uid, sym];
-  let whereExtra = " AND lower(trim(symbol)) = lower(trim($2))";
+  let whereExtra = " AND symbol = $2";
   if (accountId && accountId !== "all") {
     params.push(accountId);
     whereExtra += ` AND account_id = $${params.length}`;
