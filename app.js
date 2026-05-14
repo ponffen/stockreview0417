@@ -87,7 +87,6 @@ function stopMarketQuotePolling() {
 }
 const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
-const DAILY_CLOSE_HYDRATE_TTL_MS = 90_000;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const CHART_FALLBACK_DAYS = 90;
@@ -250,9 +249,6 @@ const state = {
 };
 let apiReady = false;
 let tradeSearchSuggestController = null;
-let dailyCloseHydrateInFlight = null;
-let dailyCloseHydrateCacheKey = "";
-let dailyCloseHydrateAt = 0;
 let analysisRenderRequestSeq = 0;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
@@ -1231,7 +1227,7 @@ function shiftDateKeyByDays(dateKey, deltaDays) {
   return toDateKey(t);
 }
 
-function buildAnalysisDailyFetchRange(scope, history) {
+function buildAnalysisDailyFetchRange(scope) {
   const today = toDateKey(new Date());
   const to = shiftDateKeyByDays(today, 1);
   const trades = Array.isArray(scope?.trades) ? scope.trades : [];
@@ -1240,7 +1236,8 @@ function buildAnalysisDailyFetchRange(scope, history) {
     .filter(Boolean)
     .sort()[0];
   if (state.analysisRangeMode === "custom") {
-    const customStart = state.customRangeStart || history?.[0]?.date || earliestTradeDate || shiftDateKeyByDays(today, -365);
+    const customStart =
+      state.customRangeStart || earliestTradeDate || shiftDateKeyByDays(today, -365);
     return {
       from: shiftDateKeyByDays(customStart, -20),
       to,
@@ -1254,7 +1251,7 @@ function buildAnalysisDailyFetchRange(scope, history) {
   }
   if (state.analysisRangeMode === "all") {
     return {
-      from: shiftDateKeyByDays(earliestTradeDate || history?.[0]?.date || today, -20),
+      from: shiftDateKeyByDays(earliestTradeDate || today, -20),
       to,
     };
   }
@@ -1264,54 +1261,49 @@ function buildAnalysisDailyFetchRange(scope, history) {
   };
 }
 
-/** 从 SQLite 日收盘价表灌入 state.klineMap，优先于实时拉日 K */
-async function hydrateKlineFromLocalDb(symbols = []) {
+function symbolCloseRowsToKline(arr) {
+  return (Array.isArray(arr) ? arr : [])
+    .map((row) => ({
+      day: String(row.date || "").slice(0, 10),
+      open: Number(row.close),
+      high: Number(row.close),
+      low: Number(row.close),
+      close: Number(row.close),
+      volume: 0,
+    }))
+    .filter((x) => x.day && Number.isFinite(x.close))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** 按需从服务端 symbol_daily_close 快照灌入 klineMap（不在全站行情轮询里批量拉） */
+async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYDRATE_WINDOW_DAYS) {
   if (!apiReady) {
     return;
   }
-  const pickedSymbols = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))].sort();
-  if (!pickedSymbols.length) {
+  const picked = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))].sort();
+  if (!picked.length) {
     return;
   }
-  const cacheKey = `${pickedSymbols.join(",")}|${DAILY_CLOSE_HYDRATE_WINDOW_DAYS}`;
-  const now = Date.now();
-  if (cacheKey === dailyCloseHydrateCacheKey && now - dailyCloseHydrateAt < DAILY_CLOSE_HYDRATE_TTL_MS) {
-    return;
-  }
-  if (dailyCloseHydrateInFlight && cacheKey === dailyCloseHydrateCacheKey) {
-    await dailyCloseHydrateInFlight;
-    return;
-  }
-  try {
-    dailyCloseHydrateCacheKey = cacheKey;
-    dailyCloseHydrateInFlight = (async () => {
+  const chunk = 40;
+  const d = Math.max(30, Math.min(2000, Number(days) || DAILY_CLOSE_HYDRATE_WINDOW_DAYS));
+  for (let i = 0; i < picked.length; i += chunk) {
+    const part = picked.slice(i, i + chunk);
+    try {
       const r = await apiFetch(
-        `${API_BASE}/snapshot/symbol-close?days=${encodeURIComponent(
-          String(DAILY_CLOSE_HYDRATE_WINDOW_DAYS)
-        )}&symbols=${encodeURIComponent(pickedSymbols.join(","))}`,
-        { cache: "no-store", timeoutMs: 18_000 }
+        `${API_BASE}/snapshot/symbol-close?days=${encodeURIComponent(String(d))}&symbols=${encodeURIComponent(
+          part.join(","),
+        )}`,
+        { cache: "no-store", timeoutMs: 22_000 },
       );
       if (!r.ok) {
-        return;
+        continue;
       }
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (!j?.ok || !j.data || typeof j.data !== "object") {
-        return;
+        continue;
       }
-      const toKlineRows = (arr) =>
-        (Array.isArray(arr) ? arr : [])
-          .map((row) => ({
-            day: String(row.date || "").slice(0, 10),
-            open: Number(row.close),
-            high: Number(row.close),
-            low: Number(row.close),
-            close: Number(row.close),
-            volume: 0,
-          }))
-          .filter((x) => x.day && Number.isFinite(x.close))
-          .sort((a, b) => a.day.localeCompare(b.day));
       Object.entries(j.data).forEach(([sym, rows]) => {
-        const list = toKlineRows(rows);
+        const list = symbolCloseRowsToKline(rows);
         if (!list.length) {
           return;
         }
@@ -1322,14 +1314,8 @@ async function hydrateKlineFromLocalDb(symbols = []) {
           state.klineMap[legacyAlias] = list;
         }
       });
-      dailyCloseHydrateAt = Date.now();
-    })();
-    await dailyCloseHydrateInFlight;
-  } catch {
-    // ignore
-  } finally {
-    if (cacheKey === dailyCloseHydrateCacheKey) {
-      dailyCloseHydrateInFlight = null;
+    } catch {
+      // ignore chunk
     }
   }
 }
@@ -3585,6 +3571,35 @@ function withPublicTradesContext(d, fn) {
   }
 }
 
+async function withPublicTradesContextAsync(d, asyncFn) {
+  if (!d || !Array.isArray(d.publicTrades) || typeof asyncFn !== "function") {
+    return;
+  }
+  const prevTrades = state.trades;
+  const prevAlgo = state.algoMode;
+  const prevBook = state._overviewBookCurrencyOverride;
+  state.trades = d.publicTrades;
+  state.algoMode = "twr";
+  const book = d.publicOverviewBookCurrency;
+  if (book && typeof book === "string") {
+    const c = book.toUpperCase();
+    if (c === "USD" || c === "HKD" || c === "CNY") {
+      state._overviewBookCurrencyOverride = c;
+    } else {
+      state._overviewBookCurrencyOverride = null;
+    }
+  } else {
+    state._overviewBookCurrencyOverride = null;
+  }
+  try {
+    await asyncFn();
+  } finally {
+    state.trades = prevTrades;
+    state.algoMode = prevAlgo;
+    state._overviewBookCurrencyOverride = prevBook;
+  }
+}
+
 function renderPublicEarningProfileHtml(d) {
   if (!d || !Array.isArray(d.publicTrades)) {
     return `<p class="empty">暂无脱敏持仓数据</p>`;
@@ -3836,6 +3851,39 @@ function withPublicProfileAnalysisUi(fn) {
   });
   try {
     return fn();
+  } finally {
+    Object.assign(state, snap);
+  }
+}
+
+async function withPublicProfileAnalysisUiAsync(asyncFn) {
+  const ui = ensurePublicProfileAnalysisUi();
+  const snap = {
+    analysisRangeMode: state.analysisRangeMode,
+    analysisPreset: state.analysisPreset,
+    rangeDays: state.rangeDays,
+    analysisPanOffset: state.analysisPanOffset,
+    customRangeStart: state.customRangeStart,
+    customRangeEnd: state.customRangeEnd,
+    customRangeDraftStart: state.customRangeDraftStart,
+    customRangeDraftEnd: state.customRangeDraftEnd,
+    benchmark: state.benchmark,
+    capitalTrendMode: state.capitalTrendMode,
+  };
+  Object.assign(state, {
+    analysisRangeMode: ui.analysisRangeMode,
+    analysisPreset: ui.analysisPreset,
+    rangeDays: ui.rangeDays,
+    analysisPanOffset: ui.analysisPanOffset,
+    customRangeStart: ui.customRangeStart,
+    customRangeEnd: ui.customRangeEnd,
+    customRangeDraftStart: ui.customRangeDraftStart,
+    customRangeDraftEnd: ui.customRangeDraftEnd,
+    benchmark: ui.benchmark,
+    capitalTrendMode: ui.capitalTrendMode,
+  });
+  try {
+    await asyncFn();
   } finally {
     Object.assign(state, snap);
   }
@@ -4147,13 +4195,15 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   };
 
   if (!useDbRows || !dbRows.length) {
-    const history = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
-    const selected = resolveAnalysisRange(history);
-    const mySeries = rebaseRateSeriesByFirstDay(computeModeSeries(selected, state.algoMode));
-    const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selected));
-    bindRateOnly(mySeries, benchSeries);
-    paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, selected, refresh);
-    renderAnalysisStockRank(history, scope, portfolio, pubRank, rankOpts);
+    clearCanvasChart(pubRate);
+    clearCanvasChart(pubMkt);
+    if (pubRank) {
+      pubRank.innerHTML = `<p class="empty">暂无日快照数据。</p>`;
+    }
+    if (pubRateSummary) {
+      pubRateSummary.textContent =
+        state.benchmark === "none" ? "我的收益率 –" : "我的 – / 基准 – / 对比 –";
+    }
     return;
   }
 
@@ -4187,18 +4237,12 @@ async function renderPublicProfileAnalysis(d) {
     return;
   }
   ensurePublicProfileAnalysisUi();
-  withPublicTradesContext(detail, () => {
-    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-    const portfolio = computePortfolio(scope.trades, []);
-    const todayKey = toDateKey(new Date());
-    const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
-    const liveByMode = {
-      twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
-      mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
-    };
-    const dbRows = Array.isArray(detail.analysisDaily) ? detail.analysisDaily : [];
-
-    withPublicProfileAnalysisUi(() => {
+  await withPublicTradesContextAsync(detail, async () => {
+    await withPublicProfileAnalysisUiAsync(async () => {
+      const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
+      const portfolio = computePortfolio(scope.trades, []);
+      const todayKey = toDateKey(new Date());
+      const dbRows = Array.isArray(detail.analysisDaily) ? detail.analysisDaily : [];
       if (!dbRows.length) {
         paintPublicProfileAnalysisCore(detail, {
           useDbRows: false,
@@ -4206,18 +4250,41 @@ async function renderPublicProfileAnalysis(d) {
           portfolio,
           scope,
           todayKey,
-          liveByMode,
+          liveByMode: { twr: 0, mwr: 0 },
         });
-      } else {
-        paintPublicProfileAnalysisCore(detail, {
-          useDbRows: true,
-          dbRows,
-          portfolio,
-          scope,
-          todayKey,
-          liveByMode,
-        });
+        return;
       }
+      const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+      const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, []);
+      const pseudoHistory = sorted.map((row) => ({
+        date: row.date,
+        value: row.marketValue,
+        flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
+      }));
+      const selectedPh = resolveAnalysisRange(pseudoHistory);
+      const symSet = new Set();
+      for (const pos of portfolio.positions || []) {
+        const ns = normalizeSymbol(pos.symbol);
+        if (ns) {
+          symSet.add(ns);
+        }
+      }
+      if (state.benchmark !== "none") {
+        const nb = normalizeSymbol(state.benchmark);
+        if (nb) {
+          symSet.add(nb);
+        }
+      }
+      const win = Math.min(900, Math.max(120, selectedPh.length + 200));
+      await fetchSymbolCloseIntoKlineMap([...symSet], win);
+      paintPublicProfileAnalysisCore(detail, {
+        useDbRows: true,
+        dbRows,
+        portfolio,
+        scope,
+        todayKey,
+        liveByMode,
+      });
     });
   });
   syncCommunityProfileAnalysisControls();
@@ -5779,6 +5846,44 @@ function todayProfitCnyForAnalysisSnapshot(portfolio) {
   }, 0);
 }
 
+/** 用 analysis_daily 冻结序列 + 今日市值/出入金，重算当日末点 TWR/MWR（不依赖本机日 K 拼组合历史）。 */
+function buildLiveByModeFromSnapshotDaily(sortedRows, portfolio, todayKey, scopeCash) {
+  const tk = String(todayKey || "").slice(0, 10);
+  const cash = Array.isArray(scopeCash)
+    ? scopeCash
+    : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
+  const extToday = cash.reduce((s, r) => {
+    if (String(r.date).slice(0, 10) === tk) {
+      return s + cashTransferRowNetCny(r);
+    }
+    return s;
+  }, 0);
+  const pts = [];
+  for (const row of sortedRows || []) {
+    const d = String(row.date || "").slice(0, 10);
+    if (!d || d >= tk) {
+      continue;
+    }
+    pts.push({
+      date: d,
+      value: Number(row.marketValue ?? row.market_value) || 0,
+      flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0) || 0,
+    });
+  }
+  pts.push({
+    date: tk,
+    value: Number(portfolio?.totalMarketValue) || 0,
+    flow: extToday,
+  });
+  if (!pts.length) {
+    return { twr: 0, mwr: 0 };
+  }
+  return {
+    twr: computeModeSeries(pts, "twr").at(-1)?.rate ?? 0,
+    mwr: computeModeSeries(pts, "mwr").at(-1)?.rate ?? 0,
+  };
+}
+
 /**
  * 分析 Tab 最后一行对齐首页总览：总市值、本金、当日 profit_cny（与总览「今日」同口径）。
  * total_profit 仍按库里「日收益累加」延伸：昨日累计 + 今日 profit_cny，避免与历史点混用「持仓成本法 totalProfit」导致曲线断层。
@@ -5950,15 +6055,8 @@ function computeStageOverviewFromSnapshotRows(dbRows, portfolio, scope, stageRan
   const firstTradeDate =
     tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
   const todayKey = toDateKey(new Date());
-  const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
-  if (!historyFull.length) {
-    return null;
-  }
-  const liveByMode = {
-    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
-    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
-  };
   const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, scope.cashTransfers);
   const merged = mergeAnalysisSliceWithLive(
     sorted.map((row) => ({ ...row })),
     portfolio,
@@ -6183,19 +6281,8 @@ async function refreshOverviewProfitRowFromSnapshots() {
   const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
   const firstTradeDate =
     tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-  const historyFull = buildPortfolioHistory(portfolio.positions, tradeList, scope.cashTransfers);
-  if (!historyFull.length) {
-    if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
-    }
-    return;
-  }
-  const liveByMode = {
-    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
-    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
-  };
   const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
   const merged = mergeAnalysisSliceWithLive(
     sorted.map((row) => ({ ...row })),
     portfolio,
@@ -6358,12 +6445,7 @@ async function renderAnalysis(options = {}) {
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const todayKey = toDateKey(new Date());
-  const historyFull = buildPortfolioHistory(portfolio.positions, scope.trades, scope.cashTransfers);
-  const liveByMode = {
-    twr: computeModeSeries(historyFull, "twr").at(-1)?.rate ?? 0,
-    mwr: computeModeSeries(historyFull, "mwr").at(-1)?.rate ?? 0,
-  };
-  const fetchRange = buildAnalysisDailyFetchRange(scope, historyFull);
+  const fetchRange = buildAnalysisDailyFetchRange(scope);
 
   let dbRows = [];
   if (apiReady) {
@@ -6390,6 +6472,7 @@ async function renderAnalysis(options = {}) {
   }
 
   const sorted = [...dbRows].sort((a, b) => a.date.localeCompare(b.date));
+  const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, scope.cashTransfers);
   const pseudoHistory = sorted.map((row) => ({
     date: row.date,
     value: row.marketValue,
@@ -6398,6 +6481,21 @@ async function renderAnalysis(options = {}) {
   const selectedPh = resolveAnalysisRange(pseudoHistory);
   const dateSet = new Set(selectedPh.map((p) => p.date));
   let sliceRows = sorted.filter((row) => dateSet.has(row.date));
+  const symSet = new Set();
+  for (const pos of portfolio.positions || []) {
+    const ns = normalizeSymbol(pos.symbol);
+    if (ns) {
+      symSet.add(ns);
+    }
+  }
+  if (state.benchmark !== "none") {
+    const nb = normalizeSymbol(state.benchmark);
+    if (nb) {
+      symSet.add(nb);
+    }
+  }
+  const win = Math.min(900, Math.max(120, selectedPh.length + 200));
+  await fetchSymbolCloseIntoKlineMap([...symSet], win);
   sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode, scope.cashTransfers);
 
   const modePts = sliceRows.map((r) => ({
@@ -6751,7 +6849,11 @@ async function ensureSymbolData(symbol) {
     const currentLatestDay = latestKlineDay(currentList);
     const needRefreshKline = !currentList.length || (latestTradeDate && currentLatestDay < latestTradeDate);
     if (needRefreshKline) {
-      const list = await fetchKlineData(symbol);
+      const listRows = await (async () => {
+        await fetchSymbolCloseIntoKlineMap([normalizedSymbol], 720);
+        return getKlineBySymbol(symbol);
+      })();
+      const list = Array.isArray(listRows) ? listRows : [];
       if (list.length) {
         state.klineMap[normalizedSymbol] = list;
         if (legacyAlias) {
@@ -8379,8 +8481,10 @@ async function refreshMarketData(opts = {}) {
       console.warn("首屏实时行情拉取失败，保留本地数据展示", error);
     }
 
-    await hydrateKlineFromLocalDb(klineSymbols);
-
+    const missClose = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
+    if (missClose.length) {
+      await fetchSymbolCloseIntoKlineMap(missClose, 60);
+    }
     for (const symbol of klineSymbols) {
       // Fallback "realtime": use local daily-kline only; do not fan out remote single-symbol requests.
       if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
