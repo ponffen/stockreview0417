@@ -3473,7 +3473,7 @@ function isPublicProfileActiveHoldingRow(row) {
 }
 
 /** 分析区：总市值按区间内首日归一为 1（脱敏，仅形态） */
-function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, onRefresh) {
+function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, onDataRefresh) {
   if (!canvas || !selectedPoints?.length) {
     return;
   }
@@ -3483,7 +3483,7 @@ function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, o
     date: p.date,
     value: (Number(p.value) || 0) / denom,
   }));
-  const payload = drawDualLineChart(canvas, series, null, "#4f83f1", null, {
+  const chartOpts = {
     keyA: "mvIdx",
     labelA: "总市值指数",
     yAxisMode: "left",
@@ -3492,11 +3492,15 @@ function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, o
     valueFormatter: (value) => formatNumber(value, 4),
     axisFormatter: (value) => formatNumber(value, 3),
     yRangePadding: { minFactor: 0.92, maxFactor: 1.08 },
-  });
-  if (tooltipEl && onRefresh) {
-    bindInteractiveChart(canvas, tooltipEl, () => payload, {
+  };
+  const payloads = { mkt: drawDualLineChart(canvas, series, null, "#4f83f1", null, chartOpts) };
+  if (tooltipEl && onDataRefresh) {
+    bindInteractiveChart(canvas, tooltipEl, () => payloads.mkt, {
       mode: "analysis",
-      onRefresh,
+      onRefresh: onDataRefresh,
+      onRedraw: () => {
+        payloads.mkt = drawDualLineChart(canvas, series, null, "#4f83f1", null, chartOpts);
+      },
       valueFormatter: (val) => formatNumber(val, 4),
     });
   }
@@ -4128,11 +4132,14 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   const rankOpts = { publicStockRankLayout: true };
 
   const bindRateOnly = (mySeries, benchSeries) => {
-    const ratePayload = drawLineChart(mySeries, benchSeries, pubRate);
+    const payloads = { rate: drawLineChart(mySeries, benchSeries, pubRate) };
     const rateHasBenchmark = state.benchmark !== "none";
-    bindInteractiveChart(pubRate, pubRateTip, () => ratePayload, {
+    bindInteractiveChart(pubRate, pubRateTip, () => payloads.rate, {
       mode: "analysis",
       onRefresh: refresh,
+      onRedraw: () => {
+        payloads.rate = drawLineChart(mySeries, benchSeries, pubRate);
+      },
       valueFormatter: (_value, key) => {
         if (key === "benchmark" && !rateHasBenchmark) {
           return "--";
@@ -6715,10 +6722,41 @@ async function renderAnalysis(options = {}) {
     void renderAnalysis({ showLoading: false });
   };
 
+  const analysisChartPayloads = {
+    rate: ratePayload,
+    profit: profitPayload,
+    asset: assetPayload,
+  };
+  const redrawAnalysisChartsOnly = () => {
+    analysisChartPayloads.rate = drawLineChart(mySeries, benchSeries);
+    analysisChartPayloads.profit = drawDualLineChart(
+      analysisProfitChart,
+      profitSeries.map((item) => ({ date: item.date, value: item.value })),
+      null,
+      "#f45a68",
+      null,
+      {
+        keyA: "profit",
+        labelA: "收益",
+        yAxisMode: "left",
+        leftLabel: "",
+        xLabel: "",
+        valueFormatter: (value) => formatNumber(value, 2),
+        axisFormatter: (value) => formatNumber(value, 2),
+        yRangePadding: {
+          minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
+          maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
+        },
+      }
+    );
+    analysisChartPayloads.asset = drawAssetChart(assetSeries);
+  };
+
   const rateHasBenchmark = state.benchmark !== "none";
-  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, {
+  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => analysisChartPayloads.rate, {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
+    onRedraw: redrawAnalysisChartsOnly,
     valueFormatter: (_value, key) => {
       if (key === "benchmark" && !rateHasBenchmark) {
         return "--";
@@ -6726,14 +6764,16 @@ async function renderAnalysis(options = {}) {
       return `${formatNumber(_value, 2)}%`;
     },
   });
-  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, {
+  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => analysisChartPayloads.profit, {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
+    onRedraw: redrawAnalysisChartsOnly,
     valueFormatter: (value) => formatNumber(value, 2),
   });
-  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, {
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => analysisChartPayloads.asset, {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
+    onRedraw: redrawAnalysisChartsOnly,
     valueFormatter: (value) => formatNumber(value, 2),
   });
 
@@ -8252,7 +8292,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       crossVisible = false;
       tooltip.classList.remove("show");
       delete state.chartCrosshairMap[canvas.id];
-      requestRefresh();
+      requestRefresh("redraw");
     },
   };
   chartRuntimeMap.set(canvas.id, runtime);
@@ -8264,12 +8304,17 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     }
   };
 
-  const requestRefresh = () => {
+  const requestRefresh = (reason = "redraw") => {
     if (refreshRafId) {
       return;
     }
     refreshRafId = window.requestAnimationFrame(() => {
       refreshRafId = 0;
+      const mode = runtime.options.mode;
+      if (mode === "analysis" && reason === "redraw" && typeof runtime.options.onRedraw === "function") {
+        runtime.options.onRedraw();
+        return;
+      }
       runtime.options.onRefresh?.();
     });
   };
@@ -8307,7 +8352,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         y: point.y,
       })),
     };
-    requestRefresh();
+    requestRefresh("redraw");
     const formatter = runtime.options.valueFormatter || ((value) => formatNumber(value, 2));
     const rows = state.chartCrosshairMap[canvas.id].points
       .map((item) => `<div>${escapeHtml(item.label)}：${formatter(item.value, item.key, item.axis)}</div>`)
@@ -8332,7 +8377,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const maxOffset = Math.max(0, total - Math.max(2, Number(state.rangeDays || 30)));
       state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
     }
-    requestRefresh();
+    requestRefresh(runtime.options.mode === "analysis" ? "data" : "redraw");
   };
 
   canvas.addEventListener("pointerdown", (event) => {
@@ -8377,7 +8422,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
           updateAnalysisWindowByScale(scale);
           renderControls();
         }
-        requestRefresh();
+        requestRefresh(runtime.options.mode === "analysis" ? "data" : "redraw");
       }
       state.lastPinchDistanceMap[canvas.id] = distance;
       return;
