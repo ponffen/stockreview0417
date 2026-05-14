@@ -2792,6 +2792,7 @@ function renderAll() {
   previousRenderAllRouteForOverviewSnapshot = state.route;
   renderControls();
   renderRoute();
+  clearHoldingsTradePaneDomIfHiddenRoute();
   if (state.route === "earning") {
     renderOverviewAndStockTable();
   } else if (state.route === "analysis") {
@@ -5532,6 +5533,19 @@ function openEditCashTransferDialog(rawId) {
   cashTransferDialog?.showModal();
 }
 
+/** 离开「交易」页后不再重绘该表；若不清理 tbody，大列表会一直占内存，切页时易触发移动端渲染进程崩溃（Chrome 错误代码 5）。 */
+function clearHoldingsTradePaneDomIfHiddenRoute() {
+  if (state.route === "trade" || state.route === "trade-search") {
+    return;
+  }
+  if (tradeTableBody) {
+    tradeTableBody.innerHTML = "";
+  }
+  if (cashTransferTableBody) {
+    cashTransferTableBody.innerHTML = "";
+  }
+}
+
 function renderCashTransferTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -8248,8 +8262,14 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     return existing;
   }
   if (existing && existing.canvas !== canvas) {
-    chartRuntimeMap.delete(canvas.id);
+    if (typeof existing.dispose === "function") {
+      existing.dispose();
+    } else {
+      chartRuntimeMap.delete(canvas.id);
+    }
   }
+  const pointerCtl = new AbortController();
+  const signal = pointerCtl.signal;
   let pressing = false;
   let pressTimer = null;
   let activePointerId = null;
@@ -8271,7 +8291,6 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       requestRefresh("redraw");
     },
   };
-  chartRuntimeMap.set(canvas.id, runtime);
 
   const clearPressTimer = () => {
     if (pressTimer) {
@@ -8356,29 +8375,35 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     requestRefresh(runtime.options.mode === "analysis" ? "data" : "redraw");
   };
 
-  canvas.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    canvas.setPointerCapture(event.pointerId);
-    pointers.set(event.pointerId, event);
-    activePointerId = event.pointerId;
-    pressing = true;
-    moved = false;
-    panStarted = false;
-    startX = event.clientX;
-    lastMoveX = event.clientX;
-    if (event.pointerType !== "mouse") {
-      updateCrosshair(event.clientX, event.clientY);
-    }
-    clearPressTimer();
-    pressTimer = window.setTimeout(() => {
-      if (!pressing || moved || crossVisible) {
-        return;
+  canvas.addEventListener(
+    "pointerdown",
+    (event) => {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      pointers.set(event.pointerId, event);
+      activePointerId = event.pointerId;
+      pressing = true;
+      moved = false;
+      panStarted = false;
+      startX = event.clientX;
+      lastMoveX = event.clientX;
+      if (event.pointerType !== "mouse") {
+        updateCrosshair(event.clientX, event.clientY);
       }
-      updateCrosshair(event.clientX, event.clientY);
-    }, event.pointerType === "mouse" ? CHART_MOUSE_HOLD_MS : CHART_TOUCH_HOLD_MS);
-  });
+      clearPressTimer();
+      pressTimer = window.setTimeout(() => {
+        if (!pressing || moved || crossVisible) {
+          return;
+        }
+        updateCrosshair(event.clientX, event.clientY);
+      }, event.pointerType === "mouse" ? CHART_MOUSE_HOLD_MS : CHART_TOUCH_HOLD_MS);
+    },
+    { signal },
+  );
 
-  canvas.addEventListener("pointermove", (event) => {
+  canvas.addEventListener(
+    "pointermove",
+    (event) => {
     event.preventDefault();
     const payload = runtime.payloadBuilder?.();
     if (pointers.has(event.pointerId)) {
@@ -8424,7 +8449,9 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         handlePan(deltaX, payload);
       }
     }
-  });
+    },
+    { signal },
+  );
 
   const clearPointer = (event) => {
     event.preventDefault();
@@ -8447,14 +8474,35 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       runtime.hideCrosshair();
     }
   };
-  canvas.addEventListener("pointerup", clearPointer);
-  canvas.addEventListener("pointercancel", clearPointer);
-  canvas.addEventListener("pointerleave", (event) => {
-    clearPointer(event);
-    if (event.pointerType === "mouse") {
-      runtime.hideCrosshair();
+  canvas.addEventListener("pointerup", clearPointer, { signal });
+  canvas.addEventListener("pointercancel", clearPointer, { signal });
+  canvas.addEventListener(
+    "pointerleave",
+    (event) => {
+      clearPointer(event);
+      if (event.pointerType === "mouse") {
+        runtime.hideCrosshair();
+      }
+    },
+    { signal },
+  );
+  runtime.dispose = () => {
+    if (chartRuntimeMap.get(canvas.id) === runtime) {
+      chartRuntimeMap.delete(canvas.id);
     }
-  });
+    pointerCtl.abort();
+    clearPressTimer();
+    if (refreshRafId) {
+      window.cancelAnimationFrame(refreshRafId);
+      refreshRafId = 0;
+    }
+    delete state.chartCrosshairMap[canvas.id];
+    if (state.lastPinchDistanceMap) {
+      delete state.lastPinchDistanceMap[canvas.id];
+    }
+    tooltip.classList.remove("show");
+  };
+  chartRuntimeMap.set(canvas.id, runtime);
   return runtime;
 }
 
