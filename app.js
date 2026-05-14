@@ -255,6 +255,11 @@ const analysisDailyInFlight = new Map();
 const symbolDailyResponseCache = new Map();
 const symbolDailyInFlight = new Map();
 const SYMBOL_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
+/** 首页 home-summary：合并并发 + 短复用，避免 startApp 连续多次 renderAll 打三遍 */
+let homeSummaryFetchGen = 0;
+const homeSummaryInflightByKey = new Map();
+let homeSummaryRpcMemo = { key: "", data: null, at: 0 };
+const HOME_SUMMARY_RPC_REUSE_MS = 8000;
 let pendingSettingsSyncPayload = null;
 let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
@@ -686,7 +691,11 @@ async function startAppAfterAuth(options = {}) {
     persistState();
   }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
-  void hydrateSymbolNameMap(state.trades.map((trade) => trade.symbol)).then(() => {
+  void hydrateSymbolNameMap(
+    state.route === "earning" || state.route === "analysis"
+      ? collectSymbolsForMarket()
+      : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
+  ).then(() => {
     renderAll();
   });
   renderAll();
@@ -4592,6 +4601,9 @@ function invalidateOverviewSnapshotUi() {
   state.overviewSnapshotUi.snapBySym = null;
   state.overviewSnapshotUi.monthInnerHTML = "";
   state.overviewSnapshotUi.monthClass = "";
+  homeSummaryFetchGen += 1;
+  homeSummaryRpcMemo = { key: "", data: null, at: 0 };
+  homeSummaryInflightByKey.clear();
 }
 
 function overviewTradesLedgerKey() {
@@ -6166,6 +6178,54 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
     .join("");
 }
 
+/**
+ * 仅 accountScope=all；与「当前账户筛选 + 成交账本」绑定，失效见 invalidateOverviewSnapshotUi。
+ */
+async function fetchHomeSummaryRemote() {
+  if (!apiReady) {
+    return null;
+  }
+  const memoKey = `${state.selectedAccountId}|${overviewTradesLedgerKey()}`;
+  const now = Date.now();
+  if (
+    homeSummaryRpcMemo.data &&
+    homeSummaryRpcMemo.key === memoKey &&
+    now - homeSummaryRpcMemo.at < HOME_SUMMARY_RPC_REUSE_MS
+  ) {
+    return homeSummaryRpcMemo.data;
+  }
+  if (homeSummaryInflightByKey.has(memoKey)) {
+    return homeSummaryInflightByKey.get(memoKey);
+  }
+  const gen = homeSummaryFetchGen;
+  const p = (async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/snapshot/home-summary?accountScope=all`, {
+        cache: "no-store",
+        timeoutMs: 18_000,
+      });
+      if (!res.ok) {
+        return null;
+      }
+      const j = await res.json().catch(() => ({}));
+      if (!j.ok || !j.data?.account || !Array.isArray(j.data.symbols)) {
+        return null;
+      }
+      if (gen !== homeSummaryFetchGen) {
+        return null;
+      }
+      homeSummaryRpcMemo = { key: memoKey, data: j.data, at: Date.now() };
+      return j.data;
+    } catch {
+      return null;
+    } finally {
+      homeSummaryInflightByKey.delete(memoKey);
+    }
+  })();
+  homeSummaryInflightByKey.set(memoKey, p);
+  return p;
+}
+
 async function refreshOverviewProfitRowFromSnapshots() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -6189,21 +6249,10 @@ async function refreshOverviewProfitRowFromSnapshots() {
   let homeData = null;
   let homeCoversSymbols = false;
   if (aid === "all") {
-    try {
-      const res = await apiFetch(`${API_BASE}/snapshot/home-summary?accountScope=all`, {
-        cache: "no-store",
-        timeoutMs: 18_000,
-      });
-      if (res.ok) {
-        const j = await res.json();
-        if (j.ok && j.data?.account && Array.isArray(j.data.symbols)) {
-          homeData = j.data;
-          const have = new Set(homeData.symbols.map((s) => normalizeSymbol(s.symbol)));
-          homeCoversSymbols = symList.length === 0 || symList.every((s) => have.has(s));
-        }
-      }
-    } catch {
-      homeData = null;
+    homeData = await fetchHomeSummaryRemote();
+    if (homeData?.account && Array.isArray(homeData.symbols)) {
+      const have = new Set(homeData.symbols.map((s) => normalizeSymbol(s.symbol)));
+      homeCoversSymbols = symList.length === 0 || symList.every((s) => have.has(s));
     }
   }
   if (seq !== overviewProfitRefreshSeq) {
