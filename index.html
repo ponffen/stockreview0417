@@ -343,6 +343,11 @@
                 <tbody id="tradeTableBody"></tbody>
               </table>
             </div>
+            <div id="tradeListPager" class="list-pager hidden" aria-label="交易记录分页">
+              <button type="button" id="tradeListPrevBtn" class="btn btn-ghost">上一页</button>
+              <span id="tradeListPageInfo" class="list-pager-info secondary"></span>
+              <button type="button" id="tradeListNextBtn" class="btn btn-ghost">下一页</button>
+            </div>
           </div>
           <div id="cashRecordsPanel" class="trade-subtab-panel hidden" data-panel="cash">
             <div class="trade-table-wrap">
@@ -358,6 +363,11 @@
                 </thead>
                 <tbody id="cashTransferTableBody"></tbody>
               </table>
+            </div>
+            <div id="cashListPager" class="list-pager hidden" aria-label="资金记录分页">
+              <button type="button" id="cashListPrevBtn" class="btn btn-ghost">上一页</button>
+              <span id="cashListPageInfo" class="list-pager-info secondary"></span>
+              <button type="button" id="cashListNextBtn" class="btn btn-ghost">下一页</button>
             </div>
           </div>
         </article>
@@ -821,6 +831,11 @@
             </thead>
             <tbody id="stockRecordListBody"></tbody>
           </table>
+        </div>
+        <div id="stockRecordListPager" class="list-pager hidden" aria-label="个股成交分页">
+          <button type="button" id="stockRecordListPrevBtn" class="btn btn-ghost">上一页</button>
+          <span id="stockRecordListPageInfo" class="list-pager-info secondary"></span>
+          <button type="button" id="stockRecordListNextBtn" class="btn btn-ghost">下一页</button>
         </div>
       </div>
     </section>

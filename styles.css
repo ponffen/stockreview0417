@@ -2940,3 +2940,25 @@ body.auth-mode {
   color: var(--muted);
   text-align: center;
 }
+
+/* 交易 / 资金 / 个股记录列表分页 */
+.list-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 4px 0 2px;
+  flex-wrap: wrap;
+}
+.list-pager.hidden {
+  display: none;
+}
+.list-pager-info {
+  font-size: 13px;
+  min-width: 10em;
+  text-align: center;
+}
+.list-pager .btn {
+  min-width: 5.5rem;
+}

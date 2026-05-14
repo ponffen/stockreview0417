@@ -67,6 +67,7 @@ function readMarketDelayFromResponse(response) {
   markMarketDataDelayed(response.headers.get("x-market-data-source") || "cache");
 }
 const KLINE_DATALEN = 120;
+const LIST_PAGE_SIZE = 10;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
@@ -182,6 +183,14 @@ const state = {
   cashTransfers: [],
   /** 交易页子 Tab：trades | cash */
   tradePanelTab: "trades",
+  /** 交易 / 资金列表分页（仅 UI，全量仍在 state.trades / cashTransfers 供组合计算） */
+  tradeListPage: 1,
+  tradeListTotal: 0,
+  cashListPage: 1,
+  cashListTotal: 0,
+  stockRecordTradePage: 1,
+  stockRecordTradeTotal: 0,
+  stockRecordListCtx: null,
   editingCashTransferId: null,
   quoteMap: {},
   klineMap: {},
@@ -383,6 +392,18 @@ const tradeSearchBackBtn = document.getElementById("tradeSearchBackBtn");
 const tradeStockSearchInput = document.getElementById("tradeStockSearchInput");
 const tradeStockSearchResults = document.getElementById("tradeStockSearchResults");
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
+const tradeListPager = document.getElementById("tradeListPager");
+const tradeListPrevBtn = document.getElementById("tradeListPrevBtn");
+const tradeListNextBtn = document.getElementById("tradeListNextBtn");
+const tradeListPageInfo = document.getElementById("tradeListPageInfo");
+const cashListPager = document.getElementById("cashListPager");
+const cashListPrevBtn = document.getElementById("cashListPrevBtn");
+const cashListNextBtn = document.getElementById("cashListNextBtn");
+const cashListPageInfo = document.getElementById("cashListPageInfo");
+const stockRecordListPager = document.getElementById("stockRecordListPager");
+const stockRecordListPrevBtn = document.getElementById("stockRecordListPrevBtn");
+const stockRecordListNextBtn = document.getElementById("stockRecordListNextBtn");
+const stockRecordListPageInfo = document.getElementById("stockRecordListPageInfo");
 const appRouteLoading = document.getElementById("appRouteLoading");
 const appRouteLoadingText = document.getElementById("appRouteLoadingText");
 
@@ -980,6 +1001,95 @@ function getFilteredCashTransfers(accountId = "all") {
     return [...list];
   }
   return list.filter((row) => String(row.accountId) === String(accountId));
+}
+
+function totalListPages(total, pageSize = LIST_PAGE_SIZE) {
+  return Math.max(1, Math.ceil(Number(total || 0) / Math.max(1, pageSize)));
+}
+
+function updateListPagerUi({ pagerEl, prevBtn, nextBtn, infoEl, page, total, pageSize = LIST_PAGE_SIZE }) {
+  if (!pagerEl) {
+    return;
+  }
+  const tp = totalListPages(total, pageSize);
+  const hasRows = total > 0;
+  pagerEl.classList.toggle("hidden", !hasRows);
+  if (!hasRows) {
+    return;
+  }
+  if (prevBtn) {
+    prevBtn.disabled = page <= 1;
+  }
+  if (nextBtn) {
+    nextBtn.disabled = page >= tp;
+  }
+  if (infoEl) {
+    infoEl.textContent = `第 ${page} / ${tp} 页（共 ${total} 条）`;
+  }
+}
+
+async function fetchTradesPageRemote(accountId, page) {
+  const aid = accountId === "all" ? "all" : encodeURIComponent(String(accountId));
+  const res = await apiFetch(
+    `${getApiBaseForFetch()}/trades/page?accountId=${aid}&page=${encodeURIComponent(String(page))}&pageSize=${LIST_PAGE_SIZE}`,
+    { cache: "no-store", timeoutMs: 18_000 }
+  );
+  if (!res.ok) {
+    throw new Error(`trades page ${res.status}`);
+  }
+  const j = await res.json().catch(() => ({}));
+  if (!j?.ok) {
+    throw new Error("trades page bad json");
+  }
+  return {
+    rows: Array.isArray(j.data) ? j.data.map(normalizeTrade) : [],
+    total: Number(j.total) || 0,
+    page: Number(j.page) || page,
+    pageSize: Number(j.pageSize) || LIST_PAGE_SIZE,
+  };
+}
+
+async function fetchCashTransfersPageRemote(accountId, page) {
+  const aid = accountId === "all" ? "all" : encodeURIComponent(String(accountId));
+  const res = await apiFetch(
+    `${getApiBaseForFetch()}/cash-transfers/page?accountId=${aid}&page=${encodeURIComponent(String(page))}&pageSize=${LIST_PAGE_SIZE}`,
+    { cache: "no-store", timeoutMs: 18_000 }
+  );
+  if (!res.ok) {
+    throw new Error(`cash page ${res.status}`);
+  }
+  const j = await res.json().catch(() => ({}));
+  if (!j?.ok) {
+    throw new Error("cash page bad json");
+  }
+  return {
+    rows: Array.isArray(j.data) ? j.data.map(normalizeCashTransferRow) : [],
+    total: Number(j.total) || 0,
+    page: Number(j.page) || page,
+    pageSize: Number(j.pageSize) || LIST_PAGE_SIZE,
+  };
+}
+
+async function fetchSymbolTradesPageRemote(symbol, accountId, page) {
+  const sym = encodeURIComponent(normalizeSymbol(symbol));
+  const aid = accountId === "all" ? "all" : encodeURIComponent(String(accountId));
+  const res = await apiFetch(
+    `${getApiBaseForFetch()}/trades/symbol-page?symbol=${sym}&accountId=${aid}&page=${encodeURIComponent(String(page))}&pageSize=${LIST_PAGE_SIZE}`,
+    { cache: "no-store", timeoutMs: 18_000 }
+  );
+  if (!res.ok) {
+    throw new Error(`symbol trades page ${res.status}`);
+  }
+  const j = await res.json().catch(() => ({}));
+  if (!j?.ok) {
+    throw new Error("symbol trades page bad json");
+  }
+  return {
+    rows: Array.isArray(j.data) ? j.data.map(normalizeTrade) : [],
+    total: Number(j.total) || 0,
+    page: Number(j.page) || page,
+    pageSize: Number(j.pageSize) || LIST_PAGE_SIZE,
+  };
 }
 
 /** 单条银证资金记录折算人民币净额（转入为正、转出为负） */
@@ -2117,12 +2227,15 @@ function bindEvents() {
   });
   tradeAccountFilterSelect?.addEventListener("change", () => {
     state.tradeFilterAccountId = resolveValidAccountFilter(tradeAccountFilterSelect.value);
+    state.tradeListPage = 1;
+    state.cashListPage = 1;
     persistState();
     renderTradeTable();
     renderControls();
   });
   stockRecordAccountSelect?.addEventListener("change", () => {
     state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
+    state.stockRecordTradePage = 1;
     persistState();
     if (state.route === "stock-record" && state.activeRecordSymbol) {
       void renderStockRecordPage(state.activeRecordSymbol);
@@ -2239,15 +2352,56 @@ function bindEvents() {
   });
   tradeSubtabTrades?.addEventListener("click", () => {
     state.tradePanelTab = "trades";
+    state.tradeListPage = 1;
     syncTradePanelTabUi();
     renderTradeTable();
     persistState();
   });
   tradeSubtabCash?.addEventListener("click", () => {
     state.tradePanelTab = "cash";
+    state.cashListPage = 1;
     syncTradePanelTabUi();
     renderTradeTable();
     persistState();
+  });
+  tradeListPrevBtn?.addEventListener("click", () => {
+    if (state.tradeListPage > 1) {
+      state.tradeListPage -= 1;
+      renderTradeTable();
+    }
+  });
+  tradeListNextBtn?.addEventListener("click", () => {
+    const maxP = totalListPages(state.tradeListTotal, LIST_PAGE_SIZE);
+    if (state.tradeListPage < maxP) {
+      state.tradeListPage += 1;
+      renderTradeTable();
+    }
+  });
+  cashListPrevBtn?.addEventListener("click", () => {
+    if (state.cashListPage > 1) {
+      state.cashListPage -= 1;
+      renderTradeTable();
+    }
+  });
+  cashListNextBtn?.addEventListener("click", () => {
+    const maxP = totalListPages(state.cashListTotal, LIST_PAGE_SIZE);
+    if (state.cashListPage < maxP) {
+      state.cashListPage += 1;
+      renderTradeTable();
+    }
+  });
+  stockRecordListPrevBtn?.addEventListener("click", () => {
+    if (state.stockRecordTradePage > 1) {
+      state.stockRecordTradePage -= 1;
+      void renderStockRecordPage(state.activeRecordSymbol);
+    }
+  });
+  stockRecordListNextBtn?.addEventListener("click", () => {
+    const maxP = totalListPages(state.stockRecordTradeTotal, LIST_PAGE_SIZE);
+    if (state.stockRecordTradePage < maxP) {
+      state.stockRecordTradePage += 1;
+      void renderStockRecordPage(state.activeRecordSymbol);
+    }
   });
   cashTransferTableBody?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-cash-id]");
@@ -5533,26 +5687,80 @@ function openEditCashTransferDialog(rawId) {
 }
 
 function renderCashTransferTable() {
+  void renderCashTransferTablePaged();
+}
+
+async function renderCashTransferTablePaged() {
   if (state.route === "community-profile" || state.route === "stock-record") {
+    return;
+  }
+  if (state.tradePanelTab !== "cash") {
     return;
   }
   if (!cashTransferTableBody) {
     return;
   }
-  const rows = getFilteredCashTransfers(state.tradeFilterAccountId);
+  const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
+  let rows = [];
+  let total = 0;
+  if (apiReady && !state.useDemoData) {
+    try {
+      const pack = await fetchCashTransfersPageRemote(aid, state.cashListPage);
+      total = pack.total;
+      state.cashListTotal = total;
+      const maxP = totalListPages(total, LIST_PAGE_SIZE);
+      if (state.cashListPage > maxP) {
+        state.cashListPage = maxP;
+        return renderCashTransferTablePaged();
+      }
+      rows = pack.rows;
+    } catch (error) {
+      console.error("加载资金记录分页失败", error);
+      const all = getFilteredCashTransfers(aid).sort((a, b) => {
+        const c = String(b.date).localeCompare(String(a.date));
+        return c !== 0 ? c : (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      total = all.length;
+      state.cashListTotal = total;
+      const maxP = totalListPages(total, LIST_PAGE_SIZE);
+      if (state.cashListPage > maxP) {
+        state.cashListPage = maxP;
+      }
+      const start = (state.cashListPage - 1) * LIST_PAGE_SIZE;
+      rows = all.slice(start, start + LIST_PAGE_SIZE);
+    }
+  } else {
+    const all = getFilteredCashTransfers(aid).sort((a, b) => {
+      const c = String(b.date).localeCompare(String(a.date));
+      return c !== 0 ? c : (b.createdAt || 0) - (a.createdAt || 0);
+    });
+    total = all.length;
+    state.cashListTotal = total;
+    const maxP = totalListPages(total, LIST_PAGE_SIZE);
+    if (state.cashListPage > maxP) {
+      state.cashListPage = maxP;
+    }
+    const start = (state.cashListPage - 1) * LIST_PAGE_SIZE;
+    rows = all.slice(start, start + LIST_PAGE_SIZE);
+  }
   if (!rows.length) {
     cashTransferTableBody.innerHTML = `
       <tr>
         <td colspan="5"><p class="empty">暂无资金记录，点击「新增资金记录」添加银证转账。</p></td>
       </tr>
     `;
+    updateListPagerUi({
+      pagerEl: cashListPager,
+      prevBtn: cashListPrevBtn,
+      nextBtn: cashListNextBtn,
+      infoEl: cashListPageInfo,
+      page: state.cashListPage,
+      total: 0,
+      pageSize: LIST_PAGE_SIZE,
+    });
     return;
   }
-  const sorted = [...rows].sort((a, b) => {
-    const c = String(b.date).localeCompare(String(a.date));
-    return c !== 0 ? c : (b.createdAt || 0) - (a.createdAt || 0);
-  });
-  cashTransferTableBody.innerHTML = sorted
+  cashTransferTableBody.innerHTML = rows
     .map((row) => {
       const acc = getAccountById(row.accountId);
       const dirLabel = row.direction === "out" ? "银证转出" : "银证转入";
@@ -5569,6 +5777,15 @@ function renderCashTransferTable() {
       `;
     })
     .join("");
+  updateListPagerUi({
+    pagerEl: cashListPager,
+    prevBtn: cashListPrevBtn,
+    nextBtn: cashListNextBtn,
+    infoEl: cashListPageInfo,
+    page: state.cashListPage,
+    total,
+    pageSize: LIST_PAGE_SIZE,
+  });
 }
 
 function renderTradeTable() {
@@ -5576,22 +5793,79 @@ function renderTradeTable() {
     return;
   }
   syncTradePanelTabUi();
+  void renderTradeTableBodiesPaged();
+}
+
+async function renderTradeTableBodiesPaged() {
   if (!tradeTableBody) {
-    renderCashTransferTable();
+    await renderCashTransferTablePaged();
     return;
   }
-  const trades = getFilteredTrades(state.tradeFilterAccountId);
-  if (!trades.length) {
+  await Promise.all([renderTradeListBodyPaged(), renderCashTransferTablePaged()]);
+}
+
+async function renderTradeListBodyPaged() {
+  if (!tradeTableBody) {
+    return;
+  }
+  if (state.tradePanelTab !== "trades") {
+    return;
+  }
+  const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
+  let rows = [];
+  let total = 0;
+  if (apiReady && !state.useDemoData) {
+    try {
+      const pack = await fetchTradesPageRemote(aid, state.tradeListPage);
+      total = pack.total;
+      state.tradeListTotal = total;
+      const maxP = totalListPages(total, LIST_PAGE_SIZE);
+      if (state.tradeListPage > maxP) {
+        state.tradeListPage = maxP;
+        return renderTradeListBodyPaged();
+      }
+      rows = pack.rows;
+    } catch (error) {
+      console.error("加载交易记录分页失败", error);
+      const all = getFilteredTrades(aid).sort(sortTradeDesc);
+      total = all.length;
+      state.tradeListTotal = total;
+      const maxP = totalListPages(total, LIST_PAGE_SIZE);
+      if (state.tradeListPage > maxP) {
+        state.tradeListPage = maxP;
+      }
+      const start = (state.tradeListPage - 1) * LIST_PAGE_SIZE;
+      rows = all.slice(start, start + LIST_PAGE_SIZE);
+    }
+  } else {
+    const all = getFilteredTrades(aid).sort(sortTradeDesc);
+    total = all.length;
+    state.tradeListTotal = total;
+    const maxP = totalListPages(total, LIST_PAGE_SIZE);
+    if (state.tradeListPage > maxP) {
+      state.tradeListPage = maxP;
+    }
+    const start = (state.tradeListPage - 1) * LIST_PAGE_SIZE;
+    rows = all.slice(start, start + LIST_PAGE_SIZE);
+  }
+  if (!rows.length) {
     tradeTableBody.innerHTML = `
       <tr>
         <td colspan="7"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
       </tr>
     `;
-    renderCashTransferTable();
+    updateListPagerUi({
+      pagerEl: tradeListPager,
+      prevBtn: tradeListPrevBtn,
+      nextBtn: tradeListNextBtn,
+      infoEl: tradeListPageInfo,
+      page: state.tradeListPage,
+      total: 0,
+      pageSize: LIST_PAGE_SIZE,
+    });
     return;
   }
-  const sorted = [...trades].sort(sortTradeDesc);
-  tradeTableBody.innerHTML = sorted
+  tradeTableBody.innerHTML = rows
     .map((trade) => {
       return `
         <tr class="trade-row trade-row--clickable" data-record-id="${escapeHtml(String(trade.id))}">
@@ -5608,7 +5882,15 @@ function renderTradeTable() {
       `;
     })
     .join("");
-  renderCashTransferTable();
+  updateListPagerUi({
+    pagerEl: tradeListPager,
+    prevBtn: tradeListPrevBtn,
+    nextBtn: tradeListNextBtn,
+    infoEl: tradeListPageInfo,
+    page: state.tradeListPage,
+    total,
+    pageSize: LIST_PAGE_SIZE,
+  });
 }
 
 function openTradeRecordActionsSheet(tradeId) {
@@ -6905,11 +7187,16 @@ async function renderStockRecordPage(symbol) {
     portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   }
   const symKey = normalizeSymbol(symbol);
+  const listCtx = `${symKey}|${activeAccountId}|${usePub ? "pub" : "me"}`;
+  if (state.stockRecordListCtx !== listCtx) {
+    state.stockRecordListCtx = listCtx;
+    state.stockRecordTradePage = 1;
+  }
   const position = portfolio.positions.find((item) => normalizeSymbol(item.symbol) === symKey);
-  const symbolTrades = scope.trades
+  const symbolTradesAll = scope.trades
     .filter((item) => normalizeSymbol(item.symbol) === symKey)
     .sort(sortTradeDesc);
-  if (!position && !symbolTrades.length && !usePub && activeAccountId === "all") {
+  if (!position && !symbolTradesAll.length && !usePub && activeAccountId === "all") {
     if (state.route === "stock-record" && state.activeRecordSymbol === symbol) {
       state.route = state.previousRoute || "earning";
       state.activeRecordSymbol = null;
@@ -6924,7 +7211,7 @@ async function renderStockRecordPage(symbol) {
   const current = validNumber(quote.current, position?.currentPrice, 0);
   const prev = validNumber(quote.prevClose, position?.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
-  const positionName = position?.name || symbolTrades[0]?.name || quote?.name || symbol;
+  const positionName = position?.name || symbolTradesAll[0]?.name || quote?.name || symbol;
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = quote.time || state.quoteTime || "--";
@@ -6955,23 +7242,72 @@ async function renderStockRecordPage(symbol) {
       : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th class=\"trade-note-head\">备注</th>";
   }
 
-  stockRecordListBody.innerHTML = symbolTrades
-    .map((trade) => {
-      const rowCore = `
+  const emptyColspan = usePub ? "5" : "6";
+  let tableRows = [];
+  let listTotal = 0;
+  if (usePub) {
+    listTotal = symbolTradesAll.length;
+    state.stockRecordTradeTotal = listTotal;
+    const maxP = totalListPages(listTotal, LIST_PAGE_SIZE);
+    if (state.stockRecordTradePage > maxP) {
+      state.stockRecordTradePage = maxP;
+      return renderStockRecordPage(symbol);
+    }
+    const start = (state.stockRecordTradePage - 1) * LIST_PAGE_SIZE;
+    tableRows = symbolTradesAll.slice(start, start + LIST_PAGE_SIZE);
+  } else if (apiReady && !state.useDemoData) {
+    try {
+      const pack = await fetchSymbolTradesPageRemote(symbol, activeAccountId, state.stockRecordTradePage);
+      listTotal = pack.total;
+      state.stockRecordTradeTotal = listTotal;
+      const maxP = totalListPages(listTotal, LIST_PAGE_SIZE);
+      if (state.stockRecordTradePage > maxP) {
+        state.stockRecordTradePage = maxP;
+        return renderStockRecordPage(symbol);
+      }
+      tableRows = pack.rows;
+    } catch (error) {
+      console.error("加载个股成交分页失败", error);
+      listTotal = symbolTradesAll.length;
+      state.stockRecordTradeTotal = listTotal;
+      const maxP = totalListPages(listTotal, LIST_PAGE_SIZE);
+      if (state.stockRecordTradePage > maxP) {
+        state.stockRecordTradePage = maxP;
+      }
+      const start = (state.stockRecordTradePage - 1) * LIST_PAGE_SIZE;
+      tableRows = symbolTradesAll.slice(start, start + LIST_PAGE_SIZE);
+    }
+  } else {
+    listTotal = symbolTradesAll.length;
+    state.stockRecordTradeTotal = listTotal;
+    const maxP = totalListPages(listTotal, LIST_PAGE_SIZE);
+    if (state.stockRecordTradePage > maxP) {
+      state.stockRecordTradePage = maxP;
+    }
+    const start = (state.stockRecordTradePage - 1) * LIST_PAGE_SIZE;
+    tableRows = symbolTradesAll.slice(start, start + LIST_PAGE_SIZE);
+  }
+
+  if (!tableRows.length) {
+    stockRecordListBody.innerHTML = `<tr><td colspan="${emptyColspan}"><p class="empty">暂无该标的成交记录</p></td></tr>`;
+  } else {
+    stockRecordListBody.innerHTML = tableRows
+      .map((trade) => {
+        const rowCore = `
       <tr class="stock-record-trade-row" data-record-id="${escapeHtml(String(trade.id))}">
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
         <td>${formatNumber(trade.price, 2)}</td>`;
-      if (usePub) {
-        const share = publicTradeAmountShareOfLatestMv(trade, detail);
-        const shareCell =
-          share != null && Number.isFinite(share) ? formatPercent(share) : "—";
-        return `${rowCore}
+        if (usePub) {
+          const share = publicTradeAmountShareOfLatestMv(trade, detail);
+          const shareCell =
+            share != null && Number.isFinite(share) ? formatPercent(share) : "—";
+          return `${rowCore}
         <td class="num">${shareCell}</td>
         <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
-      }
-      return `${rowCore}
+        }
+        return `${rowCore}
         <td>${formatNumber(trade.quantity, 0)}</td>
         <td class="${trade.side === "buy" ? "down" : "up"}">${trade.side === "buy" ? "-" : "+"}${formatNumber(
           trade.amount,
@@ -6979,10 +7315,20 @@ async function renderStockRecordPage(symbol) {
         )}</td>
         <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
-    })
-    .join("");
+      })
+      .join("");
+  }
+  updateListPagerUi({
+    pagerEl: stockRecordListPager,
+    prevBtn: stockRecordListPrevBtn,
+    nextBtn: stockRecordListNextBtn,
+    infoEl: stockRecordListPageInfo,
+    page: state.stockRecordTradePage,
+    total: listTotal,
+    pageSize: LIST_PAGE_SIZE,
+  });
 
-  drawStockRecordChart(symbol, symbolTrades);
+  drawStockRecordChart(symbol, symbolTradesAll);
 }
 
 async function ensureSymbolData(symbol) {

@@ -690,6 +690,106 @@ async function getCashTransfers(userId) {
   return rows.map(rowToCashTransfer);
 }
 
+/** 交易列表分页（新在前，与前端 sortTradeDesc 一致） */
+async function getTradesPage(userId, opts = {}) {
+  const uid = String(userId || "").trim();
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
+  const page = Math.max(1, Number(opts.page) || 1);
+  const offset = (page - 1) * pageSize;
+  const accountId = String(opts.accountId ?? "all").trim() || "all";
+  if (!uid) {
+    return { rows: [], total: 0, page, pageSize };
+  }
+  const params = [uid];
+  let whereExtra = "";
+  if (accountId && accountId !== "all") {
+    params.push(accountId);
+    whereExtra = ` AND account_id = $${params.length}`;
+  }
+  const { rows: cr } = await q(
+    `SELECT COUNT(*)::bigint AS c FROM trades WHERE user_id = $1${whereExtra}`,
+    params
+  );
+  const total = Number(cr[0]?.c || 0);
+  const lim1 = params.length + 1;
+  const lim2 = params.length + 2;
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE user_id = $1${whereExtra}
+     ORDER BY trade_date DESC, created_at DESC
+     LIMIT $${lim1} OFFSET $${lim2}`,
+    [...params, pageSize, offset]
+  );
+  return { rows: rows.map(rowToTrade), total, page, pageSize };
+}
+
+/** 资金记录分页（新在前） */
+async function getCashTransfersPage(userId, opts = {}) {
+  const uid = String(userId || "").trim();
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
+  const page = Math.max(1, Number(opts.page) || 1);
+  const offset = (page - 1) * pageSize;
+  const accountId = String(opts.accountId ?? "all").trim() || "all";
+  if (!uid) {
+    return { rows: [], total: 0, page, pageSize };
+  }
+  const params = [uid];
+  let whereExtra = "";
+  if (accountId && accountId !== "all") {
+    params.push(accountId);
+    whereExtra = ` AND account_id = $${params.length}`;
+  }
+  const { rows: cr } = await q(
+    `SELECT COUNT(*)::bigint AS c FROM cash_transfers WHERE user_id = $1${whereExtra}`,
+    params
+  );
+  const total = Number(cr[0]?.c || 0);
+  const lim1 = params.length + 1;
+  const lim2 = params.length + 2;
+  const { rows } = await q(
+    `SELECT id, account_id, transfer_date, direction, amount, note, created_at
+     FROM cash_transfers WHERE user_id = $1${whereExtra}
+     ORDER BY transfer_date DESC, created_at DESC
+     LIMIT $${lim1} OFFSET $${lim2}`,
+    [...params, pageSize, offset]
+  );
+  return { rows: rows.map(rowToCashTransfer), total, page, pageSize };
+}
+
+/** 某标的成交分页（新在前） */
+async function getTradesForSymbolPage(userId, opts = {}) {
+  const uid = String(userId || "").trim();
+  const sym = normalizeSymbol(String(opts.symbol || "").trim());
+  const pageSize = Math.min(100, Math.max(1, Number(opts.pageSize) || 10));
+  const page = Math.max(1, Number(opts.page) || 1);
+  const offset = (page - 1) * pageSize;
+  const accountId = String(opts.accountId ?? "all").trim() || "all";
+  if (!uid || !sym) {
+    return { rows: [], total: 0, page, pageSize };
+  }
+  const params = [uid, sym];
+  let whereExtra = " AND lower(trim(symbol)) = lower(trim($2))";
+  if (accountId && accountId !== "all") {
+    params.push(accountId);
+    whereExtra += ` AND account_id = $${params.length}`;
+  }
+  const { rows: cr } = await q(
+    `SELECT COUNT(*)::bigint AS c FROM trades WHERE user_id = $1${whereExtra}`,
+    params
+  );
+  const total = Number(cr[0]?.c || 0);
+  const lim1 = params.length + 1;
+  const lim2 = params.length + 2;
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE user_id = $1${whereExtra}
+     ORDER BY trade_date DESC, created_at DESC
+     LIMIT $${lim1} OFFSET $${lim2}`,
+    [...params, pageSize, offset]
+  );
+  return { rows: rows.map(rowToTrade), total, page, pageSize };
+}
+
 async function upsertCashTransfer(record, userId) {
   const uid = String(userId || "").trim();
   const row = cashTransferToRow(record, userId);
@@ -2189,11 +2289,14 @@ module.exports = {
   normalizeAccountRecords,
   normalizeDailyReturn,
   getTrades,
+  getTradesPage,
+  getTradesForSymbolPage,
   upsertTrade,
   importTrades,
   deleteTradeById,
   normalizeCashTransfer,
   getCashTransfers,
+  getCashTransfersPage,
   upsertCashTransfer,
   importCashTransfers,
   deleteCashTransferById,

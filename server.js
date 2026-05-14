@@ -704,10 +704,13 @@ const {
   normalizeSymbol,
   normalizeTrade,
   getTrades,
+  getTradesPage,
+  getTradesForSymbolPage,
   upsertTrade,
   importTrades,
   deleteTradeById,
   getCashTransfers,
+  getCashTransfersPage,
   upsertCashTransfer,
   importCashTransfers,
   deleteCashTransferById,
@@ -1409,6 +1412,35 @@ app.get("/api/trades", requireAuth, async (req, res) => {
   res.json({ ok: true, data: await getTrades(req.userId) });
 });
 
+app.get("/api/trades/page", requireAuth, async (req, res) => {
+  try {
+    const accountId = String(req.query.accountId ?? "all").trim() || "all";
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || "10"), 10) || 10));
+    const out = await getTradesPage(req.userId, { accountId, page, pageSize });
+    res.json({ ok: true, data: out.rows, total: out.total, page: out.page, pageSize: out.pageSize });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "trades page failed" });
+  }
+});
+
+app.get("/api/trades/symbol-page", requireAuth, async (req, res) => {
+  try {
+    const symbol = normalizeSymbol(String(req.query.symbol || "").trim());
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "symbol is required" });
+      return;
+    }
+    const accountId = String(req.query.accountId ?? "all").trim() || "all";
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || "10"), 10) || 10));
+    const out = await getTradesForSymbolPage(req.userId, { symbol, accountId, page, pageSize });
+    res.json({ ok: true, data: out.rows, total: out.total, page: out.page, pageSize: out.pageSize });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "symbol trades page failed" });
+  }
+});
+
 app.post("/api/trades", requireAuth, async (req, res) => {
   try {
     const trade = normalizeTrade(req.body || {});
@@ -1434,6 +1466,18 @@ app.delete("/api/trades/:id", requireAuth, async (req, res) => {
 
 app.get("/api/cash-transfers", requireAuth, async (req, res) => {
   res.json({ ok: true, data: await getCashTransfers(req.userId) });
+});
+
+app.get("/api/cash-transfers/page", requireAuth, async (req, res) => {
+  try {
+    const accountId = String(req.query.accountId ?? "all").trim() || "all";
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || "10"), 10) || 10));
+    const out = await getCashTransfersPage(req.userId, { accountId, page, pageSize });
+    res.json({ ok: true, data: out.rows, total: out.total, page: out.page, pageSize: out.pageSize });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "cash page failed" });
+  }
 });
 
 app.post("/api/cash-transfers", requireAuth, async (req, res) => {
