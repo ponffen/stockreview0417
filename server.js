@@ -699,6 +699,8 @@ function resolveWebStaticRoot() {
 
 const WEB_ROOT = resolveWebStaticRoot();
 
+const { buildPortfolioSummariesForUser, buildPortfolioSummaryForAccount } = require("./src/earning-portfolio-summary");
+
 const {
   DEFAULT_SETTINGS,
   normalizeSymbol,
@@ -709,6 +711,9 @@ const {
   upsertTrade,
   importTrades,
   deleteTradeById,
+  getTradeById,
+  countTradesForAccount,
+  countCashTransfersForAccount,
   getCashTransfers,
   getCashTransfersPage,
   upsertCashTransfer,
@@ -1405,7 +1410,20 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
 });
 
 app.get("/api/state", requireAuth, async (req, res) => {
-  res.json({ ok: true, data: await getState(req.userId) });
+  const base = await getState(req.userId);
+  const portfolioSummaries = await buildPortfolioSummariesForUser(req.userId);
+  res.json({ ok: true, data: { ...base, portfolioSummaries } });
+});
+
+app.get("/api/portfolio/summary", requireAuth, async (req, res) => {
+  try {
+    const accountId = String(req.query.accountId ?? "all").trim() || "all";
+    const data = await buildPortfolioSummaryForAccount(req.userId, accountId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "portfolio summary failed" });
+  }
 });
 
 app.get("/api/trades", requireAuth, async (req, res) => {
@@ -1439,6 +1457,21 @@ app.get("/api/trades/symbol-page", requireAuth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "symbol trades page failed" });
   }
+});
+
+app.get("/api/trades/:id", requireAuth, async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id || id === "page" || id === "import") {
+    res.status(404).json({ ok: false, error: "not found" });
+    return;
+  }
+  const row = await getTradeById(id, req.userId);
+  if (!row) {
+    res.status(404).json({ ok: false, error: "trade not found" });
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, data: row });
 });
 
 app.post("/api/trades", requireAuth, async (req, res) => {

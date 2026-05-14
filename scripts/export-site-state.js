@@ -31,8 +31,16 @@ async function main() {
   if (!process.env.DATABASE_URL && process.env.POSTGRES_URL) {
     process.env.DATABASE_URL = process.env.POSTGRES_URL;
   }
-  const { getState, closeDatabase, getCliUserId } = require("../src/db");
-  const state = await getState(await getCliUserId());
+  const { getState, getTrades, getCashTransfers, closeDatabase, getCliUserId } = require("../src/db");
+  const { buildPortfolioSummariesForUser } = require("../src/earning-portfolio-summary");
+  const uid = await getCliUserId();
+  const base = await getState(uid);
+  const [portfolioSummaries, trades, cashTransfers] = await Promise.all([
+    buildPortfolioSummariesForUser(uid),
+    getTrades(uid),
+    getCashTransfers(uid),
+  ]);
+  const state = { ...base, portfolioSummaries, trades, cashTransfers };
   writeStateAndLog(state);
   await closeDatabase();
 }

@@ -179,11 +179,15 @@ const state = {
   analysisPanOffset: 0,
   dailyReturns: [],
   trades: [],
-  /** 银证转账 / 出入金 */
+  /** 银证转账 / 出入金（按需拉全量；交易 Tab 列表以分页接口为准） */
   cashTransfers: [],
+  /** 服务端预计算的持仓摘要（/api/state.portfolioSummaries） */
+  portfolioSummaries: {},
+  /** 是否已从 /api/trades、/api/cash-transfers 拉过全量（分析排行、部分编辑逻辑用） */
+  holdingsDataLoaded: false,
   /** 交易页子 Tab：trades | cash */
   tradePanelTab: "trades",
-  /** 交易 / 资金列表分页（仅 UI，全量仍在 state.trades / cashTransfers 供组合计算） */
+  /** 交易 / 资金列表分页：每页 10 条，走分页接口 */
   tradeListPage: 1,
   tradeListTotal: 0,
   cashListPage: 1,
@@ -252,6 +256,9 @@ let homeSummaryFetchGen = 0;
 const homeSummaryInflightByKey = new Map();
 let homeSummaryRpcMemo = { key: "", data: null, at: 0 };
 const HOME_SUMMARY_RPC_REUSE_MS = 8000;
+/** 交易 / 资金分页接口 in-flight 去重 */
+const remoteTradesPageInflight = new Map();
+const remoteCashPageInflight = new Map();
 let pendingSettingsSyncPayload = null;
 let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
@@ -1664,14 +1671,25 @@ async function hydrateState() {
       parsed.stockAmountDisplay === "cny" || parsed.stockAmountDisplay === "native"
         ? parsed.stockAmountDisplay
         : "native";
-    state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
-    state.cashTransfers = Array.isArray(parsed.cashTransfers)
-      ? parsed.cashTransfers.map(normalizeCashTransferRow)
-      : [];
+    state.portfolioSummaries =
+      parsed.portfolioSummaries && typeof parsed.portfolioSummaries === "object"
+        ? parsed.portfolioSummaries
+        : {};
+    state.holdingsDataLoaded = false;
+    if (sessionPhone && apiReady) {
+      state.trades = [];
+      state.cashTransfers = [];
+      state.dailyReturns = [];
+    } else {
+      state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
+      state.cashTransfers = Array.isArray(parsed.cashTransfers)
+        ? parsed.cashTransfers.map(normalizeCashTransferRow)
+        : [];
+      state.dailyReturns = Array.isArray(parsed.dailyReturns)
+        ? parsed.dailyReturns.map(normalizeDailyReturnRow)
+        : [];
+    }
     state.tradePanelTab = parsed.tradePanelTab === "cash" ? "cash" : "trades";
-    state.dailyReturns = Array.isArray(parsed.dailyReturns)
-      ? parsed.dailyReturns.map(normalizeDailyReturnRow)
-      : [];
     state.appModule = parsed.appModule === "community" ? "community" : "holdings";
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
@@ -1699,6 +1717,9 @@ async function hydrateState() {
     }
   } else if (state.trades.length === 0) {
     state.useDemoData = false;
+  }
+  if (sessionPhone && apiReady && !state.useDemoData) {
+    await ensureHoldingsTradesAndCashLoaded();
   }
   if (![7, 30, 90, 365].includes(Number(state.rangeDays))) {
     state.rangeDays = 30;
@@ -1826,6 +1847,45 @@ async function fetchApiStateBootstrap() {
     return { apiReady: true, data: result.data };
   } catch {
     return { apiReady: false, data: null };
+  }
+}
+
+async function ensureHoldingsTradesAndCashLoaded() {
+  if (!apiReady || state.useDemoData || state.holdingsDataLoaded) {
+    return;
+  }
+  try {
+    const base = getApiBaseForFetch();
+    const [r1, r2] = await Promise.all([
+      apiFetch(`${base}/trades`, { cache: "no-store", timeoutMs: 120000 }),
+      apiFetch(`${base}/cash-transfers`, { cache: "no-store", timeoutMs: 120000 }),
+    ]);
+    const j1 = await r1.json().catch(() => ({}));
+    const j2 = await r2.json().catch(() => ({}));
+    if (j1.ok && Array.isArray(j1.data)) {
+      state.trades = j1.data.map(normalizeTrade);
+    }
+    if (j2.ok && Array.isArray(j2.data)) {
+      state.cashTransfers = j2.data.map(normalizeCashTransferRow);
+    }
+    state.holdingsDataLoaded = true;
+  } catch {
+    // 网络失败时保持空列表
+  }
+}
+
+async function refreshPortfolioSummariesFromServer() {
+  if (!apiReady || state.useDemoData) {
+    return;
+  }
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/state`, { cache: "no-store", timeoutMs: 120000 });
+    const j = await r.json().catch(() => ({}));
+    if (j.ok && j.data?.portfolioSummaries && typeof j.data.portfolioSummaries === "object") {
+      state.portfolioSummaries = j.data.portfolioSummaries;
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -2165,6 +2225,8 @@ function bindEvents() {
     state.tradeFilterAccountId = resolveValidAccountFilter(tradeAccountFilterSelect.value);
     state.tradeListPage = 1;
     state.cashListPage = 1;
+    remoteTradesPageInflight.clear();
+    remoteCashPageInflight.clear();
     persistState();
     renderTradeTable();
     renderControls();
@@ -2289,6 +2351,7 @@ function bindEvents() {
   tradeSubtabTrades?.addEventListener("click", () => {
     state.tradePanelTab = "trades";
     state.tradeListPage = 1;
+    remoteTradesPageInflight.clear();
     syncTradePanelTabUi();
     renderTradeTable();
     persistState();
@@ -2296,6 +2359,7 @@ function bindEvents() {
   tradeSubtabCash?.addEventListener("click", () => {
     state.tradePanelTab = "cash";
     state.cashListPage = 1;
+    remoteCashPageInflight.clear();
     syncTradePanelTabUi();
     renderTradeTable();
     persistState();
@@ -2386,6 +2450,7 @@ function bindEvents() {
     state.useDemoData = false;
     persistState();
     renderAll();
+    void refreshPortfolioSummariesFromServer();
   });
   cashTransferDeleteBtn?.addEventListener("click", async () => {
     const id = state.editingCashTransferId;
@@ -2405,6 +2470,7 @@ function bindEvents() {
     cashTransferDialog?.close();
     persistState();
     renderAll();
+    void refreshPortfolioSummariesFromServer();
   });
   tradeSearchBackBtn?.addEventListener("click", () => goBackFromTradeStockSearch());
   tradeStockSearchInput?.addEventListener("input", (e) => {
@@ -2497,10 +2563,13 @@ function bindEvents() {
     }
     state.trades.push(savedTrade);
     state.trades.sort(sortTradeAsc);
+    remoteTradesPageInflight.clear();
+    remoteCashPageInflight.clear();
     persistState();
     clearEditState();
     tradeDialog.close();
     renderAll();
+    void refreshPortfolioSummariesFromServer();
     void refreshMarketData();
   });
 
@@ -2576,7 +2645,7 @@ function bindEvents() {
 
   accountManageSaveBtn?.addEventListener("click", () => void saveManagedAccount());
 
-  accountManageDeleteBtn?.addEventListener("click", () => deleteManagedAccount());
+  accountManageDeleteBtn?.addEventListener("click", () => void deleteManagedAccount());
 
   accountManageDialog?.addEventListener("close", () => {
     state.editingAccountId = null;
@@ -3640,7 +3709,7 @@ function renderPublicEarningProfileHtml(d) {
   }
   return withPublicTradesContext(d, () => {
     const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-    const portfolio = computePortfolio(scope.trades, []);
+    const portfolio = computePortfolioFromTrades(scope.trades, []);
     const vis = portfolio.visiblePositions;
     const bookCcy = portfolio.overviewBookCurrency || "CNY";
     const toOb = (p, v) => nativeToOverviewBook(p, v, bookCcy);
@@ -3791,7 +3860,7 @@ function syncPublicProfileStageRow() {
   }
   withPublicTradesContext(d, () => {
     const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-    const portfolio = computePortfolio(scope.trades, []);
+    const portfolio = computePortfolioFromTrades(scope.trades, []);
     const prevSr = state.stageRange;
     state.stageRange = sr;
     try {
@@ -4273,7 +4342,7 @@ async function renderPublicProfileAnalysis(d) {
   await withPublicTradesContextAsync(detail, async () => {
     await withPublicProfileAnalysisUiAsync(async () => {
       const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-      const portfolio = computePortfolio(scope.trades, []);
+      const portfolio = computePortfolioFromTrades(scope.trades, []);
       const todayKey = toDateKey(new Date());
       const dbRows = Array.isArray(detail.analysisDaily) ? detail.analysisDaily : [];
       if (!dbRows.length) {
@@ -4736,7 +4805,7 @@ function renderOverviewAndStockTable() {
       : "数据来自实时接口");
   }
   const scope = getPortfolioScope(state.selectedAccountId);
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const portfolio = getPortfolioForUi();
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
   const cards = [
     { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
@@ -5567,6 +5636,173 @@ function syncTradePanelTabUi() {
   }
 }
 
+async function renderCashTransferTablePagedRemote() {
+  if (state.route === "community-profile" || state.route === "stock-record") {
+    return;
+  }
+  if (state.tradePanelTab !== "cash" || !cashTransferTableBody) {
+    return;
+  }
+  const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
+  const key = `${aid}|${state.cashListPage}`;
+  if (remoteCashPageInflight.has(key)) {
+    try {
+      await remoteCashPageInflight.get(key);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  const run = (async () => {
+    const base = getApiBaseForFetch();
+    const r = await apiFetch(
+      `${base}/cash-transfers/page?accountId=${encodeURIComponent(aid)}&page=${state.cashListPage}&pageSize=${LIST_PAGE_SIZE}`,
+      { cache: "no-store", timeoutMs: 60_000 },
+    );
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok || !cashTransferTableBody) {
+      throw new Error("cash transfers page failed");
+    }
+    const rows = Array.isArray(j.data) ? j.data.map(normalizeCashTransferRow) : [];
+    const total = Number(j.total) || 0;
+    state.cashListTotal = total;
+    const maxP = totalListPages(total, LIST_PAGE_SIZE);
+    if (state.cashListPage > maxP && maxP > 0) {
+      state.cashListPage = maxP;
+      remoteCashPageInflight.delete(key);
+      await renderCashTransferTablePagedRemote();
+      return;
+    }
+    if (!rows.length) {
+      cashTransferTableBody.innerHTML = `
+      <tr>
+        <td colspan="5"><p class="empty">暂无资金记录，点击「新增资金记录」添加银证转账。</p></td>
+      </tr>
+    `;
+      updateListPagerUi({
+        pagerEl: cashListPager,
+        prevBtn: cashListPrevBtn,
+        nextBtn: cashListNextBtn,
+        infoEl: cashListPageInfo,
+        page: state.cashListPage,
+        total: 0,
+        pageSize: LIST_PAGE_SIZE,
+      });
+      return;
+    }
+    cashTransferTableBody.innerHTML = rows
+      .map((row) => {
+        const acc = getAccountById(row.accountId);
+        const dirLabel = row.direction === "out" ? "银证转出" : "银证转入";
+        const sign = row.direction === "in" ? "+" : "-";
+        const ccy = getCurrencyLabel(acc.currency);
+        return `
+        <tr class="cash-transfer-row" data-cash-id="${escapeHtml(String(row.id))}">
+          <td>${String(row.date).replace(/-/g, "/")}</td>
+          <td>${escapeHtml(acc.name || row.accountId)}</td>
+          <td>${dirLabel}</td>
+          <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)} ${ccy}</td>
+          <td class="trade-note-cell">${row.note ? escapeHtml(row.note) : ""}</td>
+        </tr>
+      `;
+      })
+      .join("");
+    updateListPagerUi({
+      pagerEl: cashListPager,
+      prevBtn: cashListPrevBtn,
+      nextBtn: cashListNextBtn,
+      infoEl: cashListPageInfo,
+      page: state.cashListPage,
+      total,
+      pageSize: LIST_PAGE_SIZE,
+    });
+  })().finally(() => remoteCashPageInflight.delete(key));
+  remoteCashPageInflight.set(key, run);
+  await run;
+}
+
+async function renderTradeListBodyPagedRemote() {
+  if (!tradeTableBody || state.tradePanelTab !== "trades") {
+    return;
+  }
+  const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
+  const key = `${aid}|${state.tradeListPage}`;
+  if (remoteTradesPageInflight.has(key)) {
+    try {
+      await remoteTradesPageInflight.get(key);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  const run = (async () => {
+    const base = getApiBaseForFetch();
+    const r = await apiFetch(
+      `${base}/trades/page?accountId=${encodeURIComponent(aid)}&page=${state.tradeListPage}&pageSize=${LIST_PAGE_SIZE}`,
+      { cache: "no-store", timeoutMs: 60_000 },
+    );
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok || !tradeTableBody) {
+      throw new Error("trades page failed");
+    }
+    const rows = Array.isArray(j.data) ? j.data.map(normalizeTrade) : [];
+    const total = Number(j.total) || 0;
+    state.tradeListTotal = total;
+    const maxP = totalListPages(total, LIST_PAGE_SIZE);
+    if (state.tradeListPage > maxP && maxP > 0) {
+      state.tradeListPage = maxP;
+      remoteTradesPageInflight.delete(key);
+      await renderTradeListBodyPagedRemote();
+      return;
+    }
+    if (!rows.length) {
+      tradeTableBody.innerHTML = `
+      <tr>
+        <td colspan="7"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
+      </tr>
+    `;
+      updateListPagerUi({
+        pagerEl: tradeListPager,
+        prevBtn: tradeListPrevBtn,
+        nextBtn: tradeListNextBtn,
+        infoEl: tradeListPageInfo,
+        page: state.tradeListPage,
+        total: 0,
+        pageSize: LIST_PAGE_SIZE,
+      });
+      return;
+    }
+    tradeTableBody.innerHTML = rows
+      .map((trade) => {
+        return `
+        <tr class="trade-row trade-row--clickable" data-record-id="${escapeHtml(String(trade.id))}">
+          <td>${trade.date.replace(/-/g, "/")}</td>
+          <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
+          <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
+          <td class="num">${formatNumber(trade.price, 2)}</td>
+          <td class="num">${formatNumber(trade.quantity, 0)}</td>
+          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
+            trade.side === "buy" ? "-" : "+"
+          }${formatNumber(trade.amount, 2)}</td>
+          <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
+        </tr>
+      `;
+      })
+      .join("");
+    updateListPagerUi({
+      pagerEl: tradeListPager,
+      prevBtn: tradeListPrevBtn,
+      nextBtn: tradeListNextBtn,
+      infoEl: tradeListPageInfo,
+      page: state.tradeListPage,
+      total,
+      pageSize: LIST_PAGE_SIZE,
+    });
+  })().finally(() => remoteTradesPageInflight.delete(key));
+  remoteTradesPageInflight.set(key, run);
+  await run;
+}
+
 function openNewCashTransferDialog() {
   state.editingCashTransferId = null;
   if (cashTransferDialogTitle) {
@@ -5634,6 +5870,10 @@ function renderCashTransferTablePaged() {
     return;
   }
   if (!cashTransferTableBody) {
+    return;
+  }
+  if (apiReady && !state.useDemoData && sessionPhone) {
+    void renderCashTransferTablePagedRemote();
     return;
   }
   const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
@@ -5717,6 +5957,10 @@ function renderTradeListBodyPaged() {
     return;
   }
   if (state.tradePanelTab !== "trades") {
+    return;
+  }
+  if (apiReady && !state.useDemoData && sessionPhone) {
+    void renderTradeListBodyPagedRemote();
     return;
   }
   const aid = resolveValidAccountFilter(state.tradeFilterAccountId);
@@ -5841,7 +6085,7 @@ function saveManagedAccount() {
   renderAccountSection();
 }
 
-function deleteManagedAccount() {
+async function deleteManagedAccount() {
   const id = state.editingAccountId;
   if (!id || id === DEFAULT_ACCOUNT.id) {
     return;
@@ -5849,7 +6093,24 @@ function deleteManagedAccount() {
   if (!window.confirm("确定删除该股票账户？删除后不可恢复。")) {
     return;
   }
-  const n = state.trades.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === id).length;
+  let n = 0;
+  if (apiReady && sessionPhone) {
+    try {
+      const base = getApiBaseForFetch();
+      const r = await apiFetch(
+        `${base}/trades/page?accountId=${encodeURIComponent(id)}&page=1&pageSize=1`,
+        { cache: "no-store", timeoutMs: 30_000 },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (j.ok) {
+        n = Number(j.total) || 0;
+      }
+    } catch {
+      n = state.trades.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === id).length;
+    }
+  } else {
+    n = state.trades.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === id).length;
+  }
   if (n > 0) {
     window.alert(`该账户下仍有 ${n} 条交易记录，请先删除或编辑交易改用其他账户。`);
     return;
@@ -5934,6 +6195,7 @@ async function removeTradeById(tradeId) {
   }
   persistState();
   renderAll();
+  void refreshPortfolioSummariesFromServer();
   void refreshMarketData();
 }
 
@@ -5954,12 +6216,17 @@ function buildLiveByModeFromSnapshotDaily(sortedRows, portfolio, todayKey, scope
   const cash = Array.isArray(scopeCash)
     ? scopeCash
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
-  const extToday = cash.reduce((s, r) => {
-    if (String(r.date).slice(0, 10) === tk) {
-      return s + cashTransferRowNetCny(r);
-    }
-    return s;
-  }, 0);
+  let extToday = 0;
+  if (cash.length) {
+    extToday = cash.reduce((s, r) => {
+      if (String(r.date).slice(0, 10) === tk) {
+        return s + cashTransferRowNetCny(r);
+      }
+      return s;
+    }, 0);
+  } else if (Number.isFinite(Number(portfolio?.externalFlowTodayCny))) {
+    extToday = Number(portfolio.externalFlowTodayCny);
+  }
   const pts = [];
   for (const row of sortedRows || []) {
     const d = String(row.date || "").slice(0, 10);
@@ -5994,18 +6261,24 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
   const cash = Array.isArray(scopeCash)
     ? scopeCash
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
-  const extToday = cash.reduce((s, r) => {
-    if (String(r.date).slice(0, 10) === todayKey) {
-      return s + cashTransferRowNetCny(r);
-    }
-    return s;
-  }, 0);
+  const tk = String(todayKey || "").slice(0, 10);
+  let extToday = 0;
+  if (cash.length) {
+    extToday = cash.reduce((s, r) => {
+      if (String(r.date).slice(0, 10) === tk) {
+        return s + cashTransferRowNetCny(r);
+      }
+      return s;
+    }, 0);
+  } else if (Number.isFinite(Number(portfolio?.externalFlowTodayCny))) {
+    extToday = Number(portfolio.externalFlowTodayCny);
+  }
   const twr = Number(liveByMode.twr);
   const mwr = Number(liveByMode.mwr);
   const mv = portfolio.totalMarketValue;
   const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
   const next = sliceRows.map((r) => ({ ...r }));
-  const hit = next.findIndex((r) => r.date === todayKey);
+  const hit = next.findIndex((r) => String(r.date || "").slice(0, 10) === tk);
   const cumFromPrev = (idx) => {
     if (idx <= 0) {
       return 0;
@@ -6026,11 +6299,11 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
     return next;
   }
   const last = next[next.length - 1];
-  if (last && last.date < todayKey) {
+  if (last && String(last.date || "").slice(0, 10) < tk) {
     const lastCum = Number(last.totalProfit) || 0;
     next.push({
       ...last,
-      date: todayKey,
+      date: tk,
       profitCny: todayP,
       marketValue: mv,
       principal: portfolio.principal,
@@ -6460,7 +6733,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
   }
   const seq = ++overviewProfitRefreshSeq;
   const scope = getPortfolioScope(state.selectedAccountId);
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const portfolio = getPortfolioForUi();
   const vis = portfolio.visiblePositions;
   if (!apiReady) {
     setOverviewProfitKpisDash();
@@ -6733,7 +7006,7 @@ async function warmOverviewDailySnapshotsForEarning(scope, stageRange = state.st
   if (!apiReady || !scope) {
     return;
   }
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const portfolio = getPortfolioForUi();
   const vis = portfolio.visiblePositions;
   const bounds = overviewAccountDailyFetchBounds(scope, stageRange);
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
@@ -6763,7 +7036,10 @@ async function renderAnalysis(options = {}) {
   setAnalysisSummariesDash();
   clearAnalysisChartsToEmpty();
   const scope = getPortfolioScope();
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  if (apiReady && sessionPhone && !state.useDemoData && !state.holdingsDataLoaded) {
+    await ensureHoldingsTradesAndCashLoaded();
+  }
+  const portfolio = getPortfolioForUi();
   const todayKey = toDateKey(new Date());
   const fetchRange = buildAnalysisDailyFetchRange(scope);
 
@@ -7062,11 +7338,11 @@ async function renderStockRecordPage(symbol) {
   if (usePub) {
     withPublicTradesContext(detail, () => {
       scope = { accountId: "all", trades: state.trades };
-      portfolio = computePortfolio(scope.trades, []);
+      portfolio = computePortfolioFromTrades(scope.trades, []);
     });
   } else {
     scope = getPortfolioScope(activeAccountId);
-    portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+    portfolio = computePortfolioFromTrades(scope.trades, scope.cashTransfers);
   }
   const symKey = normalizeSymbol(symbol);
   const listCtx = `${symKey}|${activeAccountId}|${usePub ? "pub" : "me"}`;
@@ -7553,7 +7829,7 @@ function computeSymbolTotalRateByMode(position, symbolTrades, mode) {
   return Number.isFinite(rate) ? rate : Number.isFinite(position.profitRate) ? position.profitRate : 0;
 }
 
-function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
+function computePortfolioFromTrades(trades = state.trades, cashTransfersForScope = null) {
   const tradeList = Array.isArray(trades) ? trades : state.trades;
   const ctf = Array.isArray(cashTransfersForScope)
     ? cashTransfersForScope
@@ -7721,6 +7997,16 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   });
   positions.sort((a, b) => Math.abs(b.marketValue) - Math.abs(a.marketValue));
 
+  const todayKeyForFlow = toDateKey(new Date());
+  const externalFlowTodayCny = Array.isArray(ctf)
+    ? ctf.reduce((s, r) => {
+        if (String(r.date).slice(0, 10) === todayKeyForFlow) {
+          return s + cashTransferRowNetCny(r);
+        }
+        return s;
+      }, 0)
+    : 0;
+
   return {
     positions,
     visiblePositions,
@@ -7736,7 +8022,17 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     todayProfit,
     todayRate,
     totalProfit,
+    externalFlowTodayCny,
   };
+}
+
+function getPortfolioForScoped(overrideAccountId) {
+  const scope = getPortfolioScope(overrideAccountId);
+  return computePortfolioFromTrades(scope.trades, scope.cashTransfers);
+}
+
+function getPortfolioForUi() {
+  return getPortfolioForScoped(state.selectedAccountId);
 }
 
 /**
@@ -7748,7 +8044,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
  */
 function buildMonthlyReturnAuditRows(trades) {
   const list = trades != null ? trades : getPortfolioScope().trades;
-  const pf = computePortfolio(list);
+  const pf = computePortfolioFromTrades(list, []);
   const firstTradeDate = list.length ? [...list].sort(sortTradeAsc)[0].date : toDateKey(new Date());
   const monthStartKey = getStageStartKey("month", firstTradeDate);
   const rows = [];
@@ -9006,7 +9302,7 @@ function collectSymbolsForMarket() {
     }
   } else {
     const scope = getPortfolioScope(state.selectedAccountId);
-    const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+    const portfolio = getPortfolioForUi();
     for (const p of portfolio.visiblePositions || []) {
       if (p?.symbol) {
         out.push(ensureSymbolPrefixForQuote(p.symbol));
@@ -9038,7 +9334,7 @@ function collectKlineSymbolsForMarket() {
     }
   } else {
     const scope = getPortfolioScope(state.selectedAccountId);
-    const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+    const portfolio = getPortfolioForUi();
     for (const p of portfolio.visiblePositions || []) {
       if (p?.symbol) {
         out.push(ensureSymbolPrefixForQuote(p.symbol));

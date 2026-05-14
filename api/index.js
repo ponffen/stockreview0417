@@ -860,9 +860,11 @@ module.exports = async function handler(req, res) {
         });
 
       if (req.method === "GET" && pathOnly === "/api/state") {
-        const data = await getState(userId);
+        const { buildPortfolioSummariesForUser } = require("../src/earning-portfolio-summary");
+        const base = await getState(userId);
+        const portfolioSummaries = await buildPortfolioSummariesForUser(userId);
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data }));
+        res.end(JSON.stringify({ ok: true, data: { ...base, portfolioSummaries } }));
         return;
       }
 

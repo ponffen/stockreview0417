@@ -679,6 +679,51 @@ async function deleteTradeById(tradeId, userId) {
   return rowCount > 0;
 }
 
+async function getTradeById(tradeId, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
+    [uid, String(tradeId || "")]
+  );
+  return rows[0] ? rowToTrade(rows[0]) : null;
+}
+
+async function countTradesForAccount(userId, accountId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return 0;
+  }
+  const aid = String(accountId || "").trim();
+  const params = [uid];
+  let extra = "";
+  if (aid && aid !== "all") {
+    params.push(aid);
+    extra = ` AND account_id = $${params.length}`;
+  }
+  const { rows } = await q(`SELECT COUNT(*)::bigint AS c FROM trades WHERE user_id = $1${extra}`, params);
+  return Number(rows[0]?.c || 0);
+}
+
+async function countCashTransfersForAccount(userId, accountId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return 0;
+  }
+  const aid = String(accountId || "").trim();
+  const params = [uid];
+  let extra = "";
+  if (aid && aid !== "all") {
+    params.push(aid);
+    extra = ` AND account_id = $${params.length}`;
+  }
+  const { rows } = await q(`SELECT COUNT(*)::bigint AS c FROM cash_transfers WHERE user_id = $1${extra}`, params);
+  return Number(rows[0]?.c || 0);
+}
+
 async function getCashTransfers(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -1086,9 +1131,6 @@ async function getState(userId) {
   const uid = String(userId || "").trim();
   return {
     ...(await getSettings(uid)),
-    trades: await getTrades(uid),
-    dailyReturns: await getDailyReturns({}, uid),
-    cashTransfers: await getCashTransfers(uid),
   };
 }
 
@@ -2319,6 +2361,9 @@ module.exports = {
   upsertTrade,
   importTrades,
   deleteTradeById,
+  getTradeById,
+  countTradesForAccount,
+  countCashTransfersForAccount,
   normalizeCashTransfer,
   getCashTransfers,
   getCashTransfersPage,
