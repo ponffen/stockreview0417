@@ -85,21 +85,50 @@ function buildExternalFlowCnyByDate(allCash, accountId, accounts, allDates, fxUs
   return m;
 }
 
-function closeOnOrBefore(sortedKline, dateKey) {
+/** 成交/划转日历日与 freeze 的 dateKeys（上海自然日）对齐 */
+function normalizeTradeCalendarDateKey(d) {
+  const s = String(d == null ? "" : d).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return s;
+  }
+  const t = new Date(s);
+  if (Number.isNaN(t.getTime())) {
+    return s.slice(0, 10);
+  }
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(t);
+}
+
+/** 取最后一个 day<=dateKey 且 close>0 的收盘价，避免某日坏 K 把整仓市值算成 0 */
+function lastPositiveCloseOnOrBefore(sortedKline, dateKey) {
+  if (!sortedKline || !sortedKline.length) {
+    return null;
+  }
   let lo = 0;
   let hi = sortedKline.length - 1;
-  let ans = null;
+  let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     const d = sortedKline[mid].day;
     if (d <= dateKey) {
-      ans = sortedKline[mid].close;
+      idx = mid;
       lo = mid + 1;
     } else {
       hi = mid - 1;
     }
   }
-  return ans;
+  while (idx >= 0) {
+    const c = Number(sortedKline[idx].close);
+    if (Number.isFinite(c) && c > 0) {
+      return c;
+    }
+    idx -= 1;
+  }
+  return null;
 }
 
 function sortTradeAsc(a, b) {
@@ -111,6 +140,10 @@ function sortTradeAsc(a, b) {
 
 /** NAV 与 TWR 出入金均按「折人民币」口径；`external_flow_native` 存子账户当日出入金原币净额（审计用）。 */
 function buildPortfolioDayPoints(accountTrades, dateKeys, klineBySym, fxUsd, fxHkd, allCash, accountId, accounts) {
+  const accTradesNorm = (accountTrades || []).map((t) => ({
+    ...t,
+    date: normalizeTradeCalendarDateKey(t.date),
+  }));
   const accById = new Map(accounts.map((a) => [String(a.id), a]));
   const extCnyByDate = buildExternalFlowCnyByDate(allCash, accountId, accounts, dateKeys, fxUsd, fxHkd);
   const extNativeByDate = new Map();
@@ -126,7 +159,7 @@ function buildPortfolioDayPoints(accountTrades, dateKeys, klineBySym, fxUsd, fxH
     }
   }
 
-  const symbolSet = [...new Set(accountTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean))];
+  const symbolSet = [...new Set(accTradesNorm.map((t) => normalizeSymbol(t.symbol)).filter(Boolean))];
   const closeMemo = new Map();
   const getClose = (sym, dk) => {
     const key = `${sym}|${dk}`;
@@ -136,13 +169,13 @@ function buildPortfolioDayPoints(accountTrades, dateKeys, klineBySym, fxUsd, fxH
       closeMemo.set(key, null);
       return null;
     }
-    const v = closeOnOrBefore(kl, dk);
+    const v = lastPositiveCloseOnOrBefore(kl, dk);
     closeMemo.set(key, v);
     return v;
   };
 
   const tradesByDate = {};
-  for (const tr of accountTrades) {
+  for (const tr of accTradesNorm) {
     if (!tradesByDate[tr.date]) tradesByDate[tr.date] = [];
     tradesByDate[tr.date].push(tr);
   }
@@ -219,4 +252,6 @@ module.exports = {
   filterTradesForAccount,
   filterCashForAccount,
   cashTransferNetCnyForRow,
+  normalizeTradeCalendarDateKey,
+  lastPositiveCloseOnOrBefore,
 };

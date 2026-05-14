@@ -14,7 +14,12 @@ const {
 } = require("./db");
 const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 const { fetchSinaForexDayKSeries, toDateKey, enumerateDays, validNumber } = require("../scripts/lib/market-fetch");
-const { buildPortfolioDayPoints, computeTwrFromDayPoints } = require("./return-calcs");
+const {
+  buildPortfolioDayPoints,
+  computeTwrFromDayPoints,
+  normalizeTradeCalendarDateKey,
+  lastPositiveCloseOnOrBefore,
+} = require("./return-calcs");
 const { rebuildPerformanceSeriesCache } = require("./performance-cache-service");
 const { rebuildHomeSummaryForUser } = require("./home-summary-service");
 
@@ -122,23 +127,6 @@ function profitCnyFromAccDateNative(byCcy, dateKey, fxUsdMap, fxHkdMap) {
   return sum;
 }
 
-function closeOnOrBefore(sortedKline, dateKey) {
-  let lo = 0;
-  let hi = sortedKline.length - 1;
-  let ans = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const d = sortedKline[mid].day;
-    if (d <= dateKey) {
-      ans = sortedKline[mid].close;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return ans;
-}
-
 function closeBefore(sortedKline, dateKey) {
   let lo = 0;
   let hi = sortedKline.length - 1;
@@ -157,8 +145,9 @@ function closeBefore(sortedKline, dateKey) {
 }
 
 function filterTradesForAccount(allTrades, accountId) {
-  if (accountId === "all") return [...allTrades].sort(sortTradeAsc);
-  return allTrades.filter((t) => t.accountId === accountId).sort(sortTradeAsc);
+  const norm = (t) => ({ ...t, date: normalizeTradeCalendarDateKey(t.date) });
+  if (accountId === "all") return [...allTrades].map(norm).sort(sortTradeAsc);
+  return allTrades.filter((t) => t.accountId === accountId).map(norm).sort(sortTradeAsc);
 }
 
 function filterCashForAccount(allCash, accountId) {
@@ -331,7 +320,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
         const qEod = qty;
         if (qBod <= 0 && qEod <= 0) continue;
 
-        const closeD = closeOnOrBefore(kl, D);
+        const closeD = lastPositiveCloseOnOrBefore(kl, D);
         const closePrev = closeBefore(kl, D);
         if (!(closeD > 0)) continue;
         const prevPx = closePrev != null && closePrev > 0 ? closePrev : closeD;

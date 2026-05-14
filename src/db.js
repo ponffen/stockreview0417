@@ -34,6 +34,7 @@ const {
   rowToCashTransfer,
   addCalendarDays,
 } = require("./db-pure");
+const { toDateKey: shanghaiCalendarDateKey } = require("../scripts/lib/market-fetch");
 
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
@@ -1065,7 +1066,7 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
   );
   return rows.map((row) => ({
     accountId: row.account_id,
-    date: row.date,
+    date: row.date == null ? "" : shanghaiCalendarDateKey(row.date),
     profitCny: Number(row.profit_cny),
     twRDaily: Number(row.tw_r_daily),
     twRCumulative: Number(row.tw_r_cumulative),
