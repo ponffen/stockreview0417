@@ -241,6 +241,8 @@ const state = {
   overviewSnapshotUi: {
     ready: false,
     cacheKey: "",
+    dataKey: "",
+    homePayload: null,
     snapBySym: null,
     monthInnerHTML: "",
     monthClass: "",
@@ -4594,6 +4596,8 @@ function refreshPublicProfileEarningPanel() {
 function invalidateOverviewSnapshotUi() {
   state.overviewSnapshotUi.ready = false;
   state.overviewSnapshotUi.cacheKey = "";
+  state.overviewSnapshotUi.dataKey = "";
+  state.overviewSnapshotUi.homePayload = null;
   state.overviewSnapshotUi.snapBySym = null;
   state.overviewSnapshotUi.monthInnerHTML = "";
   state.overviewSnapshotUi.monthClass = "";
@@ -4618,6 +4622,17 @@ function buildOverviewSnapshotCacheKey() {
     sessionUserId || "",
     state.selectedAccountId,
     state.stageRange,
+    state.algoMode,
+    state.stockAmountDisplay,
+    overviewTradesLedgerKey(),
+  ].join("::");
+}
+
+/** 不含 stageRange：home-summary 已带月/年/总，切换阶段只本地重算 headline */
+function buildOverviewSnapshotDataKey() {
+  return [
+    sessionUserId || "",
+    state.selectedAccountId,
     state.algoMode,
     state.stockAmountDisplay,
     overviewTradesLedgerKey(),
@@ -4665,20 +4680,27 @@ function renderOverviewAndStockTable() {
     )
     .join("");
 
-  const snapCk = buildOverviewSnapshotCacheKey();
-  if (
-    state.overviewSnapshotUi.ready &&
-    state.overviewSnapshotUi.cacheKey === snapCk &&
-    state.overviewSnapshotUi.snapBySym &&
-    todayProfitMain &&
-    monthProfitMain
-  ) {
-    todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
-    todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
-    monthProfitMain.innerHTML = state.overviewSnapshotUi.monthInnerHTML;
-    monthProfitMain.className = state.overviewSnapshotUi.monthClass;
-    paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
-    return;
+  const dataKey = buildOverviewSnapshotDataKey();
+  const fullKey = buildOverviewSnapshotCacheKey();
+  if (state.overviewSnapshotUi.ready && todayProfitMain && monthProfitMain) {
+    if (state.overviewSnapshotUi.homePayload && state.overviewSnapshotUi.dataKey === dataKey) {
+      if (paintOverviewHeadlineFromHomePayload(state.overviewSnapshotUi.homePayload, portfolio, bookCcy)) {
+        paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
+        return;
+      }
+    }
+    if (
+      !state.overviewSnapshotUi.homePayload &&
+      state.overviewSnapshotUi.cacheKey === fullKey &&
+      state.overviewSnapshotUi.snapBySym
+    ) {
+      todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
+      todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
+      monthProfitMain.innerHTML = state.overviewSnapshotUi.monthInnerHTML;
+      monthProfitMain.className = state.overviewSnapshotUi.monthClass;
+      paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
+      return;
+    }
   }
 
   setOverviewProfitKpisDash();
@@ -6175,6 +6197,63 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
 }
 
 /**
+ * 从已拉取的 home-summary account 块计算「今日 + 当前阶段」收益与收益率（人民币口径）。
+ */
+function computeOverviewHeadlineFromHomeAccount(homeData, portfolio) {
+  const acc = homeData?.account;
+  if (!acc) {
+    return null;
+  }
+  const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
+  const lastMv = Number(acc.last_market_value_cny) || 0;
+  const tr = lastMv > 0 ? todayP / lastMv : 0;
+  const mwr = state.algoMode === "mwr";
+  let stageProfit = 0;
+  let stageRate = 0;
+  if (state.stageRange === "ytd") {
+    stageProfit = Number(acc.ytd_profit_cny) + todayP;
+    stageRate = mwr ? Number(acc.ytd_rate_mwr) || 0 : Number(acc.ytd_rate_twr) || 0;
+  } else if (state.stageRange === "total") {
+    stageProfit = Number(acc.total_profit_cny) + todayP;
+    stageRate = mwr ? Number(acc.total_rate_mwr) || 0 : Number(acc.total_rate_twr) || 0;
+  } else {
+    stageProfit = Number(acc.month_profit_cny) + todayP;
+    stageRate = mwr ? Number(acc.month_rate_mwr) || 0 : Number(acc.month_rate_twr) || 0;
+  }
+  return {
+    todayProfitCny: todayP,
+    todayRate: tr,
+    stageProfit,
+    stageRate,
+  };
+}
+
+function paintOverviewHeadlineFromHomePayload(homeData, portfolio, bookCcy) {
+  if (!todayProfitMain || !monthProfitMain) {
+    return false;
+  }
+  const h = computeOverviewHeadlineFromHomeAccount(homeData, portfolio);
+  if (
+    !h ||
+    !Number.isFinite(Number(h.stageProfit)) ||
+    !Number.isFinite(Number(h.stageRate)) ||
+    !Number.isFinite(Number(h.todayProfitCny)) ||
+    !Number.isFinite(Number(h.todayRate))
+  ) {
+    return false;
+  }
+  const todayBook = amountBookFromCny(Number(h.todayProfitCny), bookCcy);
+  const stageBook = amountBookFromCny(Number(h.stageProfit), bookCcy);
+  const tr = Number(h.todayRate);
+  const sr = Number(h.stageRate);
+  todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
+  todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
+  monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
+  monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
+  return true;
+}
+
+/**
  * 仅 accountScope=all；与「当前账户筛选 + 成交账本」绑定，失效见 invalidateOverviewSnapshotUi。
  */
 async function fetchHomeSummaryRemote() {
@@ -6302,25 +6381,11 @@ async function refreshOverviewProfitRowFromSnapshots() {
   let todayOut = null;
   let snapMap = new Map();
   if (useHomeAccount) {
-    const acc = homeData.account;
-    const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
-    const lastMv = Number(acc.last_market_value_cny) || 0;
-    const tr = lastMv > 0 ? todayP / lastMv : 0;
-    todayOut = { todayProfitCny: todayP, todayRate: tr };
-    const mwr = state.algoMode === "mwr";
-    let stageProfit = 0;
-    let stageRate = 0;
-    if (state.stageRange === "ytd") {
-      stageProfit = Number(acc.ytd_profit_cny) + todayP;
-      stageRate = mwr ? Number(acc.ytd_rate_mwr) || 0 : Number(acc.ytd_rate_twr) || 0;
-    } else if (state.stageRange === "total") {
-      stageProfit = Number(acc.total_profit_cny) + todayP;
-      stageRate = mwr ? Number(acc.total_rate_mwr) || 0 : Number(acc.total_rate_twr) || 0;
-    } else {
-      stageProfit = Number(acc.month_profit_cny) + todayP;
-      stageRate = mwr ? Number(acc.month_rate_mwr) || 0 : Number(acc.month_rate_twr) || 0;
+    const h = computeOverviewHeadlineFromHomeAccount(homeData, portfolio);
+    if (h) {
+      todayOut = { todayProfitCny: h.todayProfitCny, todayRate: h.todayRate };
+      stageOut = { stageProfit: h.stageProfit, stageRate: h.stageRate };
     }
-    stageOut = { stageProfit, stageRate };
     if (symList.length > 0) {
       snapMap =
         homeCoversSymbols && homeData.symbols
@@ -6377,6 +6442,8 @@ async function refreshOverviewProfitRowFromSnapshots() {
     monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
     paintOverviewStockTableFromSnapshots(portfolio, snapMap);
     state.overviewSnapshotUi.ready = true;
+    state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
+    state.overviewSnapshotUi.homePayload = useHomeAccount ? homeData : null;
     state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
     state.overviewSnapshotUi.snapBySym = Object.fromEntries(
       [...snapMap.entries()].map(([k, v]) => [
