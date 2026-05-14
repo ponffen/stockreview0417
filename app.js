@@ -89,7 +89,6 @@ const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
-const CHART_FALLBACK_DAYS = 90;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 const STATE_SYNC_KEYS = [
   "route",
@@ -1397,55 +1396,6 @@ function toTencentQuoteSymbol(symbol) {
     return `us${raw.toUpperCase()}`;
   }
   return raw;
-}
-
-/** 统一映射到新浪 DailyK_Batch：cn_sh/sz、hk_hk、us_、fx_。 */
-function toSinaKlineSymbol(symbol) {
-  if (!symbol) {
-    return "";
-  }
-  const n = normalizeSymbol(toQuoteRequestSymbol(symbol));
-  if (!n) {
-    return "";
-  }
-  if (/^cn_(sh|sz)\d{6}$/i.test(n)) {
-    return n;
-  }
-  if (/^hk_hk\d{5}$/i.test(n)) {
-    return n;
-  }
-  if (/^us_[a-z0-9._-]+$/i.test(n)) {
-    return `us_${n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
-  }
-  if (/^fx_(usdcny|hkdcny)$/i.test(n)) {
-    return `fx_${n.slice(3).toUpperCase()}`;
-  }
-  if (/^sh\d{6}$/.test(n) || /^sz\d{6}$/.test(n)) {
-    return `cn_${n}`;
-  }
-  if (/^hk\d{5}$/.test(n)) {
-    return `hk_${n}`;
-  }
-  if (/^rt_hk/i.test(n)) {
-    const digits = n.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
-    return `hk_hk${digits}`;
-  }
-  if (/^gb_/i.test(n)) {
-    return `us_${n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
-  }
-  if (/^us[a-z0-9._-]+$/i.test(n)) {
-    return `us_${n.slice(2).replace(/\.(oq|n)$/i, "").toUpperCase()}`;
-  }
-  if (/^fx_usdcny$/i.test(n) || /^whusdcny$/i.test(n) || /^usdcny$/i.test(n)) {
-    return "fx_USDCNY";
-  }
-  if (/^fx_hkdcny$/i.test(n) || /^whhkdcny$/i.test(n) || /^hkdcny$/i.test(n)) {
-    return "fx_HKDCNY";
-  }
-  if (/^[a-z][a-z0-9._-]*$/i.test(n)) {
-    return `us_${n.replace(/\.(oq|n)$/i, "").toUpperCase()}`;
-  }
-  return n;
 }
 
 /** 腾讯行情 `~` 分段里的金额，可能含千分位逗号 */
@@ -3625,9 +3575,7 @@ function renderPublicEarningProfileHtml(d) {
           ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, state.stageRange, state.algoMode)
           : null;
       const stageRateOv =
-        snap && Number.isFinite(Number(snap.stageRate))
-          ? Number(snap.stageRate)
-          : computeStageOverviewMetrics(portfolio, scope.trades, state.stageRange, state.algoMode).stageRate;
+        snap && Number.isFinite(Number(snap.stageRate)) ? Number(snap.stageRate) : null;
       todayInner = formatPublicProfileRateOnlyHtml(portfolio.todayRate);
       todayCls = `profit-main ${twrColorClass(portfolio.todayRate)}`;
       stageInner = formatPublicProfileRateOnlyHtml(stageRateOv);
@@ -3768,9 +3716,7 @@ function syncPublicProfileStageRow() {
           ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, sr, state.algoMode)
           : null;
       const stageRateOv =
-        snap && Number.isFinite(Number(snap.stageRate))
-          ? Number(snap.stageRate)
-          : computeStageOverviewMetrics(portfolio, scope.trades, sr, state.algoMode).stageRate;
+        snap && Number.isFinite(Number(snap.stageRate)) ? Number(snap.stageRate) : null;
       main.innerHTML = formatPublicProfileRateOnlyHtml(stageRateOv);
       main.className = `profit-main ${twrColorClass(stageRateOv)}`;
     } finally {
@@ -4743,34 +4689,6 @@ function getStageStartKey(stageRange, firstDate) {
     return firstDate;
   }
   return toDateKey(start);
-}
-
-function buildStageHistoryByRange(fullHist, stageRange, firstTradeDate) {
-  const history = Array.isArray(fullHist) ? fullHist : [];
-  if (!history.length) {
-    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-  }
-  if (stageRange === "total") {
-    return history;
-  }
-  const startKey = getStageStartKey(stageRange, firstTradeDate);
-  const filtered = history.filter((point) => point.date >= startKey);
-  return filtered.length ? filtered : history;
-}
-
-function computeStageOverviewMetrics(portfolio, trades, stageRange = state.stageRange, algoMode = state.algoMode) {
-  const tradeList = Array.isArray(trades) ? trades : [];
-  const fullHist = buildPortfolioHistory(
-    portfolio.positions,
-    tradeList,
-    getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId)),
-  );
-  const firstTradeDate =
-    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : fullHist[0]?.date ?? null;
-  const stageHist = buildStageHistoryByRange(fullHist, stageRange, firstTradeDate);
-  const stageProfit = buildProfitSeries(stageHist).at(-1)?.value ?? 0;
-  const stageRate = computeModeSeries(stageHist, algoMode).at(-1)?.rate ?? 0;
-  return { stageProfit, stageRate };
 }
 
 /** 分析页「年初至今」：本年 1 月 1 日起（analysisPreset=ytd，兼容旧数据 rangeDays=365）。 */
@@ -6816,7 +6734,11 @@ async function ensureSymbolData(symbol) {
     console.error("加载个股实时行情失败", error);
   }
   if (!getQuoteBySymbol(symbol)?.current || !Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
-    const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: true });
+    const nSym = normalizeSymbol(symbol);
+    if (nSym) {
+      await fetchSymbolCloseIntoKlineMap([nSym], 90);
+    }
+    const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
     if (latest) {
       const normalizedSymbol = normalizeSymbol(symbol);
       const legacyAlias = getLegacyUsAlias(normalizedSymbol);
@@ -6859,23 +6781,10 @@ async function ensureSymbolData(symbol) {
         if (legacyAlias) {
           state.klineMap[legacyAlias] = list;
         }
-      } else if (!currentList.length) {
-        const fallback = buildFallbackKlineFromTrades(symbol);
-        state.klineMap[normalizedSymbol] = fallback;
-        if (legacyAlias) {
-          state.klineMap[legacyAlias] = fallback;
-        }
       }
     }
   } catch (error) {
     console.error("加载个股K线失败", error);
-    if (!getKlineBySymbol(symbol).length) {
-      const fallback = buildFallbackKlineFromTrades(symbol);
-      state.klineMap[normalizedSymbol] = fallback;
-      if (legacyAlias) {
-        state.klineMap[legacyAlias] = fallback;
-      }
-    }
   }
 }
 
@@ -6885,38 +6794,6 @@ function ensureSymbolPrefixForQuote(symbol) {
     return "sz300750";
   }
   return normalized;
-}
-
-function buildFallbackKlineFromTrades(symbol) {
-  const scope = getPortfolioScope();
-  const symbolTrades = scope.trades
-    .filter((item) => item.symbol === symbol)
-    .sort(sortTradeAsc);
-  if (!symbolTrades.length) {
-    return [];
-  }
-  const start = new Date(symbolTrades[0].date);
-  const end = new Date();
-  const closeSeed = validNumber(symbolTrades[symbolTrades.length - 1].price, 1);
-  const rows = [];
-  let cursor = new Date(start);
-  let prev = closeSeed;
-  while (cursor <= end && rows.length < CHART_FALLBACK_DAYS) {
-    const day = toDateKey(cursor);
-    const trade = symbolTrades.find((item) => item.date === day);
-    const close = validNumber(trade?.price, prev);
-    rows.push({
-      day,
-      open: close,
-      high: close,
-      low: close,
-      close,
-      volume: 0,
-    });
-    prev = close;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return rows;
 }
 
 function latestKlineDay(rows = []) {
@@ -7439,100 +7316,6 @@ function dumpMonthlyReturnAudit() {
     return { rows, tsv };
   }
   return { rows, tsv: "" };
-}
-
-function buildPortfolioHistory(positions, trades = state.trades, cashTransfers = null) {
-  const tradeList = Array.isArray(trades) ? trades : state.trades;
-  const ctf = Array.isArray(cashTransfers)
-    ? cashTransfers
-    : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
-  const end = new Date();
-  const endMid = new Date(toDateKey(end) + "T12:00:00");
-  let startMid;
-  if (tradeList.length) {
-    const firstD = [...tradeList].sort(sortTradeAsc)[0].date;
-    const parsed = new Date(String(firstD).slice(0, 10) + "T12:00:00");
-    startMid = Number.isNaN(parsed.getTime()) ? new Date(endMid) : parsed;
-  } else {
-    startMid = new Date(endMid);
-    startMid.setDate(startMid.getDate() - 370);
-  }
-  const maxSpanDays = 4000;
-  if ((endMid - startMid) / 86400000 > maxSpanDays) {
-    startMid = new Date(endMid.getTime() - maxSpanDays * 86400000);
-  }
-  if (startMid > endMid) {
-    startMid = new Date(endMid);
-  }
-
-  const dateKeys = [];
-  const cursor = new Date(startMid);
-  while (cursor <= endMid) {
-    dateKeys.push(toDateKey(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  const symbolSet = new Set(positions.map((item) => item.symbol));
-  const klineMap = {};
-  const lastPriceMap = {};
-  const fxRateMap = {};
-
-  symbolSet.forEach((symbol) => {
-    const list = getKlineBySymbol(symbol);
-    klineMap[symbol] = Object.fromEntries(list.map((item) => [item.day, Number(item.close)]));
-    const fallbackTrade = tradeList.find((item) => item.symbol === symbol);
-    const quote = getQuoteBySymbol(symbol);
-    lastPriceMap[symbol] = validNumber(quote.prevClose, fallbackTrade?.price, 0);
-    fxRateMap[symbol] = getFxRateForSymbol(symbol, inferMarket(symbol));
-  });
-
-  const extByDate = new Map();
-  for (const r of ctf || []) {
-    const d = String(r.date || "").slice(0, 10);
-    const net = cashTransferRowNetCny(r);
-    if (!d || !Number.isFinite(net) || net === 0) continue;
-    extByDate.set(d, (extByDate.get(d) || 0) + net);
-  }
-
-  const tradesByDate = {};
-  for (const trade of tradeList) {
-    if (!tradesByDate[trade.date]) {
-      tradesByDate[trade.date] = [];
-    }
-    tradesByDate[trade.date].push(trade);
-  }
-  Object.values(tradesByDate).forEach((list) => list.sort((a, b) => a.createdAt - b.createdAt));
-
-  const holdings = {};
-  const points = [];
-  const todayKey = toDateKey(new Date());
-
-  for (const dateKey of dateKeys) {
-    const dailyTrades = tradesByDate[dateKey] || [];
-    for (const trade of dailyTrades) {
-      if (holdings[trade.symbol] == null) {
-        holdings[trade.symbol] = 0;
-      }
-      holdings[trade.symbol] += trade.side === "buy" ? trade.quantity : -trade.quantity;
-    }
-
-    let value = 0;
-    const flow = extByDate.get(dateKey) || 0;
-    for (const symbol of symbolSet) {
-      const dayClose = klineMap[symbol][dateKey];
-      if (Number.isFinite(dayClose) && dayClose > 0) {
-        lastPriceMap[symbol] = dayClose;
-      } else {
-        const quote = getQuoteBySymbol(symbol);
-        if (dateKey === todayKey && validNumber(quote.current, 0) > 0) {
-          lastPriceMap[symbol] = Number(quote.current);
-        }
-      }
-      value += (holdings[symbol] || 0) * (lastPriceMap[symbol] || 0) * (fxRateMap[symbol] || 1);
-    }
-    points.push({ date: dateKey, value, flow });
-  }
-  return points;
 }
 
 function normalizeProfitAlgoMode(mode) {
@@ -8518,15 +8301,19 @@ async function refreshMarketData(opts = {}) {
 }
 
 /**
- * 实时行情失败时的兜底：用日 K 最后两根 K 线算现价与昨收。
+ * 实时行情失败时的兜底：用「库内日终收盘快照」最后两根 K 线算现价与昨收（仅走 snapshot/symbol-close，不在浏览器拉新浪日 K）。
  * 勿用分钟线相邻两根代替昨收，否则涨跌幅会变成「几分钟内波动」，出现约 0.08% 这类与当日真实涨跌严重不符的数。
  */
 async function fetchLatestQuoteFromDailyKlineFallback(symbol, options = {}) {
-  const allowRemote = options.allowRemote === true;
+  void options;
   try {
     let list = getKlineBySymbol(symbol);
-    if ((!Array.isArray(list) || list.length < 2) && allowRemote) {
-      list = await fetchKlineData(symbol);
+    if (!Array.isArray(list) || list.length < 2) {
+      const n = normalizeSymbol(symbol);
+      if (n) {
+        await fetchSymbolCloseIntoKlineMap([n], 90);
+        list = getKlineBySymbol(symbol);
+      }
     }
     if (!Array.isArray(list) || list.length < 2) {
       return null;
@@ -8594,158 +8381,6 @@ async function fetchRealtimeQuotes(symbols) {
     merged[sym] = { ...q };
   });
   return merged;
-}
-
-async function fetchKlineData(symbol) {
-  return fetchKlineDataSina(symbol);
-}
-
-async function fetchMinuteKData(symbol, scale = 5, datalen = 2) {
-  return fetchKlineDataSina(symbol, scale, datalen);
-}
-
-/** 新浪 DailyK_Batch：仅日 K。 */
-function mapSinaKlineRows(source) {
-  if (!Array.isArray(source)) {
-    return [];
-  }
-  const num = (v) => Number(String(v ?? "").replace(/,/g, ""));
-  return source
-    .map((item) => {
-      const raw = String(item?.day ?? "").trim();
-      const day = raw.includes(" ")
-        ? raw.replace(/\//g, "-")
-        : raw.slice(0, 10).replace(/\//g, "-");
-      return {
-        day,
-        open: num(item?.open),
-        high: num(item?.high),
-        low: num(item?.low),
-        close: num(item?.close),
-        volume: num(item?.volume),
-      };
-    })
-    .filter((item) => item.day && Number.isFinite(item.close));
-}
-
-function pickSinaDailyBatchRows(payload, requestSymbol) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-  const root =
-    payload?.result?.data ||
-    payload?.data ||
-    (payload && typeof payload === "object" ? payload : {});
-  return (
-    root?.[requestSymbol] ||
-    root?.[String(requestSymbol).toLowerCase()] ||
-    root?.[String(requestSymbol).toUpperCase()] ||
-    []
-  );
-}
-
-/** 前端仅请求同源 API：由后端统一访问新浪 DailyK_Batch 并负责回退缓存。 */
-async function fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, asc = "0") {
-  if (!apiReady) {
-    throw new Error("api not ready");
-  }
-  const lenSafe = Math.min(5000, Math.max(2, Number(len) || KLINE_DATALEN));
-  const ascSafe = String(asc) === "1" ? "1" : "0";
-  let lastErr = null;
-  const apiB = getApiBaseForFetch();
-  const proxyUrls = [
-    `${apiB}/sina-kline?symbol=${encodeURIComponent(requestSymbol)}&len=${encodeURIComponent(
-      String(lenSafe)
-    )}&asc=${encodeURIComponent(ascSafe)}`,
-    `${apiB}/sina_kline?symbol=${encodeURIComponent(requestSymbol)}&len=${encodeURIComponent(
-      String(lenSafe)
-    )}&asc=${encodeURIComponent(ascSafe)}`,
-  ];
-  for (const u of proxyUrls) {
-    try {
-      const r = await apiFetch(u, { cache: "no-store", timeoutMs: 35_000 });
-      if (r.ok) {
-        readMarketDelayFromResponse(r);
-        return await r.json();
-      }
-      lastErr = new Error(`sina proxy ${r.status}`);
-    } catch (error) {
-      lastErr = error;
-    }
-  }
-  throw lastErr || new Error("sina dailyk failed");
-}
-
-async function fetchKlineDataSinaBatch(symbols, datalen = KLINE_DATALEN) {
-  if (!apiReady) {
-    return {};
-  }
-  const unique = [...new Set((symbols || []).map((s) => String(s || "").trim()).filter(Boolean))];
-  if (!unique.length) {
-    return {};
-  }
-  const reqToLocal = new Map();
-  for (const sym of unique) {
-    const req = toSinaKlineSymbol(sym);
-    if (req) {
-      reqToLocal.set(req, sym);
-    }
-  }
-  if (!reqToLocal.size) {
-    return {};
-  }
-  const len = Math.min(5000, Math.max(2, Number(datalen) || KLINE_DATALEN));
-  const apiB = getApiBaseForFetch();
-  const urls = [
-    `${apiB}/sina-kline?symbols=${encodeURIComponent([...reqToLocal.keys()].join(","))}&len=${encodeURIComponent(
-      String(len)
-    )}&asc=0`,
-    `${apiB}/sina_kline?symbols=${encodeURIComponent([...reqToLocal.keys()].join(","))}&len=${encodeURIComponent(
-      String(len)
-    )}&asc=0`,
-  ];
-  let payload = null;
-  let lastErr = null;
-  for (const url of urls) {
-    try {
-      const r = await apiFetch(url, { cache: "no-store", timeoutMs: 45_000 });
-      if (!r.ok) {
-        lastErr = new Error(`sina batch ${r.status}`);
-        continue;
-      }
-      readMarketDelayFromResponse(r);
-      payload = await r.json();
-      break;
-    } catch (error) {
-      lastErr = error;
-    }
-  }
-  if (!payload) {
-    if (lastErr) {
-      throw lastErr;
-    }
-    return {};
-  }
-  const out = {};
-  for (const [requestSymbol, localSymbol] of reqToLocal.entries()) {
-    out[localSymbol] = mapSinaKlineRows(pickSinaDailyBatchRows(payload, requestSymbol));
-  }
-  return out;
-}
-
-async function fetchKlineDataSina(symbol, scale = 240, datalen = KLINE_DATALEN) {
-  const requestSymbol = toSinaKlineSymbol(symbol);
-  if (!requestSymbol) {
-    return [];
-  }
-  const scaleNum = Number(scale);
-  if (Number.isFinite(scaleNum) && scaleNum < 240) {
-    return [];
-  }
-  const len = Math.min(5000, Math.max(2, Number(datalen) || KLINE_DATALEN));
-  const payload = await fetchSinaDailyBatchPayloadWithFallback(requestSymbol, len, "0");
-  const rows = pickSinaDailyBatchRows(payload, requestSymbol);
-  return mapSinaKlineRows(rows);
 }
 
 async function fetchRealtimeQuotesTencent(symbols) {
