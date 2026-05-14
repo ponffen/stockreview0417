@@ -1590,9 +1590,10 @@ async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
   let staticParsed = null;
-  apiReady = await checkApiHealth();
+  const boot = await fetchApiStateBootstrap();
+  apiReady = boot.apiReady;
   if (apiReady) {
-    remoteParsed = await fetchRemoteState();
+    remoteParsed = boot.data;
   }
   // Only use the baked-in snapshot on static hosts (GitHub Pages). When the API is up,
   // trust /api/state even if the DB is empty — otherwise site-state.json would mask a real empty database.
@@ -1773,35 +1774,30 @@ function persistState() {
   }
 }
 
-async function checkApiHealth() {
+/**
+ * 一次请求完成「API 可达」判断并拉取 state，避免 hydrate 时连打两遍 /api/state。
+ * 401 仍视为 API 可达（与旧 checkApiHealth 一致），但不解析 body。
+ */
+async function fetchApiStateBootstrap() {
   try {
     const response = await apiFetch(`${getApiBaseForFetch()}/state`, {
       cache: "no-store",
-      timeoutMs: 4_000,
+      timeoutMs: 6_000,
     });
-    // /api/state 鉴权失败(401)也说明核心 API 可达。
-    return response.ok || response.status === 401;
-  } catch (error) {
-    return false;
-  }
-}
-
-async function fetchRemoteState() {
-  try {
-    const response = await apiFetch(`${API_BASE}/state`, { cache: "no-store", timeoutMs: 6_000 });
+    const reachable = response.ok || response.status === 401;
+    if (!reachable) {
+      return { apiReady: false, data: null };
+    }
     if (response.status === 401) {
-      return null;
+      return { apiReady: true, data: null };
     }
-    if (!response.ok) {
-      return null;
-    }
-    const result = await response.json();
+    const result = await response.json().catch(() => ({}));
     if (!result?.ok || !result.data) {
-      return null;
+      return { apiReady: true, data: null };
     }
-    return result.data;
-  } catch (error) {
-    return null;
+    return { apiReady: true, data: result.data };
+  } catch {
+    return { apiReady: false, data: null };
   }
 }
 
