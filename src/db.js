@@ -1150,6 +1150,195 @@ async function deletePerformanceSeriesCacheForUser(userId) {
   await q("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
 }
 
+let homeSummarySchemaPromise = null;
+
+/** 首页「截止到昨日日终」汇总表（幂等建表）。 */
+async function ensureHomeSummaryTables() {
+  if (homeSummarySchemaPromise) {
+    return homeSummarySchemaPromise;
+  }
+  homeSummarySchemaPromise = (async () => {
+    await q(
+      `CREATE TABLE IF NOT EXISTS account_home_summary (
+        user_id TEXT NOT NULL,
+        account_scope TEXT NOT NULL,
+        frozen_through TEXT NOT NULL,
+        first_trade_date TEXT,
+        last_market_value_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+        month_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+        month_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        month_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        ytd_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+        ytd_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        ytd_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        source_version TEXT NOT NULL DEFAULT '',
+        computed_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, account_scope)
+      )`
+    ).catch(() => {});
+    await q(
+      `CREATE TABLE IF NOT EXISTS symbol_home_summary (
+        user_id TEXT NOT NULL,
+        account_scope TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        frozen_through TEXT NOT NULL,
+        first_trade_date TEXT,
+        month_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
+        ytd_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'CNY',
+        source_version TEXT NOT NULL DEFAULT '',
+        computed_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, account_scope, symbol)
+      )`
+    ).catch(() => {});
+  })();
+  return homeSummarySchemaPromise;
+}
+
+async function deleteSymbolHomeSummaryForScope(userId, accountScope = "all") {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const sc = String(accountScope || "all").trim() || "all";
+  await q("DELETE FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
+}
+
+async function deleteHomeSummaryForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  await q("DELETE FROM account_home_summary WHERE user_id = $1", [uid]);
+  await q("DELETE FROM symbol_home_summary WHERE user_id = $1", [uid]);
+}
+
+async function upsertAccountHomeSummaryRow(input, userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  const r = input || {};
+  const now = validNumber(r.computedAt, r.computed_at, nowMs());
+  await q(
+    `INSERT INTO account_home_summary (
+       user_id, account_scope, frozen_through, first_trade_date, last_market_value_cny,
+       month_profit_cny, month_rate_twr, month_rate_mwr,
+       ytd_profit_cny, ytd_rate_twr, ytd_rate_mwr,
+       total_profit_cny, total_rate_twr, total_rate_mwr,
+       source_version, computed_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     ON CONFLICT (user_id, account_scope) DO UPDATE SET
+       frozen_through = EXCLUDED.frozen_through,
+       first_trade_date = EXCLUDED.first_trade_date,
+       last_market_value_cny = EXCLUDED.last_market_value_cny,
+       month_profit_cny = EXCLUDED.month_profit_cny,
+       month_rate_twr = EXCLUDED.month_rate_twr,
+       month_rate_mwr = EXCLUDED.month_rate_mwr,
+       ytd_profit_cny = EXCLUDED.ytd_profit_cny,
+       ytd_rate_twr = EXCLUDED.ytd_rate_twr,
+       ytd_rate_mwr = EXCLUDED.ytd_rate_mwr,
+       total_profit_cny = EXCLUDED.total_profit_cny,
+       total_rate_twr = EXCLUDED.total_rate_twr,
+       total_rate_mwr = EXCLUDED.total_rate_mwr,
+       source_version = EXCLUDED.source_version,
+       computed_at = EXCLUDED.computed_at`,
+    [
+      uid,
+      String(r.accountScope || r.account_scope || "all").trim() || "all",
+      toDateKey(r.frozenThrough || r.frozen_through),
+      r.firstTradeDate != null || r.first_trade_date != null ? String(r.firstTradeDate || r.first_trade_date).slice(0, 10) : null,
+      validNumber(r.lastMarketValueCny, r.last_market_value_cny, 0),
+      validNumber(r.monthProfitCny, r.month_profit_cny, 0),
+      validNumber(r.monthRateTwr, r.month_rate_twr, 0),
+      validNumber(r.monthRateMwr, r.month_rate_mwr, 0),
+      validNumber(r.ytdProfitCny, r.ytd_profit_cny, 0),
+      validNumber(r.ytdRateTwr, r.ytd_rate_twr, 0),
+      validNumber(r.ytdRateMwr, r.ytd_rate_mwr, 0),
+      validNumber(r.totalProfitCny, r.total_profit_cny, 0),
+      validNumber(r.totalRateTwr, r.total_rate_twr, 0),
+      validNumber(r.totalRateMwr, r.total_rate_mwr, 0),
+      String(r.sourceVersion || r.source_version || "").slice(0, 64),
+      now,
+    ]
+  );
+}
+
+async function upsertSymbolHomeSummaryBatch(rows, userId = null, accountScope = "all") {
+  const uid = String(userId || (await getCliUserId())).trim();
+  const list = Array.isArray(rows) ? rows : [];
+  const sc = String(accountScope || "all").trim() || "all";
+  if (!uid || !list.length) {
+    return 0;
+  }
+  const p = await initPool();
+  const c = await p.connect();
+  try {
+    await c.query("BEGIN");
+    for (const raw of list) {
+      const r = raw || {};
+      const now = validNumber(r.computedAt, r.computed_at, nowMs());
+      await c.query(
+        `INSERT INTO symbol_home_summary (
+           user_id, account_scope, symbol, frozen_through, first_trade_date,
+           month_profit_native, ytd_profit_native, total_profit_native,
+           total_rate_twr, total_rate_mwr, currency, source_version, computed_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (user_id, account_scope, symbol) DO UPDATE SET
+           frozen_through = EXCLUDED.frozen_through,
+           first_trade_date = EXCLUDED.first_trade_date,
+           month_profit_native = EXCLUDED.month_profit_native,
+           ytd_profit_native = EXCLUDED.ytd_profit_native,
+           total_profit_native = EXCLUDED.total_profit_native,
+           total_rate_twr = EXCLUDED.total_rate_twr,
+           total_rate_mwr = EXCLUDED.total_rate_mwr,
+           currency = EXCLUDED.currency,
+           source_version = EXCLUDED.source_version,
+           computed_at = EXCLUDED.computed_at`,
+        [
+          uid,
+          sc,
+          normalizeSymbol(String(r.symbol || "").trim()),
+          toDateKey(r.frozenThrough || r.frozen_through),
+          r.firstTradeDate != null || r.first_trade_date != null ? String(r.firstTradeDate || r.first_trade_date).slice(0, 10) : null,
+          validNumber(r.monthProfitNative, r.month_profit_native, 0),
+          validNumber(r.ytdProfitNative, r.ytd_profit_native, 0),
+          validNumber(r.totalProfitNative, r.total_profit_native, 0),
+          validNumber(r.totalRateTwr, r.total_rate_twr, 0),
+          validNumber(r.totalRateMwr, r.total_rate_mwr, 0),
+          String(r.currency || "CNY").toUpperCase().slice(0, 3) || "CNY",
+          String(r.sourceVersion || r.source_version || "").slice(0, 64),
+          now,
+        ]
+      );
+    }
+    await c.query("COMMIT");
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
+  return list.length;
+}
+
+async function getHomeSummaryForUser(userId, accountScope = "all") {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { account: null, symbols: [] };
+  }
+  const sc = String(accountScope || "all").trim() || "all";
+  const { rows: ar } = await q("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
+  const { rows: sr } = await q(
+    "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
+    [uid, sc]
+  );
+  return { account: ar[0] || null, symbols: sr };
+}
+
 async function upsertPerformanceSeriesCacheRow(input) {
   const r = input || {};
   const now = nowMs();
@@ -1190,6 +1379,8 @@ async function deleteAllDataForUser(userId) {
     await c.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM account_home_summary WHERE user_id = $1", [uid]);
+    await c.query("DELETE FROM symbol_home_summary WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM app_settings WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM accounts WHERE user_id = $1", [uid]);
@@ -2022,6 +2213,11 @@ module.exports = {
   deleteAllAnalysisDailySnapshot,
   deletePerformanceSeriesCacheForUser,
   upsertPerformanceSeriesCacheRow,
+  ensureHomeSummaryTables,
+  deleteSymbolHomeSummaryForScope,
+  upsertAccountHomeSummaryRow,
+  upsertSymbolHomeSummaryBatch,
+  getHomeSummaryForUser,
   deleteAllDataForUser,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,

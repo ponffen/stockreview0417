@@ -16,6 +16,7 @@ const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 const { fetchSinaForexDayKSeries, toDateKey, enumerateDays, validNumber } = require("../scripts/lib/market-fetch");
 const { buildPortfolioDayPoints, computeTwrFromDayPoints } = require("./return-calcs");
 const { rebuildPerformanceSeriesCache } = require("./performance-cache-service");
+const { rebuildHomeSummaryForUser } = require("./home-summary-service");
 
 const FX_FALLBACK = {
   USD: 7.2,
@@ -429,6 +430,17 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     asOfDate: frozenDate,
     accountIds,
   });
+
+  try {
+    const hr = await rebuildHomeSummaryForUser(uid);
+    if (hr?.ok) {
+      logger.info?.("[freeze] home summary ok", hr.frozenThrough, "symbols=", hr.symbolCount);
+    } else if (hr && !hr.skip) {
+      logger.warn?.("[freeze] home summary", hr.error || hr.reason || hr);
+    }
+  } catch (e) {
+    logger.warn?.("[freeze] home summary failed", e?.message || e);
+  }
 
   return {
     userId: uid,

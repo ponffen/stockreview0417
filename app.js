@@ -6046,6 +6046,31 @@ function buildSymbolSnapshotProfitMap(positions, symbolPnlRows, trades, todayKey
   return map;
 }
 
+/** 服务端 symbol_home_summary（截止到 frozen_through），与 buildSymbolSnapshotProfitMap 输出结构一致。 */
+function buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeSymbols, _todayKey) {
+  const byNorm = new Map();
+  for (const s of homeSymbols || []) {
+    const sym = normalizeSymbol(s.symbol);
+    if (sym) {
+      byNorm.set(sym, s);
+    }
+  }
+  const map = new Map();
+  for (const row of vis || []) {
+    const sym = normalizeSymbol(row.symbol);
+    const r = byNorm.get(sym);
+    if (!r) {
+      continue;
+    }
+    map.set(sym, {
+      monthHistNative: Number(r.month_profit_native) || 0,
+      yearHistNative: Number(r.ytd_profit_native) || 0,
+      totalHistNative: Number(r.total_profit_native) || 0,
+    });
+  }
+  return map;
+}
+
 function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
   if (!stockTableBody) {
     return;
@@ -6161,23 +6186,51 @@ async function refreshOverviewProfitRowFromSnapshots() {
   const bounds = overviewAccountDailyFetchBounds(scope, state.stageRange);
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const symList = [...new Set(vis.map((p) => normalizeSymbol(p.symbol)).filter(Boolean))];
+  let homeData = null;
+  let homeCoversSymbols = false;
+  if (aid === "all") {
+    try {
+      const res = await apiFetch(`${API_BASE}/snapshot/home-summary?accountScope=all`, {
+        cache: "no-store",
+        timeoutMs: 18_000,
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (j.ok && j.data?.account && Array.isArray(j.data.symbols)) {
+          homeData = j.data;
+          const have = new Set(homeData.symbols.map((s) => normalizeSymbol(s.symbol)));
+          homeCoversSymbols = symList.length === 0 || symList.every((s) => have.has(s));
+        }
+      }
+    } catch {
+      homeData = null;
+    }
+  }
+  if (seq !== overviewProfitRefreshSeq) {
+    return;
+  }
+  const useHomeAccount = aid === "all" && homeData?.account;
   let dbRows = [];
   let symRows = [];
   try {
-    const accP = fetchAnalysisDailyRowsRemote({
-      accountId: aid,
-      from: bounds.from,
-      to: bounds.to,
-    });
+    const accP = useHomeAccount
+      ? Promise.resolve([])
+      : fetchAnalysisDailyRowsRemote({
+          accountId: aid,
+          from: bounds.from,
+          to: bounds.to,
+        });
     const symP =
-      symList.length > 0
-        ? fetchSymbolDailyRowsRemote({
-            accountId: aid,
-            symbols: symList,
-            from: bounds.from,
-            to: bounds.to,
-          })
-        : Promise.resolve([]);
+      homeCoversSymbols && aid === "all"
+        ? Promise.resolve([])
+        : symList.length > 0
+          ? fetchSymbolDailyRowsRemote({
+              accountId: aid,
+              symbols: symList,
+              from: bounds.from,
+              to: bounds.to,
+            })
+          : Promise.resolve([]);
     [dbRows, symRows] = await Promise.all([accP, symP]);
   } catch {
     dbRows = [];
@@ -6186,34 +6239,70 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (seq !== overviewProfitRefreshSeq) {
     return;
   }
-  if (!Array.isArray(dbRows) || !dbRows.length) {
+  if (!useHomeAccount && (!Array.isArray(dbRows) || !dbRows.length)) {
     if (seq === overviewProfitRefreshSeq) {
       setOverviewProfitKpisDash();
       paintOverviewStockTableFromSnapshots(portfolio, null);
     }
     return;
   }
-  if (symList.length && (!Array.isArray(symRows) || !symRows.length)) {
+  if (symList.length && !homeCoversSymbols && (!Array.isArray(symRows) || !symRows.length)) {
     if (seq === overviewProfitRefreshSeq) {
       setOverviewProfitKpisDash();
       paintOverviewStockTableFromSnapshots(portfolio, null);
     }
     return;
   }
-  const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
-  const firstTradeDate =
-    tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-  const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-  const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
-  const merged = mergeAnalysisSliceWithLive(
-    sorted.map((row) => ({ ...row })),
-    portfolio,
-    bounds.todayKey,
-    liveByMode,
-    scope.cashTransfers,
-  );
-  const stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
-  const todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
+  let stageOut = null;
+  let todayOut = null;
+  let snapMap = new Map();
+  if (useHomeAccount) {
+    const acc = homeData.account;
+    const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
+    const lastMv = Number(acc.last_market_value_cny) || 0;
+    const tr = lastMv > 0 ? todayP / lastMv : 0;
+    todayOut = { todayProfitCny: todayP, todayRate: tr };
+    const mwr = state.algoMode === "mwr";
+    let stageProfit = 0;
+    let stageRate = 0;
+    if (state.stageRange === "ytd") {
+      stageProfit = Number(acc.ytd_profit_cny) + todayP;
+      stageRate = mwr ? Number(acc.ytd_rate_mwr) || 0 : Number(acc.ytd_rate_twr) || 0;
+    } else if (state.stageRange === "total") {
+      stageProfit = Number(acc.total_profit_cny) + todayP;
+      stageRate = mwr ? Number(acc.total_rate_mwr) || 0 : Number(acc.total_rate_twr) || 0;
+    } else {
+      stageProfit = Number(acc.month_profit_cny) + todayP;
+      stageRate = mwr ? Number(acc.month_rate_mwr) || 0 : Number(acc.month_rate_twr) || 0;
+    }
+    stageOut = { stageProfit, stageRate };
+    if (symList.length > 0) {
+      snapMap =
+        homeCoversSymbols && homeData.symbols
+          ? buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeData.symbols, bounds.todayKey)
+          : buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey);
+    }
+    if (Array.isArray(dbRows) && dbRows.length) {
+      mergeFxRatesFromAnalysisDailyRows(dbRows);
+    }
+  } else {
+    const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
+    const firstTradeDate =
+      tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
+    const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
+    const merged = mergeAnalysisSliceWithLive(
+      sorted.map((row) => ({ ...row })),
+      portfolio,
+      bounds.todayKey,
+      liveByMode,
+      scope.cashTransfers,
+    );
+    stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
+    todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
+    snapMap =
+      symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
+  }
   if (seq !== overviewProfitRefreshSeq) {
     return;
   }
@@ -6231,8 +6320,6 @@ async function refreshOverviewProfitRowFromSnapshots() {
     }
     return;
   }
-  const snapMap =
-    symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
   const sp = Number(stageOut.stageProfit);
   const sr = Number(stageOut.stageRate);
   const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);

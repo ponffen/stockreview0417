@@ -59,6 +59,12 @@ function invalidateDailyCloseAndAnalysisCache(userId) {
   clearUserScopedCache(analysisDailyMemoryCache, userId);
   clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
   clearUserScopedCache(realtimePatchMemoryCache, userId);
+  const uid = String(userId || "").trim();
+  if (uid) {
+    setImmediate(() => {
+      rebuildHomeSummaryForUser(uid).catch(() => {});
+    });
+  }
 }
 
 function sanitizeSymbolList(input) {
@@ -739,8 +745,11 @@ const {
   removeCommunityFollow,
   isCommunityFollowing,
   pingDatabase,
+  getHomeSummaryForUser,
+  ensureHomeSummaryTables,
 } = require("./src/db");
 const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
+const { rebuildHomeSummaryForUser } = require("./src/home-summary-service");
 const {
   maskPhone,
   displayNameForUser,
@@ -1669,6 +1678,25 @@ app.get("/api/snapshot/symbol-daily", requireAuth, async (req, res) => {
     res.json({ ok: true, data: rows });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "snapshot symbol daily failed" });
+  }
+});
+
+app.get("/api/snapshot/home-summary", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const raw = await getHomeSummaryForUser(req.userId, accountScope);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      data: {
+        accountScope,
+        account: raw.account,
+        symbols: raw.symbols,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot home summary failed" });
   }
 });
 

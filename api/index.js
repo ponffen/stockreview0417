@@ -339,6 +339,7 @@ module.exports = async function handler(req, res) {
   const isSnapshotWatermarkDirect = req.method === "GET" && pathOnly === "/api/snapshot/watermark";
   const isSnapshotAccountDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/account-daily";
   const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
+  const isSnapshotHomeSummaryDirect = req.method === "GET" && pathOnly === "/api/snapshot/home-summary";
   const isSnapshotSymbolCloseDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-close";
   const isCronFreezeDirect = (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/freeze-eod";
   const isCronDailyCloseDirect =
@@ -630,6 +631,7 @@ module.exports = async function handler(req, res) {
     isSnapshotWatermarkDirect ||
     isSnapshotAccountDailyDirect ||
     isSnapshotSymbolDailyDirect ||
+    isSnapshotHomeSummaryDirect ||
     isSnapshotSymbolCloseDirect ||
     isCronFreezeDirect ||
     isCronDailyCloseDirect
@@ -645,6 +647,8 @@ module.exports = async function handler(req, res) {
         getSymbolDailyPnl,
         getTradeWindowForDailyClose,
         getSymbolDailyCloseRange,
+        getHomeSummaryForUser,
+        ensureHomeSummaryTables,
       } = require("../src/db");
       const { runDailyFreeze } = require("../src/eod-freeze-service");
       const { runDailyCloseSync } = require("../src/daily-close-sync-service");
@@ -754,6 +758,20 @@ module.exports = async function handler(req, res) {
         }
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isSnapshotHomeSummaryDirect) {
+        await ensureHomeSummaryTables();
+        const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+        const raw = await getHomeSummaryForUser(userId, accountScope);
+        res.statusCode = 200;
+        res.end(
+          JSON.stringify({
+            ok: true,
+            data: { accountScope, account: raw.account, symbols: raw.symbols },
+          })
+        );
         return;
       }
 
