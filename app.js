@@ -82,7 +82,7 @@ const STATE_SYNC_KEYS = [
   "analysisPreset",
   "customRangeStart",
   "customRangeEnd",
-  "capitalTrendMode",
+  "capitalTrendMode", // total_assets | market | cash | cash_ratio（分析资产图下拉）
   "capitalAmount",
   "accounts",
   "selectedAccountId",
@@ -166,7 +166,7 @@ const state = {
   /** 自定义区间输入框草稿，仅点「应用」后写入 customRangeStart/End 并刷新图表 */
   customRangeDraftStart: "",
   customRangeDraftEnd: "",
-  capitalTrendMode: "principal",
+  capitalTrendMode: "total_assets",
   capitalAmount: 0,
   accounts: [DEFAULT_ACCOUNT],
   selectedAccountId: "all",
@@ -1771,11 +1771,11 @@ async function hydrateState() {
   if (!["preset", "custom", "all"].includes(state.analysisRangeMode)) {
     state.analysisRangeMode = "preset";
   }
-  if (state.capitalTrendMode === "both") {
-    state.capitalTrendMode = "principal";
+  if (state.capitalTrendMode === "both" || state.capitalTrendMode === "principal") {
+    state.capitalTrendMode = "total_assets";
   }
-  if (!["principal", "market"].includes(state.capitalTrendMode)) {
-    state.capitalTrendMode = "principal";
+  if (!["total_assets", "market", "cash", "cash_ratio"].includes(state.capitalTrendMode)) {
+    state.capitalTrendMode = "total_assets";
   }
   if (state.stockAmountDisplay !== "cny" && state.stockAmountDisplay !== "native") {
     state.stockAmountDisplay = "native";
@@ -2374,7 +2374,7 @@ function bindEvents() {
   });
 
   assetCurveModeSelect?.addEventListener("change", () => {
-    state.capitalTrendMode = assetCurveModeSelect.value || "principal";
+    state.capitalTrendMode = assetCurveModeSelect.value || "total_assets";
     persistState();
     void renderAnalysis();
   });
@@ -3054,7 +3054,9 @@ function renderControls() {
         : state.customRangeEnd || "";
   }
   if (assetCurveModeSelect) {
-    assetCurveModeSelect.value = state.capitalTrendMode;
+    assetCurveModeSelect.value = ["total_assets", "market", "cash", "cash_ratio"].includes(state.capitalTrendMode)
+      ? state.capitalTrendMode
+      : "total_assets";
   }
   stockSortButtons.forEach((button) => {
     const key = button.dataset.sortKey || "";
@@ -3627,7 +3629,7 @@ function isPublicProfileActiveHoldingRow(row) {
   return true;
 }
 
-/** 分析区：总市值按区间内首日归一为 1（脱敏，仅形态） */
+/** 分析区：总资产按区间内首日归一为 1（脱敏，仅形态） */
 function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, onDataRefresh) {
   if (!canvas || !selectedPoints?.length) {
     return;
@@ -3640,7 +3642,7 @@ function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, o
   }));
   const chartOpts = {
     keyA: "mvIdx",
-    labelA: "总市值指数",
+    labelA: "总资产指数",
     yAxisMode: "left",
     leftLabel: "",
     xLabel: "",
@@ -3661,7 +3663,38 @@ function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, o
   }
 }
 
-/** 与首页总览一致：用对方脱敏后的 trades + 本金 + 对方算法/展示币种，在当前行情下重算（与本人「全部账户」视图对齐）。 */
+function paintPublicProfileCashRatioChart(canvas, tooltipEl, sliceRows, onDataRefresh) {
+  if (!canvas || !sliceRows?.length) {
+    return;
+  }
+  const series = sliceRows.map((r) => ({
+    date: r.date,
+    value: Number(r.cashRatio) || 0,
+  }));
+  const chartOpts = {
+    keyA: "cashRatio",
+    labelA: "现金占比",
+    yAxisMode: "left",
+    leftLabel: "",
+    xLabel: "",
+    valueFormatter: (value) => `${formatNumber(value, 2)}%`,
+    axisFormatter: (value) => `${formatNumber(value, 2)}%`,
+    yRangePadding: { minFactor: 0.92, maxFactor: 1.08 },
+  };
+  const payloads = { ratio: drawDualLineChart(canvas, series, null, "#9b59b6", null, chartOpts) };
+  if (tooltipEl && onDataRefresh) {
+    bindInteractiveChart(canvas, tooltipEl, () => payloads.ratio, {
+      mode: "analysis",
+      onRefresh: onDataRefresh,
+      onRedraw: () => {
+        payloads.ratio = drawDualLineChart(canvas, series, null, "#9b59b6", null, chartOpts);
+      },
+      valueFormatter: (val) => `${formatNumber(val, 2)}%`,
+    });
+  }
+}
+
+/** 与首页总览一致：用对方脱敏后的 trades + 资金/资产口径，在当前行情下重算（与本人「全部账户」视图对齐）。 */
 function withPublicTradesContext(d, fn) {
   if (!d || !Array.isArray(d.publicTrades)) {
     return fn();
@@ -3907,7 +3940,7 @@ function ensurePublicProfileAnalysisUi() {
       customRangeDraftStart: "",
       customRangeDraftEnd: "",
       benchmark: "none",
-      capitalTrendMode: "principal",
+      capitalTrendMode: "total_assets",
     };
   }
   return state.publicProfileAnalysisUi;
@@ -3926,7 +3959,11 @@ function seedPublicProfileAnalysisUiFromDetail(d) {
   const ui = ensurePublicProfileAnalysisUi();
   const bench = String(d.publicBenchmark || "none");
   ui.benchmark = ALLOWED_PUBLIC_BENCHMARKS.has(bench) ? bench : "none";
-  ui.capitalTrendMode = d.publicCapitalTrendMode === "market" ? "market" : "principal";
+  const tm = String(d.publicCapitalTrendMode || "total_assets");
+  ui.capitalTrendMode =
+    tm === "market" || tm === "cash" || tm === "cash_ratio" || tm === "total_assets"
+      ? tm
+      : "total_assets";
   const arm = String(d.publicAnalysisRangeMode || "preset");
   ui.analysisRangeMode = ["preset", "custom", "all"].includes(arm) ? arm : "preset";
   ui.analysisPreset = d.publicAnalysisPreset ?? null;
@@ -4097,12 +4134,22 @@ function getPublicProfileAnalysisSectionHtml() {
     </article>
     <article class="panel">
       <div class="panel-head">
-        <h2>总市值走势</h2>
+        <h2>总资产走势</h2>
         <span class="caption">以首日为基数1，不展示真实金额</span>
       </div>
       <div class="chart-wrap">
         <canvas id="pubAnalysisMarketIndexChart" width="700" height="320"></canvas>
         <div id="pubAnalysisMarketIndexTooltip" class="chart-tooltip"></div>
+      </div>
+    </article>
+    <article class="panel">
+      <div class="panel-head">
+        <h2>现金占比</h2>
+        <span class="caption">现金 / 总资产 × 100%</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="pubAnalysisCashRatioChart" width="700" height="280"></canvas>
+        <div id="pubAnalysisCashRatioTooltip" class="chart-tooltip"></div>
       </div>
     </article>
     <article class="panel analysis-stock-rank-panel">
@@ -4275,6 +4322,8 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
   const pubMkt = document.getElementById("pubAnalysisMarketIndexChart");
   const pubMktTip = document.getElementById("pubAnalysisMarketIndexTooltip");
+  const pubRatio = document.getElementById("pubAnalysisCashRatioChart");
+  const pubRatioTip = document.getElementById("pubAnalysisCashRatioTooltip");
   const pubRank = document.getElementById("pubAnalysisStockRankBody");
   if (!pubRate) {
     return;
@@ -4316,6 +4365,9 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   if (!useDbRows || !dbRows.length) {
     clearCanvasChart(pubRate);
     clearCanvasChart(pubMkt);
+    if (pubRatio) {
+      clearCanvasChart(pubRatio);
+    }
     if (pubRank) {
       pubRank.innerHTML = `<p class="empty">暂无日快照数据。</p>`;
     }
@@ -4346,7 +4398,14 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   bindRateOnly(mySeries, benchSeries);
-  paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, selectedPh, refresh);
+  const pubAssetIdx = sliceRows.map((r) => ({
+    date: r.date,
+    value: Number(r.totalAssets) || Number(r.marketValue) || 0,
+  }));
+  paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, pubAssetIdx, refresh);
+  if (pubRatio) {
+    paintPublicProfileCashRatioChart(pubRatio, pubRatioTip, sliceRows, refresh);
+  }
   renderAnalysisStockRank(pseudoHistory, scope, portfolio, pubRank, rankOpts);
 }
 
@@ -6037,14 +6096,14 @@ function buildLiveByModeFromSnapshotDaily(sortedRows, portfolio, todayKey, scope
 }
 
 /**
- * 分析 Tab 最后一行对齐首页总览：总市值、本金、当日 profit_cny（与总览「今日」同口径）。
+ * 分析 Tab 最后一行对齐首页总览：总市值、总资产/现金/占比、当日 profit_cny（与总览「今日」同口径）。
  * total_profit 仍按库里「日收益累加」延伸：昨日累计 + 今日 profit_cny，避免与历史点混用「持仓成本法 totalProfit」导致曲线断层。
  */
 function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode = {}, scopeCash) {
-  const cash = Array.isArray(scopeCash)
+  const cashRows = Array.isArray(scopeCash)
     ? scopeCash
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
-  const extToday = cash.reduce((s, r) => {
+  const extToday = cashRows.reduce((s, r) => {
     if (String(r.date).slice(0, 10) === todayKey) {
       return s + cashTransferRowNetCny(r);
     }
@@ -6052,7 +6111,10 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
   }, 0);
   const twr = Number(liveByMode.twr);
   const mwr = Number(liveByMode.mwr);
-  const mv = portfolio.totalMarketValue;
+  const mvCny = Number(portfolio.totalMarketValueCnyBook) || 0;
+  const cashCny = Number(portfolio.cash) || 0;
+  const totalAssetsCny = mvCny + cashCny;
+  const cashRatioPct = totalAssetsCny > 0 ? (cashCny / totalAssetsCny) * 100 : 0;
   const todayP = todayProfitCnyForAnalysisSnapshot(portfolio);
   const next = sliceRows.map((r) => ({ ...r }));
   const hit = next.findIndex((r) => r.date === todayKey);
@@ -6065,8 +6127,11 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
   if (hit >= 0) {
     next[hit] = {
       ...next[hit],
-      marketValue: mv,
-      principal: portfolio.principal,
+      marketValue: mvCny,
+      totalAssets: totalAssetsCny,
+      cash: cashCny,
+      cashRatio: cashRatioPct,
+      principal: 0,
       totalProfit: cumFromPrev(hit) + todayP,
       profitCny: todayP,
       externalFlowCny: extToday,
@@ -6082,8 +6147,11 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
       ...last,
       date: todayKey,
       profitCny: todayP,
-      marketValue: mv,
-      principal: portfolio.principal,
+      marketValue: mvCny,
+      totalAssets: totalAssetsCny,
+      cash: cashCny,
+      cashRatio: cashRatioPct,
+      principal: 0,
       totalProfit: lastCum + todayP,
       externalFlowCny: extToday,
       twRCumulative: Number.isFinite(twr) ? twr : last.twRCumulative,
@@ -6878,11 +6946,25 @@ async function renderAnalysis(options = {}) {
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   /** 与收益率曲线同源：由市值+出入金序列推盈亏；勿用库里 totalProfit 另画一条，否则标题与「我的收益率」口径不一致。 */
   const profitSeries = buildProfitSeries(modePts);
-  const assetSeries = sliceRows.map((row) => ({
-    date: row.date,
-    principal: row.principal,
-    market: row.marketValue,
-  }));
+  const assetSeries = sliceRows.map((row) => {
+    const mv = Number(row.marketValue) || 0;
+    const cash = Number(row.cash) || 0;
+    const taDb = Number(row.totalAssets);
+    const totalAssets = Number.isFinite(taDb) && Math.abs(taDb) > 1e-9 ? taDb : mv + cash;
+    const ratioDb = Number(row.cashRatio);
+    const cashRatio = Number.isFinite(ratioDb)
+      ? ratioDb
+      : totalAssets > 0
+        ? (cash / totalAssets) * 100
+        : 0;
+    return {
+      date: row.date,
+      totalAssets,
+      market: mv,
+      cash,
+      cashRatio,
+    };
+  });
 
   const ratePayload = drawLineChart(mySeries, benchSeries);
   const profitPayload = drawDualLineChart(
@@ -6964,7 +7046,10 @@ async function renderAnalysis(options = {}) {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
     onRedraw: redrawAnalysisChartsOnly,
-    valueFormatter: (value) => formatNumber(value, 2),
+    valueFormatter: (value) =>
+      state.capitalTrendMode === "cash_ratio"
+        ? `${formatNumber(value, 2)}%`
+        : formatNumber(analysisSnapshotMoneyFromCny(value), 2),
   });
 
   /** 与曲线、tooltip 同一序列：不得再用 historyFull 另算一套，否则会出现「图上最后一点约 -3% 与标题 -25%」不一致。 */
@@ -7059,24 +7144,6 @@ function buildProfitSeries(points) {
     };
   });
   return rebaseValueSeriesByFirstDay(raw, "value");
-}
-
-/** 走势：逐日本金 = 截至当日的资金记录累计净额（人民币），与 computePortfolio 本金口径一致 */
-function buildAssetSeries(points, ctf) {
-  const list = Array.isArray(ctf) ? ctf : [];
-  if (!points.length) {
-    return [{ date: toDateKey(new Date()), principal: 0, market: 0 }];
-  }
-  const dateKeys = points.map((p) => p.date);
-  const fundCumByDate = fundCnyCumulativeAlongDates(list, dateKeys);
-  return points.map((point) => {
-    const principal = fundCumByDate.get(point.date) ?? 0;
-    return {
-      date: point.date,
-      principal,
-      market: point.value,
-    };
-  });
 }
 
 async function openStockRecordDialog(symbol, opts = {}) {
@@ -7716,6 +7783,8 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   const overviewPrincipal = amountBookFromCny(principal, overviewBookCurrency);
   const overviewCash = amountBookFromCny(cash, overviewBookCurrency);
   const totalAssets = totalMarketValue + overviewCash;
+  const totalAssetsCny = totalMarketValueCnyBook + cash;
+  const cashRatioPct = totalAssetsCny > 0 ? (cash / totalAssetsCny) * 100 : 0;
 
   const totalAssetsForWeight = totalMarketValueCnyBook + cash;
   positions.forEach((item) => {
@@ -7732,9 +7801,12 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     overviewPrincipal,
     overviewCash,
     totalMarketValue,
+    totalMarketValueCnyBook,
     yesterdayMarketValue: yesterdayMarketValueForRate,
     cash,
     totalAssets,
+    totalAssetsCny,
+    cashRatioPct,
     todayProfit,
     todayRate,
     totalProfit,
@@ -8015,37 +8087,40 @@ function drawSingleLineChart(canvas, series, color) {
   return drawDualLineChart(canvas, series, null, color, null);
 }
 
+function analysisSnapshotMoneyFromCny(cnyVal) {
+  return amountBookFromCny(Number(cnyVal) || 0, getOverviewBookCurrency());
+}
+
 const ASSET_CHART_Y_MIN_FACTOR = 0.95;
 const ASSET_CHART_Y_MAX_FACTOR = 1.05;
 
 function drawAssetChart(assetSeries, canvas, trendMode) {
   const targetCanvas = canvas || analysisAssetChart;
   const mode = trendMode != null ? trendMode : state.capitalTrendMode;
-  const principalSeries = assetSeries.map((item) => ({ date: item.date, value: item.principal }));
-  const marketSeries = assetSeries.map((item) => ({ date: item.date, value: item.market }));
+  const fmtMoney = (v) => formatNumber(analysisSnapshotMoneyFromCny(v), 2);
+  const cfg =
+    mode === "market"
+      ? { key: "market", label: "总市值", color: "#4f83f1", fmt: fmtMoney }
+      : mode === "cash"
+        ? { key: "cash", label: "现金", color: "#27ae60", fmt: fmtMoney }
+        : mode === "cash_ratio"
+          ? { key: "cashRatio", label: "现金占比", color: "#9b59b6", fmt: (v) => `${formatNumber(v, 2)}%` }
+          : { key: "totalAssets", label: "总资产", color: "#5f6c82", fmt: fmtMoney };
+  const series = assetSeries.map((item) => ({
+    date: item.date,
+    value: Number(item[cfg.key]) || 0,
+  }));
   const assetYScale = {
     yRangePadding: { minFactor: ASSET_CHART_Y_MIN_FACTOR, maxFactor: ASSET_CHART_Y_MAX_FACTOR },
   };
-  if (mode === "market") {
-    return drawDualLineChart(targetCanvas, marketSeries, null, "#4f83f1", null, {
-      keyA: "market",
-      labelA: "总市值",
-      yAxisMode: "left",
-      leftLabel: "",
-      xLabel: "",
-      valueFormatter: (value) => formatNumber(value, 2),
-      axisFormatter: (value) => formatNumber(value, 2),
-      ...assetYScale,
-    });
-  }
-  return drawDualLineChart(targetCanvas, principalSeries, null, "#5f6c82", null, {
-    keyA: "principal",
-    labelA: "本金",
+  return drawDualLineChart(targetCanvas, series, null, cfg.color, null, {
+    keyA: cfg.key,
+    labelA: cfg.label,
     yAxisMode: "left",
     leftLabel: "",
     xLabel: "",
-    valueFormatter: (value) => formatNumber(value, 2),
-    axisFormatter: (value) => formatNumber(value, 2),
+    valueFormatter: cfg.fmt,
+    axisFormatter: cfg.fmt,
     ...assetYScale,
   });
 }

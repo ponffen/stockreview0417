@@ -270,12 +270,14 @@
 
         <article class="panel">
           <div class="panel-head">
-            <h2>本金/总市值走势</h2>
+            <h2>资产结构走势</h2>
             <div class="asset-mode-wrap">
               <label for="assetCurveMode" class="caption">显示</label>
               <select id="assetCurveMode" class="asset-mode-select">
-                <option value="principal">本金</option>
+                <option value="total_assets">总资产</option>
                 <option value="market">总市值</option>
+                <option value="cash">现金</option>
+                <option value="cash_ratio">现金占比</option>
               </select>
             </div>
           </div>
@@ -744,11 +746,11 @@
 
     <dialog id="capitalDialog" class="dialog">
       <div class="panel-head">
-        <h2>本金与现金</h2>
+        <h2>总资产与现金</h2>
         <button type="button" id="closeCapitalDialogBtn" class="btn btn-ghost">关闭</button>
       </div>
       <p class="form-hint" style="margin: 0; line-height: 1.5">
-        本金 = max(交易记录累计发生额, 资金记录净额)，现金 = 本金 − 交易记录累计发生额。累计发生额按买入为正、卖出为负的成交金额折人民币后累加；资金净额为银证转入与转出按账户币种折算后的人民币净额。以上均由记录自动计算。
+        本金为全部资金记录净额（人民币）；现金为期初 0 起按时间滚算：入金 − 出金 + 买卖现金流（折各账户记账币种），再汇总为人民币；总资产 = 总市值 + 现金；现金占比 = 现金 / 总资产 × 100%（总资产 ≤ 0 时显示 0%）。以上均由记录自动计算。
       </p>
     </dialog>
 

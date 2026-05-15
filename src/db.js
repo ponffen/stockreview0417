@@ -223,6 +223,9 @@ const DDL = [
     total_profit DOUBLE PRECISION NOT NULL DEFAULT 0,
     principal DOUBLE PRECISION NOT NULL DEFAULT 0,
     market_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_assets DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cash_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
     fx_hkd_cny DOUBLE PRECISION,
     fx_usd_cny DOUBLE PRECISION,
     created_at BIGINT NOT NULL,
@@ -1056,7 +1059,7 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
   const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
   const { rows } = await q(
     `SELECT account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
-      total_profit, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at
+      total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at
      FROM analysis_daily_snapshot
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1075,6 +1078,9 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
     totalProfit: Number(row.total_profit),
     principal: Number(row.principal),
     marketValue: Number(row.market_value),
+    totalAssets: Number(row.total_assets ?? row.totalAssets ?? 0),
+    cash: Number(row.cash_cny ?? row.cash ?? 0),
+    cashRatio: Number(row.cash_ratio ?? row.cashRatio ?? 0),
     fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
     fxUsdCny: row.fx_usd_cny == null ? null : Number(row.fx_usd_cny),
     createdAt: Number(row.created_at),
@@ -1095,8 +1101,11 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
     external_flow_cny: validNumber(r.externalFlowCny, r.external_flow_cny, 0),
     external_flow_native: validNumber(r.externalFlowNative, r.external_flow_native, 0),
     total_profit: validNumber(r.totalProfit, r.total_profit, 0),
-    principal: validNumber(r.principal, 0),
+    principal: 0,
     market_value: validNumber(r.marketValue, r.market_value, 0),
+    total_assets: validNumber(r.totalAssets, r.total_assets, 0),
+    cash_cny: validNumber(r.cash, r.cash_cny, 0),
+    cash_ratio: validNumber(r.cashRatio, r.cash_ratio, 0),
     fx_hkd_cny: r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
     fx_usd_cny: r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
     created_at: validNumber(r.createdAt, r.created_at, now),
@@ -1105,12 +1114,13 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
   await q(
     `INSERT INTO analysis_daily_snapshot (
        user_id, account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
-       total_profit, principal, market_value, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (user_id, account_id, date) DO UPDATE SET
        profit_cny = EXCLUDED.profit_cny, tw_r_daily = EXCLUDED.tw_r_daily, tw_r_cumulative = EXCLUDED.tw_r_cumulative,
        external_flow_cny = EXCLUDED.external_flow_cny, external_flow_native = EXCLUDED.external_flow_native,
        total_profit = EXCLUDED.total_profit, principal = EXCLUDED.principal, market_value = EXCLUDED.market_value,
+       total_assets = EXCLUDED.total_assets, cash_cny = EXCLUDED.cash_cny, cash_ratio = EXCLUDED.cash_ratio,
        fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
     [
       row.user_id,
@@ -1124,6 +1134,9 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
       row.total_profit,
       row.principal,
       row.market_value,
+      row.total_assets,
+      row.cash_cny,
+      row.cash_ratio,
       row.fx_hkd_cny,
       row.fx_usd_cny,
       row.created_at,
@@ -1779,6 +1792,15 @@ async function ensurePerformanceSchemaV2() {
     ).catch(() => {});
     await q(
       `ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`
+    ).catch(() => {});
+    await q(
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS total_assets DOUBLE PRECISION NOT NULL DEFAULT 0`
+    ).catch(() => {});
+    await q(
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS cash_cny DOUBLE PRECISION NOT NULL DEFAULT 0`
+    ).catch(() => {});
+    await q(
+      `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0`
     ).catch(() => {});
 
     const { rows } = await q(

@@ -443,7 +443,14 @@ function normalizePublicBenchmark(v) {
 }
 
 function normalizePublicCapitalTrendMode(v) {
-  return v === "market" ? "market" : "principal";
+  const s = String(v || "total_assets");
+  if (s === "market" || s === "cash" || s === "cash_ratio" || s === "total_assets") {
+    return s;
+  }
+  if (s === "principal") {
+    return "total_assets";
+  }
+  return "total_assets";
 }
 
 function normalizePublicStageRange(v) {
@@ -584,8 +591,11 @@ async function getPublicProfileDetail(viewerId, targetId) {
     ...row,
     profitCny: Number(row.profitCny) * f,
     totalProfit: Number(row.totalProfit) * f,
-    principal: Number(row.principal) * f,
+    principal: 0,
     marketValue: Number(row.marketValue) * f,
+    totalAssets: Number(row.totalAssets ?? 0) * f,
+    cash: Number(row.cash ?? 0) * f,
+    cashRatio: Number(row.cashRatio ?? 0),
   }));
 
   return {

@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   analysisPreset: null,
   customRangeStart: "",
   customRangeEnd: "",
-  capitalTrendMode: "principal",
+  capitalTrendMode: "total_assets",
   capitalAmount: 0,
   accounts: [{ id: "default", name: "默认账户", currency: "CNY", createdAt: 0 }],
   selectedAccountId: "all",

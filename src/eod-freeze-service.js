@@ -22,6 +22,7 @@ const {
 } = require("./return-calcs");
 const { rebuildPerformanceSeriesCache } = require("./performance-cache-service");
 const { rebuildHomeSummaryForUser } = require("./home-summary-service");
+const { computeLedgerCashCnyUpToDate } = require("./ledger-metrics");
 
 const FX_FALLBACK = {
   USD: 7.2,
@@ -167,24 +168,6 @@ function cashTransferNetCnyForRow(r, accById, fxUsdMap, fxHkdMap) {
   }
   const d = String(r.date).slice(0, 10);
   return ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, d);
-}
-
-function buildFundCumCnyByDate(cashRows, accountId, accounts, allDates, fxUsdMap, fxHkdMap) {
-  const accById = new Map(accounts.map((a) => [String(a.id), a]));
-  const filtered = filterCashForAccount(cashRows, accountId);
-  const dayDelta = new Map();
-  for (const r of filtered) {
-    const d = String(r.date).slice(0, 10);
-    const net = cashTransferNetCnyForRow(r, accById, fxUsdMap, fxHkdMap);
-    dayDelta.set(d, (dayDelta.get(d) || 0) + net);
-  }
-  let cum = 0;
-  const out = new Map();
-  for (const D of allDates) {
-    cum += dayDelta.get(D) || 0;
-    out.set(D, cum);
-  }
-  return out;
 }
 
 async function syncSymbolDailyCloseForWindow(symbols, fromDate, toDate, logger = console) {
@@ -368,7 +351,6 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     const accTrades = filterTradesForAccount(allTrades, accountId);
     if (!accTrades.length) continue;
 
-    const fundCumByDate = buildFundCumCnyByDate(allCash, accountId, accounts, allDates, fxUsdMap, fxHkdMap);
     const dayPoints = buildPortfolioDayPoints(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap, allCash, accountId, accounts);
     if (!dayPoints.length) continue;
 
@@ -381,16 +363,10 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
       const dk = p.date;
       const profitCny = profitCnyByAccDate.get(`${accountId}|${dk}`) ?? 0;
 
-      let sigmaCny = 0;
-      for (const tr of accTrades) {
-        if (tr.date > dk) break;
-        const m = inferMarket(tr.symbol);
-        const ccy = getSymbolCurrency(tr.symbol, m);
-        const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, tr.date);
-        sigmaCny += signedAmount(tr) * fx;
-      }
-      const fundCny = fundCumByDate.get(dk) ?? 0;
-      const principal = Math.max(sigmaCny, fundCny, 0);
+      const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+      const mvCny = Number(p.nav) || 0;
+      const totalAssetsCny = mvCny + cashCny;
+      const cashRatio = totalAssetsCny > 0 ? (cashCny / totalAssetsCny) * 100 : 0;
       cumProfit += profitCny;
       await upsertAnalysisDailySnapshot(
         {
@@ -402,8 +378,11 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
           externalFlowCny: p.extFlow,
           externalFlowNative: p.externalFlowNative,
           totalProfit: cumProfit,
-          principal,
+          principal: 0,
           marketValue: p.nav,
+          totalAssets: totalAssetsCny,
+          cash: cashCny,
+          cashRatio,
           fxHkdCny: fxHkdMap[dk] ?? null,
           fxUsdCny: fxUsdMap[dk] ?? null,
           createdAt: Date.now(),
