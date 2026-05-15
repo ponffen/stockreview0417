@@ -258,6 +258,23 @@ let lastRenderedRouteForScrollReset = "";
 /** 用于离开/重新进入「收益」时失效首页日快照 UI 缓存 */
 let previousRenderAllRouteForOverviewSnapshot = null;
 
+/**
+ * URL 加 ?snapshotUi=1：性能/对照测试——不跑 refreshMarketData（无实时、无 symbol-close），
+ * 首页 KPI 仅用日终 account-daily + home-summary；个股表用 home-summary 行占位（不做全量成交重算）。
+ */
+function isSnapshotUiTestMode() {
+  if (typeof window === "undefined" || !window.location || typeof window.location.search !== "string") {
+    return false;
+  }
+  try {
+    const raw = new URLSearchParams(window.location.search).get("snapshotUi");
+    const v = String(raw || "").trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes";
+  } catch {
+    return false;
+  }
+}
+
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
 const quoteTime = document.getElementById("quoteTime");
@@ -4946,8 +4963,166 @@ function overviewSnapshotSnapMapFromState() {
   return new Map(Object.entries(o));
 }
 
+function stubVisiblePositionsFromHomeSummarySymbols(symbols) {
+  return (Array.isArray(symbols) ? symbols : []).map((s) => {
+    const sym = normalizeSymbol(s.symbol);
+    const market = inferMarket(sym);
+    const currency = String(s.currency || getSymbolCurrency(sym, market) || "CNY").toUpperCase();
+    const fx =
+      currency === "CNY"
+        ? 1
+        : validNumber(state.fxSpot?.[currency], FX_RATE_FALLBACK[currency] || 1) || 1;
+    return {
+      symbol: sym,
+      name: sym,
+      market,
+      currency,
+      quantity: 0,
+      currentPrice: 0,
+      prevClose: 0,
+      dayChangeRate: 0,
+      marketValueNative: 0,
+      marketValue: 0,
+      fxRate: fx,
+      sigmaAmount: 0,
+      sigmaAmountNative: 0,
+      todayProfitNative: 0,
+      monthProfitNative: 0,
+      yearProfitNative: 0,
+      totalProfitNative: 0,
+      weight: 0,
+      cost: 0,
+      regretRate: 0,
+      lastTradeSide: "buy",
+    };
+  });
+}
+
+async function paintOverviewSnapshotUiTestMode() {
+  if (!overviewGrid) {
+    return;
+  }
+  const todayKey = toDateKey(new Date());
+  const from = shiftDateKeyByDays(todayKey, -400);
+  if (quoteTime) {
+    quoteTime.textContent = "snapshotUi=1（无实时行情）";
+    quoteTime.classList.remove("is-delayed");
+    quoteTime.setAttribute("title", "URL 测试模式：已跳过 refreshMarketData（含 symbol-close 补水）");
+  }
+
+  if (state.selectedAccountId !== "all") {
+    const bookCcy = getOverviewBookCurrency();
+    const dash = "—";
+    overviewGrid.innerHTML = [
+      { label: "总市值", value: dash },
+      { label: "本金", value: dash },
+      { label: "总资产", value: dash },
+      { label: "现金", value: dash },
+    ]
+      .map(
+        (item) => `
+      <article class="kpi-item">
+        <p class="kpi-label">${item.label}</p>
+        <p class="kpi-value">${item.value}</p>
+      </article>
+    `,
+      )
+      .join("");
+    setOverviewProfitKpisDash();
+    if (stockTableBody) {
+      stockTableBody.innerHTML = `
+      <tr>
+        <td colspan="14"><p class="empty">「快照测试」请切换到<strong>全部账户</strong>；地址栏保留 <code>?snapshotUi=1</code>。</p></td>
+      </tr>
+    `;
+    }
+    return;
+  }
+
+  const bookCcy = "CNY";
+  if (!apiReady) {
+    const dash = "—";
+    overviewGrid.innerHTML = [
+      { label: "总市值", value: dash },
+      { label: "本金", value: dash },
+      { label: "总资产", value: dash },
+      { label: "现金", value: dash },
+    ]
+      .map(
+        (item) => `
+      <article class="kpi-item">
+        <p class="kpi-label">${item.label}</p>
+        <p class="kpi-value">${item.value}</p>
+      </article>
+    `,
+      )
+      .join("");
+    setOverviewProfitKpisDash();
+    if (stockTableBody) {
+      stockTableBody.innerHTML = `
+      <tr><td colspan="14"><p class="empty">请先登录后再测 snapshotUi=1。</p></td></tr>
+    `;
+    }
+    return;
+  }
+
+  let homeData = null;
+  let dbRows = [];
+  try {
+    [homeData, dbRows] = await Promise.all([
+      fetchHomeSummaryRemote(),
+      fetchAnalysisDailyRowsRemote({ accountId: "all", from, to: todayKey }),
+    ]);
+  } catch {
+    homeData = null;
+    dbRows = [];
+  }
+  mergeFxRatesFromAnalysisDailyRows(Array.isArray(dbRows) ? dbRows : []);
+
+  const last = Array.isArray(dbRows) && dbRows.length ? dbRows[dbRows.length - 1] : null;
+  const mv =
+    last && Number.isFinite(Number(last.marketValue)) && Number(last.marketValue) > 0
+      ? Number(last.marketValue)
+      : Number(homeData?.account?.last_market_value_cny) || 0;
+  const principal = last ? Number(last.principal) || 0 : 0;
+  const totalAssets = last ? Number(last.totalAssets) || 0 : 0;
+  const cash = last ? Number(last.cash) || 0 : 0;
+
+  overviewGrid.innerHTML = [
+    { label: "总市值", value: formatOverviewPlainMoney(mv, bookCcy) },
+    { label: "本金", value: formatOverviewPlainMoney(principal, bookCcy) },
+    { label: "总资产", value: formatOverviewPlainMoney(totalAssets, bookCcy) },
+    { label: "现金", value: formatOverviewPlainMoney(cash, bookCcy) },
+  ]
+    .map(
+      (item) => `
+      <article class="kpi-item">
+        <p class="kpi-label">${item.label}</p>
+        <p class="kpi-value">${item.value}</p>
+      </article>
+    `,
+    )
+    .join("");
+
+  setOverviewProfitKpisDash();
+
+  if (stockTableBody) {
+    if (homeData?.symbols?.length) {
+      const vis = stubVisiblePositionsFromHomeSummarySymbols(homeData.symbols);
+      const snapMap = buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeData.symbols, todayKey);
+      paintOverviewStockTableFromSnapshots({ visiblePositions: vis }, snapMap);
+    } else {
+      paintOverviewStockTableFromSnapshots({ visiblePositions: [] }, null);
+    }
+  }
+}
+
 function renderOverviewAndStockTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
+    return;
+  }
+  if (isSnapshotUiTestMode()) {
+    void paintOverviewSnapshotUiTestMode();
     return;
   }
   if (quoteTime) {
@@ -8884,6 +9059,15 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
 
 async function refreshMarketData(opts = {}) {
   const skipFinalRender = opts.skipFinalRender === true;
+  if (isSnapshotUiTestMode()) {
+    state.marketLoading = false;
+    state.marketDataDelayed = false;
+    state.marketDataDelaySource = "";
+    if (!skipFinalRender && state.route !== "analysis") {
+      renderAll();
+    }
+    return;
+  }
   if (state.marketLoading) {
     return;
   }
