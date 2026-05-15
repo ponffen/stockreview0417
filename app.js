@@ -3253,6 +3253,20 @@ function openAppDrawer() {
 }
 
 function closeAppDrawer() {
+  // 焦点若仍在抽屉内，先移出再标 aria-hidden，否则 Chrome 报
+  // "Blocked aria-hidden… descendant retained focus"，并可能带来怪异交互。
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  if (appDrawer && active && appDrawer.contains(active)) {
+    if (appMenuBtn && typeof appMenuBtn.focus === "function") {
+      try {
+        appMenuBtn.focus({ preventScroll: true });
+      } catch {
+        appMenuBtn.focus();
+      }
+    } else if (typeof active.blur === "function") {
+      active.blur();
+    }
+  }
   appDrawer?.classList.remove("is-open");
   appDrawerBackdrop?.classList.remove("is-open");
   appDrawer?.setAttribute("aria-hidden", "true");
