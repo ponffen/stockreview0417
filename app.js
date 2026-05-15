@@ -5117,6 +5117,36 @@ async function paintOverviewSnapshotUiTestMode() {
   }
 }
 
+/** 总览四格 KPI（市值/本金/总资产/现金）；可在 mergeFxRatesFromAnalysisDailyRows 之后复算刷新。 */
+function paintOverviewKpiGridForPortfolio(portfolio) {
+  if (state.route === "community-profile" || state.route === "stock-record") {
+    return;
+  }
+  if (isSnapshotUiTestMode()) {
+    return;
+  }
+  if (!overviewGrid || !portfolio) {
+    return;
+  }
+  const bookCcy = portfolio.overviewBookCurrency || "CNY";
+  const cards = [
+    { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
+    { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
+    { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
+    { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
+  ];
+  overviewGrid.innerHTML = cards
+    .map(
+      (item) => `
+      <article class="kpi-item">
+        <p class="kpi-label">${item.label}</p>
+        <p class="kpi-value">${item.value}</p>
+      </article>
+    `,
+    )
+    .join("");
+}
+
 function renderOverviewAndStockTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -5135,24 +5165,8 @@ function renderOverviewAndStockTable() {
   }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  paintOverviewKpiGridForPortfolio(portfolio);
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const cards = [
-    { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
-    { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
-    { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
-    { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
-  ];
-
-  overviewGrid.innerHTML = cards
-    .map(
-      (item) => `
-      <article class="kpi-item">
-        <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value">${item.value}</p>
-      </article>
-    `
-    )
-    .join("");
 
   const dataKey = buildOverviewSnapshotDataKey();
   const fullKey = buildOverviewSnapshotCacheKey();
@@ -6872,100 +6886,110 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (seq !== overviewProfitRefreshSeq) {
     return;
   }
-  if (!useHomeAccount && (!Array.isArray(dbRows) || !dbRows.length)) {
-    if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
+  // fetchAnalysisDailyRowsRemote 在 resolve 时已 mergeFxRatesFromAnalysisDailyRows；首屏 KPI 往往在 merge 之前算过。
+  const shouldRepaintOverviewKpisAfterFx =
+    !useHomeAccount && Array.isArray(dbRows) && dbRows.length > 0;
+  try {
+    if (!useHomeAccount && (!Array.isArray(dbRows) || !dbRows.length)) {
+      if (seq === overviewProfitRefreshSeq) {
+        setOverviewProfitKpisDash();
+        paintOverviewStockTableFromSnapshots(portfolio, null);
+      }
+      return;
     }
-    return;
-  }
-  if (symList.length && !homeCoversSymbols && (!Array.isArray(symRows) || !symRows.length)) {
-    if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
+    if (symList.length && !homeCoversSymbols && (!Array.isArray(symRows) || !symRows.length)) {
+      if (seq === overviewProfitRefreshSeq) {
+        setOverviewProfitKpisDash();
+        paintOverviewStockTableFromSnapshots(portfolio, null);
+      }
+      return;
     }
-    return;
-  }
-  let stageOut = null;
-  let todayOut = null;
-  let snapMap = new Map();
-  if (useHomeAccount) {
-    const h = computeOverviewHeadlineFromHomeAccount(homeData, portfolio);
-    if (h) {
-      todayOut = { todayProfitCny: h.todayProfitCny, todayRate: h.todayRate };
-      stageOut = { stageProfit: h.stageProfit, stageRate: h.stageRate };
-    }
-    if (symList.length > 0) {
+    let stageOut = null;
+    let todayOut = null;
+    let snapMap = new Map();
+    if (useHomeAccount) {
+      const h = computeOverviewHeadlineFromHomeAccount(homeData, portfolio);
+      if (h) {
+        todayOut = { todayProfitCny: h.todayProfitCny, todayRate: h.todayRate };
+        stageOut = { stageProfit: h.stageProfit, stageRate: h.stageRate };
+      }
+      if (symList.length > 0) {
+        snapMap =
+          homeCoversSymbols && homeData.symbols
+            ? buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeData.symbols, bounds.todayKey)
+            : buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey);
+      }
+      if (Array.isArray(dbRows) && dbRows.length) {
+        mergeFxRatesFromAnalysisDailyRows(dbRows);
+      }
+    } else {
+      const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
+      const firstTradeDate =
+        tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
+      const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+      const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
+      const merged = mergeAnalysisSliceWithLive(
+        sorted.map((row) => ({ ...row })),
+        portfolio,
+        bounds.todayKey,
+        liveByMode,
+        scope.cashTransfers,
+      );
+      stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
+      todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
       snapMap =
-        homeCoversSymbols && homeData.symbols
-          ? buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeData.symbols, bounds.todayKey)
-          : buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey);
+        symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
     }
-    if (Array.isArray(dbRows) && dbRows.length) {
-      mergeFxRatesFromAnalysisDailyRows(dbRows);
+    if (seq !== overviewProfitRefreshSeq) {
+      return;
     }
-  } else {
-    const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
-    const firstTradeDate =
-      tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-    const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-    const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
-    const merged = mergeAnalysisSliceWithLive(
-      sorted.map((row) => ({ ...row })),
-      portfolio,
-      bounds.todayKey,
-      liveByMode,
-      scope.cashTransfers,
-    );
-    stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
-    todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
-    snapMap =
-      symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
-  }
-  if (seq !== overviewProfitRefreshSeq) {
-    return;
-  }
-  if (
-    !stageOut ||
-    !todayOut ||
-    !Number.isFinite(Number(stageOut.stageProfit)) ||
-    !Number.isFinite(Number(stageOut.stageRate)) ||
-    !Number.isFinite(Number(todayOut.todayProfitCny)) ||
-    !Number.isFinite(Number(todayOut.todayRate))
-  ) {
+    if (
+      !stageOut ||
+      !todayOut ||
+      !Number.isFinite(Number(stageOut.stageProfit)) ||
+      !Number.isFinite(Number(stageOut.stageRate)) ||
+      !Number.isFinite(Number(todayOut.todayProfitCny)) ||
+      !Number.isFinite(Number(todayOut.todayRate))
+    ) {
+      if (seq === overviewProfitRefreshSeq) {
+        setOverviewProfitKpisDash();
+        paintOverviewStockTableFromSnapshots(portfolio, null);
+      }
+      return;
+    }
+    const sp = Number(stageOut.stageProfit);
+    const sr = Number(stageOut.stageRate);
+    const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);
+    const stageBook = amountBookFromCny(sp, bookCcy);
+    const tr = Number(todayOut.todayRate);
     if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
+      todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
+      todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
+      monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
+      monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
+      paintOverviewStockTableFromSnapshots(portfolio, snapMap);
+      state.overviewSnapshotUi.ready = true;
+      state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
+      state.overviewSnapshotUi.homePayload = useHomeAccount ? homeData : null;
+      state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
+      state.overviewSnapshotUi.snapBySym = Object.fromEntries(
+        [...snapMap.entries()].map(([k, v]) => [
+          k,
+          {
+            monthHistNative: Number(v.monthHistNative) || 0,
+            yearHistNative: Number(v.yearHistNative) || 0,
+            totalHistNative: Number(v.totalHistNative) || 0,
+          },
+        ]),
+      );
+      state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
+      state.overviewSnapshotUi.monthClass = monthProfitMain.className;
     }
-    return;
-  }
-  const sp = Number(stageOut.stageProfit);
-  const sr = Number(stageOut.stageRate);
-  const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);
-  const stageBook = amountBookFromCny(sp, bookCcy);
-  const tr = Number(todayOut.todayRate);
-  if (seq === overviewProfitRefreshSeq) {
-    todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
-    todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
-    monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
-    monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
-    paintOverviewStockTableFromSnapshots(portfolio, snapMap);
-    state.overviewSnapshotUi.ready = true;
-    state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
-    state.overviewSnapshotUi.homePayload = useHomeAccount ? homeData : null;
-    state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
-    state.overviewSnapshotUi.snapBySym = Object.fromEntries(
-      [...snapMap.entries()].map(([k, v]) => [
-        k,
-        {
-          monthHistNative: Number(v.monthHistNative) || 0,
-          yearHistNative: Number(v.yearHistNative) || 0,
-          totalHistNative: Number(v.totalHistNative) || 0,
-        },
-      ]),
-    );
-    state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
-    state.overviewSnapshotUi.monthClass = monthProfitMain.className;
+  } finally {
+    if (shouldRepaintOverviewKpisAfterFx && seq === overviewProfitRefreshSeq) {
+      const scopeAfter = getPortfolioScope(state.selectedAccountId);
+      paintOverviewKpiGridForPortfolio(computePortfolio(scopeAfter.trades, scopeAfter.cashTransfers));
+    }
   }
 }
 
