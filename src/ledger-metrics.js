@@ -14,7 +14,7 @@ function tradeSignedCashNativeForLedger(trade) {
   if (ty === "bonus" || ty === "split" || ty === "merge") {
     return 0;
   }
-  return signedAmount(trade);
+  return -signedAmount(trade);
 }
 
 function compareLedgerEvent(a, b) {

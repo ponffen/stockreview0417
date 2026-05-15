@@ -1009,7 +1009,8 @@ function tradeSignedCashNativeForLedger(trade) {
   if (ty === "bonus" || ty === "split" || ty === "merge") {
     return 0;
   }
-  return signedAmount(trade);
+  // 与「发生额」买正卖负相反：现金账买入减少、卖出增加。
+  return -signedAmount(trade);
 }
 
 /** 单笔成交现金流折算到账户记账币种（用成交日汇率）。 */
