@@ -218,6 +218,8 @@ const state = {
   stockRecordFromPublicProfile: false,
   /** 进入「搜索股票」页面前的 route，用于返回 */
   tradeSearchReturnRoute: "trade",
+  /** 从「我的」子页返回时的父路由：从交易页打开 mine-algo / mine-accounts 时为 "trade" */
+  mineReturnRoute: null,
   /** 首页快照区：避免仅因行情 tick 重复拉日快照接口 */
   overviewSnapshotUi: {
     ready: false,
@@ -265,6 +267,7 @@ const stageRangeSelect = document.getElementById("stageRangeSelect");
 const accountFilterSelect = document.getElementById("accountFilterSelect");
 const analysisAccountSelect = document.getElementById("analysisAccountSelect");
 const tradeAccountFilterSelect = document.getElementById("tradeAccountFilterSelect");
+const tradeCashAccountFilterSelect = document.getElementById("tradeCashAccountFilterSelect");
 const stockTableBody = document.getElementById("stockTableBody");
 const stockCurrencyToggle = document.getElementById("stockCurrencyToggle");
 const stockSortButtons = [...document.querySelectorAll(".th-sort-btn")];
@@ -282,10 +285,13 @@ const analysisStockRankBody = document.getElementById("analysisStockRankBody");
 const demoToggleBtn = document.getElementById("demoToggleBtn");
 const quickTradeBtn = document.getElementById("quickTradeBtn");
 const recordTradeBtn = document.getElementById("recordTradeBtn");
-const tradeAddBtn = document.getElementById("tradeAddBtn");
+const tradeHubAddTradeBtn = document.getElementById("tradeHubAddTradeBtn");
+const tradeHubAddCashBtn = document.getElementById("tradeHubAddCashBtn");
+const tradeHubOpenRecordsBtn = document.getElementById("tradeHubOpenRecordsBtn");
+const tradeHubOpenCashBtn = document.getElementById("tradeHubOpenCashBtn");
 const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelectMine = document.getElementById("algoModeSelectMine");
-const mineAlgoSummary = document.getElementById("mineAlgoSummary");
+const tradeHubAlgoSummary = document.getElementById("tradeHubAlgoSummary");
 const mineUserPhone = document.getElementById("mineUserPhone");
 const mineChangePasswordBtn = document.getElementById("mineChangePasswordBtn");
 const mineLogoutBtn = document.getElementById("mineLogoutBtn");
@@ -296,10 +302,10 @@ const appTopBar = document.querySelector(".app-top-bar");
 const appHeaderTitle = document.getElementById("appHeaderTitle");
 const mineNicknameInput = document.getElementById("mineNicknameInput");
 const mineNicknameDisplay = document.getElementById("mineNicknameDisplay");
-const mineCommunityPublicToggle = document.getElementById("mineCommunityPublicToggle");
+const tradeHubCommunityPublicToggle = document.getElementById("tradeHubCommunityPublicToggle");
 const mineCommunitySaveBtn = document.getElementById("mineCommunitySaveBtn");
 const mineCommunityProfileMsg = document.getElementById("mineCommunityProfileMsg");
-const mineCommunityHomeMsg = document.getElementById("mineCommunityHomeMsg");
+const tradeHubCommunityMsg = document.getElementById("tradeHubCommunityMsg");
 const communityFeedList = document.getElementById("communityFeedList");
 const communityFollowingList = document.getElementById("communityFollowingList");
 const communityLeaderboardList = document.getElementById("communityLeaderboardList");
@@ -1684,7 +1690,15 @@ async function hydrateState() {
   if (state.route?.startsWith("community-") && state.route !== "community-profile") {
     state.appModule = "community";
   }
-  const holdingsRoutes = new Set(["earning", "analysis", "trade", "holdings-ai", "trade-search"]);
+  const holdingsRoutes = new Set([
+    "earning",
+    "analysis",
+    "trade",
+    "trade-records",
+    "trade-cash",
+    "holdings-ai",
+    "trade-search",
+  ]);
   if (holdingsRoutes.has(state.route)) {
     state.appModule = "holdings";
   }
@@ -1730,8 +1744,12 @@ function queueSettingsSyncToApi(payload) {
 }
 
 function persistState() {
+  let routeForSync = state.route;
+  if (routeForSync === "trade-search" || routeForSync === "trade-records" || routeForSync === "trade-cash") {
+    routeForSync = "trade";
+  }
   const payload = {
-    route: state.route === "trade-search" ? "trade" : state.route,
+    route: routeForSync,
     appModule: state.appModule,
     useDemoData: state.useDemoData,
     algoMode: state.algoMode,
@@ -2036,7 +2054,7 @@ function bindEvents() {
 
   mineCommunitySaveBtn?.addEventListener("click", () => void saveMineCommunityProfile());
 
-  mineCommunityPublicToggle?.addEventListener("change", () => void quickSaveCommunityPublicFromHome());
+  tradeHubCommunityPublicToggle?.addEventListener("change", () => void quickSaveCommunityPublicFromHome());
 
   if (demoToggleBtn) {
     demoToggleBtn.addEventListener("click", () => {
@@ -2064,20 +2082,17 @@ function bindEvents() {
   document.querySelectorAll("[data-mine-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-mine-open");
-      if (target === "accounts") {
-        state.route = "mine-accounts";
-      } else if (target === "community") {
+      if (target === "community") {
         state.route = "mine-community";
-      } else {
-        state.route = "mine-algo";
+        persistState();
+        renderAll();
       }
-      persistState();
-      renderAll();
     });
   });
   document.querySelectorAll("[data-mine-back]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.route = "mine";
+      state.route = state.mineReturnRoute || "mine";
+      state.mineReturnRoute = null;
       persistState();
       renderAll();
     });
@@ -2115,11 +2130,17 @@ function bindEvents() {
     renderAll();
     void refreshMarketData();
   });
-  tradeAccountFilterSelect?.addEventListener("change", () => {
-    state.tradeFilterAccountId = resolveValidAccountFilter(tradeAccountFilterSelect.value);
+  const onTradeFilterAccountChange = (value) => {
+    state.tradeFilterAccountId = resolveValidAccountFilter(value);
     persistState();
     renderTradeTable();
     renderControls();
+  };
+  tradeAccountFilterSelect?.addEventListener("change", () => {
+    onTradeFilterAccountChange(tradeAccountFilterSelect.value);
+  });
+  tradeCashAccountFilterSelect?.addEventListener("change", () => {
+    onTradeFilterAccountChange(tradeCashAccountFilterSelect.value);
   });
   stockRecordAccountSelect?.addEventListener("change", () => {
     state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
@@ -2230,24 +2251,44 @@ function bindEvents() {
   [quickTradeBtn, recordTradeBtn].filter(Boolean).forEach((button) => {
     button.addEventListener("click", openTradeStockSearch);
   });
-  tradeAddBtn?.addEventListener("click", () => {
-    if (state.tradePanelTab === "cash") {
-      openNewCashTransferDialog();
-    } else {
-      openTradeStockSearch();
-    }
+  tradeHubAddTradeBtn?.addEventListener("click", () => {
+    state.tradeSearchReturnRoute = "trade";
+    openTradeStockSearch();
   });
-  tradeSubtabTrades?.addEventListener("click", () => {
+  tradeHubAddCashBtn?.addEventListener("click", () => {
+    openNewCashTransferDialog();
+  });
+  tradeHubOpenRecordsBtn?.addEventListener("click", () => {
     state.tradePanelTab = "trades";
-    syncTradePanelTabUi();
-    renderTradeTable();
+    state.route = "trade-records";
     persistState();
+    renderAll();
   });
-  tradeSubtabCash?.addEventListener("click", () => {
+  tradeHubOpenCashBtn?.addEventListener("click", () => {
     state.tradePanelTab = "cash";
-    syncTradePanelTabUi();
-    renderTradeTable();
+    state.route = "trade-cash";
     persistState();
+    renderAll();
+  });
+  document.querySelectorAll("[data-trade-list-back]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.route = "trade";
+      persistState();
+      renderAll();
+    });
+  });
+  document.querySelectorAll("[data-trade-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.getAttribute("data-trade-open");
+      state.mineReturnRoute = "trade";
+      if (target === "accounts") {
+        state.route = "mine-accounts";
+      } else {
+        state.route = "mine-algo";
+      }
+      persistState();
+      renderAll();
+    });
   });
   cashTransferTableBody?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-cash-id]");
@@ -2797,8 +2838,10 @@ function renderAll() {
     renderOverviewAndStockTable();
   } else if (state.route === "analysis") {
     void renderAnalysis();
-  } else if (state.route === "trade" || state.route === "trade-search") {
+  } else if (state.route === "trade-records" || state.route === "trade-cash") {
     renderTradeTable();
+  } else if (state.route === "trade-search") {
+    /* 搜索股票页：表格在二级页，此处不渲染 */
   } else if (state.route === "stock-record" && state.activeRecordSymbol) {
     void renderStockRecordPage(state.activeRecordSymbol);
   } else if (state.route === "community-profile") {
@@ -2824,13 +2867,13 @@ function renderMineSection() {
     }
     mineNicknameInput.disabled = !sessionPhone;
   }
-  if (mineCommunityPublicToggle) {
-    mineCommunityPublicToggle.checked = sessionProfile.communityPublic !== false;
-    mineCommunityPublicToggle.disabled = !sessionPhone;
+  if (tradeHubCommunityPublicToggle) {
+    tradeHubCommunityPublicToggle.checked = sessionProfile.communityPublic !== false;
+    tradeHubCommunityPublicToggle.disabled = !sessionPhone;
   }
-  if (mineAlgoSummary) {
+  if (tradeHubAlgoSummary) {
     const labels = { twr: "时间加权", mwr: "资金加权", time: "时间加权", money: "资金加权", cost: "时间加权" };
-    mineAlgoSummary.textContent = labels[state.algoMode] || labels.twr;
+    tradeHubAlgoSummary.textContent = labels[state.algoMode] || labels.twr;
   }
   if (algoModeSelectMine) {
     algoModeSelectMine.value = normalizeProfitAlgoMode(state.algoMode);
@@ -2922,6 +2965,7 @@ function syncAccountSelectOptions() {
   setSelect(accountFilterSelect, state.selectedAccountId, true);
   setSelect(analysisAccountSelect, state.selectedAccountId, true);
   setSelect(tradeAccountFilterSelect, state.tradeFilterAccountId, true);
+  setSelect(tradeCashAccountFilterSelect, state.tradeFilterAccountId, true);
   setSelect(stockRecordAccountSelect, state.stockRecordAccountId, true);
   setSelect(tradeAccountInput, resolveTradeFormDefaultAccountId(), false);
   setSelect(cashTransferAccount, resolveTradeFormDefaultAccountId(), false);
@@ -4336,12 +4380,12 @@ function scheduleCommunityDataLoad() {
 }
 
 async function quickSaveCommunityPublicFromHome() {
-  if (!sessionPhone || !mineCommunityPublicToggle) {
+  if (!sessionPhone || !tradeHubCommunityPublicToggle) {
     return;
   }
-  const want = mineCommunityPublicToggle.checked;
+  const want = tradeHubCommunityPublicToggle.checked;
   const revertTo = !want;
-  mineCommunityHomeMsg?.classList.add("hidden");
+  tradeHubCommunityMsg?.classList.add("hidden");
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/me/community-profile`, {
       method: "PATCH",
@@ -4353,28 +4397,28 @@ async function quickSaveCommunityPublicFromHome() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j?.ok) {
-      mineCommunityPublicToggle.checked = revertTo;
-      if (mineCommunityHomeMsg) {
-        mineCommunityHomeMsg.textContent = j?.error || "保存失败";
-        mineCommunityHomeMsg.classList.remove("hidden", "is-ok");
-        mineCommunityHomeMsg.classList.add("is-error");
+      tradeHubCommunityPublicToggle.checked = revertTo;
+      if (tradeHubCommunityMsg) {
+        tradeHubCommunityMsg.textContent = j?.error || "保存失败";
+        tradeHubCommunityMsg.classList.remove("hidden", "is-ok");
+        tradeHubCommunityMsg.classList.add("is-error");
       }
       return;
     }
     sessionProfile.communityPublic = j.profile?.communityPublic !== false;
     lastCommunityDataKey = "";
-    if (mineCommunityHomeMsg) {
-      mineCommunityHomeMsg.textContent = "已更新";
-      mineCommunityHomeMsg.classList.remove("hidden", "is-error");
-      mineCommunityHomeMsg.classList.add("is-ok");
-      window.setTimeout(() => mineCommunityHomeMsg.classList.add("hidden"), 1800);
+    if (tradeHubCommunityMsg) {
+      tradeHubCommunityMsg.textContent = "已更新";
+      tradeHubCommunityMsg.classList.remove("hidden", "is-error");
+      tradeHubCommunityMsg.classList.add("is-ok");
+      window.setTimeout(() => tradeHubCommunityMsg.classList.add("hidden"), 1800);
     }
   } catch {
-    mineCommunityPublicToggle.checked = revertTo;
-    if (mineCommunityHomeMsg) {
-      mineCommunityHomeMsg.textContent = "网络错误";
-      mineCommunityHomeMsg.classList.remove("hidden", "is-ok");
-      mineCommunityHomeMsg.classList.add("is-error");
+    tradeHubCommunityPublicToggle.checked = revertTo;
+    if (tradeHubCommunityMsg) {
+      tradeHubCommunityMsg.textContent = "网络错误";
+      tradeHubCommunityMsg.classList.remove("hidden", "is-ok");
+      tradeHubCommunityMsg.classList.add("is-error");
     }
   }
 }
@@ -4384,7 +4428,7 @@ async function saveMineCommunityProfile() {
     return;
   }
   const nickname = mineNicknameInput?.value?.trim() || "";
-  const communityPublic = mineCommunityPublicToggle?.checked ?? true;
+  const communityPublic = tradeHubCommunityPublicToggle?.checked ?? true;
   mineCommunityProfileMsg?.classList.add("hidden");
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/me/community-profile`, {
@@ -4456,6 +4500,8 @@ function renderRoute() {
     "earning",
     "analysis",
     "trade",
+    "trade-records",
+    "trade-cash",
     "trade-search",
     "holdings-ai",
     "mine",
@@ -4488,6 +4534,8 @@ function renderRoute() {
   }
   const secondaryToplessRoutes = new Set([
     "trade-search",
+    "trade-records",
+    "trade-cash",
     "mine-accounts",
     "mine-algo",
     "mine-community",
@@ -4500,8 +4548,13 @@ function renderRoute() {
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
     if (r) {
-      const onSearch = state.route === "trade-search" && r === "trade";
-      button.classList.toggle("active", r === state.route || onSearch);
+      const tradeTabActive =
+        r === "trade" &&
+        (state.route === "trade" ||
+          state.route === "trade-records" ||
+          state.route === "trade-cash" ||
+          state.route === "trade-search");
+      button.classList.toggle("active", r === state.route || tradeTabActive);
     }
   });
   document.querySelectorAll(".bottom-tabs--profile .bottom-tab-btn").forEach((button) => {
@@ -4519,6 +4572,8 @@ function renderRoute() {
   const hideMainBottom =
     state.route === "stock-record" ||
     state.route === "trade-search" ||
+    state.route === "trade-records" ||
+    state.route === "trade-cash" ||
     state.route === "community-profile" ||
     isMineRoute(state.route);
   document.querySelectorAll(".bottom-tabs").forEach((bar) => {
@@ -5473,9 +5528,6 @@ function syncTradePanelTabUi() {
   tradeSubtabCash?.setAttribute("aria-selected", isCash ? "true" : "false");
   tradeRecordsPanel?.classList.toggle("hidden", isCash);
   cashRecordsPanel?.classList.toggle("hidden", !isCash);
-  if (tradeAddBtn) {
-    tradeAddBtn.textContent = isCash ? "新增资金记录" : "新增交易";
-  }
 }
 
 function openNewCashTransferDialog() {
@@ -5535,7 +5587,12 @@ function openEditCashTransferDialog(rawId) {
 
 /** 离开「交易」页后不再重绘该表；若不清理 tbody，大列表会一直占内存，切页时易触发移动端渲染进程崩溃（Chrome 错误代码 5）。 */
 function clearHoldingsTradePaneDomIfHiddenRoute() {
-  if (state.route === "trade" || state.route === "trade-search") {
+  if (
+    state.route === "trade" ||
+    state.route === "trade-search" ||
+    state.route === "trade-records" ||
+    state.route === "trade-cash"
+  ) {
     return;
   }
   if (tradeTableBody) {
@@ -5547,7 +5604,7 @@ function clearHoldingsTradePaneDomIfHiddenRoute() {
 }
 
 function renderCashTransferTable() {
-  if (state.route === "community-profile" || state.route === "stock-record") {
+  if (state.route === "community-profile" || state.route === "stock-record" || state.route !== "trade-cash") {
     return;
   }
   if (!cashTransferTableBody) {
@@ -5589,19 +5646,32 @@ function renderTradeTable() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
   }
+  if (state.route !== "trade-records" && state.route !== "trade-cash") {
+    return;
+  }
+  if (state.route === "trade-records") {
+    state.tradePanelTab = "trades";
+  } else {
+    state.tradePanelTab = "cash";
+  }
   syncTradePanelTabUi();
-  if (!tradeTableBody) {
+  if (state.route === "trade-cash") {
+    if (!cashTransferTableBody) {
+      return;
+    }
     renderCashTransferTable();
+    return;
+  }
+  if (!tradeTableBody) {
     return;
   }
   const trades = getFilteredTrades(state.tradeFilterAccountId);
   if (!trades.length) {
     tradeTableBody.innerHTML = `
       <tr>
-        <td colspan="7"><p class="empty">暂无交易记录，点击上方“记一笔”新增。</p></td>
+        <td colspan="7"><p class="empty">暂无交易记录，请点击「新增交易记录」添加。</p></td>
       </tr>
     `;
-    renderCashTransferTable();
     return;
   }
   const sorted = [...trades].sort(sortTradeDesc);
@@ -5622,7 +5692,6 @@ function renderTradeTable() {
       `;
     })
     .join("");
-  renderCashTransferTable();
 }
 
 function openTradeRecordActionsSheet(tradeId) {
@@ -6930,7 +6999,6 @@ async function renderStockRecordPage(symbol) {
       persistState();
       renderRoute();
       renderOverviewAndStockTable();
-      renderTradeTable();
     }
     return;
   }

@@ -1250,6 +1250,30 @@ h2 {
   min-height: 30px;
 }
 
+.trade-hub-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0 20px;
+}
+
+.trade-hub-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.trade-hub-action-btn {
+  width: 100%;
+  min-height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.trade-hub-card {
+  margin: 0;
+}
+
 .trade-subtab-bar {
   display: flex;
   gap: 0;
