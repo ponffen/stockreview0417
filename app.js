@@ -1000,6 +1000,137 @@ function cashTransferRowNetCny(r) {
   return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, r.date);
 }
 
+/** 单笔成交对现金账的影响（标的币种）：买为负、卖为正；分红为正；拆股/合股/送股无现金流。 */
+function tradeSignedCashNativeForLedger(trade) {
+  const ty = String(trade.type || "trade");
+  if (ty === "dividend") {
+    return Math.abs(Number(trade.amount) || 0);
+  }
+  if (ty === "bonus" || ty === "split" || ty === "merge") {
+    return 0;
+  }
+  return signedAmount(trade);
+}
+
+/** 单笔成交现金流折算到账户记账币种（用成交日汇率）。 */
+function tradeCashFlowInAccountCurrency(trade, accountCurrency) {
+  const acc = String(accountCurrency || "CNY").toUpperCase();
+  const dateKey = String(trade.date || "").slice(0, 10);
+  const symCcy = String(getSymbolCurrency(trade.symbol, inferMarket(trade.symbol)) || "CNY").toUpperCase();
+  const signedNat = tradeSignedCashNativeForLedger(trade);
+  if (!Number.isFinite(signedNat) || signedNat === 0) {
+    return 0;
+  }
+  const flowCny =
+    symCcy === "CNY" ? signedNat : signedNat * getFxRateForDate(symCcy, dateKey);
+  if (acc === "CNY") {
+    return flowCny;
+  }
+  const fxAcc = getFxRateForDate(acc, dateKey);
+  return Number.isFinite(fxAcc) && fxAcc > 0 ? flowCny / fxAcc : flowCny;
+}
+
+/** 资金记录在账户记账币种下的 signed 金额（转入正、转出负）。 */
+function cashTransferDeltaNative(r) {
+  const acc = getAccountById(r.accountId);
+  const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+  const sign = r.direction === "out" ? -1 : 1;
+  const nat = sign * Math.abs(Number(r.amount) || 0);
+  return { deltaNative: nat, accountCurrency: ccy };
+}
+
+function compareLedgerEvent(a, b) {
+  const da = String(a.date || "").slice(0, 10);
+  const db = String(b.date || "").slice(0, 10);
+  if (da < db) {
+    return -1;
+  }
+  if (da > db) {
+    return 1;
+  }
+  const ca = Number(a.createdAt) || 0;
+  const cb = Number(b.createdAt) || 0;
+  if (ca !== cb) {
+    return ca - cb;
+  }
+  if (a.kind !== b.kind) {
+    return a.kind === "ct" ? -1 : 1;
+  }
+  return String(a.id || "").localeCompare(String(b.id || ""));
+}
+
+/**
+ * 本金 = 全部资金记录净额（人民币计，与 cashTransferRowNetCny 一致）；
+ * 现金 = 各账户期初 0 起按时间滚：入金 − 出金 + 成交现金流（折记账币），期末余额再折人民币用即期汇率汇总。
+ */
+function computeLedgerCashAndPrincipal(tradeList, ctf) {
+  const rowsCtf = Array.isArray(ctf) ? ctf : [];
+  const rowsTr = Array.isArray(tradeList) ? tradeList : [];
+  const principalCny = rowsCtf.reduce((s, r) => s + cashTransferRowNetCny(r), 0);
+
+  const accountIds = new Set();
+  for (const r of rowsCtf) {
+    accountIds.add(String(r.accountId || "default"));
+  }
+  for (const t of rowsTr) {
+    accountIds.add(String(t.accountId || "default"));
+  }
+
+  const endingNativeByAccount = new Map();
+  for (const accId of accountIds) {
+    const acc = getAccountById(accId);
+    const accCcy = String((acc && acc.currency) || "CNY").toUpperCase();
+    const events = [];
+    for (const r of rowsCtf) {
+      if (String(r.accountId || "default") !== accId) {
+        continue;
+      }
+      const { deltaNative } = cashTransferDeltaNative(r);
+      events.push({
+        kind: "ct",
+        id: String(r.id || ""),
+        date: r.date,
+        createdAt: r.createdAt,
+        delta: deltaNative,
+      });
+    }
+    for (const t of rowsTr) {
+      if (String(t.accountId || "default") !== accId) {
+        continue;
+      }
+      const flowAcc = tradeCashFlowInAccountCurrency(t, accCcy);
+      events.push({
+        kind: "tr",
+        id: String(t.id || ""),
+        date: t.date,
+        createdAt: t.createdAt,
+        delta: flowAcc,
+      });
+    }
+    events.sort(compareLedgerEvent);
+    let bal = 0;
+    for (const ev of events) {
+      bal += ev.delta;
+    }
+    endingNativeByAccount.set(accId, bal);
+  }
+
+  let cashCny = 0;
+  for (const accId of accountIds) {
+    const balNat = Number(endingNativeByAccount.get(accId)) || 0;
+    const acc = getAccountById(accId);
+    const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+    if (ccy === "CNY") {
+      cashCny += balNat;
+    } else {
+      const fx = getFxRateToCny(ccy);
+      cashCny += balNat * (Number.isFinite(fx) && fx > 0 ? fx : 1);
+    }
+  }
+
+  return { principalCny, cashCny, endingNativeByAccount };
+}
+
 /** 截至 endDateKey（含）的资金记录净额 Σ资金（人民币计） */
 function fundNetCnyUpToDate(ctf, endDateKey) {
   if (!Array.isArray(ctf) || !endDateKey) {
@@ -6930,7 +7061,7 @@ function buildProfitSeries(points) {
   return rebaseValueSeriesByFirstDay(raw, "value");
 }
 
-/** 走势：逐日 Σ发生 与 逐日 Σ资金，本金 = max(二者)（与 computePortfolio 一致） */
+/** 走势：逐日本金 = 截至当日的资金记录累计净额（人民币），与 computePortfolio 本金口径一致 */
 function buildAssetSeries(points, ctf) {
   const list = Array.isArray(ctf) ? ctf : [];
   if (!points.length) {
@@ -6938,11 +7069,8 @@ function buildAssetSeries(points, ctf) {
   }
   const dateKeys = points.map((p) => p.date);
   const fundCumByDate = fundCnyCumulativeAlongDates(list, dateKeys);
-  let sigmaFlow = 0;
   return points.map((point) => {
-    sigmaFlow += point.flow;
-    const fundCum = fundCumByDate.get(point.date) ?? 0;
-    const principal = Math.max(sigmaFlow, fundCum, 0);
+    const principal = fundCumByDate.get(point.date) ?? 0;
     return {
       date: point.date,
       principal,
@@ -7546,17 +7674,16 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     item.yearWeight = yearDen !== 0 ? yp / yearDen : 0;
   });
 
-  /** Σ发生：交易记录带符号折人民币累计（买正卖负），与「现金=本金−Σ发生」同一口径 */
+  /** Σ发生：交易记录带符号折人民币累计（买正卖负），仍供其它逻辑/调试引用 */
   const sigmaAmountAll = tradeList.reduce(
     (sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade),
     0
   );
-  /** Σ资金：资金记录银证净额（人民币计，转入正、转出负） */
-  const sigmaFundCny = Array.isArray(ctf) ? ctf.reduce((sum, r) => sum + cashTransferRowNetCny(r), 0) : 0;
-  /** 本金 = max(Σ发生, Σ资金)；现金 = 本金 − Σ发生（不在此重复加银证，避免与本金双计） */
-  const principal = Math.max(sigmaAmountAll, sigmaFundCny, 0);
+  /** 本金 = 全部资金记录净额（人民币）；现金 = 期初 0 + 按时间滚资金与成交（见 computeLedgerCashAndPrincipal） */
+  const { principalCny, cashCny } = computeLedgerCashAndPrincipal(tradeList, ctf);
+  const principal = principalCny;
   const totalMarketValueCnyBook = visiblePositions.reduce((sum, item) => sum + item.marketValue, 0);
-  const cash = principal - sigmaAmountAll;
+  const cash = cashCny;
 
   const overviewBookCurrency = getOverviewBookCurrency();
   const toBook = (row, nativeVal) => nativeToOverviewBook(row, nativeVal, overviewBookCurrency);
