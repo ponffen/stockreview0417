@@ -126,8 +126,7 @@ function principalCnyUpToDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMap,
     const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
     const nat = sign * Math.abs(Number(r.amount) || 0);
     if (!Number.isFinite(nat) || nat === 0) continue;
-    const d = String(r.date || "").slice(0, 10);
-    sum += ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, d);
+    sum += ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, end);
   }
   return sum;
 }

@@ -74,13 +74,20 @@ function getFxRateForDate(currency, dateKey, fxByDate, fxSpot) {
   return getFxRateToCny(currency, fxSpot);
 }
 
-function cashTransferRowNetCny(r, accById, fxByDate, fxSpot) {
-  const acc = accById.get(String(r.accountId)) || { currency: "CNY" };
-  const ccy = String(acc.currency || "CNY").toUpperCase();
+function cashTransferSignedNativeAmount(r) {
   const sign = r.direction === "out" ? -1 : 1;
   const nat = sign * Math.abs(Number(r.amount) || 0);
-  if (!Number.isFinite(nat) || nat === 0) return 0;
-  return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, r.date, fxByDate, fxSpot);
+  return Number.isFinite(nat) ? nat : 0;
+}
+
+/** 按估值日 asOf 的汇率折人民币（不按发生日）。 */
+function cashTransferRowNetCnyAsOf(r, asOfDateKey, accById, fxByDate, fxSpot) {
+  const acc = accById.get(String(r.accountId)) || { currency: "CNY" };
+  const ccy = String(acc.currency || "CNY").toUpperCase();
+  const nat = cashTransferSignedNativeAmount(r);
+  if (nat === 0) return 0;
+  const asOf = String(asOfDateKey || "").slice(0, 10);
+  return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, asOf, fxByDate, fxSpot);
 }
 
 function cashTransferDeltaNative(r, accById) {
@@ -118,7 +125,6 @@ function compareLedgerEvent(a, b) {
 function computeLedgerCashAndPrincipal(tradeList, ctf, accById, fxByDate, fxSpot) {
   const rowsCtf = Array.isArray(ctf) ? ctf : [];
   const rowsTr = Array.isArray(tradeList) ? tradeList : [];
-  const principalCny = rowsCtf.reduce((s, r) => s + cashTransferRowNetCny(r, accById, fxByDate, fxSpot), 0);
 
   const accountIds = new Set();
   for (const r of rowsCtf) accountIds.add(String(r.accountId || "default"));
@@ -158,7 +164,7 @@ function computeLedgerCashAndPrincipal(tradeList, ctf, accById, fxByDate, fxSpot
       cashCny += balNat * (Number.isFinite(fx) && fx > 0 ? fx : 1);
     }
   }
-  return { principalCny, cashCny };
+  return { cashCny };
 }
 
 async function main() {
@@ -268,13 +274,28 @@ async function main() {
   const buyAmt = tradeList.filter((t) => t.side === "buy").reduce((s, t) => s + Math.abs(t.amount || 0), 0);
   const sellAmt = tradeList.filter((t) => t.side === "sell").reduce((s, t) => s + Math.abs(t.amount || 0), 0);
 
-  const { principalCny, cashCny } = computeLedgerCashAndPrincipal(tradeList, ctf, accById, fxByDate, fxSpot);
+  const { cashCny } = computeLedgerCashAndPrincipal(tradeList, ctf, accById, fxByDate, fxSpot);
+
+  let principalNat = 0;
+  for (const r of ctf) {
+    if (String(r.accountId || "default") !== String(aid)) continue;
+    principalNat += cashTransferSignedNativeAmount(r);
+  }
+  const accRow = accById.get(String(aid)) || { currency: "CNY" };
+  const accCcy = String(accRow.currency || "CNY").toUpperCase();
+  const principalCnyAtSpot =
+    accCcy === "CNY" ? principalNat : principalNat * getFxRateToCny(accCcy, fxSpot);
 
   console.log("\n--- Raw counts ---");
   console.log({ trades: tradeList.length, cashRows: ctf.length });
   console.log({ cashInNativeSum: sumIn, cashOutNativeSum: sumOut, buyNotionalAbs: buyAmt, sellNotionalAbs: sellAmt });
-  console.log("\n--- Ledger (matches app computeLedgerCashAndPrincipal; FX from analysis_daily_snapshot else fallback) ---");
-  console.log({ principalCny: Math.round(principalCny * 100) / 100, cashCny: Math.round(cashCny * 100) / 100 });
+  console.log("\n--- Ledger (matches app: 子账户本金=原币净额; 全部账户本金=各账户原币×即期折人民币) ---");
+  console.log({
+    principalNative: Math.round(principalNat * 100) / 100,
+    accountCurrency: accCcy,
+    principalCnyAtSpot: Math.round(principalCnyAtSpot * 100) / 100,
+    cashCny: Math.round(cashCny * 100) / 100,
+  });
 
   await client.end();
 }

@@ -988,16 +988,62 @@ function getFilteredCashTransfers(accountId = "all") {
   return list.filter((row) => String(row.accountId) === String(accountId));
 }
 
-/** 单条银证资金记录折算人民币净额（转入为正、转出为负） */
-function cashTransferRowNetCny(r) {
-  const acc = getAccountById(r.accountId);
-  const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+/** 银证单条在账户记账币种下的 signed 金额（转入正、转出负）。 */
+function cashTransferSignedNativeAmount(r) {
   const sign = r.direction === "out" ? -1 : 1;
   const nat = sign * Math.abs(Number(r.amount) || 0);
-  if (!Number.isFinite(nat) || nat === 0) {
+  return Number.isFinite(nat) ? nat : 0;
+}
+
+/**
+ * 单条银证折算人民币净额：按 asOf 当日（估值日）汇率，不按发生日。
+ * 总账户汇总、资金曲线、当日出入金流均用此口径。
+ */
+function cashTransferRowNetCnyAsOf(r, asOfDateKey) {
+  const acc = getAccountById(r.accountId);
+  const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+  const nat = cashTransferSignedNativeAmount(r);
+  if (nat === 0) {
     return 0;
   }
-  return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, r.date);
+  const asOf = String(asOfDateKey || "").slice(0, 10);
+  return ccy === "CNY" ? nat : nat * getFxRateForDate(ccy, asOf);
+}
+
+/** 全部账户：各子账户银证净额（原币）再按当前即期折人民币之和。 */
+function aggregatePrincipalCnyAllAccountsAtSpot(ctf) {
+  const byAcc = new Map();
+  for (const r of Array.isArray(ctf) ? ctf : []) {
+    const aid = String(r.accountId || "default");
+    const nat = cashTransferSignedNativeAmount(r);
+    if (nat === 0) {
+      continue;
+    }
+    byAcc.set(aid, (byAcc.get(aid) || 0) + nat);
+  }
+  let sum = 0;
+  for (const [aid, nat] of byAcc) {
+    if (!Number.isFinite(nat) || nat === 0) {
+      continue;
+    }
+    const acc = getAccountById(aid);
+    const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+    sum += ccy === "CNY" ? nat : nat * getFxRateToCny(ccy);
+  }
+  return sum;
+}
+
+/** 单个子账户：银证净额（原币，不按人民币中转）。 */
+function principalNativeForFilteredAccount(ctf, accountId) {
+  const aid = String(accountId || "default");
+  let s = 0;
+  for (const r of Array.isArray(ctf) ? ctf : []) {
+    if (String(r.accountId || "default") !== aid) {
+      continue;
+    }
+    s += cashTransferSignedNativeAmount(r);
+  }
+  return s;
 }
 
 /** 单笔成交对现金账的影响（标的币种）：买为负、卖为正；分红为正；拆股/合股/送股无现金流。 */
@@ -1061,13 +1107,12 @@ function compareLedgerEvent(a, b) {
 }
 
 /**
- * 本金 = 全部资金记录净额（人民币计，与 cashTransferRowNetCny 一致）；
  * 现金 = 各账户期初 0 起按时间滚：入金 − 出金 + 成交现金流（折记账币），期末余额再折人民币用即期汇率汇总。
+ * 本金不在此计算：单账户用原币净额，全部账户用各账户原币净额按即期折人民币（见 computePortfolio）。
  */
 function computeLedgerCashAndPrincipal(tradeList, ctf) {
   const rowsCtf = Array.isArray(ctf) ? ctf : [];
   const rowsTr = Array.isArray(tradeList) ? tradeList : [];
-  const principalCny = rowsCtf.reduce((s, r) => s + cashTransferRowNetCny(r), 0);
 
   const accountIds = new Set();
   for (const r of rowsCtf) {
@@ -1129,7 +1174,7 @@ function computeLedgerCashAndPrincipal(tradeList, ctf) {
     }
   }
 
-  return { principalCny, cashCny, endingNativeByAccount };
+  return { cashCny, endingNativeByAccount };
 }
 
 /** 截至 endDateKey（含）的资金记录净额 Σ资金（人民币计） */
@@ -1142,7 +1187,7 @@ function fundNetCnyUpToDate(ctf, endDateKey) {
   for (const row of ctf) {
     const d = String(row.date || "").slice(0, 10);
     if (d && d <= end) {
-      sum += cashTransferRowNetCny(row);
+      sum += cashTransferRowNetCnyAsOf(row, end);
     }
   }
   return sum;
@@ -1157,22 +1202,29 @@ function fundCnyCumulativeAlongDates(ctf, dateKeys) {
     return m;
   }
   if (!Array.isArray(ctf) || !ctf.length) {
-    for (const d of dateKeys) {
+    const keys = [...new Set(dateKeys.map((d) => String(d || "").slice(0, 10)).filter(Boolean))].sort();
+    for (const d of keys) {
       m.set(d, 0);
     }
     return m;
   }
-  const dayDelta = new Map();
-  for (const row of ctf) {
-    const d = String(row.date || "").slice(0, 10);
-    if (!d) {
-      continue;
+  const rows = (Array.isArray(ctf) ? ctf : [])
+    .map((row) => ({
+      d: String(row.date || "").slice(0, 10),
+      aid: String(row.accountId || "default"),
+      nat: cashTransferSignedNativeAmount(row),
+    }))
+    .filter((x) => x.d);
+  const keys = [...new Set(dateKeys.map((d) => String(d || "").slice(0, 10)).filter(Boolean))].sort();
+  for (const d of keys) {
+    let cum = 0;
+    for (const row of rows) {
+      if (row.d <= d && row.nat !== 0) {
+        const acc = getAccountById(row.aid);
+        const ccy = String((acc && acc.currency) || "CNY").toUpperCase();
+        cum += ccy === "CNY" ? row.nat : row.nat * getFxRateForDate(ccy, d);
+      }
     }
-    dayDelta.set(d, (dayDelta.get(d) || 0) + cashTransferRowNetCny(row));
-  }
-  let cum = 0;
-  for (const d of dateKeys) {
-    cum += dayDelta.get(d) || 0;
     m.set(d, cum);
   }
   return m;
@@ -5004,8 +5056,7 @@ function getDefaultAnalysisStartDate() {
 }
 
 /**
- * 总览区展示币种：跟随当前筛选「股票账户」的默认币种；「全部账户」时统一按人民币。
- * 注意：这仅影响总览/汇总用何种货币展示；单条交易的发生额、标的按各自原币（A/CNY、港/HKD、美/USD）在逻辑里已区分。
+ * 总览区展示币种：单账户跟随该账户记账币种（原币）；「全部账户」时统一人民币。
  */
 function getOverviewBookCurrency() {
   const o = state._overviewBookCurrencyOverride;
@@ -6080,7 +6131,7 @@ function buildLiveByModeFromSnapshotDaily(sortedRows, portfolio, todayKey, scope
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
   const extToday = cash.reduce((s, r) => {
     if (String(r.date).slice(0, 10) === tk) {
-      return s + cashTransferRowNetCny(r);
+      return s + cashTransferRowNetCnyAsOf(r, tk);
     }
     return s;
   }, 0);
@@ -6120,7 +6171,7 @@ function mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode =
     : getFilteredCashTransfers(resolveValidAccountFilter(state.selectedAccountId));
   const extToday = cashRows.reduce((s, r) => {
     if (String(r.date).slice(0, 10) === todayKey) {
-      return s + cashTransferRowNetCny(r);
+      return s + cashTransferRowNetCnyAsOf(r, todayKey);
     }
     return s;
   }, 0);
@@ -7761,9 +7812,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     (sum, trade) => sum + signedAmount(trade) * getTradeFxRate(trade),
     0
   );
-  /** 本金 = 全部资金记录净额（人民币）；现金 = 期初 0 + 按时间滚资金与成交（见 computeLedgerCashAndPrincipal） */
-  const { principalCny, cashCny } = computeLedgerCashAndPrincipal(tradeList, ctf);
-  const principal = principalCny;
+  const { cashCny, endingNativeByAccount } = computeLedgerCashAndPrincipal(tradeList, ctf);
   const totalMarketValueCnyBook = visiblePositions.reduce((sum, item) => sum + item.marketValue, 0);
   const cash = cashCny;
 
@@ -7795,8 +7844,25 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
   );
   const todayRate = yesterdayMarketValueForRate !== 0 ? todayProfit / yesterdayMarketValueForRate : 0;
   const totalProfit = sumBookByCurrency((item) => item.totalProfitNative);
-  const overviewPrincipal = amountBookFromCny(principal, overviewBookCurrency);
-  const overviewCash = amountBookFromCny(cash, overviewBookCurrency);
+
+  const isAll = state.selectedAccountId === "all";
+  const sel = String(resolveValidAccountFilter(state.selectedAccountId));
+  let principal;
+  let overviewPrincipal;
+  let overviewCash;
+  if (isAll) {
+    principal = aggregatePrincipalCnyAllAccountsAtSpot(ctf);
+    overviewPrincipal = principal;
+    overviewCash = cash;
+  } else {
+    const principalNat = principalNativeForFilteredAccount(ctf, sel);
+    const acc = getAccountById(sel);
+    const accCcy = String((acc && acc.currency) || "CNY").toUpperCase();
+    overviewPrincipal = principalNat;
+    overviewCash = Number(endingNativeByAccount.get(sel)) || 0;
+    principal = accCcy === "CNY" ? principalNat : principalNat * getFxRateToCny(accCcy);
+  }
+
   const totalAssets = totalMarketValue + overviewCash;
   const totalAssetsCny = totalMarketValueCnyBook + cash;
   const cashRatioPct = totalAssetsCny > 0 ? (cash / totalAssetsCny) * 100 : 0;
