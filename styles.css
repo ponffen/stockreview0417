@@ -1901,6 +1901,14 @@ h2 {
   justify-self: center;
 }
 
+.stock-record-add-trade-btn {
+  justify-self: end;
+  font-size: 12px;
+  padding: 6px 8px;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .empty {
   text-align: center;
   margin: 0;

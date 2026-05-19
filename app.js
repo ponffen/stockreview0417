@@ -363,6 +363,7 @@ const tradeSubmitBtn = document.getElementById("tradeSubmitBtn");
 const capitalDialog = document.getElementById("capitalDialog");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
 const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
+const stockRecordAddTradeBtn = document.getElementById("stockRecordAddTradeBtn");
 const stockRecordTitle = document.getElementById("stockRecordTitle");
 const stockRecordTime = document.getElementById("stockRecordTime");
 const stockRecordPrice = document.getElementById("stockRecordPrice");
@@ -2750,6 +2751,21 @@ function bindEvents() {
     renderRoute();
   });
 
+  stockRecordAddTradeBtn?.addEventListener("click", () => {
+    if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
+      return;
+    }
+    const symKey = normalizeSymbol(state.activeRecordSymbol);
+    const trade = state.trades.find((t) => normalizeSymbol(t.symbol) === symKey);
+    const quote = getQuoteBySymbol(symKey);
+    const name = (trade && trade.name) || (quote && quote.name) || symKey;
+    const prefill = { symbol: symKey, name: String(name).trim() || symKey };
+    if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
+      prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
+    }
+    openNewTradeDialog(prefill);
+  });
+
   communityProfileBody?.addEventListener("click", (event) => {
     const link = event.target.closest("[data-stock-record]");
     if (!link || !communityProfileBody.contains(link)) {
@@ -2894,6 +2910,12 @@ function openNewTradeDialog(prefill) {
     }
     if (prefill.name != null) {
       tradeNameInput.value = String(prefill.name);
+    }
+    if (prefill.accountId != null && tradeAccountInput) {
+      const aid = resolveValidAccountFilter(String(prefill.accountId));
+      if (aid !== "all" && state.accounts.some((a) => a.id === aid)) {
+        tradeAccountInput.value = aid;
+      }
     }
   }
   tradeDialog.showModal();
@@ -7460,6 +7482,10 @@ async function renderStockRecordPage(symbol) {
     stockRecordAccountSelect.value = activeAccountId;
     stockRecordAccountSelect.disabled = usePub;
     stockRecordAccountSelect.closest(".stock-record-account-wrap")?.classList.toggle("hidden", usePub);
+  }
+  if (stockRecordAddTradeBtn) {
+    stockRecordAddTradeBtn.disabled = usePub;
+    stockRecordAddTradeBtn.classList.toggle("hidden", usePub);
   }
 
   const recTable = stockRecordListBody?.closest("table");
