@@ -4985,6 +4985,34 @@ function overviewSnapshotSnapMapFromState() {
   return new Map(Object.entries(o));
 }
 
+/** 总览「现金占比」：现金 / 总资产 × 100%（与当前展示的 totalAssets、overviewCash 同口径）。 */
+function formatOverviewCashRatioFromTotals(totalAssetsBook, cashBook) {
+  const ta = Number(totalAssetsBook);
+  const c = Number(cashBook);
+  if (!Number.isFinite(ta) || ta <= 0 || !Number.isFinite(c)) {
+    return "0.00%";
+  }
+  return `${formatNumber((c / ta) * 100, 2)}%`;
+}
+
+/**
+ * 总览区 2×3 栅格：总资产、总市值 | 现金、现金占比 | 本金、（空）。
+ * @param {{ label: string, value: string }[]} entries 共 5 条
+ */
+function buildOverviewKpiGridInnerHtml(entries) {
+  const cells = entries
+    .map(
+      (item) => `
+      <article class="kpi-item">
+        <p class="kpi-label">${escapeHtml(item.label)}</p>
+        <p class="kpi-value">${escapeHtml(String(item.value))}</p>
+      </article>
+    `,
+    )
+    .join("");
+  return `${cells}<article class="kpi-item kpi-item--empty" aria-hidden="true"></article>`;
+}
+
 function stubVisiblePositionsFromHomeSummarySymbols(symbols) {
   return (Array.isArray(symbols) ? symbols : []).map((s) => {
     const sym = normalizeSymbol(s.symbol);
@@ -5035,21 +5063,13 @@ async function paintOverviewSnapshotUiTestMode() {
   if (state.selectedAccountId !== "all") {
     const bookCcy = getOverviewBookCurrency();
     const dash = "—";
-    overviewGrid.innerHTML = [
-      { label: "总市值", value: dash },
-      { label: "本金", value: dash },
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
       { label: "总资产", value: dash },
+      { label: "总市值", value: dash },
       { label: "现金", value: dash },
-    ]
-      .map(
-        (item) => `
-      <article class="kpi-item">
-        <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value">${item.value}</p>
-      </article>
-    `,
-      )
-      .join("");
+      { label: "现金占比", value: dash },
+      { label: "本金", value: dash },
+    ]);
     setOverviewProfitKpisDash();
     if (stockTableBody) {
       stockTableBody.innerHTML = `
@@ -5064,21 +5084,13 @@ async function paintOverviewSnapshotUiTestMode() {
   const bookCcy = "CNY";
   if (!apiReady) {
     const dash = "—";
-    overviewGrid.innerHTML = [
-      { label: "总市值", value: dash },
-      { label: "本金", value: dash },
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
       { label: "总资产", value: dash },
+      { label: "总市值", value: dash },
       { label: "现金", value: dash },
-    ]
-      .map(
-        (item) => `
-      <article class="kpi-item">
-        <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value">${item.value}</p>
-      </article>
-    `,
-      )
-      .join("");
+      { label: "现金占比", value: dash },
+      { label: "本金", value: dash },
+    ]);
     setOverviewProfitKpisDash();
     if (stockTableBody) {
       stockTableBody.innerHTML = `
@@ -5109,22 +5121,15 @@ async function paintOverviewSnapshotUiTestMode() {
   const principal = last ? Number(last.principal) || 0 : 0;
   const totalAssets = last ? Number(last.totalAssets) || 0 : 0;
   const cash = last ? Number(last.cash) || 0 : 0;
+  const ratioStr = formatOverviewCashRatioFromTotals(totalAssets, cash);
 
-  overviewGrid.innerHTML = [
-    { label: "总市值", value: formatOverviewPlainMoney(mv, bookCcy) },
-    { label: "本金", value: formatOverviewPlainMoney(principal, bookCcy) },
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
     { label: "总资产", value: formatOverviewPlainMoney(totalAssets, bookCcy) },
+    { label: "总市值", value: formatOverviewPlainMoney(mv, bookCcy) },
     { label: "现金", value: formatOverviewPlainMoney(cash, bookCcy) },
-  ]
-    .map(
-      (item) => `
-      <article class="kpi-item">
-        <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value">${item.value}</p>
-      </article>
-    `,
-    )
-    .join("");
+    { label: "现金占比", value: ratioStr },
+    { label: "本金", value: formatOverviewPlainMoney(principal, bookCcy) },
+  ]);
 
   setOverviewProfitKpisDash();
 
@@ -5158,23 +5163,14 @@ function renderOverviewAndStockTable() {
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const cards = [
-    { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
-    { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
+  const ratioStr = formatOverviewCashRatioFromTotals(portfolio.totalAssets, portfolio.overviewCash);
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
     { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
+    { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
     { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
-  ];
-
-  overviewGrid.innerHTML = cards
-    .map(
-      (item) => `
-      <article class="kpi-item">
-        <p class="kpi-label">${item.label}</p>
-        <p class="kpi-value">${item.value}</p>
-      </article>
-    `
-    )
-    .join("");
+    { label: "现金占比", value: ratioStr },
+    { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
+  ]);
 
   const dataKey = buildOverviewSnapshotDataKey();
   const fullKey = buildOverviewSnapshotCacheKey();

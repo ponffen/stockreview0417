@@ -393,6 +393,10 @@ body {
   border-bottom: none;
 }
 
+.kpi-item--empty {
+  pointer-events: none;
+}
+
 .kpi-label {
   margin: 0;
   color: #9ca5b4;
