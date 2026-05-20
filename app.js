@@ -2751,14 +2751,20 @@ function bindEvents() {
     renderRoute();
   });
 
-  stockRecordAddTradeBtn?.addEventListener("click", () => {
+  stockRecordAddTradeBtn?.addEventListener("click", async () => {
     if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
       return;
     }
     const symKey = normalizeSymbol(state.activeRecordSymbol);
     const trade = state.trades.find((t) => normalizeSymbol(t.symbol) === symKey);
     const quote = getQuoteBySymbol(symKey);
-    const name = (trade && trade.name) || (quote && quote.name) || symKey;
+    const positionName = (trade && trade.name) || (quote && quote.name) || "";
+    let name = getDisplayName(symKey, positionName);
+    const mkt = inferMarket(symKey);
+    if (apiReady && (mkt === "A股" || mkt === "港股") && !hasCnNameLabel(name)) {
+      await hydrateSymbolNameMap([symKey], { force: true });
+      name = getDisplayName(symKey, positionName);
+    }
     const prefill = { symbol: symKey, name: String(name).trim() || symKey };
     if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
       prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
