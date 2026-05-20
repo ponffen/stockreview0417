@@ -1356,14 +1356,16 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
 async function upsertPerformanceSeriesCacheRow(input) {
   const r = input || {};
   const now = nowMs();
+  const rv = Number.isFinite(Number(r.rule_version)) ? Math.trunc(Number(r.rule_version)) : 1;
   await q(
     `INSERT INTO performance_series_cache (
-       user_id, account_id, as_of_date, preset, algo, period_return, series_json, source_frozen_through, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       user_id, account_id, as_of_date, preset, algo, period_return, series_json, source_frozen_through, rule_version, updated_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (user_id, account_id, as_of_date, preset, algo) DO UPDATE SET
        period_return = EXCLUDED.period_return,
        series_json = EXCLUDED.series_json,
        source_frozen_through = EXCLUDED.source_frozen_through,
+       rule_version = EXCLUDED.rule_version,
        updated_at = EXCLUDED.updated_at`,
     [
       String(r.user_id || "").trim(),
@@ -1374,6 +1376,7 @@ async function upsertPerformanceSeriesCacheRow(input) {
       validNumber(r.period_return, 0),
       r.series_json == null ? null : String(r.series_json),
       String(r.source_frozen_through || "").slice(0, 10),
+      rv,
       now,
     ]
   );
@@ -1789,6 +1792,9 @@ async function ensurePerformanceSchemaV2() {
       )`).catch(() => {});
     await q(
       `CREATE INDEX IF NOT EXISTS idx_perf_series_user_asof ON performance_series_cache (user_id, as_of_date DESC)`
+    ).catch(() => {});
+    await q(
+      `ALTER TABLE performance_series_cache ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`
     ).catch(() => {});
     await q(
       `ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`

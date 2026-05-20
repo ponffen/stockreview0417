@@ -37,6 +37,82 @@ function normalizeProfitAlgoMode(mode) {
   return "twr";
 }
 
+/** 不规则现金流 XIRR（年化），与 performance-cache-service 一致 */
+function npv(rate, datedAmounts) {
+  const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
+  let s = 0;
+  for (const { date, amt } of datedAmounts) {
+    const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
+    s += amt / (1 + rate) ** years;
+  }
+  return s;
+}
+
+function xirr(datedAmounts, guess = 0.08) {
+  if (!datedAmounts.length) return 0;
+  let r = guess;
+  for (let k = 0; k < 40; k += 1) {
+    const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
+    let f = 0;
+    let df = 0;
+    for (const { date, amt } of datedAmounts) {
+      const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
+      const den = (1 + r) ** years;
+      f += amt / den;
+      df += (-years * amt) / ((1 + r) ** (years + 1));
+    }
+    if (!Number.isFinite(f) || Math.abs(f) < 1e-8) return r;
+    if (!Number.isFinite(df) || Math.abs(df) < 1e-12) break;
+    const nr = r - f / df;
+    if (!Number.isFinite(nr) || nr <= -0.9999 || nr > 100) break;
+    r = nr;
+  }
+  let lo = -0.9999;
+  let hi = 10;
+  for (let k = 0; k < 80; k += 1) {
+    const mid = (lo + hi) / 2;
+    const v = npv(mid, datedAmounts);
+    if (!Number.isFinite(v)) break;
+    if (Math.abs(v) < 1e-7) return mid;
+    if (v > 0) lo = mid;
+    else hi = mid;
+  }
+  return r;
+}
+
+/** 资金加权：期初总资产、区间内出入金、期末总资产 → XIRR */
+function xirrFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
+  const start = String(windowStart).slice(0, 10);
+  const end = String(windowEnd).slice(0, 10);
+  const prev = rowsSortedAsc.filter((r) => r.date < start);
+  const bv = prev.length ? Number(prev[prev.length - 1].totalAssets ?? 0) : 0;
+  const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : String(start).slice(0, 10);
+  const inWin = rowsSortedAsc.filter((r) => r.date >= start && r.date <= end);
+  if (!inWin.length) return 0;
+  const ev = Number(inWin[inWin.length - 1].totalAssets ?? 0);
+  const lastD = String(inWin[inWin.length - 1].date).slice(0, 10);
+  const dayMap = new Map();
+  if (Number.isFinite(bv) && bv !== 0) {
+    dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
+  }
+  for (const r of inWin) {
+    const ef = Number(r.externalFlowCny ?? 0) || 0;
+    if (ef) {
+      const d = String(r.date).slice(0, 10);
+      dayMap.set(d, (dayMap.get(d) || 0) + ef);
+    }
+  }
+  if (Number.isFinite(ev)) {
+    dayMap.set(lastD, (dayMap.get(lastD) || 0) + ev);
+  }
+  const dated = [...dayMap.entries()]
+    .map(([date, amt]) => ({ date, amt }))
+    .filter((x) => x.amt !== 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (dated.length < 2) return 0;
+  return xirr(dated, 0.05);
+}
+
 function computeMoneyWeightedSeries(points) {
   const result = [];
   const startClose = points[0].value - points[0].flow;
@@ -130,20 +206,29 @@ function buildProfitSeries(points) {
 }
 
 function metricsForWindow(allRowsThroughF, windowStart, windowEnd) {
-  const w = allRowsThroughF
+  const rowsAsc = allRowsThroughF
     .map((r) => ({
       date: String(r.date).slice(0, 10),
-      value: Number(r.marketValue ?? r.market_value ?? 0),
-      flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
+      totalAssets:
+        Number(r.totalAssets ?? r.total_assets ?? 0) ||
+        Number(r.marketValue ?? r.market_value ?? 0) ||
+        0,
+      externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
     }))
-    .filter((r) => r.date && r.date >= windowStart && r.date <= windowEnd)
+    .filter((r) => r.date && r.date <= windowEnd)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const w = rowsAsc.filter((r) => r.date >= windowStart && r.date <= windowEnd);
   if (!w.length) {
     return { profitCny: 0, rateTwr: 0, rateMwr: 0 };
   }
-  const profitSeries = buildProfitSeries(w);
-  const rateTwr = rebaseRateSeriesByFirstDay(computeModeSeries(w, "twr")).at(-1)?.rate ?? 0;
-  const rateMwr = rebaseRateSeriesByFirstDay(computeModeSeries(w, "mwr")).at(-1)?.rate ?? 0;
+  const pts = w.map((r) => ({
+    date: r.date,
+    value: r.totalAssets,
+    flow: r.externalFlowCny,
+  }));
+  const profitSeries = buildProfitSeries(pts);
+  const rateTwr = rebaseRateSeriesByFirstDay(computeModeSeries(pts, "twr")).at(-1)?.rate ?? 0;
+  const rateMwr = xirrFromSnapshotWindow(rowsAsc, windowStart, windowEnd);
   return {
     profitCny: profitSeries.at(-1)?.value ?? 0,
     rateTwr,
@@ -165,11 +250,15 @@ function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, first
     .map((r) => ({
       date: String(r.date || "").slice(0, 10),
       marketValue: Number(r.marketValue ?? r.market_value ?? 0),
+      totalAssets:
+        Number(r.totalAssets ?? r.total_assets ?? 0) ||
+        Number(r.marketValue ?? r.market_value ?? 0) ||
+        0,
       externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
     }))
     .filter((r) => r.date && r.date <= F)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const lastMv = rows.length ? Number(rows[rows.length - 1].marketValue) || 0 : 0;
+  const lastMv = rows.length ? Number(rows[rows.length - 1].totalAssets) || 0 : 0;
   const month = metricsForWindow(rows, ms, F);
   const ytd = metricsForWindow(rows, ys, F);
   const total = metricsForWindow(rows, ft, F);
@@ -204,4 +293,7 @@ module.exports = {
   yearStartKeyShanghai,
   computeAccountHomeSummaryFromSnapshots,
   symbolRatesFromPnlPoints,
+  buildProfitSeries,
+  rebaseRateSeriesByFirstDay,
+  computeTimeWeightedSeries,
 };

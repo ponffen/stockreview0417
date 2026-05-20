@@ -354,7 +354,22 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     const dayPoints = buildPortfolioDayPoints(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap, allCash, accountId, accounts);
     if (!dayPoints.length) continue;
 
-    const twrArr = computeTwrFromDayPoints(dayPoints);
+    const twrInputs = [];
+    for (let i = 0; i < dayPoints.length; i += 1) {
+      const p = dayPoints[i];
+      const dk = p.date;
+      const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+      const mvCny = Number(p.nav) || 0;
+      const totalAssetsCny = mvCny + cashCny;
+      twrInputs.push({
+        date: dk,
+        nav: totalAssetsCny,
+        extFlow: p.extFlow,
+        tradeFlow: 0,
+        externalFlowNative: p.externalFlowNative,
+      });
+    }
+    const twrArr = computeTwrFromDayPoints(twrInputs);
 
     let cumProfit = 0;
     for (let i = 0; i < dayPoints.length; i += 1) {
@@ -465,4 +480,5 @@ async function runDailyFreeze(options = {}) {
 module.exports = {
   runDailyFreeze,
   resolveFrozenDate,
+  freezeUserToDate,
 };

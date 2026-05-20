@@ -1,6 +1,6 @@
 /**
- * TWR / 组合日序列（账户级）：NAV 用市值；TWR 现金流仅「出入金」；
- * tradeFlow 仅用于首日 BMV 估计，不进入 TWR 分子减项。
+ * TWR / 组合日序列（账户级）：价值用「日末总资产」；现金流仅「出入金」；
+ * tradeFlow 已废弃（不入 TWR 分子/分母），保留字段仅为兼容旧调用方。
  */
 
 const validNumber = (v, fb = 0) => {
@@ -222,10 +222,10 @@ function computeTwrFromDayPoints(points) {
   let compound = 1;
   let prevNav = null;
   for (let i = 0; i < points.length; i += 1) {
-    const { date, nav, extFlow, tradeFlow } = points[i];
+    const { date, nav, extFlow } = points[i];
     let daily = 0;
     if (i === 0) {
-      const bmv = Math.max(nav - extFlow - tradeFlow, 1e-9);
+      const bmv = Math.max(nav - extFlow, 1e-9);
       const denom = bmv + Math.max(extFlow, 0);
       daily = denom !== 0 ? (nav - bmv - extFlow) / denom : 0;
       prevNav = nav;

@@ -3,9 +3,16 @@ const {
   deletePerformanceSeriesCacheForUser,
   upsertPerformanceSeriesCacheRow,
 } = require("./db");
+const {
+  buildProfitSeries,
+  rebaseRateSeriesByFirstDay,
+  computeTimeWeightedSeries,
+} = require("./home-summary-maths");
 
 const PRESETS = ["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"];
 const ALGOS = ["twr", "mwr"];
+/** 与 analysis / home-summary 序列口径一致；变更后须全量重算缓存 */
+const PERFORMANCE_RULE_VERSION = 2;
 
 function addCalendarDays(dateKey, days) {
   const d = new Date(`${String(dateKey || "").slice(0, 10)}T12:00:00+08:00`);
@@ -122,15 +129,15 @@ function twrPeriodFromSnapshots(rows, start, end) {
   return d1 / d0 - 1;
 }
 
-/** MWR：期初 -BV、区间内 external_flow_cny、期末 +EV（同日合并后 XIRR） */
+/** MWR：期初 -BV、区间内 external_flow_cny、期末 +EV（同日合并后 XIRR）；BV/EV 用 total_assets（总资产） */
 function mwrPeriodFromSnapshots(rows, start, end) {
   if (!rows.length) return 0;
   const prev = rows.filter((r) => r.date < start);
-  const bv = prev.length ? Number(prev[prev.length - 1].marketValue ?? 0) : 0;
+  const bv = prev.length ? Number(prev[prev.length - 1].totalAssets ?? 0) : 0;
   const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : String(start).slice(0, 10);
   const inWin = rows.filter((r) => r.date >= start && r.date <= end);
   if (!inWin.length) return 0;
-  const ev = Number(inWin[inWin.length - 1].marketValue ?? 0);
+  const ev = Number(inWin[inWin.length - 1].totalAssets ?? 0);
   const lastD = String(inWin[inWin.length - 1].date).slice(0, 10);
   const dayMap = new Map();
   if (Number.isFinite(bv) && bv !== 0) {
@@ -158,6 +165,26 @@ async function deletePerformanceSeriesForUser(userId) {
   return deletePerformanceSeriesCacheForUser(userId);
 }
 
+function buildTwrPresetSeriesJson(sliceRows) {
+  if (!sliceRows.length) return null;
+  const pts = sliceRows.map((r) => ({
+    date: r.date,
+    value: Number(r.totalAssets ?? 0) || 0,
+    flow: Number(r.externalFlowCny ?? 0) || 0,
+  }));
+  const profitSeries = buildProfitSeries(pts);
+  const twRaw = computeTimeWeightedSeries(pts);
+  const twRebased = rebaseRateSeriesByFirstDay(twRaw);
+  return JSON.stringify({
+    ruleVersion: PERFORMANCE_RULE_VERSION,
+    dates: pts.map((p) => p.date),
+    totalAssets: pts.map((p) => p.value),
+    externalFlowCny: pts.map((p) => p.flow),
+    cumulativeProfit: profitSeries.map((p) => p.value),
+    twrRebased: twRebased.map((p) => p.rate),
+  });
+}
+
 /**
  * 为某用户、若干账户、在 as_of_date 上预计算各 preset × twr/mwr。
  * @param {object} opts
@@ -179,6 +206,7 @@ async function rebuildPerformanceSeriesCache(opts) {
     const rows = rowsRaw.map((r) => ({
       date: r.date,
       marketValue: r.marketValue,
+      totalAssets: Number(r.totalAssets ?? r.marketValue ?? 0),
       twRCumulative: r.twRCumulative != null ? r.twRCumulative : r.tw_r_cumulative,
       externalFlowCny: r.externalFlowCny != null ? r.externalFlowCny : r.external_flow_cny,
     }));
@@ -193,10 +221,20 @@ async function rebuildPerformanceSeriesCache(opts) {
 
       for (const algo of algos) {
         let pr = 0;
+        let seriesJson = null;
+        const start0 = addCalendarDays(start, -1);
+        const sliceForSeries = rows.filter((r) => r.date >= start0 && r.date <= end);
         if (algo === "twr") {
           pr = twrPeriodFromSnapshots(rows, start, end);
+          seriesJson = buildTwrPresetSeriesJson(sliceForSeries);
         } else {
           pr = mwrPeriodFromSnapshots(rows, start, end);
+          seriesJson = JSON.stringify({
+            ruleVersion: PERFORMANCE_RULE_VERSION,
+            kind: "mwr",
+            xirrAnnualized: pr,
+            note: "no_daily_series",
+          });
         }
         await upsertPerformanceSeriesCacheRow({
           user_id: userId,
@@ -205,8 +243,9 @@ async function rebuildPerformanceSeriesCache(opts) {
           preset,
           algo,
           period_return: pr,
-          series_json: null,
+          series_json: seriesJson,
           source_frozen_through: asOf,
+          rule_version: PERFORMANCE_RULE_VERSION,
         });
         written += 1;
       }
@@ -222,4 +261,5 @@ module.exports = {
   resolvePresetRange,
   twrPeriodFromSnapshots,
   mwrPeriodFromSnapshots,
+  PERFORMANCE_RULE_VERSION,
 };

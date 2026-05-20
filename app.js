@@ -4447,14 +4447,20 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
 
   const rankOpts = { publicStockRankLayout: true };
 
-  const bindRateOnly = (mySeries, benchSeries) => {
-    const payloads = { rate: drawLineChart(mySeries, benchSeries, pubRate) };
+  const bindRateOnly = (mySeries, benchSeries, opts = {}) => {
+    const mwrUi = opts.mwrUi === true;
+    const headlineMwr = Number(opts.headlineMwr) || 0;
+    const drawRate = () =>
+      mwrUi
+        ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。")
+        : drawLineChart(mySeries, benchSeries, pubRate);
+    const payloads = { rate: drawRate() };
     const rateHasBenchmark = state.benchmark !== "none";
     bindInteractiveChart(pubRate, pubRateTip, () => payloads.rate, {
       mode: "analysis",
       onRefresh: refresh,
       onRedraw: () => {
-        payloads.rate = drawLineChart(mySeries, benchSeries, pubRate);
+        payloads.rate = drawRate();
       },
       valueFormatter: (_value, key) => {
         if (key === "benchmark" && !rateHasBenchmark) {
@@ -4463,14 +4469,21 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
         return `${formatNumber(_value, 2)}%`;
       },
     });
-    const lastMy = mySeries.at(-1)?.rate ?? 0;
+    const lastMyTwr = mySeries.at(-1)?.rate ?? 0;
     const lastBench = benchSeries.at(-1)?.rate ?? 0;
-    const excess = lastMy - lastBench;
+    const excess = lastMyTwr - lastBench;
     if (pubRateSummary) {
-      pubRateSummary.textContent =
-        state.benchmark === "none"
-          ? `我的收益率 ${formatPercent(lastMy)}`
-          : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+      if (mwrUi) {
+        pubRateSummary.textContent =
+          state.benchmark === "none"
+            ? `我的收益率 ${formatPercent(headlineMwr)}`
+            : `我的 ${formatPercent(headlineMwr)} / 基准 ${formatPercent(lastBench)} / 对比 –`;
+      } else {
+        pubRateSummary.textContent =
+          state.benchmark === "none"
+            ? `我的收益率 ${formatPercent(lastMyTwr)}`
+            : `我的 ${formatPercent(lastMyTwr)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+      }
     }
   };
 
@@ -4491,25 +4504,40 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
   }
 
   const sorted = [...dbRows].sort((a, b) => a.date.localeCompare(b.date));
-  const pseudoHistory = sorted.map((row) => ({
+  const mergedFull = mergeAnalysisSliceWithLive(
+    sorted.map((row) => ({ ...row })),
+    portfolio,
+    todayKey,
+    liveByMode,
+    scope.cashTransfers,
+  );
+  const pseudoHistory = mergedFull.map((row) => ({
     date: row.date,
-    value: row.marketValue,
+    value: analysisTotalAssetsFromRow(row),
     flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
   }));
   const selectedPh = resolveAnalysisRange(pseudoHistory);
   const dateSet = new Set(selectedPh.map((p) => p.date));
-  let sliceRows = sorted.filter((row) => dateSet.has(row.date));
-  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode, scope.cashTransfers);
+  const sliceRows = mergedFull.filter((row) => dateSet.has(row.date));
 
   const modePts = sliceRows.map((r) => ({
     date: r.date,
-    value: r.marketValue,
+    value: analysisTotalAssetsFromRow(r),
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
   }));
-  const mySeriesRaw = computeModeSeries(modePts, state.algoMode);
+  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : state.algoMode);
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
-  bindRateOnly(mySeries, benchSeries);
+  let headlineMwrPub = 0;
+  if (useMwrUi && sliceRows.length) {
+    headlineMwrPub = analysisXirrForStage(
+      mergedFull,
+      String(sliceRows[0].date).slice(0, 10),
+      String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
+    );
+  }
+  bindRateOnly(mySeries, benchSeries, { mwrUi: useMwrUi, headlineMwr: headlineMwrPub });
   const pubAssetIdx = sliceRows.map((r) => ({
     date: r.date,
     value: Number(r.totalAssets) || Number(r.marketValue) || 0,
@@ -6342,13 +6370,15 @@ function buildLiveByModeFromSnapshotDaily(sortedRows, portfolio, todayKey, scope
     }
     pts.push({
       date: d,
-      value: Number(row.marketValue ?? row.market_value) || 0,
+      value: analysisTotalAssetsFromRow(row),
       flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0) || 0,
     });
   }
+  const mvCny = Number(portfolio?.totalMarketValueCnyBook ?? portfolio?.totalMarketValue) || 0;
+  const cashLive = Number(portfolio?.cash) || 0;
   pts.push({
     date: tk,
-    value: Number(portfolio?.totalMarketValue) || 0,
+    value: mvCny + cashLive,
     flow: extToday,
   });
   if (!pts.length) {
@@ -6495,12 +6525,169 @@ function todayProfitRateCnyFromMergedRows(mergedRows, todayKey) {
   }
   const row = mergedRows[idx];
   const todayP = Number(row.profitCny ?? row.profit_cny) || 0;
-  let prevMv = 0;
+  let prevTa = 0;
   if (idx > 0) {
-    prevMv = Number(mergedRows[idx - 1].marketValue) || 0;
+    prevTa = analysisTotalAssetsFromRow(mergedRows[idx - 1]);
   }
-  const rate = prevMv > 0 ? todayP / prevMv : 0;
+  const rate = prevTa > 0 ? todayP / prevTa : 0;
   return { todayProfitCny: todayP, todayRate: rate };
+}
+
+/** 日快照行：优先 total_assets（总资产），否则总市值+现金 */
+function analysisTotalAssetsFromRow(r) {
+  const ta = Number(r?.totalAssets ?? r?.total_assets);
+  if (Number.isFinite(ta) && Math.abs(ta) > 1e-8) {
+    return ta;
+  }
+  const mv = Number(r?.marketValue ?? r?.market_value) || 0;
+  const cash = Number(r?.cash ?? r?.cash_cny) || 0;
+  return mv + cash;
+}
+
+function analysisNpv(rate, datedAmounts) {
+  const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
+  let s = 0;
+  for (const { date, amt } of datedAmounts) {
+    const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
+    s += amt / (1 + rate) ** years;
+  }
+  return s;
+}
+
+function analysisXirr(datedAmounts, guess = 0.08) {
+  if (!datedAmounts.length) {
+    return 0;
+  }
+  let r = guess;
+  for (let k = 0; k < 40; k += 1) {
+    const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
+    let f = 0;
+    let df = 0;
+    for (const { date, amt } of datedAmounts) {
+      const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
+      const den = (1 + r) ** years;
+      f += amt / den;
+      df += (-years * amt) / ((1 + r) ** (years + 1));
+    }
+    if (!Number.isFinite(f) || Math.abs(f) < 1e-8) {
+      return r;
+    }
+    if (!Number.isFinite(df) || Math.abs(df) < 1e-12) {
+      break;
+    }
+    const nr = r - f / df;
+    if (!Number.isFinite(nr) || nr <= -0.9999 || nr > 100) {
+      break;
+    }
+    r = nr;
+  }
+  let lo = -0.9999;
+  let hi = 10;
+  for (let k = 0; k < 80; k += 1) {
+    const mid = (lo + hi) / 2;
+    const v = analysisNpv(mid, datedAmounts);
+    if (!Number.isFinite(v)) {
+      break;
+    }
+    if (Math.abs(v) < 1e-7) {
+      return mid;
+    }
+    if (v > 0) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return r;
+}
+
+/** 资金加权（XIRR）：与 performance-cache-service.mwrPeriodFromSnapshots 同结构，价值用总资产 */
+function analysisXirrForStage(mergedRows, startKey, endKey) {
+  const rows = [...(mergedRows || [])]
+    .map((r) => ({
+      date: String(r.date || "").slice(0, 10),
+      totalAssets: analysisTotalAssetsFromRow(r),
+      externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
+    }))
+    .filter((r) => r.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const start = String(startKey || "").slice(0, 10);
+  const end = String(endKey || "").slice(0, 10);
+  const prev = rows.filter((r) => r.date < start);
+  const bv = prev.length ? Number(prev[prev.length - 1].totalAssets) || 0 : 0;
+  const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : start;
+  const inWin = rows.filter((r) => r.date >= start && r.date <= end);
+  if (!inWin.length) {
+    return 0;
+  }
+  const ev = Number(inWin[inWin.length - 1].totalAssets) || 0;
+  const lastD = String(inWin[inWin.length - 1].date).slice(0, 10);
+  const dayMap = new Map();
+  if (Number.isFinite(bv) && bv !== 0) {
+    dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
+  }
+  for (const r of inWin) {
+    if (r.externalFlowCny) {
+      dayMap.set(r.date, (dayMap.get(r.date) || 0) + r.externalFlowCny);
+    }
+  }
+  if (Number.isFinite(ev)) {
+    dayMap.set(lastD, (dayMap.get(lastD) || 0) + ev);
+  }
+  const dated = [...dayMap.entries()]
+    .map(([date, amt]) => ({ date, amt }))
+    .filter((x) => x.amt !== 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (dated.length < 2) {
+    return 0;
+  }
+  return analysisXirr(dated, 0.05);
+}
+
+function drawAnalysisMwrRatePlaceholder(canvas, message) {
+  const target = canvas || analysisRateChart;
+  if (!target) {
+    return {
+      seriesList: [],
+      xMin: 2,
+      xMax: 400,
+      yMin: 20,
+      yMax: 200,
+      yAxisMode: "left",
+      leftRange: { min: 0, max: 1, range: 1 },
+      rightRange: { min: 0, max: 1, range: 1 },
+      mapX: () => 0,
+      mapY: () => 0,
+      pickNearestByX() {
+        return { index: 0, x: 0, points: [] };
+      },
+    };
+  }
+  const ctx = target.getContext("2d");
+  const width = target.width;
+  const height = target.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#8f99a9";
+  ctx.font = "15px system-ui,sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const msg = String(message || "");
+  ctx.fillText(msg, width / 2, height / 2);
+  return {
+    seriesList: [],
+    xMin: 2,
+    xMax: width - 2,
+    yMin: 20,
+    yMax: height - 36,
+    yAxisMode: "left",
+    leftRange: { min: 0, max: 1, range: 1 },
+    rightRange: { min: 0, max: 1, range: 1 },
+    mapX: () => 0,
+    mapY: () => 0,
+    pickNearestByX() {
+      return { index: 0, x: width / 2, points: [] };
+    },
+  };
 }
 
 /** 已对「今日」做完 merge 的日序列上，截取总览阶段算阶段收益/收益率（人民币口径）。 */
@@ -6509,21 +6696,33 @@ function computeStageOverviewFromMergedRows(mergedRows, stageRange, algoMode, fi
     return null;
   }
   const startKey = String(getStageStartKey(stageRange, firstTradeDate) || "").slice(0, 10);
-  const windowRows = mergedRows.filter((r) => String(r.date || "").slice(0, 10) >= startKey);
+  const sorted = [...mergedRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const idxStart = sorted.findIndex((r) => String(r.date || "").slice(0, 10) >= startKey);
+  const prevRow = idxStart > 0 ? sorted[idxStart - 1] : null;
+  const windowRows = sorted.filter((r) => String(r.date || "").slice(0, 10) >= startKey);
   if (!windowRows.length) {
     return null;
   }
-  const modePts = windowRows.map((r) => ({
+  const extendedRows = prevRow ? [prevRow, ...windowRows] : windowRows;
+  const modePts = extendedRows.map((r) => ({
     date: r.date,
-    value: Number(r.marketValue),
+    value: analysisTotalAssetsFromRow(r),
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
   }));
   const profitSeries = buildProfitSeries(modePts);
-  const modeSeriesRaw = computeModeSeries(modePts, algoMode);
-  const modeSeriesRebased = rebaseRateSeriesByFirstDay(modeSeriesRaw);
+  const endKey = String(windowRows[windowRows.length - 1].date || "").slice(0, 10);
+  const norm = normalizeProfitAlgoMode(algoMode);
+  let stageRate = 0;
+  if (norm === "mwr") {
+    stageRate = analysisXirrForStage(sorted, startKey, endKey);
+  } else {
+    const modeSeriesRaw = computeModeSeries(modePts, "twr");
+    const modeSeriesRebased = rebaseRateSeriesByFirstDay(modeSeriesRaw);
+    stageRate = modeSeriesRebased.at(-1)?.rate ?? 0;
+  }
   return {
     stageProfit: profitSeries.at(-1)?.value ?? 0,
-    stageRate: modeSeriesRebased.at(-1)?.rate ?? 0,
+    stageRate,
   };
 }
 
@@ -7176,14 +7375,21 @@ async function renderAnalysis(options = {}) {
 
   const sorted = [...dbRows].sort((a, b) => a.date.localeCompare(b.date));
   const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, scope.cashTransfers);
-  const pseudoHistory = sorted.map((row) => ({
+  const mergedFull = mergeAnalysisSliceWithLive(
+    sorted.map((row) => ({ ...row })),
+    portfolio,
+    todayKey,
+    liveByMode,
+    scope.cashTransfers,
+  );
+  const pseudoHistory = mergedFull.map((row) => ({
     date: row.date,
-    value: row.marketValue,
+    value: analysisTotalAssetsFromRow(row),
     flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
   }));
   const selectedPh = resolveAnalysisRange(pseudoHistory);
   const dateSet = new Set(selectedPh.map((p) => p.date));
-  let sliceRows = sorted.filter((row) => dateSet.has(row.date));
+  let sliceRows = mergedFull.filter((row) => dateSet.has(row.date));
   const symSet = new Set();
   for (const pos of portfolio.positions || []) {
     const ns = normalizeSymbol(pos.symbol);
@@ -7199,17 +7405,17 @@ async function renderAnalysis(options = {}) {
   }
   const win = Math.min(900, Math.max(120, selectedPh.length + 200));
   await fetchSymbolCloseIntoKlineMap([...symSet], win);
-  sliceRows = mergeAnalysisSliceWithLive(sliceRows, portfolio, todayKey, liveByMode, scope.cashTransfers);
 
   const modePts = sliceRows.map((r) => ({
     date: r.date,
-    value: r.marketValue,
+    value: analysisTotalAssetsFromRow(r),
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
   }));
-  const mySeriesRaw = computeModeSeries(modePts, state.algoMode);
+  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : state.algoMode);
   const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
-  /** 与收益率曲线同源：由市值+出入金序列推盈亏；勿用库里 totalProfit 另画一条，否则标题与「我的收益率」口径不一致。 */
+  /** 与收益率曲线同源：由总资产+出入金序列推盈亏 */
   const profitSeries = buildProfitSeries(modePts);
   const assetSeries = sliceRows.map((row) => {
     const mv = Number(row.marketValue) || 0;
@@ -7231,7 +7437,9 @@ async function renderAnalysis(options = {}) {
     };
   });
 
-  const ratePayload = drawLineChart(mySeries, benchSeries);
+  const ratePayload = useMwrUi
+    ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
+    : drawLineChart(mySeries, benchSeries);
   const profitPayload = drawDualLineChart(
     analysisProfitChart,
     profitSeries.map((item) => ({ date: item.date, value: item.value })),
@@ -7265,7 +7473,9 @@ async function renderAnalysis(options = {}) {
     asset: assetPayload,
   };
   const redrawAnalysisChartsOnly = () => {
-    analysisChartPayloads.rate = drawLineChart(mySeries, benchSeries);
+    analysisChartPayloads.rate = useMwrUi
+      ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
+      : drawLineChart(mySeries, benchSeries);
     analysisChartPayloads.profit = drawDualLineChart(
       analysisProfitChart,
       profitSeries.map((item) => ({ date: item.date, value: item.value })),
@@ -7317,16 +7527,31 @@ async function renderAnalysis(options = {}) {
         : formatNumber(analysisSnapshotMoneyFromCny(value), 2),
   });
 
-  /** 与曲线、tooltip 同一序列：不得再用 historyFull 另算一套，否则会出现「图上最后一点约 -3% 与标题 -25%」不一致。 */
-  const lastMy = mySeries.at(-1)?.rate ?? 0;
+  /** 与曲线、tooltip 同一序列 */
+  let headlineMwr = 0;
+  if (useMwrUi && sliceRows.length) {
+    headlineMwr = analysisXirrForStage(
+      mergedFull,
+      String(sliceRows[0].date).slice(0, 10),
+      String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
+    );
+  }
+  const lastMyTwr = mySeries.at(-1)?.rate ?? 0;
   const lastBench = benchSeries.at(-1)?.rate ?? 0;
   const lastProfit = profitSeries.at(-1)?.value ?? 0;
-  const excess = lastMy - lastBench;
+  const excess = lastMyTwr - lastBench;
   if (analysisRateSummary) {
-    analysisRateSummary.textContent =
-      state.benchmark === "none"
-        ? `我的收益率 ${formatPercent(lastMy)}`
-        : `我的 ${formatPercent(lastMy)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+    if (useMwrUi) {
+      analysisRateSummary.textContent =
+        state.benchmark === "none"
+          ? `我的收益率 ${formatPercent(headlineMwr)}`
+          : `我的 ${formatPercent(headlineMwr)} / 基准 ${formatPercent(lastBench)} / 对比 –`;
+    } else {
+      analysisRateSummary.textContent =
+        state.benchmark === "none"
+          ? `我的收益率 ${formatPercent(lastMyTwr)}`
+          : `我的 ${formatPercent(lastMyTwr)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
+    }
   }
   if (analysisProfitSummary) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
