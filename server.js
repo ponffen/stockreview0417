@@ -726,6 +726,7 @@ const {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestAnalysisSnapshotDate,
+  getPerformancePresetSnapshot,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,
@@ -1629,6 +1630,69 @@ app.get("/api/snapshot/watermark", async (_req, res) => {
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "watermark failed" });
+  }
+});
+
+const PERFORMANCE_PRESET_API_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
+
+app.get("/api/snapshot/performance-preset", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const preset = req.query.preset != null ? String(req.query.preset).trim() : "";
+    const asOfDate =
+      req.query.asOfDate != null && String(req.query.asOfDate).trim()
+        ? String(req.query.asOfDate).trim().slice(0, 10)
+        : "";
+    if (!PERFORMANCE_PRESET_API_KEYS.has(preset)) {
+      res.status(400).json({ ok: false, error: "invalid preset" });
+      return;
+    }
+    const snap = await getPerformancePresetSnapshot(req.userId, accountId || "all", preset, asOfDate || null);
+    if (!snap) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: { preset, asOfDate: null, twr: null, mwr: null } });
+      return;
+    }
+    let twrSeries = null;
+    if (snap.twr?.seriesJson) {
+      try {
+        twrSeries = JSON.parse(snap.twr.seriesJson);
+      } catch {
+        twrSeries = null;
+      }
+    }
+    let mwrSeries = null;
+    if (snap.mwr?.seriesJson) {
+      try {
+        mwrSeries = JSON.parse(snap.mwr.seriesJson);
+      } catch {
+        mwrSeries = null;
+      }
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      data: {
+        preset,
+        asOfDate: snap.asOfDate,
+        twr: snap.twr
+          ? {
+              periodReturn: snap.twr.periodReturn,
+              ruleVersion: snap.twr.ruleVersion,
+              series: twrSeries,
+            }
+          : null,
+        mwr: snap.mwr
+          ? {
+              periodReturn: snap.mwr.periodReturn,
+              ruleVersion: snap.mwr.ruleVersion,
+              series: mwrSeries,
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "performance preset snapshot failed" });
   }
 });
 

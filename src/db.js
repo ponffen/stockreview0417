@@ -1353,6 +1353,56 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
   return { account: ar[0] || null, symbols: sr };
 }
 
+const PERFORMANCE_PRESET_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
+
+/**
+ * 读取某冻结日上的业绩曲线缓存（twr + mwr 两行）。as_of 缺省时取该用户该账户该 preset 下最大的 as_of_date。
+ * @returns {Promise<{ asOfDate: string, twr: object|null, mwr: object|null }|null>}
+ */
+async function getPerformancePresetSnapshot(userId, accountId, preset, asOfDateOpt) {
+  const uid = String(userId || "").trim();
+  const acc = String(accountId || "all").trim() || "all";
+  const presetKey = String(preset || "").trim();
+  if (!uid || !PERFORMANCE_PRESET_KEYS.has(presetKey)) {
+    return null;
+  }
+  let asOf = String(asOfDateOpt || "").trim().slice(0, 10);
+  if (!asOf) {
+    const { rows: mx } = await q(
+      `SELECT MAX(as_of_date) AS d FROM performance_series_cache
+       WHERE user_id = $1 AND account_id = $2 AND preset = $3`,
+      [uid, acc, presetKey]
+    );
+    asOf = mx[0]?.d ? String(mx[0].d).slice(0, 10) : "";
+  }
+  if (!asOf) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT algo, period_return, series_json, rule_version, as_of_date
+     FROM performance_series_cache
+     WHERE user_id = $1 AND account_id = $2 AND preset = $3 AND as_of_date = $4
+       AND algo IN ('twr','mwr')`,
+    [uid, acc, presetKey, asOf]
+  );
+  const out = { asOfDate: asOf, twr: null, mwr: null };
+  for (const row of rows) {
+    const algo = String(row.algo || "").trim();
+    const slot = {
+      periodReturn: validNumber(row.period_return, 0),
+      ruleVersion: Number.isFinite(Number(row.rule_version)) ? Math.trunc(Number(row.rule_version)) : 1,
+      seriesJson: row.series_json == null ? null : String(row.series_json),
+      asOfDate: String(row.as_of_date || asOf).slice(0, 10),
+    };
+    if (algo === "twr") {
+      out.twr = slot;
+    } else if (algo === "mwr") {
+      out.mwr = slot;
+    }
+  }
+  return out;
+}
+
 async function upsertPerformanceSeriesCacheRow(input) {
   const r = input || {};
   const now = nowMs();
@@ -2241,6 +2291,7 @@ module.exports = {
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
   deletePerformanceSeriesCacheForUser,
+  getPerformancePresetSnapshot,
   upsertPerformanceSeriesCacheRow,
   ensureHomeSummaryTables,
   deleteSymbolHomeSummaryForScope,
