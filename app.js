@@ -2753,7 +2753,7 @@ function bindEvents() {
     if (addTradeLink && stockTableBody.contains(addTradeLink)) {
       const sym = addTradeLink.getAttribute("data-stock-add-trade");
       if (sym) {
-        void openStockRecordAndNewTradeDialog(sym);
+        void openNewTradeDialogPrefilledForSymbol(sym, { accountSource: "overview" });
       }
       return;
     }
@@ -7957,11 +7957,15 @@ function buildProfitSeries(points) {
   return rebaseValueSeriesByFirstDay(raw, "value");
 }
 
-async function openAddTradePrefilledForActiveRecordSymbol() {
-  if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
+async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
+  const accountSource = opts.accountSource === "stock-record" ? "stock-record" : "overview";
+  if (state.stockRecordFromPublicProfile) {
     return;
   }
-  const symKey = normalizeSymbol(state.activeRecordSymbol);
+  const symKey = normalizeSymbol(rawSymbol);
+  if (!symKey) {
+    return;
+  }
   const trade = state.trades.find((t) => normalizeSymbol(t.symbol) === symKey);
   const quote = getQuoteBySymbol(symKey);
   const positionName = (trade && trade.name) || (quote && quote.name) || "";
@@ -7972,18 +7976,21 @@ async function openAddTradePrefilledForActiveRecordSymbol() {
     name = getDisplayName(symKey, positionName);
   }
   const prefill = { symbol: symKey, name: String(name).trim() || symKey };
-  if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
-    prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
+  if (accountSource === "stock-record") {
+    if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
+      prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
+    }
+  } else if (state.selectedAccountId && state.selectedAccountId !== "all") {
+    prefill.accountId = resolveValidAccountFilter(state.selectedAccountId);
   }
   openNewTradeDialog(prefill);
 }
 
-async function openStockRecordAndNewTradeDialog(symbol) {
-  if (state.stockRecordFromPublicProfile) {
+async function openAddTradePrefilledForActiveRecordSymbol() {
+  if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
     return;
   }
-  await openStockRecordDialog(symbol);
-  await openAddTradePrefilledForActiveRecordSymbol();
+  await openNewTradeDialogPrefilledForSymbol(state.activeRecordSymbol, { accountSource: "stock-record" });
 }
 
 async function openStockRecordDialog(symbol, opts = {}) {
