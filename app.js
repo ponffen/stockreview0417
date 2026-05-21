@@ -972,6 +972,17 @@ function getAccountById(accountId) {
   return state.accounts.find((item) => item.id === accountId) || DEFAULT_ACCOUNT;
 }
 
+function formatTradeAccountCellHtml(trade, publicDetail) {
+  const id = String(trade?.accountId || DEFAULT_ACCOUNT.id || "default").trim() || "default";
+  if (publicDetail?.publicAccountNames && typeof publicDetail.publicAccountNames === "object") {
+    const nm = publicDetail.publicAccountNames[id];
+    const label = nm != null && String(nm).trim() ? String(nm) : id;
+    return escapeHtml(label);
+  }
+  const acc = getAccountById(id);
+  return escapeHtml(String(acc.name || id));
+}
+
 /** 个股页副标题：当前筛选下的股票账户名称（多账户时用顿号拼接） */
 function stockRecordAccountCaption(scope, symbolTrades) {
   const aid = scope.accountId;
@@ -2738,6 +2749,14 @@ function bindEvents() {
   });
 
   stockTableBody?.addEventListener("click", (event) => {
+    const addTradeLink = event.target.closest("[data-stock-add-trade]");
+    if (addTradeLink && stockTableBody.contains(addTradeLink)) {
+      const sym = addTradeLink.getAttribute("data-stock-add-trade");
+      if (sym) {
+        void openStockRecordAndNewTradeDialog(sym);
+      }
+      return;
+    }
     const link = event.target.closest("[data-stock-record]");
     if (!link) {
       return;
@@ -2754,24 +2773,7 @@ function bindEvents() {
   });
 
   stockRecordAddTradeBtn?.addEventListener("click", async () => {
-    if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
-      return;
-    }
-    const symKey = normalizeSymbol(state.activeRecordSymbol);
-    const trade = state.trades.find((t) => normalizeSymbol(t.symbol) === symKey);
-    const quote = getQuoteBySymbol(symKey);
-    const positionName = (trade && trade.name) || (quote && quote.name) || "";
-    let name = getDisplayName(symKey, positionName);
-    const mkt = inferMarket(symKey);
-    if (apiReady && (mkt === "A股" || mkt === "港股") && !hasCnNameLabel(name)) {
-      await hydrateSymbolNameMap([symKey], { force: true });
-      name = getDisplayName(symKey, positionName);
-    }
-    const prefill = { symbol: symKey, name: String(name).trim() || symKey };
-    if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
-      prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
-    }
-    openNewTradeDialog(prefill);
+    await openAddTradePrefilledForActiveRecordSymbol();
   });
 
   communityProfileBody?.addEventListener("click", (event) => {
@@ -4430,7 +4432,10 @@ function bindPublicProfileAnalysisInteractions(d) {
   });
 }
 
-function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope, todayKey, liveByMode }) {
+function paintPublicProfileAnalysisCore(
+  d,
+  { useDbRows, dbRows, portfolio, scope, todayKey, liveByMode, perfSnap = null },
+) {
   const pubRate = document.getElementById("pubAnalysisRateChart");
   const pubRateTip = document.getElementById("pubAnalysisRateTooltip");
   const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
@@ -4518,7 +4523,21 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
     value: analysisTotalAssetsFromRow(row),
     flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
   }));
-  const selectedPh = resolveAnalysisRange(pseudoHistory);
+  const perfPresetKey = resolvePerformancePresetKeyFromStateLike(state);
+  let selectedPh = resolveAnalysisRange(pseudoHistory);
+  if (
+    perfPresetKey &&
+    (perfPresetKey === "last_7d" || perfPresetKey === "last_30d" || perfPresetKey === "last_90d") &&
+    Number(state.analysisPanOffset || 0) === 0
+  ) {
+    const len = perfPresetKey === "last_7d" ? 7 : perfPresetKey === "last_30d" ? 30 : 90;
+    const end = String(mergedFull[mergedFull.length - 1]?.date || todayKey).slice(0, 10);
+    const start = addCalendarDaysToDateKey(end, -(len - 1));
+    const alt = pseudoHistory.filter((p) => p.date >= start && p.date <= end);
+    if (alt.length >= 2) {
+      selectedPh = alt;
+    }
+  }
   const dateSet = new Set(selectedPh.map((p) => p.date));
   const sliceRows = mergedFull.filter((row) => dateSet.has(row.date));
 
@@ -4528,16 +4547,26 @@ function paintPublicProfileAnalysisCore(d, { useDbRows, dbRows, portfolio, scope
     flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
   }));
   const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : state.algoMode);
-  const mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
+  const bundle = buildAnalysisChartsSeriesBundle({
+    modePts,
+    selectedPh,
+    useMwrUi,
+    algoMode: state.algoMode,
+    perfSnap: perfSnap ?? null,
+  });
+  const mySeries = bundle.mySeries;
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   let headlineMwrPub = 0;
   if (useMwrUi && sliceRows.length) {
-    headlineMwrPub = analysisXirrForStage(
-      mergedFull,
-      String(sliceRows[0].date).slice(0, 10),
-      String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
-    );
+    if (bundle.cacheHeadlineMwr != null && Number.isFinite(bundle.cacheHeadlineMwr)) {
+      headlineMwrPub = bundle.cacheHeadlineMwr;
+    } else {
+      headlineMwrPub = analysisXirrForStage(
+        mergedFull,
+        String(sliceRows[0].date).slice(0, 10),
+        String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
+      );
+    }
   }
   bindRateOnly(mySeries, benchSeries, { mwrUi: useMwrUi, headlineMwr: headlineMwrPub });
   const pubAssetIdx = sliceRows.map((r) => ({
@@ -4576,12 +4605,33 @@ async function renderPublicProfileAnalysis(d) {
       }
       const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
       const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, []);
-      const pseudoHistory = sorted.map((row) => ({
+      const mergedFull = mergeAnalysisSliceWithLive(
+        sorted.map((row) => ({ ...row })),
+        portfolio,
+        todayKey,
+        liveByMode,
+        scope.cashTransfers,
+      );
+      const pseudoHistory = mergedFull.map((row) => ({
         date: row.date,
-        value: row.marketValue,
+        value: analysisTotalAssetsFromRow(row),
         flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
       }));
-      const selectedPh = resolveAnalysisRange(pseudoHistory);
+      const perfPresetKey = resolvePerformancePresetKeyFromStateLike(state);
+      let selectedPh = resolveAnalysisRange(pseudoHistory);
+      if (
+        perfPresetKey &&
+        (perfPresetKey === "last_7d" || perfPresetKey === "last_30d" || perfPresetKey === "last_90d") &&
+        Number(state.analysisPanOffset || 0) === 0
+      ) {
+        const len = perfPresetKey === "last_7d" ? 7 : perfPresetKey === "last_30d" ? 30 : 90;
+        const end = String(mergedFull[mergedFull.length - 1]?.date || todayKey).slice(0, 10);
+        const start = addCalendarDaysToDateKey(end, -(len - 1));
+        const alt = pseudoHistory.filter((p) => p.date >= start && p.date <= end);
+        if (alt.length >= 2) {
+          selectedPh = alt;
+        }
+      }
       const symSet = new Set();
       for (const pos of portfolio.positions || []) {
         const ns = normalizeSymbol(pos.symbol);
@@ -4597,6 +4647,10 @@ async function renderPublicProfileAnalysis(d) {
       }
       const win = Math.min(900, Math.max(120, selectedPh.length + 200));
       await fetchSymbolCloseIntoKlineMap([...symSet], win);
+      let perfSnap = null;
+      if (apiReady && perfPresetKey && detail.userId) {
+        perfSnap = await fetchCommunityPerformancePresetRemote(String(detail.userId), perfPresetKey);
+      }
       paintPublicProfileAnalysisCore(detail, {
         useDbRows: true,
         dbRows,
@@ -4604,6 +4658,7 @@ async function renderPublicProfileAnalysis(d) {
         scope,
         todayKey,
         liveByMode,
+        perfSnap,
       });
     });
   });
@@ -6154,7 +6209,7 @@ function renderTradeTable() {
   if (!trades.length) {
     tradeTableBody.innerHTML = `
       <tr>
-        <td colspan="7"><p class="empty">暂无交易记录，请点击「新增交易记录」添加。</p></td>
+        <td colspan="8"><p class="empty">暂无交易记录，请点击「新增交易记录」添加。</p></td>
       </tr>
     `;
     return;
@@ -6162,6 +6217,8 @@ function renderTradeTable() {
   const sorted = [...trades].sort(sortTradeDesc);
   tradeTableBody.innerHTML = sorted
     .map((trade) => {
+      const acc = getAccountById(trade.accountId);
+      const accLabel = escapeHtml(acc.name || trade.accountId || "default");
       return `
         <tr class="trade-row trade-row--clickable" data-record-id="${escapeHtml(String(trade.id))}">
           <td>${trade.date.replace(/-/g, "/")}</td>
@@ -6172,6 +6229,7 @@ function renderTradeTable() {
           <td class="num ${trade.side === "buy" ? "down" : "up"}">${
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>
+          <td class="trade-account-cell">${accLabel}</td>
           <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
         </tr>
       `;
@@ -6923,7 +6981,7 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
           <td class="${totalClass}">${tdTotal}</td>
           <td class="${totalRateClass}">${tdTotalR}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
-          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(row.symbol)}">记录</a></td>
+          <td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(row.symbol)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(row.symbol)}">交易</a></td>
         </tr>
       `;
     })
@@ -7244,26 +7302,27 @@ async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   }
 }
 
-function resolvePerformancePresetKeyFromAnalysisState() {
-  if (state.analysisRangeMode === "custom") {
+function resolvePerformancePresetKeyFromStateLike(like) {
+  const arm = String(like?.analysisRangeMode ?? "preset");
+  if (arm === "custom") {
     return null;
   }
-  if (state.analysisRangeMode === "all") {
+  if (arm === "all") {
     return "inception";
   }
-  if (state.analysisRangeMode !== "preset") {
+  if (arm !== "preset") {
     return null;
   }
-  if (state.analysisPreset === "mtd") {
+  if (like?.analysisPreset === "mtd") {
     return "mtd";
   }
-  if (state.analysisPreset === "ytd") {
+  if (like?.analysisPreset === "ytd") {
     return "ytd";
   }
-  if (Number(state.analysisPanOffset || 0) !== 0) {
+  if (Number(like?.analysisPanOffset || 0) !== 0) {
     return null;
   }
-  const rd = Number(state.rangeDays);
+  const rd = Number(like?.rangeDays);
   if (rd === 7) {
     return "last_7d";
   }
@@ -7274,6 +7333,10 @@ function resolvePerformancePresetKeyFromAnalysisState() {
     return "last_90d";
   }
   return null;
+}
+
+function resolvePerformancePresetKeyFromAnalysisState() {
+  return resolvePerformancePresetKeyFromStateLike(state);
 }
 
 function parsePerformanceTwrSeriesPayload(raw) {
@@ -7304,6 +7367,46 @@ async function fetchAnalysisPerformancePresetRemote(accountId, preset) {
       `${getApiBaseForFetch()}/snapshot/performance-preset?accountId=${encodeURIComponent(
         aid,
       )}&preset=${encodeURIComponent(preset)}`,
+      { cache: "no-store", timeoutMs: 15_000 },
+    );
+    if (!res.ok) {
+      return null;
+    }
+    const j = await res.json().catch(() => ({}));
+    if (!j?.ok || !j.data) {
+      return null;
+    }
+    const d = j.data;
+    const twrSeries = d.twr?.series && typeof d.twr.series === "object" ? d.twr.series : null;
+    const twrPayload = parsePerformanceTwrSeriesPayload(twrSeries);
+    if (!twrPayload || twrPayload.ruleVersion < ANALYSIS_PERFORMANCE_RULE_VERSION) {
+      return null;
+    }
+    return {
+      asOfDate: String(d.asOfDate || "").slice(0, 10),
+      twrPayload,
+      periodReturnTwr: Number(d.twr?.periodReturn) || 0,
+      periodReturnMwr: Number(d.mwr?.periodReturn) || 0,
+      mwrRuleVersion: Number(d.mwr?.ruleVersion) || 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCommunityPerformancePresetRemote(targetUserId, preset) {
+  if (!apiReady) {
+    return null;
+  }
+  const tid = String(targetUserId || "").trim();
+  if (!tid || !preset) {
+    return null;
+  }
+  try {
+    const res = await apiFetch(
+      `${getApiBaseForFetch()}/community/users/${encodeURIComponent(
+        tid,
+      )}/performance-preset?accountId=all&preset=${encodeURIComponent(preset)}`,
       { cache: "no-store", timeoutMs: 15_000 },
     );
     if (!res.ok) {
@@ -7398,6 +7501,31 @@ function buildAnalysisRateProfitFromPerfCache(twrPayload, selectedOrderedDates, 
     }
   }
   return { mySeries, profitSeries };
+}
+
+function buildAnalysisChartsSeriesBundle({ modePts, selectedPh, useMwrUi, algoMode, perfSnap }) {
+  const selectedOrderedDates = selectedPh.map((p) => String(p.date).slice(0, 10));
+  const fromCache = perfSnap
+    ? buildAnalysisRateProfitFromPerfCache(perfSnap.twrPayload, selectedOrderedDates, perfSnap.asOfDate, modePts)
+    : null;
+  if (fromCache) {
+    let cacheHeadlineMwr = null;
+    if (
+      useMwrUi &&
+      perfSnap &&
+      Number(perfSnap.mwrRuleVersion) >= ANALYSIS_PERFORMANCE_RULE_VERSION &&
+      Number.isFinite(perfSnap.periodReturnMwr)
+    ) {
+      cacheHeadlineMwr = perfSnap.periodReturnMwr;
+    }
+    return { mySeries: fromCache.mySeries, profitSeries: fromCache.profitSeries, cacheHeadlineMwr };
+  }
+  const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : algoMode);
+  return {
+    mySeries: rebaseRateSeriesByFirstDay(mySeriesRaw),
+    profitSeries: buildProfitSeries(modePts),
+    cacheHeadlineMwr: null,
+  };
 }
 
 const SYMBOL_SNAPSHOT_CHUNK = 14;
@@ -7596,20 +7724,15 @@ async function renderAnalysis(options = {}) {
   if (renderRequestId !== analysisRenderRequestSeq) {
     return;
   }
-  const selectedOrderedDates = selectedPh.map((p) => String(p.date).slice(0, 10));
-  const fromCache = perfSnap
-    ? buildAnalysisRateProfitFromPerfCache(perfSnap.twrPayload, selectedOrderedDates, perfSnap.asOfDate, modePts)
-    : null;
-  let mySeries;
-  let profitSeries;
-  if (fromCache) {
-    mySeries = fromCache.mySeries;
-    profitSeries = fromCache.profitSeries;
-  } else {
-    const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : state.algoMode);
-    mySeries = rebaseRateSeriesByFirstDay(mySeriesRaw);
-    profitSeries = buildProfitSeries(modePts);
-  }
+  const bundle = buildAnalysisChartsSeriesBundle({
+    modePts,
+    selectedPh,
+    useMwrUi,
+    algoMode: state.algoMode,
+    perfSnap,
+  });
+  const mySeries = bundle.mySeries;
+  const profitSeries = bundle.profitSeries;
   const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
   const assetSeries = sliceRows.map((row) => {
     const mv = Number(row.marketValue) || 0;
@@ -7724,12 +7847,8 @@ async function renderAnalysis(options = {}) {
   /** 与曲线、tooltip 同一序列 */
   let headlineMwr = 0;
   if (useMwrUi && sliceRows.length) {
-    if (
-      perfSnap &&
-      Number(perfSnap.mwrRuleVersion) >= ANALYSIS_PERFORMANCE_RULE_VERSION &&
-      Number.isFinite(perfSnap.periodReturnMwr)
-    ) {
-      headlineMwr = perfSnap.periodReturnMwr;
+    if (bundle.cacheHeadlineMwr != null && Number.isFinite(bundle.cacheHeadlineMwr)) {
+      headlineMwr = bundle.cacheHeadlineMwr;
     } else {
       headlineMwr = analysisXirrForStage(
         mergedFull,
@@ -7838,6 +7957,35 @@ function buildProfitSeries(points) {
   return rebaseValueSeriesByFirstDay(raw, "value");
 }
 
+async function openAddTradePrefilledForActiveRecordSymbol() {
+  if (state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
+    return;
+  }
+  const symKey = normalizeSymbol(state.activeRecordSymbol);
+  const trade = state.trades.find((t) => normalizeSymbol(t.symbol) === symKey);
+  const quote = getQuoteBySymbol(symKey);
+  const positionName = (trade && trade.name) || (quote && quote.name) || "";
+  let name = getDisplayName(symKey, positionName);
+  const mkt = inferMarket(symKey);
+  if (apiReady && (mkt === "A股" || mkt === "港股") && !hasCnNameLabel(name)) {
+    await hydrateSymbolNameMap([symKey], { force: true });
+    name = getDisplayName(symKey, positionName);
+  }
+  const prefill = { symbol: symKey, name: String(name).trim() || symKey };
+  if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
+    prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
+  }
+  openNewTradeDialog(prefill);
+}
+
+async function openStockRecordAndNewTradeDialog(symbol) {
+  if (state.stockRecordFromPublicProfile) {
+    return;
+  }
+  await openStockRecordDialog(symbol);
+  await openAddTradePrefilledForActiveRecordSymbol();
+}
+
 async function openStockRecordDialog(symbol, opts = {}) {
   state.stockRecordFromPublicProfile = opts.fromPublicProfile === true;
   state.activeRecordSymbol = symbol;
@@ -7924,8 +8072,8 @@ async function renderStockRecordPage(symbol) {
   }
   if (headRow) {
     headRow.innerHTML = usePub
-      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th class="trade-note-head">备注</th>`
-      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th class=\"trade-note-head\">备注</th>";
+      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th>股票账户</th><th class="trade-note-head">备注</th>`
+      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th><th class=\"trade-note-head\">备注</th>";
   }
 
   stockRecordListBody.innerHTML = symbolTrades
@@ -7935,12 +8083,14 @@ async function renderStockRecordPage(symbol) {
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
         <td>${formatNumber(trade.price, 2)}</td>`;
+      const accCell = `<td class="trade-account-cell">${formatTradeAccountCellHtml(trade, usePub ? detail : null)}</td>`;
       if (usePub) {
         const share = publicTradeAmountShareOfLatestMv(trade, detail);
         const shareCell =
           share != null && Number.isFinite(share) ? formatPercent(share) : "—";
         return `${rowCore}
         <td class="num">${shareCell}</td>
+        ${accCell}
         <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
       }
@@ -7950,6 +8100,7 @@ async function renderStockRecordPage(symbol) {
           trade.amount,
           2,
         )}</td>
+        ${accCell}
         <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
       </tr>`;
     })

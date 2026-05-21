@@ -19,6 +19,7 @@ const {
   formatSymbolForDisplay,
   getAnalysisDailySnapshots,
   getSettings,
+  getAccounts,
 } = require("./db");
 const { fetchTencentQuoteMetaForSymbols } = require("./tencent-quote-meta");
 
@@ -572,6 +573,14 @@ async function getPublicProfileDetail(viewerId, targetId) {
     : { marketValue: 0, profitCnyDay: 0 };
 
   const settings = await getSettings(tid);
+  const accRows = await getAccounts(tid);
+  const publicAccountNames = Object.fromEntries(
+    (accRows || []).map((a) => {
+      const id = String(a.id || "default").trim() || "default";
+      const nm = String(a.name || "").trim();
+      return [id, nm || id];
+    }),
+  );
   const capRaw = Number(settings.capitalAmount) || 0;
   const panOff = Number(settings.analysisPanOffset);
   const analysisPanOffset = Number.isFinite(panOff) ? panOff : 0;
@@ -617,6 +626,7 @@ async function getPublicProfileDetail(viewerId, targetId) {
     publicLatestMarketValueCny: lastSnap ? Number(lastSnap.market_value || 0) : 0,
     publicCapitalAmount: capRaw * f,
     publicTrades,
+    publicAccountNames,
     analysisDaily,
     publicAlgoMode: normalizePublicAlgoMode(settings.algoMode),
     publicOverviewBookCurrency: overviewBookCurrencyFromSettings(settings),

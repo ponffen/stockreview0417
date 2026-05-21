@@ -1165,6 +1165,34 @@ app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) 
   }
 });
 
+app.get("/api/community/users/:targetId/performance-preset", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const preset = req.query.preset != null ? String(req.query.preset).trim() : "";
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "all";
+    const asOfDate =
+      req.query.asOfDate != null && String(req.query.asOfDate).trim()
+        ? String(req.query.asOfDate).trim().slice(0, 10)
+        : "";
+    if (!targetId || !PERFORMANCE_PRESET_API_KEYS.has(preset)) {
+      res.status(400).json({ ok: false, error: "invalid request" });
+      return;
+    }
+    const viewerId = String(req.userId || "").trim();
+    const isSelf = viewerId === targetId;
+    const row = await getUserCommunityRow(targetId);
+    if (!row || (!isSelf && !Number(row.community_public))) {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    const snap = await getPerformancePresetSnapshot(targetId, accountId || "all", preset, asOfDate || null);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: jsonPerformancePresetFromSnap(snap, preset) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "community performance preset failed" });
+  }
+});
+
 app.post("/api/community/follow/:targetId", requireAuth, async (req, res) => {
   const targetId = String(req.params.targetId || "").trim();
   if (!targetId) {
@@ -1635,6 +1663,46 @@ app.get("/api/snapshot/watermark", async (_req, res) => {
 
 const PERFORMANCE_PRESET_API_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
 
+function jsonPerformancePresetFromSnap(snap, preset) {
+  if (!snap) {
+    return { preset, asOfDate: null, twr: null, mwr: null };
+  }
+  let twrSeries = null;
+  if (snap.twr?.seriesJson) {
+    try {
+      twrSeries = JSON.parse(snap.twr.seriesJson);
+    } catch {
+      twrSeries = null;
+    }
+  }
+  let mwrSeries = null;
+  if (snap.mwr?.seriesJson) {
+    try {
+      mwrSeries = JSON.parse(snap.mwr.seriesJson);
+    } catch {
+      mwrSeries = null;
+    }
+  }
+  return {
+    preset,
+    asOfDate: snap.asOfDate,
+    twr: snap.twr
+      ? {
+          periodReturn: snap.twr.periodReturn,
+          ruleVersion: snap.twr.ruleVersion,
+          series: twrSeries,
+        }
+      : null,
+    mwr: snap.mwr
+      ? {
+          periodReturn: snap.mwr.periodReturn,
+          ruleVersion: snap.mwr.ruleVersion,
+          series: mwrSeries,
+        }
+      : null,
+  };
+}
+
 app.get("/api/snapshot/performance-preset", requireAuth, async (req, res) => {
   try {
     const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
@@ -1648,49 +1716,8 @@ app.get("/api/snapshot/performance-preset", requireAuth, async (req, res) => {
       return;
     }
     const snap = await getPerformancePresetSnapshot(req.userId, accountId || "all", preset, asOfDate || null);
-    if (!snap) {
-      res.setHeader("Cache-Control", "no-store");
-      res.json({ ok: true, data: { preset, asOfDate: null, twr: null, mwr: null } });
-      return;
-    }
-    let twrSeries = null;
-    if (snap.twr?.seriesJson) {
-      try {
-        twrSeries = JSON.parse(snap.twr.seriesJson);
-      } catch {
-        twrSeries = null;
-      }
-    }
-    let mwrSeries = null;
-    if (snap.mwr?.seriesJson) {
-      try {
-        mwrSeries = JSON.parse(snap.mwr.seriesJson);
-      } catch {
-        mwrSeries = null;
-      }
-    }
     res.setHeader("Cache-Control", "no-store");
-    res.json({
-      ok: true,
-      data: {
-        preset,
-        asOfDate: snap.asOfDate,
-        twr: snap.twr
-          ? {
-              periodReturn: snap.twr.periodReturn,
-              ruleVersion: snap.twr.ruleVersion,
-              series: twrSeries,
-            }
-          : null,
-        mwr: snap.mwr
-          ? {
-              periodReturn: snap.mwr.periodReturn,
-              ruleVersion: snap.mwr.ruleVersion,
-              series: mwrSeries,
-            }
-          : null,
-      },
-    });
+    res.json({ ok: true, data: jsonPerformancePresetFromSnap(snap, preset) });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "performance preset snapshot failed" });
   }
