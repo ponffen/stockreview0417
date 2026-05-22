@@ -1108,8 +1108,7 @@ async function getHomeBootstrap(userId) {
     const settings = await getSettings("");
     return { ...settings, accounts: settings.accounts || [], dataVersion: 0, rebuilding: false, frozenThrough: null };
   }
-  const settings = await getSettings(uid);
-  const um = await getUserMetricsMeta(uid);
+  const [settings, um] = await Promise.all([getSettings(uid), getUserMetricsMeta(uid, { light: true })]);
   return {
     ...settings,
     accounts: settings.accounts || [],
@@ -1136,13 +1135,22 @@ async function ensureMetricsOpsTables() {
   return metricsOpsSchemaPromise;
 }
 
-async function getUserMetricsMeta(userId) {
+async function getUserMetricsMeta(userId, opts = {}) {
   const uid = String(userId || "").trim();
   if (!uid) return { dataVersion: 0, rebuilding: false, frozenThrough: null };
-  await ensureMetricsOpsTables();
-  const { rows } = await q(`SELECT data_version, rebuilding, frozen_through FROM user_metrics_meta WHERE user_id = $1`, [uid]);
+  const light = opts.light === true;
+  if (!light) {
+    await ensureMetricsOpsTables();
+  }
+  const { rows } = await q(
+    `SELECT data_version, rebuilding, frozen_through FROM user_metrics_meta WHERE user_id = $1`,
+    [uid]
+  );
   const row = rows[0];
   if (!row) {
+    if (light) {
+      return { dataVersion: 0, rebuilding: false, frozenThrough: null };
+    }
     const frozen = await getLatestAnalysisSnapshotDate(uid, "all");
     return { dataVersion: 0, rebuilding: false, frozenThrough: frozen || null };
   }
@@ -1153,11 +1161,16 @@ async function getUserMetricsMeta(userId) {
   };
 }
 
+/** cron / 首次写入前：home_summary + metrics 运维表幂等建表（勿放在首屏 bootstrap）。 */
+async function ensureAppDerivedTables() {
+  await Promise.all([ensureHomeSummaryTables(), ensureMetricsOpsTables()]);
+}
+
 async function upsertUserMetricsMeta(userId, patch = {}) {
   const uid = String(userId || "").trim();
   if (!uid) return;
   await ensureMetricsOpsTables();
-  const cur = await getUserMetricsMeta(uid);
+  const cur = await getUserMetricsMeta(uid, { light: true });
   const dataVersion = patch.dataVersion != null ? Number(patch.dataVersion) : cur.dataVersion;
   const rebuilding = patch.rebuilding != null ? !!patch.rebuilding : cur.rebuilding;
   const frozenThrough = patch.frozenThrough !== undefined ? patch.frozenThrough : cur.frozenThrough;
@@ -1478,6 +1491,7 @@ async function upsertAccountHomeSummaryRow(input, userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   const r = input || {};
   const now = validNumber(r.computedAt, r.computed_at, nowMs());
+  await ensureHomeSummaryTables();
   await q(
     `INSERT INTO account_home_summary (
        user_id, account_scope, frozen_through, first_trade_date, last_market_value_cny,
@@ -1545,6 +1559,7 @@ async function upsertSymbolHomeSummaryBatch(rows, userId = null, accountScope = 
   if (!uid || !list.length) {
     return 0;
   }
+  await ensureHomeSummaryTables();
   const p = await initPool();
   const c = await p.connect();
   try {
@@ -2569,6 +2584,8 @@ module.exports = {
   getPerformancePresetSnapshot,
   upsertPerformanceSeriesCacheRow,
   ensureHomeSummaryTables,
+  ensureMetricsOpsTables,
+  ensureAppDerivedTables,
   deleteHomeSummaryForUser,
   deleteSymbolHomeSummaryForScope,
   upsertAccountHomeSummaryRow,

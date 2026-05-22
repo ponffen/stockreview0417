@@ -1464,7 +1464,6 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
 
 app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
   try {
-    await ensureHomeSummaryTables();
     const data = await getHomeBootstrap(req.userId);
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data });
@@ -1475,7 +1474,6 @@ app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
 
 app.get("/api/metrics/returns", requireAuth, async (req, res) => {
   try {
-    await ensureHomeSummaryTables();
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
     sendMetricsJson(res, await getMetricsReturns(req.userId, accountScope, req.query.stages));
   } catch (error) {
@@ -1485,7 +1483,6 @@ app.get("/api/metrics/returns", requireAuth, async (req, res) => {
 
 app.get("/api/metrics/assets", requireAuth, async (req, res) => {
   try {
-    await ensureHomeSummaryTables();
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
     sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
   } catch (error) {
@@ -1526,7 +1523,6 @@ app.get("/api/series/daily-asset", requireAuth, async (req, res) => {
 
 app.get("/api/holdings", requireAuth, async (req, res) => {
   try {
-    await ensureHomeSummaryTables();
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
     sendMetricsJson(res, await getHoldings(req.userId, accountScope));
   } catch (error) {
@@ -1558,7 +1554,6 @@ app.get("/api/public/:targetId/metrics/returns", requireAuth, async (req, res) =
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
     if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    await ensureHomeSummaryTables();
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
     sendMetricsJson(res, await getMetricsReturns(gate.userId, accountScope, req.query.stages));
   } catch (error) {
@@ -1819,6 +1814,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
   }
   const startedAt = Date.now();
   try {
+    await ensureAppDerivedTables();
     const forcedDate = req.query?.frozenDate || req.body?.frozenDate;
     const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
     const syncDailyClose = parseBooleanInput(req.query?.syncDailyClose ?? req.body?.syncDailyClose, false);
@@ -1862,6 +1858,7 @@ app.all("/api/cron/sync-daily-close", async (req, res) => {
   }
   const startedAt = Date.now();
   try {
+    await ensureAppDerivedTables();
     const asOfDate = req.query?.asOfDate || req.body?.asOfDate;
     const bodySymbols = Array.isArray(req.body?.symbols) ? req.body.symbols : [];
     const querySymbols = sanitizeSymbolList(req.query?.symbols);
