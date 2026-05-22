@@ -100,6 +100,11 @@ const VERCEL_DB_SLOT_MAX = Math.min(
 let vercelDbSlotsInUse = 0;
 const vercelDbSlotWaiters = [];
 
+const VERCEL_DB_SLOT_WAIT_MS = Math.max(
+  1000,
+  Math.min(25_000, Number(process.env.VERCEL_DB_SLOT_WAIT_MS || 12_000))
+);
+
 function acquireVercelDbSlot() {
   if (!process.env.VERCEL) {
     return Promise.resolve();
@@ -108,8 +113,12 @@ function acquireVercelDbSlot() {
     vercelDbSlotsInUse += 1;
     return Promise.resolve();
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`vercel db slot wait timeout after ${VERCEL_DB_SLOT_WAIT_MS}ms`));
+    }, VERCEL_DB_SLOT_WAIT_MS);
     vercelDbSlotWaiters.push(() => {
+      clearTimeout(timer);
       vercelDbSlotsInUse += 1;
       resolve();
     });
@@ -126,6 +135,104 @@ function releaseVercelDbSlot() {
     next();
   }
 }
+async function withVercelDbClient(fn) {
+  if (!process.env.VERCEL) {
+    throw new Error("withVercelDbClient only for VERCEL");
+  }
+  const dbUrl = getPgConnectionString();
+  if (!dbUrl) {
+    throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
+  }
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+  const hardTimeoutMs = Math.max(1000, Number(process.env.DATABASE_PING_HARD_TIMEOUT_MS || connectMs + 2000));
+  await acquireVercelDbSlot();
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: getSslOption(),
+    connectionTimeoutMillis: connectMs,
+    query_timeout: connectMs,
+  });
+  const withHardTimeout = (promise, stage) => {
+    let timerId = null;
+    return new Promise((resolve, reject) => {
+      timerId = setTimeout(() => {
+        reject(new Error(`database ${stage} timeout after ${hardTimeoutMs}ms`));
+      }, hardTimeoutMs);
+      promise.then(
+        (v) => {
+          if (timerId) clearTimeout(timerId);
+          resolve(v);
+        },
+        (err) => {
+          if (timerId) clearTimeout(timerId);
+          reject(err);
+        }
+      );
+    });
+  };
+  try {
+    await withHardTimeout(client.connect(), "connect");
+    return await fn(client);
+  } finally {
+    try {
+      await client.end().catch(() => {});
+    } finally {
+      releaseVercelDbSlot();
+    }
+  }
+}
+
+function applyAppSettingsRows(settings, rows) {
+  for (const row of rows || []) {
+    if (row.key === "accounts") {
+      continue;
+    }
+    if (!(row.key in settings)) {
+      continue;
+    }
+    try {
+      settings[row.key] = JSON.parse(row.value);
+    } catch {
+      settings[row.key] = row.value;
+    }
+  }
+}
+
+async function getHomeBootstrapWithClient(client, uid) {
+  const settings = { ...DEFAULT_SETTINGS };
+  const sres = await client.query("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]);
+  applyAppSettingsRows(settings, sres.rows);
+  const ares = await client.query(
+    "SELECT id, name, currency, created_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC, id ASC",
+    [uid]
+  );
+  settings.accounts = ares.rows.map(rowToAccount);
+  let um = { dataVersion: 0, rebuilding: false, frozenThrough: null };
+  try {
+    const mres = await client.query(
+      "SELECT data_version, rebuilding, frozen_through FROM user_metrics_meta WHERE user_id = $1",
+      [uid]
+    );
+    const row = mres.rows[0];
+    if (row) {
+      um = {
+        dataVersion: Number(row.data_version) || 0,
+        rebuilding: row.rebuilding === true,
+        frozenThrough: row.frozen_through || null,
+      };
+    }
+  } catch {
+    // 表未建时忽略，cron/写入路径会 ensure
+  }
+  return {
+    ...settings,
+    accounts: settings.accounts || [],
+    dataVersion: um.dataVersion,
+    rebuilding: um.rebuilding,
+    frozenThrough: um.frozenThrough,
+  };
+}
+
 
 async function ensureSnapshotWatermarkTable() {
   if (snapshotWatermarkTableReadyPromise) {
@@ -1107,6 +1214,9 @@ async function getHomeBootstrap(userId) {
   if (!uid) {
     const settings = await getSettings("");
     return { ...settings, accounts: settings.accounts || [], dataVersion: 0, rebuilding: false, frozenThrough: null };
+  }
+  if (process.env.VERCEL) {
+    return withVercelDbClient((client) => getHomeBootstrapWithClient(client, uid));
   }
   const [settings, um] = await Promise.all([getSettings(uid), getUserMetricsMeta(uid, { light: true })]);
   return {
