@@ -1463,11 +1463,14 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
 });
 
 app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
+  const started = Date.now();
   try {
     const data = await getHomeBootstrap(req.userId);
+    console.log("[home.bootstrap] ok ms=%d uid=%s", Date.now() - started, req.userId);
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data });
   } catch (error) {
+    console.error("[home.bootstrap] fail ms=%d msg=%s", Date.now() - started, error?.message || error);
     res.status(500).json({ ok: false, error: error.message || "home bootstrap failed" });
   }
 });
