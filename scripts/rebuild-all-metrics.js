@@ -1,13 +1,53 @@
 #!/usr/bin/env node
 /**
  * 全量重算：从首笔成交日至昨日逐日 freeze + home_summary。
- * 用法: DATABASE_URL=... node scripts/rebuild-all-metrics.js
+ * 用法:
+ *   DATABASE_URL=... node scripts/rebuild-all-metrics.js
+ *   DATABASE_URL=... REBUILD_USER_ID=<uuid> node scripts/rebuild-all-metrics.js
  */
 require("dotenv").config();
 const { listAllUserIds, getTrades, upsertUserMetricsMeta } = require("../src/db");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 const { rebuildHomeSummaryForUser } = require("../src/home-summary-service");
 const { addCalendarDays } = require("../src/metrics/stages");
+
+const USER_DELAY_MS = Math.max(0, Number(process.env.REBUILD_USER_DELAY_MS || 8000));
+const FREEZE_RETRY_MAX = Math.max(1, Number(process.env.REBUILD_FREEZE_RETRY_MAX || 4));
+const FREEZE_RETRY_BASE_MS = Math.max(500, Number(process.env.REBUILD_FREEZE_RETRY_BASE_MS || 2000));
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransientDbError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("conn crashed") ||
+    msg.includes("connect failed") ||
+    msg.includes("server login has been failing") ||
+    msg.includes("connection terminated") ||
+    msg.includes("econnreset") ||
+    msg.includes("timeout")
+  );
+}
+
+async function withRetries(label, fn) {
+  let last;
+  for (let i = 0; i < FREEZE_RETRY_MAX; i += 1) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (!isTransientDbError(e) || i >= FREEZE_RETRY_MAX - 1) {
+        throw e;
+      }
+      const wait = FREEZE_RETRY_BASE_MS * (i + 1);
+      console.warn(`[retry] ${label} attempt=${i + 1} wait=${wait}ms`, e?.message || e);
+      await sleep(wait);
+    }
+  }
+  throw last;
+}
 
 function enumerateDatesInclusive(start, end) {
   const out = [];
@@ -32,10 +72,17 @@ async function rebuildUser(uid) {
   const dates = enumerateDatesInclusive(start, end);
   console.log("[user]", uid, "dates", dates.length, start, "->", end);
   await upsertUserMetricsMeta(uid, { rebuilding: true, rebuildFrom: start });
+  let done = 0;
   for (const d of dates) {
-    await freezeUserToDate(uid, d, { logger: console, force: true, syncDailyClose: false });
+    await withRetries(`freeze ${uid} ${d}`, () =>
+      freezeUserToDate(uid, d, { logger: console, force: true, syncDailyClose: false })
+    );
+    done += 1;
+    if (done % 50 === 0) {
+      console.log("[progress]", uid, `${done}/${dates.length}`, d);
+    }
   }
-  const hr = await rebuildHomeSummaryForUser(uid);
+  const hr = await withRetries(`home-summary ${uid}`, () => rebuildHomeSummaryForUser(uid));
   await upsertUserMetricsMeta(uid, {
     rebuilding: false,
     frozenThrough: end,
@@ -45,14 +92,27 @@ async function rebuildUser(uid) {
 }
 
 async function main() {
-  const userIds = await listAllUserIds();
-  console.log("[rebuild-all-metrics] users=", userIds.length);
-  for (const uid of userIds) {
+  const only = String(process.env.REBUILD_USER_ID || "").trim();
+  let userIds = await listAllUserIds();
+  if (only) {
+    userIds = userIds.filter((id) => id === only);
+    if (!userIds.length) {
+      console.error("[rebuild-all-metrics] user not found:", only);
+      process.exit(1);
+    }
+  }
+  console.log("[rebuild-all-metrics] users=", userIds.length, only ? `(only ${only})` : "");
+  for (let i = 0; i < userIds.length; i += 1) {
+    const uid = userIds[i];
     try {
       await rebuildUser(uid);
     } catch (e) {
       console.error("[fail]", uid, e?.message || e);
       await upsertUserMetricsMeta(uid, { rebuilding: false }).catch(() => {});
+    }
+    if (i < userIds.length - 1 && USER_DELAY_MS > 0) {
+      console.log("[rebuild-all-metrics] pause", USER_DELAY_MS, "ms before next user");
+      await sleep(USER_DELAY_MS);
     }
   }
   console.log("[rebuild-all-metrics] finished");
