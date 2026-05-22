@@ -259,6 +259,11 @@ const symbolNamePendingUpsertBySymbol = new Map();
 let symbolNameUpsertFlushTimer = null;
 /** 与 session 对齐，避免 lite 启动后重复打 trades/cash/daily 三接口 */
 let ledgerBootstrapCompleteForUid = "";
+
+/** 首屏收益/资产走 metrics API；成交/银证仅在交易相关路由或回退计算时加载 */
+function routeNeedsLedgerData(route) {
+  return route === "trade-records" || route === "trade-cash" || route === "stock-record";
+}
 let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
@@ -711,23 +716,32 @@ async function startAppAfterAuth(options = {}) {
     persistState();
   }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
-  void hydrateSymbolNameMap(
-    state.route === "earning" || state.route === "analysis"
-      ? collectSymbolsForMarket()
-      : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
-  ).then(() => {
+  const symForNames =
+    state.route === "earning"
+      ? []
+      : state.route === "analysis"
+        ? collectSymbolsForMarket()
+        : normalizeSymbolList(state.trades.map((trade) => trade.symbol));
+  void hydrateSymbolNameMap(symForNames).then(() => {
     renderAll();
   });
   renderAll();
-  void refreshMarketData({ skipFinalRender: true }).finally(() => {
-    renderAll();
-    if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
-      refreshPublicProfileEarningPanel();
-      if (state.communityProfileTab === "analysis") {
-        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+  if (state.route === "earning") {
+    // 首屏：服务端 metrics 已含 L2 现价/今日盈亏，不拉 trades/cash，也不打腾讯 quote
+    void refreshOverviewProfitRowFromSnapshots().finally(() => {
+      renderAll();
+    });
+  } else {
+    void refreshMarketData({ skipFinalRender: true }).finally(() => {
+      renderAll();
+      if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
+        refreshPublicProfileEarningPanel();
+        if (state.communityProfileTab === "analysis") {
+          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        }
       }
-    }
-  });
+    });
+  }
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
@@ -1906,7 +1920,9 @@ async function hydrateState() {
     }
   }
   if (apiReady && sessionPhone && (bootstrapKind === "lite" || bootstrapKind === "home")) {
-    await ensureLedgerDataLoaded();
+    if (routeNeedsLedgerData(state.route)) {
+      void ensureLedgerDataLoaded();
+    }
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
@@ -3045,6 +3061,7 @@ function syncTradeAmountFromPriceQuantity() {
 }
 
 function openNewTradeDialog(prefill) {
+  void ensureLedgerDataLoaded();
   clearEditState();
   tradeForm.reset();
   tradeTypeInput.value = "trade";
@@ -3211,7 +3228,7 @@ function renderAll() {
   } else if (state.route === "analysis") {
     void renderAnalysis();
   } else if (state.route === "trade-records" || state.route === "trade-cash") {
-    renderTradeTable();
+    void renderTradeTablesWithLedger();
   } else if (state.route === "trade-search") {
     /* 搜索股票页：表格在二级页，此处不渲染 */
   } else if (state.route === "stock-record" && state.activeRecordSymbol) {
@@ -6254,6 +6271,11 @@ function renderAnalysisStockRank(
     </div>`;
 }
 
+async function renderTradeTablesWithLedger() {
+  await ensureLedgerDataLoaded();
+  renderTradeTable();
+}
+
 function syncTradePanelTabUi() {
   const isCash = state.tradePanelTab === "cash";
   tradeSubtabTrades?.classList.toggle("is-active", !isCash);
@@ -7428,6 +7450,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
       return;
     }
   }
+  await ensureLedgerDataLoaded();
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const vis = portfolio.visiblePositions;

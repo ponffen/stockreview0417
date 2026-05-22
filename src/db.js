@@ -2684,6 +2684,7 @@ module.exports = {
   insertCronJobRun,
   listCronJobRuns,
   buildAccountKpiSurfaceForScope,
+  resolveBookCurrencyForAccountScope,
   getSymbolDailyPnl,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
