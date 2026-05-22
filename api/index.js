@@ -316,6 +316,113 @@ module.exports = async function handler(req, res) {
     }
   }
 
+  // --------- 直连：首屏 bootstrap + 热路径 metrics（绕过 serverless-http，避免 300s 挂起）---------
+  const isHomeBootstrapDirect = req.method === "GET" && pathOnly === "/api/home/bootstrap";
+  const isMetricsReturnsDirect = req.method === "GET" && pathOnly === "/api/metrics/returns";
+  const isMetricsAssetsDirect = req.method === "GET" && pathOnly === "/api/metrics/assets";
+  const isHoldingsDirect = req.method === "GET" && pathOnly === "/api/holdings";
+  const isAccountKpisDirect = req.method === "GET" && pathOnly === "/api/surface/account-kpis";
+
+  if (
+    isHomeBootstrapDirect ||
+    isMetricsReturnsDirect ||
+    isMetricsAssetsDirect ||
+    isHoldingsDirect ||
+    isAccountKpisDirect
+  ) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    const started = Date.now();
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+
+      if (isHomeBootstrapDirect) {
+        const { getHomeBootstrap } = require("../src/db");
+        const data = await getHomeBootstrap(userId);
+        console.log(
+          "[api/index.js] direct home/bootstrap ok ms=%d uid=%s",
+          Date.now() - started,
+          userId
+        );
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isAccountKpisDirect) {
+        const { buildAccountKpiSurfaceForScope } = require("../src/db");
+        const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+        const surface = await buildAccountKpiSurfaceForScope(userId, accountScope);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: surface, accountScope }));
+        return;
+      }
+
+      const {
+        getMetricsReturns,
+        getMetricsAssets,
+        getHoldings,
+      } = require("../src/metrics-api-service");
+      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+
+      if (isMetricsReturnsDirect) {
+        const stages = getSearchParam(req, "stages") || undefined;
+        const data = await getMetricsReturns(userId, accountScope, stages);
+        console.log(
+          "[api/index.js] direct metrics/returns ok ms=%d uid=%s scope=%s",
+          Date.now() - started,
+          userId,
+          accountScope
+        );
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isMetricsAssetsDirect) {
+        const data = await getMetricsAssets(userId, accountScope);
+        console.log(
+          "[api/index.js] direct metrics/assets ok ms=%d uid=%s scope=%s",
+          Date.now() - started,
+          userId,
+          accountScope
+        );
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isHoldingsDirect) {
+        const data = await getHoldings(userId, accountScope);
+        console.log(
+          "[api/index.js] direct holdings ok ms=%d uid=%s scope=%s",
+          Date.now() - started,
+          userId,
+          accountScope
+        );
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+    } catch (error) {
+      console.error(
+        "[api/index.js] direct home/metrics fail path=%s ms=%d msg=%s",
+        pathOnly,
+        Date.now() - started,
+        error?.message || error
+      );
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "request failed" }));
+      return;
+    }
+  }
+
   // --------- 直连：/api/state 与社区 API（与同上 auth，避免 Express 落到 SPA）---------
   const communityProfileMatch =
     pathOnly.match(/^\/api\/community\/users\/([^/]+)\/profile$/) || null;
@@ -860,7 +967,9 @@ module.exports = async function handler(req, res) {
         });
 
       if (req.method === "GET" && pathOnly === "/api/state") {
-        const data = await getState(userId);
+        const liteRaw = getSearchParam(req, "lite");
+        const lite = liteRaw === "1" || String(liteRaw || "").toLowerCase() === "true";
+        const data = await getState(userId, { lite });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;

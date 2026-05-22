@@ -56,6 +56,8 @@ function clearUserScopedCache(map, userId) {
   }
 }
 
+const { scheduleMetricsRebuildForUser } = require("./src/metrics-rebuild-service");
+
 function invalidateDailyCloseAndAnalysisCache(userId) {
   clearUserScopedCache(analysisDailyMemoryCache, userId);
   clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
@@ -758,6 +760,22 @@ const {
 } = require("./src/db");
 const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
 const { rebuildHomeSummaryForUser } = require("./src/home-summary-service");
+const {
+  getMetricsReturns,
+  getMetricsAssets,
+  getSeriesDailyProfit,
+  getSeriesDailyTwr,
+  getSeriesDailyAsset,
+  getHoldings,
+  getStockRank,
+  getBenchmarkSeries,
+} = require("./src/metrics-api-service");
+
+function sendMetricsJson(res, payload) {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, data: payload });
+}
+
 
 /** 合并短时间内的多次失效触发，避免 rebuild 占满 Neon 连接导致全站 API pending */
 const homeSummaryRebuildTimers = new Map();
@@ -855,7 +873,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(compression());
+// Vercel + serverless-http：compression 可能导致响应流永不结束而挂到 300s
+if (!process.env.VERCEL) {
+  app.use(compression());
+}
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 
@@ -2036,7 +2057,6 @@ app.get("/api/snapshot/home-summary", requireAuth, async (req, res) => {
 
 app.get("/api/surface/account-kpis", requireAuth, async (req, res) => {
   try {
-    await ensureHomeSummaryTables();
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
     const surface = await buildAccountKpiSurfaceForScope(req.userId, accountScope);
     res.setHeader("Cache-Control", "no-store");
