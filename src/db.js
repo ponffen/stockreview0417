@@ -92,6 +92,41 @@ let snapshotWatermarkTableReadyPromise = null;
 
 const SYMBOL_MAP_CANONICALIZE_TTL_MS = 5 * 60 * 1000;
 
+/** Vercel：限制单实例同时打开的 Neon 连接数，避免 burst 时 pooler 排队导致全站 API pending */
+const VERCEL_DB_SLOT_MAX = Math.min(
+  16,
+  Math.max(1, Number(process.env.VERCEL_DB_SLOT_MAX || (process.env.VERCEL ? 6 : 99)))
+);
+let vercelDbSlotsInUse = 0;
+const vercelDbSlotWaiters = [];
+
+function acquireVercelDbSlot() {
+  if (!process.env.VERCEL) {
+    return Promise.resolve();
+  }
+  if (vercelDbSlotsInUse < VERCEL_DB_SLOT_MAX) {
+    vercelDbSlotsInUse += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    vercelDbSlotWaiters.push(() => {
+      vercelDbSlotsInUse += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseVercelDbSlot() {
+  if (!process.env.VERCEL) {
+    return;
+  }
+  vercelDbSlotsInUse -= 1;
+  const next = vercelDbSlotWaiters.shift();
+  if (next) {
+    next();
+  }
+}
+
 async function ensureSnapshotWatermarkTable() {
   if (snapshotWatermarkTableReadyPromise) {
     return snapshotWatermarkTableReadyPromise;
@@ -369,8 +404,10 @@ async function q(text, params = []) {
   // 复用时写入新请求会永久挂起直到 300s 函数超时。
   // 因此每次查询都临时新建 Client，用完立刻 end()。
   if (process.env.VERCEL) {
+    await acquireVercelDbSlot();
     const dbUrl = getPgConnectionString();
     if (!dbUrl) {
+      releaseVercelDbSlot();
       throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
     }
     const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
@@ -381,14 +418,24 @@ async function q(text, params = []) {
       connectionTimeoutMillis: connectMs,
       query_timeout: connectMs,
     });
-    let timeoutId = null;
-    const withHardTimeout = (promise, stage) =>
-      new Promise((resolve, reject) => {
-        timeoutId = setTimeout(() => {
+    const withHardTimeout = (promise, stage) => {
+      let timerId = null;
+      return new Promise((resolve, reject) => {
+        timerId = setTimeout(() => {
           reject(new Error(`database ${stage} timeout after ${hardTimeoutMs}ms`));
         }, hardTimeoutMs);
-        promise.then(resolve, reject);
+        promise.then(
+          (v) => {
+            if (timerId) clearTimeout(timerId);
+            resolve(v);
+          },
+          (err) => {
+            if (timerId) clearTimeout(timerId);
+            reject(err);
+          }
+        );
       });
+    };
     try {
       console.log("[db.q.vercel] build=v2 stage=connect-start textHead=%s", String(text).substring(0, 40));
       await withHardTimeout(client.connect(), "connect");
@@ -400,8 +447,11 @@ async function q(text, params = []) {
       console.error("[db.q.vercel] stage=error msg=%s textHead=%s", e?.message || e, String(text).substring(0, 80));
       throw e;
     } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      await client.end().catch(() => {});
+      try {
+        await client.end().catch(() => {});
+      } finally {
+        releaseVercelDbSlot();
+      }
     }
   }
 
@@ -832,25 +882,58 @@ async function getDailyReturns(query = {}, userId = null) {
   const accountId = query.accountId != null ? String(query.accountId).trim() : "";
   const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "";
   const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "";
-  if (!accountId && !from && !to) {
-    const { rows } = await q(
-      "SELECT account_id, date, profit, return_rate, total_asset, created_at FROM daily_returns WHERE user_id = $1 ORDER BY account_id ASC, date ASC",
-      [uid]
-    );
-    return rows.map(rowToDailyReturn);
-  }
-  const fromBound = from || "1970-01-01";
-  const toBound = to || "9999-12-31";
-  const { rows } = await q(
-    `SELECT account_id, date, profit, return_rate, total_asset, created_at
+  const allHistory = query.allHistory === true || query.allHistory === 1;
+  const limitN = Number(query.limit);
+  const offsetN = Number(query.offset);
+  const limit = Number.isFinite(limitN) ? Math.min(50000, Math.max(0, Math.floor(limitN))) : 0;
+  const offset = Number.isFinite(offsetN) ? Math.max(0, Math.floor(offsetN)) : 0;
+  const defaultCapDays = Math.min(5000, Math.max(60, Number(process.env.DAILY_RETURNS_DEFAULT_CAP_DAYS) || 800));
+
+  const mapRows = (rows) => rows.map(rowToDailyReturn);
+
+  if (accountId || from || to) {
+    const fromBound = from || "1970-01-01";
+    const toBound = to || "9999-12-31";
+    let sql = `SELECT account_id, date, profit, return_rate, total_asset, created_at
      FROM daily_returns
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
        AND date >= $3 AND date <= $4
-     ORDER BY date ASC`,
-    [uid, accountId, fromBound, toBound]
-  );
-  return rows.map(rowToDailyReturn);
+     ORDER BY date ASC`;
+    const params = [uid, accountId, fromBound, toBound];
+    if (limit > 0) {
+      sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(limit, offset);
+    }
+    const { rows } = await q(sql, params);
+    return mapRows(rows);
+  }
+
+  if (allHistory) {
+    let sql =
+      "SELECT account_id, date, profit, return_rate, total_asset, created_at FROM daily_returns WHERE user_id = $1 ORDER BY account_id ASC, date ASC";
+    const params = [uid];
+    if (limit > 0) {
+      sql += ` LIMIT $2 OFFSET $3`;
+      params.push(limit, offset);
+    }
+    const { rows } = await q(sql, params);
+    return mapRows(rows);
+  }
+
+  const today = toDateKey(new Date());
+  const minD = addCalendarDays(today, -defaultCapDays);
+  let sql = `SELECT account_id, date, profit, return_rate, total_asset, created_at
+     FROM daily_returns
+     WHERE user_id = $1 AND date >= $2
+     ORDER BY account_id ASC, date ASC`;
+  const params = [uid, minD];
+  if (limit > 0) {
+    sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limit, offset);
+  }
+  const { rows } = await q(sql, params);
+  return mapRows(rows);
 }
 
 async function upsertDailyReturn(input, userId) {
@@ -894,7 +977,7 @@ async function importDailyReturns(rows, mode = "append", userId = null) {
   } finally {
     client.release();
   }
-  return getDailyReturns({}, uid);
+  return getDailyReturns({ allHistory: true }, uid);
 }
 
 async function deleteDailyReturn(accountId, date, userId) {
@@ -960,15 +1043,160 @@ async function setSettings(partial, userId) {
   return getSettings(uid);
 }
 
-async function getState(userId) {
+async function getState(userId, opts = {}) {
   const uid = String(userId || "").trim();
+  const base = await getSettings(uid);
+  if (opts.lite === true) {
+    return {
+      ...base,
+      trades: [],
+      dailyReturns: [],
+      cashTransfers: [],
+    };
+  }
+  const [trades, dailyReturns, cashTransfers] = await Promise.all([
+    getTrades(uid),
+    getDailyReturns({ allHistory: true }, uid),
+    getCashTransfers(uid),
+  ]);
   return {
-    ...(await getSettings(uid)),
-    trades: await getTrades(uid),
-    dailyReturns: await getDailyReturns({}, uid),
-    cashTransfers: await getCashTransfers(uid),
+    ...base,
+    trades,
+    dailyReturns,
+    cashTransfers,
   };
 }
+
+/** 账户级 KPI 展示账本：全部=CNY；单账户=该账户 settings 记账币种。 */
+function resolveBookCurrencyForAccountScope(settings, accountScope) {
+  const sc = String(accountScope || "all").trim() || "all";
+  if (sc === "all") {
+    return "CNY";
+  }
+  const accs = Array.isArray(settings?.accounts) ? settings.accounts : [];
+  const hit = accs.find((a) => String(a.id || "") === sc);
+  const c = String(hit?.currency || "CNY").toUpperCase();
+  if (c === "USD" || c === "HKD" || c === "CNY") {
+    return c;
+  }
+  return "CNY";
+}
+
+/** 供 HTTP：单 scope 的账户 KPI 展示态（依赖 account_home_summary 已由定时任务写入）。 */
+async function buildAccountKpiSurfaceForScope(userId, accountScope = "all") {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const sc = String(accountScope || "all").trim() || "all";
+  const settings = await getSettings(uid);
+  const { rows } = await q("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  const { buildAccountKpiSurfacePayload } = require("./account-kpi-surface");
+  const book = resolveBookCurrencyForAccountScope(settings, sc);
+  const algo = String(settings?.algoMode || "twr").toLowerCase() === "mwr" ? "mwr" : "twr";
+  return buildAccountKpiSurfacePayload(row, book, algo);
+}
+
+/** 首屏：设置 + 账户列表 + metrics 元数据（收益/资产/持仓由 metrics API 拉取）。 */
+async function getHomeBootstrap(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    const settings = await getSettings("");
+    return { ...settings, accounts: settings.accounts || [], dataVersion: 0, rebuilding: false, frozenThrough: null };
+  }
+  const settings = await getSettings(uid);
+  const um = await getUserMetricsMeta(uid);
+  return {
+    ...settings,
+    accounts: settings.accounts || [],
+    dataVersion: um.dataVersion,
+    rebuilding: um.rebuilding,
+    frozenThrough: um.frozenThrough,
+  };
+}
+
+let metricsOpsSchemaPromise = null;
+
+async function ensureMetricsOpsTables() {
+  if (metricsOpsSchemaPromise) return metricsOpsSchemaPromise;
+  metricsOpsSchemaPromise = (async () => {
+    await q(`CREATE TABLE IF NOT EXISTS user_metrics_meta (
+        user_id TEXT PRIMARY KEY, data_version INTEGER NOT NULL DEFAULT 0,
+        rebuilding BOOLEAN NOT NULL DEFAULT FALSE, frozen_through TEXT,
+        rebuild_from TEXT, updated_at BIGINT NOT NULL DEFAULT 0)`).catch(() => {});
+    await q(`CREATE TABLE IF NOT EXISTS cron_job_run (
+        id BIGSERIAL PRIMARY KEY, job_name TEXT NOT NULL, started_at BIGINT NOT NULL,
+        finished_at BIGINT, ok BOOLEAN NOT NULL DEFAULT FALSE, error_message TEXT,
+        meta_json TEXT, created_at BIGINT NOT NULL)`).catch(() => {});
+  })();
+  return metricsOpsSchemaPromise;
+}
+
+async function getUserMetricsMeta(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return { dataVersion: 0, rebuilding: false, frozenThrough: null };
+  await ensureMetricsOpsTables();
+  const { rows } = await q(`SELECT data_version, rebuilding, frozen_through FROM user_metrics_meta WHERE user_id = $1`, [uid]);
+  const row = rows[0];
+  if (!row) {
+    const frozen = await getLatestAnalysisSnapshotDate(uid, "all");
+    return { dataVersion: 0, rebuilding: false, frozenThrough: frozen || null };
+  }
+  return {
+    dataVersion: Number(row.data_version) || 0,
+    rebuilding: row.rebuilding === true,
+    frozenThrough: row.frozen_through || null,
+  };
+}
+
+async function upsertUserMetricsMeta(userId, patch = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+  await ensureMetricsOpsTables();
+  const cur = await getUserMetricsMeta(uid);
+  const dataVersion = patch.dataVersion != null ? Number(patch.dataVersion) : cur.dataVersion;
+  const rebuilding = patch.rebuilding != null ? !!patch.rebuilding : cur.rebuilding;
+  const frozenThrough = patch.frozenThrough !== undefined ? patch.frozenThrough : cur.frozenThrough;
+  const rebuildFrom = patch.rebuildFrom !== undefined ? patch.rebuildFrom : null;
+  await q(
+    `INSERT INTO user_metrics_meta (user_id, data_version, rebuilding, frozen_through, rebuild_from, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id) DO UPDATE SET
+       data_version = EXCLUDED.data_version, rebuilding = EXCLUDED.rebuilding,
+       frozen_through = EXCLUDED.frozen_through, rebuild_from = EXCLUDED.rebuild_from, updated_at = EXCLUDED.updated_at`,
+    [uid, dataVersion, rebuilding, frozenThrough, rebuildFrom, nowMs()],
+  );
+}
+
+async function insertCronJobRun(row) {
+  await ensureMetricsOpsTables();
+  const r = row || {};
+  await q(
+    `INSERT INTO cron_job_run (job_name, started_at, finished_at, ok, error_message, meta_json, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [String(r.jobName || ""), Number(r.startedAt) || nowMs(), r.finishedAt != null ? Number(r.finishedAt) : null,
+     r.ok === true, r.errorMessage != null ? String(r.errorMessage).slice(0, 2000) : null,
+     r.metaJson != null ? String(r.metaJson).slice(0, 8000) : null, nowMs()],
+  );
+}
+
+async function listCronJobRuns(limit = 50) {
+  await ensureMetricsOpsTables();
+  const n = Math.min(200, Math.max(1, Number(limit) || 50));
+  const { rows } = await q(
+    `SELECT id, job_name, started_at, finished_at, ok, error_message, meta_json, created_at
+     FROM cron_job_run ORDER BY id DESC LIMIT $1`, [n]);
+  return rows.map((row) => ({
+    id: row.id, jobName: row.job_name, startedAt: Number(row.started_at),
+    finishedAt: row.finished_at != null ? Number(row.finished_at) : null,
+    ok: row.ok === true, errorMessage: row.error_message, metaJson: row.meta_json,
+    createdAt: Number(row.created_at),
+  }));
+}
+
 
 async function getSymbolDailyPnl(query = {}, userId = null) {
   const uid = String(userId || "").trim();
@@ -1172,8 +1400,9 @@ async function ensureHomeSummaryTables() {
     return homeSummarySchemaPromise;
   }
   homeSummarySchemaPromise = (async () => {
-    await q(
-      `CREATE TABLE IF NOT EXISTS account_home_summary (
+    await Promise.all([
+      q(
+        `CREATE TABLE IF NOT EXISTS account_home_summary (
         user_id TEXT NOT NULL,
         account_scope TEXT NOT NULL,
         frozen_through TEXT NOT NULL,
@@ -1192,9 +1421,9 @@ async function ensureHomeSummaryTables() {
         computed_at BIGINT NOT NULL,
         PRIMARY KEY (user_id, account_scope)
       )`
-    ).catch(() => {});
-    await q(
-      `CREATE TABLE IF NOT EXISTS symbol_home_summary (
+      ).catch(() => {}),
+      q(
+        `CREATE TABLE IF NOT EXISTS symbol_home_summary (
         user_id TEXT NOT NULL,
         account_scope TEXT NOT NULL,
         symbol TEXT NOT NULL,
@@ -1210,7 +1439,19 @@ async function ensureHomeSummaryTables() {
         computed_at BIGINT NOT NULL,
         PRIMARY KEY (user_id, account_scope, symbol)
       )`
-    ).catch(() => {});
+      ).catch(() => {}),
+    ]);
+    for (const ddl of [
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_total_assets_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_market_value_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_cash_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_principal_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_fx_usd_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_fx_hkd_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+    ]) {
+      await q(ddl).catch(() => {});
+    }
   })();
   return homeSummarySchemaPromise;
 }
@@ -1243,8 +1484,10 @@ async function upsertAccountHomeSummaryRow(input, userId = null) {
        month_profit_cny, month_rate_twr, month_rate_mwr,
        ytd_profit_cny, ytd_rate_twr, ytd_rate_mwr,
        total_profit_cny, total_rate_twr, total_rate_mwr,
+       eod_total_assets_cny, eod_market_value_cny, eod_cash_cny, eod_cash_ratio, eod_principal_cny,
+       eod_fx_usd_cny, eod_fx_hkd_cny,
        source_version, computed_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
      ON CONFLICT (user_id, account_scope) DO UPDATE SET
        frozen_through = EXCLUDED.frozen_through,
        first_trade_date = EXCLUDED.first_trade_date,
@@ -1258,6 +1501,13 @@ async function upsertAccountHomeSummaryRow(input, userId = null) {
        total_profit_cny = EXCLUDED.total_profit_cny,
        total_rate_twr = EXCLUDED.total_rate_twr,
        total_rate_mwr = EXCLUDED.total_rate_mwr,
+       eod_total_assets_cny = EXCLUDED.eod_total_assets_cny,
+       eod_market_value_cny = EXCLUDED.eod_market_value_cny,
+       eod_cash_cny = EXCLUDED.eod_cash_cny,
+       eod_cash_ratio = EXCLUDED.eod_cash_ratio,
+       eod_principal_cny = EXCLUDED.eod_principal_cny,
+       eod_fx_usd_cny = EXCLUDED.eod_fx_usd_cny,
+       eod_fx_hkd_cny = EXCLUDED.eod_fx_hkd_cny,
        source_version = EXCLUDED.source_version,
        computed_at = EXCLUDED.computed_at`,
     [
@@ -1275,6 +1525,13 @@ async function upsertAccountHomeSummaryRow(input, userId = null) {
       validNumber(r.totalProfitCny, r.total_profit_cny, 0),
       validNumber(r.totalRateTwr, r.total_rate_twr, 0),
       validNumber(r.totalRateMwr, r.total_rate_mwr, 0),
+      validNumber(r.eodTotalAssetsCny, r.eod_total_assets_cny, 0),
+      validNumber(r.eodMarketValueCny, r.eod_market_value_cny, 0),
+      validNumber(r.eodCashCny, r.eod_cash_cny, 0),
+      validNumber(r.eodCashRatio, r.eod_cash_ratio, 0),
+      validNumber(r.eodPrincipalCny, r.eod_principal_cny, 0),
+      validNumber(r.eodFxUsdCny, r.eod_fx_usd_cny, 0),
+      validNumber(r.eodFxHkdCny, r.eod_fx_hkd_cny, 0),
       String(r.sourceVersion || r.source_version || "").slice(0, 64),
       now,
     ]
@@ -1586,6 +1843,14 @@ async function ensureSymbolNameMapTable() {
     return symbolNameMapTableReadyPromise;
   }
   symbolNameMapTableReadyPromise = (async () => {
+    try {
+      const { rows } = await q("SELECT to_regclass('public.symbol_name_map') AS t");
+      if (rows[0]?.t) {
+        return;
+      }
+    } catch {
+      // 探活失败则继续走 DDL
+    }
     const ddl = `
       SET lock_timeout = '3000ms';
       SET statement_timeout = '8000ms';
@@ -1611,6 +1876,10 @@ async function ensureSymbolNameMapTable() {
   return symbolNameMapTableReadyPromise;
 }
 
+/**
+ * 将历史 gb_ 前缀美股别名并入小写 symbol（维护用）。
+ * 已从 symbol_name_map 读写热路径移除；可在一键脚本或管理端按需 force 调用。
+ */
 async function canonicalizeSymbolNameMapUsAliases(force = false) {
   const now = nowMs();
   if (!force && now - symbolNameMapCanonicalizedAt < SYMBOL_MAP_CANONICALIZE_TTL_MS) {
@@ -1728,7 +1997,7 @@ async function upsertSymbolNameMapBatch(rows = []) {
     return 0;
   }
   await ensureSymbolNameMapTable();
-  await canonicalizeSymbolNameMapUsAliases();
+  /** 写入路径不再跑 gb_ 整表整理，避免与读路径/其它实例争用 symbol_name_map 锁导致全站 pending */
   const latestBySymbol = new Map();
   for (const item of list) {
     latestBySymbol.set(item.symbol, item);
@@ -1765,7 +2034,7 @@ async function upsertSymbolNameMapBatch(rows = []) {
 
 async function getSymbolNameMap(symbols = []) {
   await ensureSymbolNameMapTable();
-  await canonicalizeSymbolNameMapUsAliases();
+  /** 读路径不跑 gb_ 别名整理：该步骤会扫表 INSERT/DELETE，多 Serverless 实例并发时易锁表，导致 symbol-name-map / home-summary / 行情等大面积 pending。整理仍在 upsertSymbolNameMapBatch 写入时执行。 */
   const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
   if (!uniq.length) {
     return {};
@@ -2284,6 +2553,12 @@ module.exports = {
   getSettings,
   setSettings,
   getState,
+  getHomeBootstrap,
+  getUserMetricsMeta,
+  upsertUserMetricsMeta,
+  insertCronJobRun,
+  listCronJobRuns,
+  buildAccountKpiSurfaceForScope,
   getSymbolDailyPnl,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
@@ -2294,6 +2569,7 @@ module.exports = {
   getPerformancePresetSnapshot,
   upsertPerformanceSeriesCacheRow,
   ensureHomeSummaryTables,
+  deleteHomeSummaryForUser,
   deleteSymbolHomeSummaryForScope,
   upsertAccountHomeSummaryRow,
   upsertSymbolHomeSummaryBatch,

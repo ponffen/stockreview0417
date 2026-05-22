@@ -1,6 +1,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const express = require("express");
+const compression = require("compression");
 const cors = require("cors");
 const iconv = require("iconv-lite");
 
@@ -61,9 +62,7 @@ function invalidateDailyCloseAndAnalysisCache(userId) {
   clearUserScopedCache(realtimePatchMemoryCache, userId);
   const uid = String(userId || "").trim();
   if (uid) {
-    setImmediate(() => {
-      rebuildHomeSummaryForUser(uid).catch(() => {});
-    });
+    setImmediate(() => scheduleMetricsRebuildForUser(uid));
   }
 }
 
@@ -698,6 +697,10 @@ function resolveWebStaticRoot() {
 }
 
 const WEB_ROOT = resolveWebStaticRoot();
+const STATIC_ASSET_LONG_CACHE =
+  process.env.VERCEL === "1" ||
+  String(process.env.VERCEL || "").toLowerCase() === "true" ||
+  process.env.NODE_ENV === "production";
 
 const {
   DEFAULT_SETTINGS,
@@ -719,6 +722,9 @@ const {
   getSettings,
   setSettings,
   getState,
+  getHomeBootstrap,
+  insertCronJobRun,
+  listCronJobRuns,
   getSymbolDailyPnl,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
@@ -748,9 +754,34 @@ const {
   pingDatabase,
   getHomeSummaryForUser,
   ensureHomeSummaryTables,
+  buildAccountKpiSurfaceForScope,
 } = require("./src/db");
 const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
 const { rebuildHomeSummaryForUser } = require("./src/home-summary-service");
+
+/** 合并短时间内的多次失效触发，避免 rebuild 占满 Neon 连接导致全站 API pending */
+const homeSummaryRebuildTimers = new Map();
+const HOME_SUMMARY_REBUILD_DEBOUNCE_MS = Math.max(
+  300,
+  Math.min(300_000, Number(process.env.HOME_SUMMARY_REBUILD_DEBOUNCE_MS) || 12_000)
+);
+
+function scheduleRebuildHomeSummaryForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const prev = homeSummaryRebuildTimers.get(uid);
+  if (prev) {
+    clearTimeout(prev);
+  }
+  const t = setTimeout(() => {
+    homeSummaryRebuildTimers.delete(uid);
+    rebuildHomeSummaryForUser(uid).catch(() => {});
+  }, HOME_SUMMARY_REBUILD_DEBOUNCE_MS);
+  homeSummaryRebuildTimers.set(uid, t);
+}
+
 const {
   maskPhone,
   displayNameForUser,
@@ -824,6 +855,7 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(compression());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 
@@ -1430,8 +1462,189 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const data = await getHomeBootstrap(req.userId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "home bootstrap failed" });
+  }
+});
+
+app.get("/api/metrics/returns", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsReturns(req.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics returns failed" });
+  }
+});
+
+app.get("/api/metrics/assets", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics assets failed" });
+  }
+});
+
+app.get("/api/series/daily-profit", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyProfit(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily profit series failed" });
+  }
+});
+
+app.get("/api/series/daily-twr", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyTwr(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily twr series failed" });
+  }
+});
+
+app.get("/api/series/daily-asset", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
+    sendMetricsJson(res, await getSeriesDailyAsset(req.userId, accountScope, stage, metric));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily asset series failed" });
+  }
+});
+
+app.get("/api/holdings", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getHoldings(req.userId, accountScope));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "holdings failed" });
+  }
+});
+
+app.get("/api/analysis/stock-rank", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getStockRank(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "stock rank failed" });
+  }
+});
+
+app.get("/api/series/benchmark", requireAuth, async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol || "").trim();
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getBenchmarkSeries(req.userId, symbol, stage));
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "benchmark series failed" });
+  }
+});
+
+app.get("/api/public/:targetId/metrics/returns", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsReturns(gate.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public metrics returns failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-twr", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyTwr(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily twr failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-profit", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyProfit(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily profit failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-asset", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
+    sendMetricsJson(res, await getSeriesDailyAsset(gate.userId, accountScope, stage, metric));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily asset failed" });
+  }
+});
+
+app.get("/api/public/:targetId/analysis/stock-rank", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getStockRank(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public stock rank failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/benchmark", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const symbol = String(req.query.symbol || "").trim();
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getBenchmarkSeries(gate.userId, symbol, stage));
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "public benchmark failed" });
+  }
+});
+
+app.get("/api/ops/cron-runs", requireAuth, async (req, res) => {
+  try {
+    if (!(await isMetricsOpsAdmin(req.userId))) {
+      res.status(403).json({ ok: false, error: "forbidden" });
+      return;
+    }
+    const data = await listCronJobRuns(req.query.limit);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "cron runs failed" });
+  }
+});
+
 app.get("/api/state", requireAuth, async (req, res) => {
-  res.json({ ok: true, data: await getState(req.userId) });
+  const liteRaw = req.query.lite != null ? String(req.query.lite) : "";
+  const lite = liteRaw === "1" || liteRaw.toLowerCase() === "true";
+  res.json({ ok: true, data: await getState(req.userId, { lite }) });
 });
 
 app.get("/api/trades", requireAuth, async (req, res) => {
@@ -1604,6 +1817,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     res.status(401).json({ ok: false, error: "unauthorized cron request" });
     return;
   }
+  const startedAt = Date.now();
   try {
     const forcedDate = req.query?.frozenDate || req.body?.frozenDate;
     const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
@@ -1619,9 +1833,23 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     analysisDailyMemoryCache.clear();
     dailyCloseForTradesMemoryCache.clear();
     realtimePatchMemoryCache.clear();
+    await insertCronJobRun({
+      jobName: "freeze-eod",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: true,
+      metaJson: JSON.stringify({ frozenDate: result?.frozenDate, users: result?.users?.length }),
+    });
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data: result });
   } catch (error) {
+    await insertCronJobRun({
+      jobName: "freeze-eod",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: false,
+      errorMessage: error?.message || String(error),
+    }).catch(() => {});
     res.status(500).json({ ok: false, error: error?.message || "freeze failed" });
   }
 });
@@ -1632,6 +1860,7 @@ app.all("/api/cron/sync-daily-close", async (req, res) => {
     res.status(401).json({ ok: false, error: "unauthorized cron request" });
     return;
   }
+  const startedAt = Date.now();
   try {
     const asOfDate = req.query?.asOfDate || req.body?.asOfDate;
     const bodySymbols = Array.isArray(req.body?.symbols) ? req.body.symbols : [];
@@ -1644,9 +1873,23 @@ app.all("/api/cron/sync-daily-close", async (req, res) => {
     });
     dailyCloseForTradesMemoryCache.clear();
     realtimePatchMemoryCache.clear();
+    await insertCronJobRun({
+      jobName: "sync-daily-close",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: true,
+      metaJson: JSON.stringify({ rowsWritten: result?.rowsWritten, failedSymbols: result?.failedSymbols }),
+    });
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data: result });
   } catch (error) {
+    await insertCronJobRun({
+      jobName: "sync-daily-close",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: false,
+      errorMessage: error?.message || String(error),
+    }).catch(() => {});
     res.status(500).json({ ok: false, error: error?.message || "sync daily close failed" });
   }
 });
@@ -1788,6 +2031,22 @@ app.get("/api/snapshot/home-summary", requireAuth, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "snapshot home summary failed" });
+  }
+});
+
+app.get("/api/surface/account-kpis", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const surface = await buildAccountKpiSurfaceForScope(req.userId, accountScope);
+    res.setHeader("Cache-Control", "no-store");
+    if (!surface) {
+      res.json({ ok: true, data: null, accountScope });
+      return;
+    }
+    res.json({ ok: true, data: surface, accountScope });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "account kpis surface failed" });
   }
 });
 
@@ -2050,11 +2309,19 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
 app.get("/api/daily-returns", requireAuth, async (req, res) => {
   try {
     const { accountId, from, to } = req.query || {};
+    const full =
+      req.query.full != null &&
+      (String(req.query.full).trim() === "1" || String(req.query.full).trim().toLowerCase() === "true");
+    const limit = req.query.limit != null ? String(req.query.limit) : "";
+    const offset = req.query.offset != null ? String(req.query.offset) : "";
     const data = await getDailyReturns(
       {
         accountId: accountId != null ? String(accountId) : "",
         from: from != null ? String(from) : "",
         to: to != null ? String(to) : "",
+        allHistory: full,
+        limit,
+        offset,
       },
       req.userId
     );
@@ -2501,10 +2768,16 @@ app.use("/api", (_req, res) => {
   res.status(404).json({ ok: false, error: "API route not found" });
 });
 
-// 避免浏览器强缓存 HTML/JS/CSS，否则改代码后仍常见「刷新仍是旧页面」
+// 生产环境对 app.js / styles.css 使用较短强缓存 + SWR，减轻重复访问体积；HTML 仍禁用强缓存以免旧壳引用错位。
+// 本地开发（非 VERCEL、NODE_ENV 非 production）维持 no-store，避免改代码后仍见旧脚本。
 app.use(
   express.static(WEB_ROOT, {
     setHeaders(res, filePath) {
+      const base = path.basename(String(filePath || ""));
+      if (STATIC_ASSET_LONG_CACHE && /^(app\.js|styles\.css)$/i.test(base)) {
+        res.setHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
+        return;
+      }
       if (/\.(html|js|css|json|ico|svg)$/i.test(filePath)) {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         res.setHeader("Pragma", "no-cache");

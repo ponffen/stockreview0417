@@ -12,7 +12,9 @@ const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 const POSITION_EPSILON = 1e-6;
 const KEEP_AFTER_FLAT_DAYS = 365;
 const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
+const BENCHMARK_DAILY_SYMBOLS = ["sh000001", "sz399001", "rt_hkHSI", "gb_inx"];
 const FX_DAILY_LOOKBACK_DAYS = 7;
+const BENCHMARK_LOOKBACK_DAYS = 400;
 
 function normalizeLifecycleTrade(raw) {
   const symbol = normalizeSymbol(raw?.symbol);

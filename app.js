@@ -182,6 +182,8 @@ const state = {
   trades: [],
   /** 银证转账 / 出入金 */
   cashTransfers: [],
+  /** 服务端 materialized 账户 KPI 展示态（与定时任务 account_home_summary 一致），按 accountScope 索引 */
+  accountKpisByScope: {},
   /** 交易页子 Tab：trades | cash */
   tradePanelTab: "trades",
   editingCashTransferId: null,
@@ -252,6 +254,11 @@ let pendingSettingsSyncTimer = null;
 const symbolNameFetchedAt = new Map();
 const symbolNameHydrateInFlight = new Map();
 const symbolNameSyncedAt = new Map();
+const SYMBOL_NAME_UPSERT_DEBOUNCE_MS = 800;
+const symbolNamePendingUpsertBySymbol = new Map();
+let symbolNameUpsertFlushTimer = null;
+/** 与 session 对齐，避免 lite 启动后重复打 trades/cash/daily 三接口 */
+let ledgerBootstrapCompleteForUid = "";
 let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
@@ -294,6 +301,7 @@ const accountForm = document.getElementById("accountForm");
 const accountTableBody = document.getElementById("accountTableBody");
 const analysisRateSummary = document.getElementById("analysisRateSummary");
 const analysisProfitSummary = document.getElementById("analysisProfitSummary");
+const analysisEodAccountCaption = document.getElementById("analysisEodAccountCaption");
 const analysisRateChart = document.getElementById("analysisRateChart");
 const analysisProfitChart = document.getElementById("analysisProfitChart");
 const analysisAssetChart = document.getElementById("analysisAssetChart");
@@ -460,6 +468,7 @@ async function refreshSessionFromServer() {
     });
     if (!r.ok) {
       sessionUserId = "";
+      ledgerBootstrapCompleteForUid = "";
       sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
       return false;
     }
@@ -555,6 +564,7 @@ function bindAuthUi() {
         return;
       }
       sessionPhone = String(j.user?.phone || phone);
+      ledgerBootstrapCompleteForUid = "";
       showAppShell();
       await startAppAfterAuth();
     } catch {
@@ -604,6 +614,7 @@ function bindAuthUi() {
         return;
       }
       sessionPhone = String(j.user?.phone || phone);
+      ledgerBootstrapCompleteForUid = "";
       showAppShell();
       await startAppAfterAuth();
     } catch {
@@ -1391,6 +1402,41 @@ async function hydrateSymbolNameMap(symbols, options = {}) {
   }
 }
 
+function flushPendingSymbolNameUpserts() {
+  symbolNameUpsertFlushTimer = null;
+  if (!apiReady) {
+    symbolNamePendingUpsertBySymbol.clear();
+    return;
+  }
+  const rows = [...symbolNamePendingUpsertBySymbol.values()];
+  symbolNamePendingUpsertBySymbol.clear();
+  if (!rows.length) {
+    return;
+  }
+  void apiFetch(`${getApiBaseForFetch()}/admin/upsert-symbol-name-map`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rows }),
+    cache: "no-store",
+    timeoutMs: 12_000,
+  }).catch(() => {});
+}
+
+function queueSymbolNameUpsertRows(rows) {
+  if (!rows.length) {
+    return;
+  }
+  for (const row of rows) {
+    const sym = String(row?.symbol || "").trim();
+    if (sym) {
+      symbolNamePendingUpsertBySymbol.set(sym, row);
+    }
+  }
+  if (!symbolNameUpsertFlushTimer) {
+    symbolNameUpsertFlushTimer = window.setTimeout(flushPendingSymbolNameUpserts, SYMBOL_NAME_UPSERT_DEBOUNCE_MS);
+  }
+}
+
 async function syncSymbolNamesFromQuotes(quoteMap = {}) {
   if (!apiReady || !quoteMap || typeof quoteMap !== "object") {
     return;
@@ -1417,17 +1463,7 @@ async function syncSymbolNamesFromQuotes(quoteMap = {}) {
   if (!rows.length) {
     return;
   }
-  try {
-    await apiFetch(`${getApiBaseForFetch()}/admin/upsert-symbol-name-map`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows }),
-      cache: "no-store",
-      timeoutMs: 10_000,
-    });
-  } catch {
-    // ignore write-back failures
-  }
+  queueSymbolNameUpsertRows(rows);
 }
 
 function shiftDateKeyByDays(dateKey, deltaDays) {
@@ -1491,7 +1527,7 @@ function symbolCloseRowsToKline(arr) {
 }
 
 /** 按需从服务端 symbol_daily_close 快照灌入 klineMap（不在全站行情轮询里批量拉） */
-async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYDRATE_WINDOW_DAYS) {
+async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYDRATE_WINDOW_DAYS, opts = {}) {
   if (!apiReady) {
     return;
   }
@@ -1500,9 +1536,13 @@ async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYD
     return;
   }
   const chunk = 40;
+  const waveSize = Math.max(1, Math.min(8, Number(opts.parallelChunks) || 4));
   const d = Math.max(30, Math.min(2000, Number(days) || DAILY_CLOSE_HYDRATE_WINDOW_DAYS));
+  const parts = [];
   for (let i = 0; i < picked.length; i += chunk) {
-    const part = picked.slice(i, i + chunk);
+    parts.push(picked.slice(i, i + chunk));
+  }
+  async function fetchOnePart(part) {
     try {
       const r = await apiFetch(
         `${API_BASE}/snapshot/symbol-close?days=${encodeURIComponent(String(d))}&symbols=${encodeURIComponent(
@@ -1511,11 +1551,11 @@ async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYD
         { cache: "no-store", timeoutMs: 22_000 },
       );
       if (!r.ok) {
-        continue;
+        return;
       }
       const j = await r.json().catch(() => ({}));
       if (!j?.ok || !j.data || typeof j.data !== "object") {
-        continue;
+        return;
       }
       Object.entries(j.data).forEach(([sym, rows]) => {
         const list = symbolCloseRowsToKline(rows);
@@ -1532,6 +1572,9 @@ async function fetchSymbolCloseIntoKlineMap(symbols = [], days = DAILY_CLOSE_HYD
     } catch {
       // ignore chunk
     }
+  }
+  for (let i = 0; i < parts.length; i += waveSize) {
+    await Promise.all(parts.slice(i, i + waveSize).map((p) => fetchOnePart(p)));
   }
 }
 
@@ -1795,6 +1838,7 @@ async function hydrateState() {
   let staticParsed = null;
   const boot = await fetchApiStateBootstrap();
   apiReady = boot.apiReady;
+  const bootstrapKind = boot.bootstrapKind || "none";
   if (apiReady) {
     remoteParsed = boot.data;
   }
@@ -1839,6 +1883,9 @@ async function hydrateState() {
       parsed.stockAmountDisplay === "cny" || parsed.stockAmountDisplay === "native"
         ? parsed.stockAmountDisplay
         : "native";
+    if (parsed.accountKpisByScope && typeof parsed.accountKpisByScope === "object") {
+      state.accountKpisByScope = { ...parsed.accountKpisByScope };
+    }
     state.trades = Array.isArray(parsed.trades) ? parsed.trades.map(normalizeTrade) : [];
     state.cashTransfers = Array.isArray(parsed.cashTransfers)
       ? parsed.cashTransfers.map(normalizeCashTransferRow)
@@ -1848,6 +1895,24 @@ async function hydrateState() {
       ? parsed.dailyReturns.map(normalizeDailyReturnRow)
       : [];
     state.appModule = parsed.appModule === "community" ? "community" : "holdings";
+    if (
+      bootstrapKind === "home" &&
+      parsed.homeSummary &&
+      parsed.homeSummary.account &&
+      Array.isArray(parsed.homeSummary.symbols)
+    ) {
+      const memoKey = `${state.selectedAccountId}|${overviewTradesLedgerKey()}`;
+      homeSummaryRpcMemo = { key: memoKey, data: parsed.homeSummary, at: Date.now() };
+    }
+  }
+  if (apiReady && sessionPhone && (bootstrapKind === "lite" || bootstrapKind === "home")) {
+    await ensureLedgerDataLoaded();
+  }
+  if (apiReady && sessionPhone && bootstrapKind === "home") {
+    const uidMark = String(sessionUserId || "").trim() || String(sessionPhone || "").trim();
+    if (uidMark) {
+      ledgerBootstrapCompleteForUid = uidMark;
+    }
   }
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
@@ -1990,29 +2055,100 @@ function persistState() {
 }
 
 /**
- * 一次请求完成「API 可达」判断并拉取 state，避免 hydrate 时连打两遍 /api/state。
- * 401 仍视为 API 可达（与旧 checkApiHealth 一致），但不解析 body。
+ * 优先 GET /api/home/bootstrap（首屏：设置 + 成交/银证 + home-summary）；失败则回退 /api/state?lite=1。
+ * 401 仍视为 API 可达，但不解析 body。
  */
 async function fetchApiStateBootstrap() {
+  const unreachable = () => ({ apiReady: false, data: null, bootstrapKind: "none" });
+  const unauthorized = () => ({ apiReady: true, data: null, bootstrapKind: "none" });
   try {
-    const response = await apiFetch(`${getApiBaseForFetch()}/state`, {
+    const response = await apiFetch(`${getApiBaseForFetch()}/home/bootstrap`, {
       cache: "no-store",
-      timeoutMs: 6_000,
+      timeoutMs: 30_000,
     });
     const reachable = response.ok || response.status === 401;
     if (!reachable) {
-      return { apiReady: false, data: null };
+      return unreachable();
     }
     if (response.status === 401) {
-      return { apiReady: true, data: null };
+      return unauthorized();
     }
-    const result = await response.json().catch(() => ({}));
-    if (!result?.ok || !result.data) {
-      return { apiReady: true, data: null };
+    if (response.ok) {
+      const result = await response.json().catch(() => ({}));
+      if (result?.ok && result.data) {
+        return { apiReady: true, data: result.data, bootstrapKind: "home" };
+      }
     }
-    return { apiReady: true, data: result.data };
+    const r2 = await apiFetch(`${getApiBaseForFetch()}/state?lite=1`, {
+      cache: "no-store",
+      timeoutMs: 10_000,
+    });
+    if (!r2.ok && r2.status !== 401) {
+      return unreachable();
+    }
+    if (r2.status === 401) {
+      return unauthorized();
+    }
+    const j2 = await r2.json().catch(() => ({}));
+    if (!j2?.ok || !j2.data) {
+      return { apiReady: true, data: null, bootstrapKind: "none" };
+    }
+    return { apiReady: true, data: j2.data, bootstrapKind: "lite" };
   } catch {
-    return { apiReady: false, data: null };
+    return unreachable();
+  }
+}
+
+/**
+ * lite /api/state 之后仅并行补齐成交与银证（首屏不拉 daily-returns）。
+ */
+async function ensureLedgerDataLoaded() {
+  if (!apiReady || !sessionPhone) {
+    return;
+  }
+  const uid = String(sessionUserId || "").trim() || String(sessionPhone || "").trim();
+  if (!uid) {
+    return;
+  }
+  if (ledgerBootstrapCompleteForUid === uid) {
+    return;
+  }
+  async function pullLedgerOnce() {
+    const settled = await Promise.allSettled([
+      apiFetch(`${API_BASE}/trades`, { cache: "no-store", timeoutMs: 25_000 }),
+      apiFetch(`${API_BASE}/cash-transfers`, { cache: "no-store", timeoutMs: 25_000 }),
+    ]);
+    const parseOne = async (idx) => {
+      const s = settled[idx];
+      if (!s || s.status !== "fulfilled") {
+        return { ok: false, body: {} };
+      }
+      const res = s.value;
+      const body = await res.json().catch(() => ({}));
+      return { ok: res.ok && body?.ok === true, body };
+    };
+    const [trP, cashP] = await Promise.all([parseOne(0), parseOne(1)]);
+    const trOk = trP.ok && Array.isArray(trP.body.data);
+    const cashOk = cashP.ok && Array.isArray(cashP.body.data);
+    if (trOk) {
+      state.trades = trP.body.data.map(normalizeTrade);
+    }
+    if (cashOk) {
+      state.cashTransfers = cashP.body.data.map(normalizeCashTransferRow);
+    }
+    return { trOk, cashOk, coreOk: trOk && cashOk };
+  }
+  try {
+    let { trOk, cashOk, coreOk } = await pullLedgerOnce();
+    if (!coreOk) {
+      await new Promise((r) => window.setTimeout(r, 350));
+      ({ trOk, cashOk, coreOk } = await pullLedgerOnce());
+    }
+    if (coreOk) {
+      ledgerBootstrapCompleteForUid = uid;
+    }
+  } catch (error) {
+    console.warn("ensureLedgerDataLoaded failed", error);
   }
 }
 
@@ -4586,6 +4722,42 @@ async function renderPublicProfileAnalysis(d) {
     return;
   }
   ensurePublicProfileAnalysisUi();
+  const targetId = String(detail.userId || state.communityProfileUserId || "").trim();
+  if (apiReady && targetId) {
+    const stage = metricsStageFromAnalysis();
+    const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
+    const [twrPack, profitPack, assetPack, benchPack, rankPack, retPack] = await Promise.all([
+      fetchMetricsApi("/series/daily-twr", { accountScope: "all", stage }, targetId),
+      fetchMetricsApi("/series/daily-profit", { accountScope: "all", stage }, targetId),
+      fetchMetricsApi("/series/daily-asset", { accountScope: "all", stage, metric: "total_assets" }, targetId),
+      benchSym ? fetchMetricsApi("/series/benchmark", { symbol: benchSym, stage }, targetId) : null,
+      fetchMetricsApi("/analysis/stock-rank", { accountScope: "all", stage }, targetId),
+      fetchMetricsApi("/metrics/returns", { accountScope: "all", stages: stage }, targetId),
+    ]);
+    if (twrPack?.points?.length || profitPack?.points?.length) {
+      await withPublicProfileAnalysisUiAsync(async () => {
+        const pubRate = document.getElementById("pubAnalysisRateChart");
+        const pubMkt = document.getElementById("pubAnalysisMarketChart");
+        const pubRank = document.getElementById("pubAnalysisStockRankBody");
+        const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
+        const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+        const mySeries = trimMetricsSeriesPoints(twrPack.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
+        const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
+        const assetIdx = trimMetricsSeriesPoints(assetPack?.points || []).map((p) => ({ date: p.date, value: Number(p.value) || 0 }));
+        const stageRet = retPack?.stages?.[stage];
+        const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        if (pubRate) {
+          const drawRate = () => useMwrUi ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries, pubRate);
+          bindInteractiveChart(pubRate, document.getElementById("pubAnalysisRateTooltip"), () => drawRate(), { mode: "analysis", onRefresh: refresh });
+          if (pubRateSummary) pubRateSummary.textContent = useMwrUi ? `我的收益率 ${formatPercent(stageRet?.rateMwr ?? 0)}` : `我的 ${formatPercent((mySeries.at(-1)?.rate ?? 0) / 100)}`;
+        }
+        if (pubMkt) paintPublicProfileMarketIndexChart(pubMkt, document.getElementById("pubAnalysisMarketTooltip"), assetIdx, refresh);
+        renderAnalysisStockRankFromMetrics(rankPack, pubRank, { publicStockRankLayout: true });
+      });
+      syncCommunityProfileAnalysisControls();
+      return;
+    }
+  }
   await withPublicTradesContextAsync(detail, async () => {
     await withPublicProfileAnalysisUiAsync(async () => {
       const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
@@ -5033,6 +5205,7 @@ function invalidateOverviewSnapshotUi() {
   homeSummaryFetchGen += 1;
   homeSummaryRpcMemo = { key: "", data: null, at: 0 };
   homeSummaryInflightByKey.clear();
+  state.accountKpisByScope = {};
 }
 
 function overviewTradesLedgerKey() {
@@ -5253,15 +5426,33 @@ function renderOverviewAndStockTable() {
   }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
+  const aid = String(state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId));
+  void ensureAccountKpiSurfaceLoaded(aid).then(() => {
+    if (state.route === "earning") {
+      renderOverviewAndStockTable();
+    }
+  });
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const ratioStr = formatOverviewCashRatioFromTotals(portfolio.totalAssets, portfolio.overviewCash);
-  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-    { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
-    { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
-    { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
-    { label: "现金占比", value: ratioStr },
-    { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
-  ]);
+  const surf = state.accountKpisByScope[aid];
+  const surfDisp = surf && surf.display && typeof surf.display === "object" ? surf.display : null;
+  if (surfDisp && surf.frozenThrough) {
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
+      { label: "总资产", value: String(surfDisp.totalAssets) },
+      { label: "总市值", value: String(surfDisp.marketValue) },
+      { label: "现金", value: String(surfDisp.cash) },
+      { label: "现金占比", value: String(surfDisp.cashRatio) },
+      { label: "本金", value: String(surfDisp.principal) },
+    ]);
+  } else {
+    const ratioStr = formatOverviewCashRatioFromTotals(portfolio.totalAssets, portfolio.overviewCash);
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
+      { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
+      { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
+      { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
+      { label: "现金占比", value: ratioStr },
+      { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
+    ]);
+  }
 
   const dataKey = buildOverviewSnapshotDataKey();
   const fullKey = buildOverviewSnapshotCacheKey();
@@ -7045,6 +7236,31 @@ function paintOverviewHeadlineFromHomePayload(homeData, portfolio, bookCcy) {
   return true;
 }
 
+async function ensureAccountKpiSurfaceLoaded(accountScope) {
+  if (!apiReady || !sessionPhone) {
+    return;
+  }
+  const sc = String(accountScope || "all").trim() || "all";
+  if (state.accountKpisByScope[sc]) {
+    return;
+  }
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/surface/account-kpis?accountScope=${encodeURIComponent(sc)}`,
+      { cache: "no-store", timeoutMs: 18_000 },
+    );
+    if (!res.ok) {
+      return;
+    }
+    const j = await res.json().catch(() => ({}));
+    if (j?.ok && j.data != null && typeof j.data === "object") {
+      state.accountKpisByScope[sc] = j.data;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * 仅 accountScope=all；与「当前账户筛选 + 成交账本」绑定，失效见 invalidateOverviewSnapshotUi。
  */
@@ -7093,6 +7309,95 @@ async function fetchHomeSummaryRemote() {
   return p;
 }
 
+const METRICS_HOME_STAGE = { month: "mtd", ytd: "ytd", total: "inception" };
+function metricsStageFromHome() { return METRICS_HOME_STAGE[state.stageRange] || "mtd"; }
+function metricsStageFromAnalysis() {
+  const preset = resolvePerformancePresetKeyFromAnalysisState();
+  if (preset) return preset;
+  if (state.analysisRangeMode === "all") return "inception";
+  return "mtd";
+}
+function trimMetricsSeriesPoints(points) {
+  const off = Math.max(0, Number(state.analysisPanOffset) || 0);
+  if (!off || !Array.isArray(points) || points.length < 3) return points || [];
+  return points.slice(Math.min(off, points.length - 2));
+}
+async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
+  if (!apiReady) return null;
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) { if (v != null && String(v) !== "") qs.set(k, String(v)); }
+  const q = qs.toString();
+  const prefix = publicTargetId ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}` : getApiBaseForFetch();
+  const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
+  try {
+    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 28000 });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j?.ok || !j.data) return null;
+    return j.data;
+  } catch { return null; }
+}
+function metricHeadlineHtml(profitDisplay, rateDisplay, profitCny, rate) {
+  const amtCls = Number(profitCny) >= 0 ? "up" : "down";
+  return `<span class="profit-amt ${amtCls}">${escapeHtml(String(profitDisplay ?? "–"))}</span><span class="profit-rate-inline ${twrColorClass(rate)}">${escapeHtml(String(rateDisplay ?? "–"))}</span>`;
+}
+function paintOverviewStockTableFromMetricsRows(rows) {
+  if (!stockTableBody) return;
+  if (!rows?.length) { stockTableBody.innerHTML = `<tr><td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`; return; }
+  stockTableBody.innerHTML = rows.map((row) => {
+    const sym = normalizeSymbol(row.symbol);
+    const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td>${escapeHtml(row.todayProfitDisplay || "–")}</td><td><div class="cell-main">${escapeHtml(row.priceDisplay || "–")}</div><div class="cell-sub">${escapeHtml(row.dayChangeDisplay || "–")}</div></td><td><div class="cell-main">${escapeHtml(row.marketValueDisplay || "–")}</div><div class="cell-sub">${escapeHtml(row.quantityDisplay || "–")}</div></td><td>${escapeHtml(row.weightDisplay || "–")}</td><td>${escapeHtml(row.costDisplay || "–")}</td><td>${escapeHtml(row.monthProfitDisplay || "–")}</td><td>${escapeHtml(row.monthWeightDisplay || "–")}</td><td>${escapeHtml(row.yearProfitDisplay || "–")}</td><td>${escapeHtml(row.yearWeightDisplay || "–")}</td><td>${escapeHtml(row.totalProfitDisplay || "–")}</td><td>${escapeHtml(row.totalRateDisplay || "–")}</td><td>${escapeHtml(row.regretDisplay || "–")}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
+  }).join("");
+}
+function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {
+  if (!targetBody) return;
+  const hideProfitCol = rankOpts.publicStockRankLayout || rankOpts.hideProfitColumn;
+  const rows = Array.isArray(rankPayload?.rows) ? rankPayload.rows : [];
+  if (!rows.length) { targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`; return; }
+  targetBody.innerHTML = rows.map((row) => {
+    const profitCell = hideProfitCol ? "" : `<td>${escapeHtml(row.profitDisplay || "–")}</td>`;
+    const holdCell = rankOpts.publicStockRankLayout ? `<td>${escapeHtml(row.holdIntervalsLabel || "–")}</td>` : `<td>${Number(row.heldDays) || 0} 天</td>`;
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(row.pxChangeDisplay || "–")}</td></tr>`;
+  }).join("");
+}
+async function paintAnalysisFromMetricsApi(renderRequestId) {
+  const stage = metricsStageFromAnalysis();
+  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
+  const [twrPack, profitPack, assetPack, benchPack, rankPack, retPack] = await Promise.all([
+    fetchMetricsApi("/series/daily-twr", { accountScope: aid, stage }),
+    fetchMetricsApi("/series/daily-profit", { accountScope: aid, stage }),
+    fetchMetricsApi("/series/daily-asset", { accountScope: aid, stage, metric: "total_assets" }),
+    benchSym ? fetchMetricsApi("/series/benchmark", { symbol: benchSym, stage }) : null,
+    fetchMetricsApi("/analysis/stock-rank", { accountScope: aid, stage }),
+    fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: stage }),
+  ]);
+  if (renderRequestId !== analysisRenderRequestSeq) return false;
+  if (!twrPack?.points?.length && !profitPack?.points?.length) return false;
+  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const mySeries = trimMetricsSeriesPoints(twrPack.points).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
+  const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
+  const profitSeries = trimMetricsSeriesPoints(profitPack.points).map((p) => ({ date: p.date, value: Number(p.profitCny) || 0 }));
+  const assetSeries = trimMetricsSeriesPoints(assetPack?.points || []).map((p) => ({ date: p.date, totalAssets: Number(p.value) || 0, market: 0, cash: 0, cashRatio: 0 }));
+  const stageRet = retPack?.stages?.[stage];
+  const ratePayload = useMwrUi ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries);
+  const profitPayload = drawDualLineChart(analysisProfitChart, profitSeries.map((i) => ({ date: i.date, value: i.value })), null, "#f45a68", null, { keyA: "profit", labelA: "收益", yAxisMode: "left", leftLabel: "", xLabel: "", valueFormatter: (v) => formatNumber(v, 2), axisFormatter: (v) => formatNumber(v, 2), yRangePadding: { minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR, maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR } });
+  const assetPayload = drawAssetChart(assetSeries);
+  if (analysisRateSummary) {
+    const lastMy = mySeries.at(-1)?.rate ?? 0; const lastBench = benchSeries.at(-1)?.rate ?? 0;
+    analysisRateSummary.textContent = useMwrUi ? `我的收益率 ${formatPercent(stageRet?.rateMwr ?? 0)}` : state.benchmark === "none" ? `我的收益率 ${formatPercent(lastMy / 100)}` : `我的 ${formatPercent(lastMy / 100)} / 基准 ${formatPercent(lastBench / 100)} / 对比 ${formatPercent((lastMy - lastBench) / 100)}`;
+  }
+  if (analysisProfitSummary && stageRet) analysisProfitSummary.textContent = `累计收益 ${stageRet.profitDisplay || "–"}`;
+  renderAnalysisStockRankFromMetrics(rankPack, analysisStockRankBody, {});
+  const refreshAnalysisView = () => { renderControls(); void renderAnalysis({ showLoading: false }); };
+  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, { mode: "analysis", onRefresh: refreshAnalysisView });
+  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
+  void ensureAccountKpiSurfaceLoaded(aid);
+  return true;
+}
+
+
 async function refreshOverviewProfitRowFromSnapshots() {
   if (state.route === "community-profile" || state.route === "stock-record") {
     return;
@@ -7101,6 +7406,25 @@ async function refreshOverviewProfitRowFromSnapshots() {
     return;
   }
   const seq = ++overviewProfitRefreshSeq;
+  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const stageKey = metricsStageFromHome();
+  if (apiReady) {
+    const ret = await fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: `today,${stageKey}` });
+    const hold = await fetchMetricsApi("/holdings", { accountScope: aid });
+    if (seq === overviewProfitRefreshSeq && ret?.stages?.today && ret?.stages?.[stageKey]) {
+      const today = ret.stages.today;
+      const stage = ret.stages[stageKey];
+      todayProfitMain.innerHTML = metricHeadlineHtml(today.profitDisplay, today.rateDisplay, today.profitCny, today.rate);
+      todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
+      monthProfitMain.innerHTML = metricHeadlineHtml(stage.profitDisplay, stage.rateDisplay, stage.profitCny, stage.rate);
+      monthProfitMain.className = `profit-main ${Number(stage.profitCny) >= 0 ? "up" : "down"}`;
+      paintOverviewStockTableFromMetricsRows(hold?.rows || []);
+      state.overviewSnapshotUi.ready = true;
+      state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
+      state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
+      return;
+    }
+  }
   const scope = getPortfolioScope(state.selectedAccountId);
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const vis = portfolio.visiblePositions;
@@ -7111,7 +7435,6 @@ async function refreshOverviewProfitRowFromSnapshots() {
   }
   const bookCcy = portfolio.overviewBookCurrency || "CNY";
   const bounds = overviewAccountDailyFetchBounds(scope, state.stageRange);
-  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const symList = [...new Set(vis.map((p) => normalizeSymbol(p.symbol)).filter(Boolean))];
   let homeData = null;
   let homeCoversSymbols = false;
@@ -7655,6 +7978,19 @@ async function renderAnalysis(options = {}) {
   if (!dbRows.length) {
     if (renderRequestId === analysisRenderRequestSeq) {
       renderAnalysisStockRank([], scope, portfolio);
+      const kpiAid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+      void ensureAccountKpiSurfaceLoaded(kpiAid).then(() => {
+        if (analysisEodAccountCaption) {
+          const line = state.accountKpisByScope[kpiAid]?.summaryLine;
+          if (line) {
+            analysisEodAccountCaption.textContent = line;
+            analysisEodAccountCaption.hidden = false;
+          } else {
+            analysisEodAccountCaption.textContent = "";
+            analysisEodAccountCaption.hidden = true;
+          }
+        }
+      });
     }
     return;
   }
@@ -7876,6 +8212,18 @@ async function renderAnalysis(options = {}) {
   }
   if (analysisProfitSummary) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
+  }
+  const kpiAid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  await ensureAccountKpiSurfaceLoaded(kpiAid);
+  if (analysisEodAccountCaption) {
+    const line = state.accountKpisByScope[kpiAid]?.summaryLine;
+    if (line) {
+      analysisEodAccountCaption.textContent = line;
+      analysisEodAccountCaption.hidden = false;
+    } else {
+      analysisEodAccountCaption.textContent = "";
+      analysisEodAccountCaption.hidden = true;
+    }
   }
   renderAnalysisStockRank(pseudoHistory, scope, portfolio);
   void warmOverviewDailySnapshotsForEarning(scope, state.stageRange);
@@ -9741,21 +10089,29 @@ async function refreshMarketData(opts = {}) {
 
     const missClose = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
     if (missClose.length) {
-      await fetchSymbolCloseIntoKlineMap(missClose, 60);
+      await fetchSymbolCloseIntoKlineMap(missClose, 60, { parallelChunks: 6 });
     }
-    for (const symbol of klineSymbols) {
-      // Fallback "realtime": use local daily-kline only; do not fan out remote single-symbol requests.
-      if (!Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
-        const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { allowRemote: false });
-        if (latest) {
-          const normalized = normalizeSymbol(symbol);
-          const legacyAlias = getLegacyUsAlias(normalized);
-          state.quoteMap[normalized] = latest;
-          if (legacyAlias) {
-            state.quoteMap[legacyAlias] = latest;
+    let stillNoRealtime = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
+    if (stillNoRealtime.length) {
+      await fetchSymbolCloseIntoKlineMap(stillNoRealtime, 90, { parallelChunks: 6 });
+    }
+    stillNoRealtime = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
+    const fbConc = 6;
+    for (let i = 0; i < stillNoRealtime.length; i += fbConc) {
+      const slice = stillNoRealtime.slice(i, i + fbConc);
+      await Promise.all(
+        slice.map(async (symbol) => {
+          const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { skipExtraKlineFetch: true });
+          if (latest) {
+            const normalized = normalizeSymbol(symbol);
+            const legacyAlias = getLegacyUsAlias(normalized);
+            state.quoteMap[normalized] = latest;
+            if (legacyAlias) {
+              state.quoteMap[legacyAlias] = latest;
+            }
           }
-        }
-      }
+        }),
+      );
     }
 
     // 名称由腾讯实时批量结果填充；停用东财兜底，避免产生与行情无关的超时红项。
@@ -9780,10 +10136,13 @@ async function refreshMarketData(opts = {}) {
  * 勿用分钟线相邻两根代替昨收，否则涨跌幅会变成「几分钟内波动」，出现约 0.08% 这类与当日真实涨跌严重不符的数。
  */
 async function fetchLatestQuoteFromDailyKlineFallback(symbol, options = {}) {
-  void options;
+  const skipExtraKlineFetch = options.skipExtraKlineFetch === true;
   try {
     let list = getKlineBySymbol(symbol);
     if (!Array.isArray(list) || list.length < 2) {
+      if (skipExtraKlineFetch) {
+        return null;
+      }
       const n = normalizeSymbol(symbol);
       if (n) {
         await fetchSymbolCloseIntoKlineMap([n], 90);

@@ -236,6 +236,24 @@ function metricsForWindow(allRowsThroughF, windowStart, windowEnd) {
   };
 }
 
+/** 取冻结日及之前最近一条 analysis 日快照（rows 可为 getAnalysisDailySnapshots 的 camelCase 行，已按 date 升序更佳）。 */
+function lastAnalysisDailyRowOnOrBefore(rows, frozenThrough) {
+  const F = String(frozenThrough || "").slice(0, 10);
+  let best = null;
+  let bestD = "";
+  for (const r of rows || []) {
+    const d = String(r.date || "").slice(0, 10);
+    if (!d || d > F) {
+      continue;
+    }
+    if (!best || d >= bestD) {
+      best = r;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
 /**
  * @param {Array<{date:string,marketValue:number,externalFlowCny?:number,external_flow_cny?:number}>} rowsAllAll
  * @param {string} frozenThrough YYYY-MM-DD
@@ -291,9 +309,13 @@ function symbolRatesFromPnlPoints(ptsSorted) {
 module.exports = {
   monthStartKeyShanghai,
   yearStartKeyShanghai,
+  lastAnalysisDailyRowOnOrBefore,
   computeAccountHomeSummaryFromSnapshots,
   symbolRatesFromPnlPoints,
   buildProfitSeries,
   rebaseRateSeriesByFirstDay,
   computeTimeWeightedSeries,
+  metricsForWindow,
+  xirrFromSnapshotWindow,
+  computeModeSeries,
 };

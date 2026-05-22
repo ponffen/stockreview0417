@@ -1,0 +1,135 @@
+/**
+ * f 持仓表：symbol_home_summary（冻结）+ computeLiveMetrics（今日/现价），方案 A 全 display。
+ */
+const { normalizeSymbol, formatSymbolForDisplay } = require("../db");
+const { fmtMoney, fmtPercentRatio } = require("../account-kpi-surface");
+
+function inferMarket(symbol) {
+  const s = String(symbol || "");
+  if (s.startsWith("sh") || s.startsWith("sz")) {
+    return "A股";
+  }
+  if (s.startsWith("hk") || s.startsWith("rt_hk")) {
+    return "港股";
+  }
+  return "美股";
+}
+
+function marketTag(market) {
+  if (market === "A股") {
+    return "CN";
+  }
+  if (market === "港股") {
+    return "HK";
+  }
+  if (market === "美股") {
+    return "US";
+  }
+  return "OT";
+}
+
+function formatRegret(rate, side) {
+  const r = Number(rate);
+  if (!Number.isFinite(r)) {
+    return "—";
+  }
+  const s = String(side || "").toLowerCase() === "sell" ? "卖" : "买";
+  return `${s}后 ${fmtPercentRatio(r)}`;
+}
+
+async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, accountRow }) {
+  const book = String(settings?.overviewBookCurrency || "CNY").toUpperCase();
+  const fxU = Number(accountRow?.eod_fx_usd_cny) || live.fxUsdCny || 7.2;
+  const fxH = Number(accountRow?.eod_fx_hkd_cny) || live.fxHkdCny || 0.92;
+  const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
+  const snapBySym = new Map((symbolRows || []).map((r) => [normalizeSymbol(r.symbol), r]));
+
+  const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
+  const rowsOut = [];
+  for (const sym of keys) {
+    const liveP = liveBySym.get(sym);
+    const snap = snapBySym.get(sym);
+    const qty = liveP?.quantity || 0;
+    if (!(qty > 1e-6)) {
+      continue;
+    }
+    const ccy = String(snap?.currency || liveP?.currency || "CNY").toUpperCase();
+    const fx =
+      ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
+    const todayNat = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const monthNat = (Number(snap?.month_profit_native) || 0) + todayNat;
+    const yearNat = (Number(snap?.ytd_profit_native) || 0) + todayNat;
+    const totalNat = (Number(snap?.total_profit_native) || 0) + todayNat;
+    const current = Number(liveP?.current) || 0;
+    const prev = Number(liveP?.prevClose) || current;
+    const dayChg = prev > 0 ? (current - prev) / prev : 0;
+    const mvNat = qty * current;
+    const costNat =
+      Math.abs(Number(snap?.total_profit_native) || 0) > 0 && Number(snap?.total_rate_twr)
+        ? mvNat - totalNat
+        : mvNat;
+    const sigma = qty > 0 ? costNat / qty : 0;
+    const totalRate = Math.abs(sigma * qty) > 0 ? totalNat / Math.abs(sigma * qty) : 0;
+
+    rowsOut.push({
+      symbol: sym,
+      name: snap?.name || sym,
+      marketTag: marketTag(inferMarket(sym)),
+      stockCode: formatSymbolForDisplay(sym),
+      priceDisplay: Number.isFinite(current) ? current.toFixed(3) : "—",
+      dayChangeDisplay: fmtPercentRatio(dayChg),
+      marketValueDisplay: fmtMoney(mvNat * (ccy === "CNY" ? 1 : 1 / fx), book),
+      quantityDisplay: String(Math.round(qty)),
+      weightDisplay: "—",
+      costDisplay: Number.isFinite(sigma) ? sigma.toFixed(3) : "—",
+      todayProfitDisplay: fmtMoney(todayNat / (ccy === "CNY" ? 1 : fx), book),
+      monthProfitDisplay: fmtMoney(monthNat / (ccy === "CNY" ? 1 : fx), book),
+      monthWeightDisplay: "—",
+      yearProfitDisplay: fmtMoney(yearNat / (ccy === "CNY" ? 1 : fx), book),
+      yearWeightDisplay: "—",
+      totalProfitDisplay: fmtMoney(totalNat / (ccy === "CNY" ? 1 : fx), book),
+      totalRateDisplay: fmtPercentRatio(totalRate),
+      regretDisplay: "—",
+    });
+  }
+
+  const totalMv = rowsOut.reduce((s, r) => {
+    const lp = liveBySym.get(normalizeSymbol(r.symbol));
+    return s + (Number(lp?.marketValueCny) || 0);
+  }, 0);
+  const totalAssets = Number(live.totalAssetsCny) || totalMv + (Number(live.cashCny) || 0);
+  let monthDen = 0;
+  let yearDen = 0;
+  for (const sym of keys) {
+    const snap = snapBySym.get(sym);
+    const liveP = liveBySym.get(sym);
+    if (!(liveP?.quantity > 1e-6)) {
+      continue;
+    }
+    const todayNat = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    monthDen += Math.abs((Number(snap?.month_profit_native) || 0) + todayNat);
+    yearDen += Math.abs((Number(snap?.ytd_profit_native) || 0) + todayNat);
+  }
+  for (const row of rowsOut) {
+    const sym = normalizeSymbol(row.symbol);
+    const snap = snapBySym.get(sym);
+    const liveP = liveBySym.get(sym);
+    const todayNat = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const monthNat = (Number(snap?.month_profit_native) || 0) + todayNat;
+    const yearNat = (Number(snap?.ytd_profit_native) || 0) + todayNat;
+    const mv = Number(liveP?.marketValueCny) || 0;
+    row.weightDisplay = totalAssets > 0 ? fmtPercentRatio(mv / totalAssets) : "0.00%";
+    row.monthWeightDisplay = monthDen > 0 ? fmtPercentRatio(monthNat / monthDen) : "0.00%";
+    row.yearWeightDisplay = yearDen > 0 ? fmtPercentRatio(yearNat / yearDen) : "0.00%";
+  }
+
+  rowsOut.sort((a, b) => {
+    const pa = liveBySym.get(normalizeSymbol(a.symbol));
+    const pb = liveBySym.get(normalizeSymbol(b.symbol));
+    return (Number(pb?.marketValueCny) || 0) - (Number(pa?.marketValueCny) || 0);
+  });
+
+  return rowsOut;
+}
+
+module.exports = { buildHoldingsPayload };
