@@ -5,7 +5,7 @@ const {
   normalizeSymbol,
   getSymbolDailyCloseRange,
   upsertSymbolDailyPnlBatch,
-  upsertAnalysisDailySnapshot,
+  upsertAnalysisDailySnapshotBatch,
   upsertSymbolDailyCloseBatch,
   listAllUserIds,
   getLatestAnalysisSnapshotDate,
@@ -346,7 +346,13 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     profitCnyByAccDate.set(pk, profitCnyFromAccDateNative(byCcy, dateKey, fxUsdMap, fxHkdMap));
   }
 
+  const analysisRowsBuffer = [];
   let analysisRowsWritten = 0;
+  const flushAnalysis = async () => {
+    if (!analysisRowsBuffer.length) return;
+    analysisRowsWritten += await upsertAnalysisDailySnapshotBatch(analysisRowsBuffer.splice(0, analysisRowsBuffer.length), uid);
+  };
+
   for (const accountId of accountIds) {
     const accTrades = filterTradesForAccount(allTrades, accountId);
     if (!accTrades.length) continue;
@@ -354,16 +360,17 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     const dayPoints = buildPortfolioDayPoints(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap, allCash, accountId, accounts);
     if (!dayPoints.length) continue;
 
+    const cashCnyByDate = new Map();
     const twrInputs = [];
     for (let i = 0; i < dayPoints.length; i += 1) {
       const p = dayPoints[i];
       const dk = p.date;
       const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+      cashCnyByDate.set(dk, cashCny);
       const mvCny = Number(p.nav) || 0;
-      const totalAssetsCny = mvCny + cashCny;
       twrInputs.push({
         date: dk,
-        nav: totalAssetsCny,
+        nav: mvCny + cashCny,
         extFlow: p.extFlow,
         tradeFlow: 0,
         externalFlowNative: p.externalFlowNative,
@@ -377,36 +384,33 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
       const tw = twrArr[i] || { twRDaily: 0, twRCumulative: 0 };
       const dk = p.date;
       const profitCny = profitCnyByAccDate.get(`${accountId}|${dk}`) ?? 0;
-
-      const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+      const cashCny = cashCnyByDate.get(dk);
       const mvCny = Number(p.nav) || 0;
       const totalAssetsCny = mvCny + cashCny;
       const cashRatio = totalAssetsCny > 0 ? (cashCny / totalAssetsCny) * 100 : 0;
       cumProfit += profitCny;
-      await upsertAnalysisDailySnapshot(
-        {
-          accountId,
-          date: dk,
-          profitCny,
-          twRDaily: tw.twRDaily,
-          twRCumulative: tw.twRCumulative,
-          externalFlowCny: p.extFlow,
-          externalFlowNative: p.externalFlowNative,
-          totalProfit: cumProfit,
-          principal: 0,
-          marketValue: p.nav,
-          totalAssets: totalAssetsCny,
-          cash: cashCny,
-          cashRatio,
-          fxHkdCny: fxHkdMap[dk] ?? null,
-          fxUsdCny: fxUsdMap[dk] ?? null,
-          createdAt: Date.now(),
-        },
-        uid
-      );
-      analysisRowsWritten += 1;
+      analysisRowsBuffer.push({
+        accountId,
+        date: dk,
+        profitCny,
+        twRDaily: tw.twRDaily,
+        twRCumulative: tw.twRCumulative,
+        externalFlowCny: p.extFlow,
+        externalFlowNative: p.externalFlowNative,
+        totalProfit: cumProfit,
+        principal: 0,
+        marketValue: p.nav,
+        totalAssets: totalAssetsCny,
+        cash: cashCny,
+        cashRatio,
+        fxHkdCny: fxHkdMap[dk] ?? null,
+        fxUsdCny: fxUsdMap[dk] ?? null,
+        createdAt: Date.now(),
+      });
+      if (analysisRowsBuffer.length >= 500) await flushAnalysis();
     }
   }
+  await flushAnalysis();
 
   await rebuildPerformanceSeriesCache({
     userId: uid,

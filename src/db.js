@@ -1497,6 +1497,59 @@ async function upsertAnalysisDailySnapshot(input, userId = null) {
   return row;
 }
 
+async function upsertAnalysisDailySnapshotBatch(rows, userId = null) {
+  const uid = String(userId || (await getCliUserId())).trim();
+  const list = Array.isArray(rows) ? rows : [];
+  const now = nowMs();
+  const p = await initPool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    for (const raw of list) {
+      const r = raw || {};
+      await client.query(
+        `INSERT INTO analysis_daily_snapshot (
+           user_id, account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
+           total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         ON CONFLICT (user_id, account_id, date) DO UPDATE SET
+           profit_cny = EXCLUDED.profit_cny, tw_r_daily = EXCLUDED.tw_r_daily, tw_r_cumulative = EXCLUDED.tw_r_cumulative,
+           external_flow_cny = EXCLUDED.external_flow_cny, external_flow_native = EXCLUDED.external_flow_native,
+           total_profit = EXCLUDED.total_profit, principal = EXCLUDED.principal, market_value = EXCLUDED.market_value,
+           total_assets = EXCLUDED.total_assets, cash_cny = EXCLUDED.cash_cny, cash_ratio = EXCLUDED.cash_ratio,
+           fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
+        [
+          uid,
+          String(r.accountId || r.account_id || "default").trim() || "default",
+          toDateKey(r.date),
+          validNumber(r.profitCny, r.profit_cny, 0),
+          validNumber(r.twRDaily, r.tw_r_daily, 0),
+          validNumber(r.twRCumulative, r.tw_r_cumulative, 0),
+          validNumber(r.externalFlowCny, r.external_flow_cny, 0),
+          validNumber(r.externalFlowNative, r.external_flow_native, 0),
+          validNumber(r.totalProfit, r.total_profit, 0),
+          0,
+          validNumber(r.marketValue, r.market_value, 0),
+          validNumber(r.totalAssets, r.total_assets, 0),
+          validNumber(r.cash, r.cash_cny, 0),
+          validNumber(r.cashRatio, r.cash_ratio, 0),
+          r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
+          r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
+          validNumber(r.createdAt, r.created_at, now),
+          now,
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  return list.length;
+}
+
 async function deleteAllSymbolDailyPnl(userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   await q("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
@@ -2688,6 +2741,7 @@ module.exports = {
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
   upsertAnalysisDailySnapshot,
+  upsertAnalysisDailySnapshotBatch,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
   deletePerformanceSeriesCacheForUser,
