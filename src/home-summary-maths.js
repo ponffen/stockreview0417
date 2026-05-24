@@ -259,10 +259,13 @@ function lastAnalysisDailyRowOnOrBefore(rows, frozenThrough) {
  * @param {string} frozenThrough YYYY-MM-DD
  * @param {string} firstTradeDate 总收益起点：首笔交易日
  */
-function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, firstTradeDate) {
+function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, firstTradeDate, asOfToday) {
   const F = String(frozenThrough).slice(0, 10);
-  const ms = monthStartKeyShanghai(F);
-  const ys = yearStartKeyShanghai(F);
+  // Use the caller-supplied today date so MTD/YTD boundaries reflect the current
+  // month/year rather than the frozen date (important for cleared accounts).
+  const today = asOfToday ? String(asOfToday).slice(0, 10) : F;
+  const ms = monthStartKeyShanghai(today);
+  const ys = yearStartKeyShanghai(today);
   const ft = String(firstTradeDate || F).slice(0, 10);
   const rows = rowsAllAll
     .map((r) => ({

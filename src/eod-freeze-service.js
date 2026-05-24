@@ -11,6 +11,11 @@ const {
   getLatestAnalysisSnapshotDate,
   setSnapshotWatermark,
   ensurePerformanceSchemaV2,
+  getUserMetricsMeta,
+  upsertUserMetricsMeta,
+  getAccountMetricsMetaForUser,
+  upsertAccountMetricsMeta,
+  getLastEodSharesForUser,
 } = require("./db");
 const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 const { fetchSinaForexDayKSeries, toDateKey, enumerateDays, validNumber } = require("../scripts/lib/market-fetch");
@@ -227,6 +232,14 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
 
   await ensurePerformanceSchemaV2();
 
+  // User-level cleared check: skip entirely if user has no active positions
+  if (!options.force) {
+    const userMeta = await getUserMetricsMeta(uid, { light: true });
+    if (userMeta.isCleared) {
+      return { userId: uid, skipped: true, reason: "user-cleared" };
+    }
+  }
+
   const latestAllSnapshotDate = await getLatestAnalysisSnapshotDate(uid, "all");
   if (!options.force && latestAllSnapshotDate && latestAllSnapshotDate >= frozenDate) {
     return { userId: uid, skipped: true, reason: "already-up-to-date", latestSnapshotDate: latestAllSnapshotDate };
@@ -249,6 +262,42 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   const accounts = await getAccounts(uid);
   const allDates = enumerateDays(minD, frozenDate);
   const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
+
+  // Load account clearing state and last known EOD shares for skip optimizations
+  const accountMetaList = await getAccountMetricsMetaForUser(uid);
+  const accountMetaMap = new Map(accountMetaList.map((m) => [m.accountId, m]));
+  const lastEodRows = await getLastEodSharesForUser(uid);
+  const lastEodMap = new Map(lastEodRows.map((r) => [`${r.accountId}|${r.symbol}`, r]));
+
+  // Determine which accounts/symbols have new trades since the last snapshot
+  const snapshotDate = latestAllSnapshotDate || "1900-01-01";
+  const newTradeKeys = new Set();    // `${accountId}|${symbol}` pairs with new trades
+  const accountHasNewTrades = new Set();  // accountIds with new trades
+  for (const t of allTrades) {
+    const td = String(t.date).slice(0, 10);
+    if (td > snapshotDate) {
+      const sym = String(t.symbol || "");
+      const acc = String(t.accountId || "default");
+      newTradeKeys.add(`${acc}|${sym}`);
+      newTradeKeys.add(`all|${sym}`);
+      accountHasNewTrades.add(acc);
+    }
+  }
+
+  // Pre-compute which sub-accounts to skip entirely (cleared + no new trades)
+  const skippedSubAccounts = new Set();
+  if (!options.force) {
+    for (const t of allTrades) {
+      const acc = String(t.accountId || "default");
+      const accMeta = accountMetaMap.get(acc);
+      if (accMeta?.isCleared && !accountHasNewTrades.has(acc)) {
+        skippedSubAccounts.add(acc);
+      }
+    }
+  }
+
+  // Track final EOD shares per (accountId, symbol) for clearing detection at end
+  const symbolFinalEod = new Map();
 
   const syncedDailyCloseRows = syncDailyClose ? await syncSymbolDailyCloseForWindow(symbols, minD, frozenDate, logger) : 0;
 
@@ -276,6 +325,9 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   };
 
   for (const accountId of accountIds) {
+    // Account-level cleared skip for symbol_daily_pnl writes
+    if (accountId !== "all" && skippedSubAccounts.has(accountId)) continue;
+
     const accTrades = filterTradesForAccount(allTrades, accountId);
     if (!accTrades.length) continue;
     for (const sym of symbols) {
@@ -283,6 +335,16 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
       if (!symTrades.length) continue;
       const kl = klineBySym.get(sym) || [];
       if (!kl.length) continue;
+
+      // Symbol-level cleared skip: if last known eodShares = 0 and no new trades, skip
+      if (!options.force) {
+        const symKey = `${accountId}|${sym}`;
+        const lastEod = lastEodMap.get(symKey);
+        if (lastEod && lastEod.eodShares <= 0 && !newTradeKeys.has(symKey)) {
+          symbolFinalEod.set(symKey, 0);
+          continue;
+        }
+      }
 
       let pi = 0;
       let qty = 0;
@@ -335,6 +397,8 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
         addDailyProfitNativeByCurrency(accDateNative, accountId, D, pnlNative, ccy);
         if (symbolRowsBuffer.length >= 500) await flushSym();
       }
+      // Track final EOD shares for clearing detection
+      symbolFinalEod.set(`${accountId}|${sym}`, qty);
     }
   }
   await flushSym();
@@ -354,6 +418,9 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   };
 
   for (const accountId of accountIds) {
+    // Account-level cleared skip for analysis_daily_snapshot writes
+    if (accountId !== "all" && skippedSubAccounts.has(accountId)) continue;
+
     const accTrades = filterTradesForAccount(allTrades, accountId);
     if (!accTrades.length) continue;
 
@@ -412,10 +479,15 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   }
   await flushAnalysis();
 
+  // Only rebuild perf cache for accounts that were actually processed
+  const activeAccountIds = options.force
+    ? accountIds
+    : accountIds.filter((a) => a === "all" || !skippedSubAccounts.has(a));
+
   await rebuildPerformanceSeriesCache({
     userId: uid,
     asOfDate: frozenDate,
-    accountIds,
+    accountIds: activeAccountIds,
   });
 
   try {
@@ -428,6 +500,39 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   } catch (e) {
     logger.warn?.("[freeze] home summary failed", e?.message || e);
   }
+
+  // Detect clearing status and persist to meta tables
+  const frozenDateKey = String(frozenDate).slice(0, 10);
+  const subAccountIds = accountIds.filter((a) => a !== "all");
+  let allSubCleared = subAccountIds.length > 0;
+
+  for (const accId of subAccountIds) {
+    if (skippedSubAccounts.has(accId)) {
+      // Was skipped — already marked cleared in a previous run
+      const existingMeta = accountMetaMap.get(accId);
+      if (!existingMeta?.isCleared) allSubCleared = false;
+      continue;
+    }
+    // Check if all symbols in this account ended with 0 shares
+    const accSymbols = symbols.filter((sym) =>
+      allTrades.some((t) => String(t.accountId || "default") === accId && t.symbol === sym)
+    );
+    const accIsCleared =
+      accSymbols.length === 0 ||
+      accSymbols.every((sym) => (symbolFinalEod.get(`${accId}|${sym}`) ?? 0) <= 0);
+    if (!accIsCleared) allSubCleared = false;
+    await upsertAccountMetricsMeta(uid, accId, {
+      isCleared: accIsCleared,
+      clearedAt: accIsCleared ? frozenDateKey : null,
+      frozenThrough: frozenDateKey,
+    });
+  }
+
+  await upsertUserMetricsMeta(uid, {
+    isCleared: allSubCleared,
+    clearedAt: allSubCleared ? frozenDateKey : null,
+    frozenThrough: frozenDateKey,
+  });
 
   return {
     userId: uid,

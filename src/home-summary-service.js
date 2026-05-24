@@ -69,12 +69,15 @@ async function rebuildHomeSummaryForUser(userId) {
   if (!analysisRows.length) {
     return { ok: false, skip: true, reason: "no analysis rows" };
   }
-  const acc = computeAccountHomeSummaryFromSnapshots(analysisRows, frozen, firstTrade);
+  // Use today's Shanghai date so MTD/YTD windows are relative to the current month/year,
+  // not the frozen date — ensures cleared users show 0% for the current period.
+  const todayShanghai = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+  const acc = computeAccountHomeSummaryFromSnapshots(analysisRows, frozen, firstTrade, todayShanghai);
   const sourceVersion = buildSourceVersion(trades, cash);
   const now = Date.now();
   const F = String(frozen).slice(0, 10);
-  const ms = monthStartKeyShanghai(F);
-  const ys = yearStartKeyShanghai(F);
+  const ms = monthStartKeyShanghai(todayShanghai);
+  const ys = yearStartKeyShanghai(todayShanghai);
 
   const allSymPnl = await getSymbolDailyPnl({ accountId: "all", from: firstTrade || F, to: frozen }, uid);
   const bySym = new Map();

@@ -779,6 +779,18 @@ async function upsertTrade(trade, userId) {
       row.updated_at,
     ]
   );
+  // Reset clearing flags so the next cron re-evaluates this user/account
+  const tradeNow = nowMs();
+  await q(
+    `UPDATE user_metrics_meta SET is_cleared = FALSE, updated_at = $2 WHERE user_id = $1`,
+    [row.user_id, tradeNow]
+  ).catch(() => {});
+  await q(
+    `INSERT INTO account_metrics_meta (user_id, account_id, is_cleared, updated_at)
+     VALUES ($1, $2, FALSE, $3)
+     ON CONFLICT (user_id, account_id) DO UPDATE SET is_cleared = FALSE, updated_at = EXCLUDED.updated_at`,
+    [row.user_id, row.account_id, tradeNow]
+  ).catch(() => {});
   return normalizeTrade({ ...trade, id: row.id });
 }
 
@@ -832,7 +844,26 @@ async function importTrades(trades, mode = "append", userId = null) {
 
 async function deleteTradeById(tradeId, userId) {
   const uid = String(userId || "").trim();
-  const { rowCount } = await q("DELETE FROM trades WHERE user_id = $1 AND id = $2", [uid, String(tradeId || "")]);
+  const tid = String(tradeId || "");
+  // Get account_id before delete so we can reset that account's clearing flag
+  let deletedAccountId = null;
+  try {
+    const { rows: tr } = await q("SELECT account_id FROM trades WHERE user_id = $1 AND id = $2", [uid, tid]);
+    deletedAccountId = tr[0]?.account_id || null;
+  } catch { /* ignore */ }
+  const { rowCount } = await q("DELETE FROM trades WHERE user_id = $1 AND id = $2", [uid, tid]);
+  if (rowCount > 0) {
+    const delNow = nowMs();
+    await q(`UPDATE user_metrics_meta SET is_cleared = FALSE, updated_at = $2 WHERE user_id = $1`, [uid, delNow]).catch(() => {});
+    if (deletedAccountId) {
+      await q(
+        `INSERT INTO account_metrics_meta (user_id, account_id, is_cleared, updated_at)
+         VALUES ($1, $2, FALSE, $3)
+         ON CONFLICT (user_id, account_id) DO UPDATE SET is_cleared = FALSE, updated_at = EXCLUDED.updated_at`,
+        [uid, deletedAccountId, delNow]
+      ).catch(() => {});
+    }
+  }
   return rowCount > 0;
 }
 
@@ -1236,7 +1267,15 @@ async function ensureMetricsOpsTables() {
     await q(`CREATE TABLE IF NOT EXISTS user_metrics_meta (
         user_id TEXT PRIMARY KEY, data_version INTEGER NOT NULL DEFAULT 0,
         rebuilding BOOLEAN NOT NULL DEFAULT FALSE, frozen_through TEXT,
-        rebuild_from TEXT, updated_at BIGINT NOT NULL DEFAULT 0)`).catch(() => {});
+        rebuild_from TEXT, updated_at BIGINT NOT NULL DEFAULT 0,
+        is_cleared BOOLEAN NOT NULL DEFAULT FALSE, cleared_at TEXT)`).catch(() => {});
+    await q(`ALTER TABLE user_metrics_meta ADD COLUMN IF NOT EXISTS is_cleared BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+    await q(`ALTER TABLE user_metrics_meta ADD COLUMN IF NOT EXISTS cleared_at TEXT`).catch(() => {});
+    await q(`CREATE TABLE IF NOT EXISTS account_metrics_meta (
+        user_id TEXT NOT NULL, account_id TEXT NOT NULL,
+        is_cleared BOOLEAN NOT NULL DEFAULT FALSE, cleared_at TEXT,
+        frozen_through TEXT, updated_at BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, account_id))`).catch(() => {});
     await q(`CREATE TABLE IF NOT EXISTS cron_job_run (
         id BIGSERIAL PRIMARY KEY, job_name TEXT NOT NULL, started_at BIGINT NOT NULL,
         finished_at BIGINT, ok BOOLEAN NOT NULL DEFAULT FALSE, error_message TEXT,
@@ -1259,15 +1298,17 @@ async function getUserMetricsMeta(userId, opts = {}) {
   const row = rows[0];
   if (!row) {
     if (light) {
-      return { dataVersion: 0, rebuilding: false, frozenThrough: null };
+      return { dataVersion: 0, rebuilding: false, frozenThrough: null, isCleared: false, clearedAt: null };
     }
     const frozen = await getLatestAnalysisSnapshotDate(uid, "all");
-    return { dataVersion: 0, rebuilding: false, frozenThrough: frozen || null };
+    return { dataVersion: 0, rebuilding: false, frozenThrough: frozen || null, isCleared: false, clearedAt: null };
   }
   return {
     dataVersion: Number(row.data_version) || 0,
     rebuilding: row.rebuilding === true,
     frozenThrough: row.frozen_through || null,
+    isCleared: row.is_cleared === true,
+    clearedAt: row.cleared_at || null,
   };
 }
 
@@ -1285,13 +1326,72 @@ async function upsertUserMetricsMeta(userId, patch = {}) {
   const rebuilding = patch.rebuilding != null ? !!patch.rebuilding : cur.rebuilding;
   const frozenThrough = patch.frozenThrough !== undefined ? patch.frozenThrough : cur.frozenThrough;
   const rebuildFrom = patch.rebuildFrom !== undefined ? patch.rebuildFrom : null;
+  const isCleared = patch.isCleared !== undefined ? !!patch.isCleared : (cur.isCleared || false);
+  const clearedAt = patch.clearedAt !== undefined ? (patch.clearedAt || null) : (cur.clearedAt || null);
   await q(
-    `INSERT INTO user_metrics_meta (user_id, data_version, rebuilding, frozen_through, rebuild_from, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (user_id) DO UPDATE SET
+    `INSERT INTO user_metrics_meta (user_id, data_version, rebuilding, frozen_through, rebuild_from, is_cleared, cleared_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id) DO UPDATE SET
        data_version = EXCLUDED.data_version, rebuilding = EXCLUDED.rebuilding,
-       frozen_through = EXCLUDED.frozen_through, rebuild_from = EXCLUDED.rebuild_from, updated_at = EXCLUDED.updated_at`,
-    [uid, dataVersion, rebuilding, frozenThrough, rebuildFrom, nowMs()],
+       frozen_through = EXCLUDED.frozen_through, rebuild_from = EXCLUDED.rebuild_from,
+       is_cleared = EXCLUDED.is_cleared, cleared_at = EXCLUDED.cleared_at,
+       updated_at = EXCLUDED.updated_at`,
+    [uid, dataVersion, rebuilding, frozenThrough, rebuildFrom, isCleared, clearedAt, nowMs()],
   );
+}
+
+async function upsertAccountMetricsMeta(userId, accountId, patch = {}) {
+  const uid = String(userId || "").trim();
+  const acc = String(accountId || "default").trim() || "default";
+  if (!uid || !acc) return;
+  await ensureMetricsOpsTables();
+  const isCleared = patch.isCleared !== undefined ? !!patch.isCleared : false;
+  const clearedAt = patch.clearedAt !== undefined ? (patch.clearedAt || null) : null;
+  const frozenThrough = patch.frozenThrough !== undefined ? (patch.frozenThrough || null) : null;
+  await q(
+    `INSERT INTO account_metrics_meta (user_id, account_id, is_cleared, cleared_at, frozen_through, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (user_id, account_id) DO UPDATE SET
+       is_cleared = EXCLUDED.is_cleared,
+       cleared_at = EXCLUDED.cleared_at,
+       frozen_through = COALESCE(EXCLUDED.frozen_through, account_metrics_meta.frozen_through),
+       updated_at = EXCLUDED.updated_at`,
+    [uid, acc, isCleared, clearedAt, frozenThrough, nowMs()]
+  );
+}
+
+async function getAccountMetricsMetaForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return [];
+  await ensureMetricsOpsTables();
+  const { rows } = await q(
+    `SELECT account_id, is_cleared, cleared_at, frozen_through, updated_at
+     FROM account_metrics_meta WHERE user_id = $1`,
+    [uid]
+  );
+  return rows.map((r) => ({
+    accountId: String(r.account_id),
+    isCleared: r.is_cleared === true,
+    clearedAt: r.cleared_at || null,
+    frozenThrough: r.frozen_through || null,
+    updatedAt: Number(r.updated_at) || 0,
+  }));
+}
+
+async function getLastEodSharesForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return [];
+  const { rows } = await q(
+    `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
+     FROM symbol_daily_pnl WHERE user_id = $1
+     ORDER BY account_id, symbol, date DESC`,
+    [uid]
+  );
+  return rows.map((r) => ({
+    accountId: String(r.account_id),
+    symbol: String(r.symbol),
+    eodShares: Number(r.eod_shares),
+    date: String(r.date),
+  }));
 }
 
 async function insertCronJobRun(row) {
@@ -2734,6 +2834,9 @@ module.exports = {
   getHomeBootstrap,
   getUserMetricsMeta,
   upsertUserMetricsMeta,
+  upsertAccountMetricsMeta,
+  getAccountMetricsMetaForUser,
+  getLastEodSharesForUser,
   insertCronJobRun,
   listCronJobRuns,
   buildAccountKpiSurfaceForScope,
