@@ -5184,6 +5184,7 @@ function invalidateOverviewSnapshotUi() {
   homeSummaryRpcMemo = { key: "", data: null, at: 0 };
   homeSummaryInflightByKey.clear();
   state.accountKpisByScope = {};
+  _kpiInFlightByScope.clear();
 }
 
 function overviewTradesLedgerKey() {
@@ -5406,7 +5407,7 @@ function renderOverviewAndStockTable() {
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const aid = String(state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId));
   void ensureAccountKpiSurfaceLoaded(aid).then(() => {
-    if (state.route === "earning") {
+    if (state.route === "earning" && state.accountKpisByScope[aid]) {
       renderOverviewAndStockTable();
     }
   });
@@ -7214,6 +7215,8 @@ function paintOverviewHeadlineFromHomePayload(homeData, portfolio, bookCcy) {
   return true;
 }
 
+const _kpiInFlightByScope = new Map();
+
 async function ensureAccountKpiSurfaceLoaded(accountScope) {
   if (!apiReady || !sessionPhone) {
     return;
@@ -7222,21 +7225,30 @@ async function ensureAccountKpiSurfaceLoaded(accountScope) {
   if (state.accountKpisByScope[sc]) {
     return;
   }
-  try {
-    const res = await apiFetch(
-      `${API_BASE}/surface/account-kpis?accountScope=${encodeURIComponent(sc)}`,
-      { cache: "no-store", timeoutMs: 18_000 },
-    );
-    if (!res.ok) {
-      return;
-    }
-    const j = await res.json().catch(() => ({}));
-    if (j?.ok && j.data != null && typeof j.data === "object") {
-      state.accountKpisByScope[sc] = j.data;
-    }
-  } catch {
-    /* ignore */
+  if (_kpiInFlightByScope.has(sc)) {
+    return _kpiInFlightByScope.get(sc);
   }
+  const promise = (async () => {
+    try {
+      const res = await apiFetch(
+        `${API_BASE}/surface/account-kpis?accountScope=${encodeURIComponent(sc)}`,
+        { cache: "no-store", timeoutMs: 18_000 },
+      );
+      if (!res.ok) {
+        return;
+      }
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok && j.data != null && typeof j.data === "object") {
+        state.accountKpisByScope[sc] = j.data;
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      _kpiInFlightByScope.delete(sc);
+    }
+  })();
+  _kpiInFlightByScope.set(sc, promise);
+  return promise;
 }
 
 /**
