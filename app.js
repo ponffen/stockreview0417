@@ -5185,6 +5185,7 @@ function invalidateOverviewSnapshotUi() {
   homeSummaryInflightByKey.clear();
   state.accountKpisByScope = {};
   _kpiInFlightByScope.clear();
+  _overviewProfitInflight = null;
 }
 
 function overviewTradesLedgerKey() {
@@ -6957,6 +6958,7 @@ function computeStageOverviewFromMergedRows(mergedRows, stageRange, algoMode, fi
 }
 
 let overviewProfitRefreshSeq = 0;
+let _overviewProfitInflight = null;
 
 /**
  * 与 renderAnalysis 同链：全日快照 merge 今日后，再截阶段；dbRows 可为接口或社区内嵌 analysisDaily。
@@ -7389,15 +7391,20 @@ async function paintAnalysisFromMetricsApi(renderRequestId) {
 
 
 async function refreshOverviewProfitRowFromSnapshots() {
-  if (state.route === "community-profile" || state.route === "stock-record") {
-    return;
-  }
-  if (!todayProfitMain || !monthProfitMain) {
-    return;
-  }
-  const seq = ++overviewProfitRefreshSeq;
+  if (state.route === "community-profile" || state.route === "stock-record") return;
+  if (!todayProfitMain || !monthProfitMain) return;
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const stageKey = metricsStageFromHome();
+  const reqKey = `${aid}|${stageKey}`;
+  if (_overviewProfitInflight?.key === reqKey) return _overviewProfitInflight.promise;
+  const seq = ++overviewProfitRefreshSeq;
+  const promise = _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey);
+  _overviewProfitInflight = { key: reqKey, promise };
+  return promise;
+}
+
+async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
+  try {
   if (apiReady) {
     const ret = await fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: `today,${stageKey}` });
     const hold = await fetchMetricsApi("/holdings", { accountScope: aid });
@@ -7562,6 +7569,9 @@ async function refreshOverviewProfitRowFromSnapshots() {
     );
     state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
     state.overviewSnapshotUi.monthClass = monthProfitMain.className;
+  }
+  } finally {
+    if (_overviewProfitInflight?.key === reqKey) _overviewProfitInflight = null;
   }
 }
 
