@@ -1,1 +1,2813 @@
-Y29uc3QgcGF0aCA9IHJlcXVpcmUoIm5vZGU6cGF0aCIpOwpjb25zdCBmcyA9IHJlcXVpcmUoIm5vZGU6ZnMiKTsKY29uc3QgZXhwcmVzcyA9IHJlcXVpcmUoImV4cHJlc3MiKTsKY29uc3QgY29tcHJlc3Npb24gPSByZXF1aXJlKCJjb21wcmVzc2lvbiIpOwpjb25zdCBjb3JzID0gcmVxdWlyZSgiY29ycyIpOwpjb25zdCBpY29udiA9IHJlcXVpcmUoImljb252LWxpdGUiKTsKCmNvbnN0IHsKICBmZXRjaFNpbmFLbGluZUpzb25Gcm9tVXBzdHJlYW0sCiAgZmV0Y2hTaW5hRGFpbHlLQmF0Y2hGcm9tVXBzdHJlYW0sCiAgdG9TaW5hRGFpbHlLQmF0Y2hTeW1ib2wsCn0gPSByZXF1aXJlKCIuL3NyYy9zaW5hLWtsaW5lLXVwc3RyZWFtIik7CmNvbnN0IHsgZmV0Y2hSZW1vdGVEYWlseUNsb3Nlc0ZvclN5bWJvbCB9ID0gcmVxdWlyZSgiLi9zcmMvZGFpbHktY2xvc2UtYmFja2ZpbGwiKTsKCmNvbnN0IE1BUktFVF9LTElORV9ERUZBVUxUX0xFTiA9IDEyMDsKY29uc3QgTUFSS0VUX0NBQ0hFX1RUTF9NUyA9IDMwICogNjAgKiAxMDAwOwpjb25zdCBBTkFMWVNJU19EQUlMWV9DQUNIRV9UVExfTVMgPSAyMCAqIDEwMDA7CmNvbnN0IERBSUxZX0NMT1NFX0ZPUl9UUkFERVNfQ0FDSEVfVFRMX01TID0gMjAgKiAxMDAwOwpjb25zdCBSRUFMVElNRV9QQVRDSF9DQUNIRV9UVExfTVMgPSAxMCAqIDEwMDA7CmNvbnN0IHNpbmFLbGluZU1lbW9yeUNhY2hlID0gbmV3IE1hcCgpOwpjb25zdCB0ZW5jZW50UXVvdGVNZW1vcnlDYWNoZSA9IG5ldyBNYXAoKTsKY29uc3QgYW5hbHlzaXNEYWlseU1lbW9yeUNhY2hlID0gbmV3IE1hcCgpOwpjb25zdCBkYWlseUNsb3NlRm9yVHJhZGVzTWVtb3J5Q2FjaGUgPSBuZXcgTWFwKCk7CmNvbnN0IHJlYWx0aW1lUGF0Y2hNZW1vcnlDYWNoZSA9IG5ldyBNYXAoKTsKCmZ1bmN0aW9uIGNhY2hlU2V0KG1hcCwga2V5LCB2YWx1ZSkgewogIG1hcC5zZXQoU3RyaW5nKGtleSksIHsgdmFsdWUsIHVwZGF0ZWRBdDogRGF0ZS5ub3coKSB9KTsKfQoKZnVuY3Rpb24gY2FjaGVHZXRXaXRoVHRsKG1hcCwga2V5LCB0dGxNcykgewogIGNvbnN0IGhpdCA9IG1hcC5nZXQoU3RyaW5nKGtleSkpOwogIGlmICghaGl0KSB7CiAgICByZXR1cm4gbnVsbDsKICB9CiAgaWYgKERhdGUubm93KCkgLSBOdW1iZXIoaGl0LnVwZGF0ZWRBdCB8fCAwKSA+IHR0bE1zKSB7CiAgICBtYXAuZGVsZXRlKFN0cmluZyhrZXkpKTsKICAgIHJldHVybiBudWxsOwogIH0KICByZXR1cm4gaGl0LnZhbHVlOwp9CgpmdW5jdGlvbiBjYWNoZUdldChtYXAsIGtleSkgewogIHJldHVybiBjYWNoZUdldFdpdGhUdGwobWFwLCBrZXksIE1BUktFVF9DQUNIRV9UVExfTVMpOwp9CgpmdW5jdGlvbiBjbGVhclVzZXJTY29wZWRDYWNoZShtYXAsIHVzZXJJZCkgewogIGNvbnN0IHVpZCA9IFN0cmluZyh1c2VySWQgfHwgIiIpLnRyaW0oKTsKICBpZiAoIXVpZCkgewogICAgcmV0dXJuOwogIH0KICBjb25zdCBwcmVmaXggPSBgdToke3VpZH06YDsKICBmb3IgKGNvbnN0IGtleSBvZiBtYXAua2V5cygpKSB7CiAgICBpZiAoU3RyaW5nKGtleSkuc3RhcnRzV2l0aChwcmVmaXgpKSB7CiAgICAgIG1hcC5kZWxldGUoa2V5KTsKICAgIH0KICB9Cn0KCmZ1bmN0aW9uIGludmFsaWRhdGVEYWlseUNsb3NlQW5kQW5hbHlzaXNDYWNoZSh1c2VySWQpIHsKICBjbGVhclVzZXJTY29wZWRDYWNoZShhbmFseXNpc0RhaWx5TWVtb3J5Q2FjaGUsIHVzZXJJZCk7CiAgY2xlYXJVc2VyU2NvcGVkQ2FjaGUoZGFpbHlDbG9zZUZvclRyYWRlc01lbW9yeUNhY2hlLCB1c2VySWQpOwogIGNsZWFyVXNlclNjb3BlZENhY2hlKHJlYWx0aW1lUGF0Y2hNZW1vcnlDYWNoZSwgdXNlcklkKTsKICBjb25zdCB1aWQgPSBTdHJpbmcodXNlcklkIHx8ICIiKS50cmltKCk7CiAgaWYgKHVpZCkgewogICAgc2V0SW1tZWRpYXRlKCgpID0+IHNjaGVkdWxlTWV0cmljc1JlYnVpbGRGb3JVc2VyKHVpZCkpOwogIH0KfQoKZnVuY3Rpb24gc2FuaXRpemVTeW1ib2xMaXN0KGlucHV0KSB7CiAgY29uc3QgcmF3ID0gU3RyaW5nKGlucHV0IHx8ICIiKS50cmltKCk7CiAgaWYgKCFyYXcpIHsKICAgIHJldHVybiBbXTsKICB9CiAgcmV0dXJuIFsKICAgIC4uLm5ldyBTZXQoCiAgICAgIHJhdwogICAgICAgIC5zcGxpdCgiLCIpCiAgICAgICAgLm1hcCgocykgPT4gbm9ybWFsaXplU3ltYm9sKFN0cmluZyhzIHx8ICIiKSkpCiAgICAgICAgLmZpbHRlcihCb29sZWFuKQogICAgKSwKICBdOwp9CgpmdW5jdGlvbiBub3JtYWxpemVMZW5QYXJhbShpbnB1dCwgZmFsbGJhY2sgPSBNQVJLRVRfS0xJTkVfREVGQVVMVF9MRU4pIHsKICBjb25zdCBuID0gTnVtYmVyKGlucHV0KTsKICBpZiAoIU51bWJlci5pc0Zpbml0ZShuKSkgewogICAgcmV0dXJuIGZhbGxiYWNrOwogIH0KICByZXR1cm4gTWF0aC5taW4oNTAwMCwgTWF0aC5tYXgoMiwgTWF0aC5mbG9vcihuKSkpOwp9CgpmdW5jdGlvbiBkYXRlS2V5RGF5c0Zyb21Ub2RheShkZWx0YURheXMpIHsKICBjb25zdCBkID0gbmV3IERhdGUoKTsKICBkLnNldERhdGUoZC5nZXREYXRlKCkgKyBOdW1iZXIoZGVsdGFEYXlzIHx8IDApKTsKICByZXR1cm4gYCR7ZC5nZXRGdWxsWWVhcigpfS0ke1N0cmluZyhkLmdldE1vbnRoKCkgKyAxKS5wYWRTdGFydCgyLCAiMCIpfS0ke1N0cmluZyhkLmdldERhdGUoKSkucGFkU3RhcnQoMiwgIjAiKX1gOwp9CgpmdW5jdGlvbiBtYXBTaW5hRGFpbHlTeW1ib2xUb0RiU3ltYm9sKHN5bWJvbCkgewogIGNvbnN0IGNhbm9uaWNhbCA9IHRvU2luYURhaWx5S0JhdGNoU3ltYm9sKHN5bWJvbCk7CiAgaWYgKCFjYW5vbmljYWwpIHsKICAgIHJldHVybiAiIjsKICB9CiAgaWYgKC9eY25fc2hcZHs2fSQvaS50ZXN0KGNhbm9uaWNhbCkpIHsKICAgIHJldHVybiBgc2gke2Nhbm9uaWNhbC5zbGljZSgtNil9YDsKICB9CiAgaWYgKC9eY25fc3pcZHs2fSQvaS50ZXN0KGNhbm9uaWNhbCkpIHsKICAgIHJldHVybiBgc3oke2Nhbm9uaWNhbC5zbGljZSgtNil9YDsKICB9CiAgaWYgKC9eaGtfaGtcZHs1fSQvaS50ZXN0KGNhbm9uaWNhbCkpIHsKICAgIHJldHVybiBgaGske2Nhbm9uaWNhbC5zbGljZSgtNSl9YDsKICB9CiAgaWYgKC9edXNfW0EtWjAtOS5fLV0rJC9pLnRlc3QoY2Fub25pY2FsKSkgewogICAgcmV0dXJuIGNhbm9uaWNhbC5zbGljZSgzKS50b0xvd2VyQ2FzZSgpOwogIH0KICByZXR1cm4gIiI7Cn0KCmZ1bmN0aW9uIG1hcERhaWx5Q2xvc2VSb3dzVG9TaW5hQmFycyhyb3dzKSB7CiAgcmV0dXJuIChyb3dzIHx8IFtdKQogICAgLm1hcCgocikgPT4gewogICAgICBjb25zdCBkYXkgPSBTdHJpbmcocj8uZGF0ZSB8fCAiIikuc2xpY2UoMCwgMTApOwogICAgICBjb25zdCBjbG9zZSA9IE51bWJlcihyPy5jbG9zZSk7CiAgICAgIGlmICghZGF5IHx8ICFOdW1iZXIuaXNGaW5pdGUoY2xvc2UpIHx8IGNsb3NlIDw9IDApIHsKICAgICAgICByZXR1cm4gbnVsbDsKICAgICAgfQogICAgICByZXR1cm4gewogICAgICAgIGRheSwKICAgICAgICBvcGVuOiBjbG9zZSwKICAgICAgICBoaWdoOiBjbG9zZSwKICAgICAgICBsb3c6IGNsb3NlLAogICAgICAgIGNsb3NlLAogICAgICAgIHZvbHVtZTogMCwKICAgICAgfTsKICAgIH0pCiAgICAuZmlsdGVyKEJvb2xlYW4pOwp9CgpmdW5jdGlvbiBjbGlwUm93c0J5UmFuZ2VBbmRMZW4ocm93cywgeyBsZW4sIHN0YXJ0LCBlbmQgfSkgewogIGxldCBvdXQgPSBBcnJheS5pc0FycmF5KHJvd3MpID8gWy4uLnJvd3NdIDogW107CiAgaWYgKHN0YXJ0KSB7CiAgICBvdXQgPSBvdXQuZmlsdGVyKChyKSA9PiBTdHJpbmcocj8uZGF5IHx8ICIiKS5zbGljZSgwLCAxMCkgPj0gc3RhcnQpOwogIH0KICBpZiAoZW5kKSB7CiAgICBvdXQgPSBvdXQuZmlsdGVyKChyKSA9PiBTdHJpbmcocj8uZGF5IHx8ICIiKS5zbGljZSgwLCAxMCkgPD0gZW5kKTsKICB9CiAgb3V0LnNvcnQoKGEsIGIpID0+IFN0cmluZyhhLmRheSkubG9jYWxlQ29tcGFyZShTdHJpbmcoYi5kYXkpKSk7CiAgaWYgKG91dC5sZW5ndGggPiBsZW4pIHsKICAgIHJldHVybiBvdXQuc2xpY2Uob3V0Lmxlbmd0aCAtIGxlbik7CiAgfQogIHJldHVybiBvdXQ7Cn0KCmFzeW5jIGZ1bmN0aW9uIGxvYWRTaW5hRmFsbGJhY2tSb3dzKHJlcXVlc3RTeW1ib2wsIHsgbGVuLCBzdGFydCwgZW5kIH0pIHsKICBjb25zdCBkYlN5bWJvbCA9IG1hcFNpbmFEYWlseVN5bWJvbFRvRGJTeW1ib2wocmVxdWVzdFN5bWJvbCk7CiAgaWYgKGRiU3ltYm9sKSB7CiAgICBjb25zdCB0byA9IGVuZCB8fCBkYXRlS2V5RGF5c0Zyb21Ub2RheSgwKTsKICAgIGNvbnN0IGZyb20gPSBzdGFydCB8fCBkYXRlS2V5RGF5c0Zyb21Ub2RheSgtTWF0aC5tYXgoMzAsIGxlbiAqIDQpKTsKICAgIHRyeSB7CiAgICAgIGNvbnN0IGRiUm93cyA9IGF3YWl0IGdldFN5bWJvbERhaWx5Q2xvc2VSYW5nZShkYlN5bWJvbCwgZnJvbSwgdG8pOwogICAgICBpZiAoQXJyYXkuaXNBcnJheShkYlJvd3MpICYmIGRiUm93cy5sZW5ndGgpIHsKICAgICAgICByZXR1cm4gewogICAgICAgICAgcm93czogY2xpcFJvd3NCeVJhbmdlQW5kTGVuKG1hcERhaWx5Q2xvc2VSb3dzVG9TaW5hQmFycyhkYlJvd3MpLCB7IGxlbiwgc3RhcnQsIGVuZCB9KSwKICAgICAgICAgIHNvdXJjZTogImRiLWNhY2hlIiwKICAgICAgICB9OwogICAgICB9CiAgICB9IGNhdGNoIHsKICAgICAgLy8gaWdub3JlIERCIGZhbGxiYWNrIGZhaWx1cmUgYW5kIGNvbnRpbnVlIHRvIG1lbW9yeSBjYWNoZQogICAgfQogIH0KICBjb25zdCBtZW1vcnlSb3dzID0gY2FjaGVHZXQoc2luYUtsaW5lTWVtb3J5Q2FjaGUsIHJlcXVlc3RTeW1ib2wpOwogIGlmIChBcnJheS5pc0FycmF5KG1lbW9yeVJvd3MpICYmIG1lbW9yeVJvd3MubGVuZ3RoKSB7CiAgICByZXR1cm4gewogICAgICByb3dzOiBjbGlwUm93c0J5UmFuZ2VBbmRMZW4obWVtb3J5Um93cywgeyBsZW4sIHN0YXJ0LCBlbmQgfSksCiAgICAgIHNvdXJjZTogIm1lbW9yeS1jYWNoZSIsCiAgICB9OwogIH0KICByZXR1cm4geyByb3dzOiBbXSwgc291cmNlOiAiIiB9Owp9CgpmdW5jdGlvbiBzZXREZWxheWVkSGVhZGVycyhyZXMsIHNvdXJjZSkgewogIHJlcy5zZXRIZWFkZXIoIlgtTWFya2V0LURhdGEtRGVsYXllZCIsICIxIik7CiAgcmVzLnNldEhlYWRlcigiWC1NYXJrZXQtRGF0YS1Tb3VyY2UiLCBTdHJpbmcoc291cmNlIHx8ICJjYWNoZSIpKTsKfQoKZnVuY3Rpb24gcGFyc2VUZW5jZW50UXVvdGVUZXh0VG9NYXAodGV4dCkgewogIGNvbnN0IG91dCA9IG5ldyBNYXAoKTsKICBjb25zdCByZSA9IC92XyhbQS1aYS16MC05Ll9dKyk9IihbXiJdKikiL2c7CiAgbGV0IG07CiAgd2hpbGUgKChtID0gcmUuZXhlYyhTdHJpbmcodGV4dCB8fCAiIikpKSAhPT0gbnVsbCkgewogICAgb3V0LnNldChTdHJpbmcobVsxXSB8fCAiIikudG9Mb3dlckNhc2UoKSwgU3RyaW5nKG1bMl0gfHwgIiIpKTsKICB9CiAgcmV0dXJuIG91dDsKfQoKZnVuY3Rpb24gYnVpbGRUZW5jZW50UXVvdGVUZXh0RnJvbU1hcChyZXFLZXlzLCBwYXlsb2FkTWFwKSB7CiAgY29uc3QgbGluZXMgPSBbXTsKICBmb3IgKGNvbnN0IGtleSBvZiByZXFLZXlzKSB7CiAgICBjb25zdCBwYXlsb2FkID0gcGF5bG9hZE1hcC5nZXQoU3RyaW5nKGtleSB8fCAiIikudG9Mb3dlckNhc2UoKSk7CiAgICBpZiAocGF5bG9hZCA9PSBudWxsKSB7CiAgICAgIGNvbnRpbnVlOwogICAgfQogICAgbGluZXMucHVzaChgdl8ke2tleX09IiR7cGF5bG9hZH0iO2ApOwogIH0KICByZXR1cm4gbGluZXMuam9pbigiXG4iKTsKfQoKZnVuY3Rpb24gdG9UZW5jZW50UXVvdGVTeW1ib2wocmF3U3ltYm9sKSB7CiAgaWYgKCFyYXdTeW1ib2wpIHsKICAgIHJldHVybiAiIjsKICB9CiAgY29uc3Qgc3JjID0gU3RyaW5nKHJhd1N5bWJvbCkudHJpbSgpOwogIGNvbnN0IHJhdyA9IHNyYy50b0xvd2VyQ2FzZSgpLnJlcGxhY2UoL1xzKy9nLCAiIik7CiAgY29uc3Qgb3JpZyA9IHNyYy5yZXBsYWNlKC9ccysvZywgIiIpOwogIGlmICgvc2hcZHs2fSQvLnRlc3QocmF3KSB8fCAvXnN6XGR7Nn0kLy50ZXN0KHJhdykgfHwgL15oa1xkezV9JC8udGVzdChyYXcpKSB7CiAgICByZXR1cm4gcmF3OwogIH0KICBpZiAoL151c19bYS16MC05Ll8tXSskL2kudGVzdChzcmMpKSB7CiAgICBjb25zdCBiYXNlID0gc3JjLnJlcGxhY2UoL151c18vaSwgIiIpLnJlcGxhY2UoL1wuKE9RfE4pJC9pLCAiIik7CiAgICByZXR1cm4gYHVzJHtiYXNlLnRvVXBwZXJDYXNlKCl9YDsKICB9CiAgaWYgKC9edXNbQS1aMC05Ll8tXSskL2kudGVzdChvcmlnKSkgewogICAgY29uc3QgYmFzZSA9IG9yaWcucmVwbGFjZSgvXnVzL2ksICIiKS5yZXBsYWNlKC9cLihPUXxOKSQvaSwgIiIpOwogICAgcmV0dXJuIGB1cyR7YmFzZS50b1VwcGVyQ2FzZSgpfWA7CiAgfQogIGlmICgvXmdiXy9pLnRlc3QocmF3KSkgewogICAgcmV0dXJuIGB1cyR7cmF3LnNsaWNlKDMpLnRvVXBwZXJDYXNlKCl9YDsKICB9CiAgaWYgKC9ecnRfaGsvaS50ZXN0KHJhdykpIHsKICAgIGNvbnN0IGNvZGUgPSByYXcucmVwbGFjZSgvXnJ0X2hrXz8vaSwgIiIpLnJlcGxhY2UoL1xEL2csICIiKS5wYWRTdGFydCg1LCAiMCIpOwogICAgcmV0dXJuIGBoayR7Y29kZX1gOwogIH0KICBpZiAoL15bYS16XVthLXowLTkuXy1dKiQvaS50ZXN0KHJhdykpIHsKICAgIHJldHVybiBgdXMke3Jhdy50b1VwcGVyQ2FzZSgpfWA7CiAgfQogIHJldHVybiAiIjsKfQoKZnVuY3Rpb24gcGFyc2VUZW5jZW50UHJpY2VGaWVsZChzZWdtZW50KSB7CiAgaWYgKHNlZ21lbnQgPT0gbnVsbCkgewogICAgcmV0dXJuIE5hTjsKICB9CiAgY29uc3QgdCA9IFN0cmluZyhzZWdtZW50KS50cmltKCkucmVwbGFjZSgvLC9nLCAiIik7CiAgY29uc3QgbiA9IE51bWJlcih0KTsKICByZXR1cm4gTnVtYmVyLmlzRmluaXRlKG4pID8gbiA6IE5hTjsKfQoKZnVuY3Rpb24gcGFyc2VRdW90ZVRpbWVUb0RhdGVLZXkodGltZVN0cikgewogIGlmICghdGltZVN0ciB8fCB0eXBlb2YgdGltZVN0ciAhPT0gInN0cmluZyIpIHsKICAgIHJldHVybiBudWxsOwogIH0KICBjb25zdCB0ID0gdGltZVN0ci50cmltKCk7CiAgaWYgKCF0IHx8IHQgPT09ICItLSIpIHsKICAgIHJldHVybiBudWxsOwogIH0KICBjb25zdCBjb21wYWN0ID0gL14oXGR7NH0pKFxkezJ9KShcZHsyfSkvLmV4ZWModC5yZXBsYWNlKC9ccy9nLCAiIikpOwogIGlmIChjb21wYWN0ICYmIGNvbXBhY3RbMF0ubGVuZ3RoID49IDgpIHsKICAgIHJldHVybiBgJHtjb21wYWN0WzFdfS0ke2NvbXBhY3RbMl19LSR7Y29tcGFjdFszXX1gOwogIH0KICBjb25zdCBpc28gPSAvXihcZHs0fSlbLS8uXHU1ZTczXShcZHsxLDJ9KVstLy5cdTY3MDhdKFxkezEsMn0pLy5leGVjKHQpOwogIGlmIChpc28pIHsKICAgIHJldHVybiBgJHtpc29bMV19LSR7U3RyaW5nKE51bWJlcihpc29bMl0pKS5wYWRTdGFydCgyLCAiMCIpfS0ke1N0cmluZyhOdW1iZXIoaXNvWzNdKSkucGFkU3RhcnQoMiwgIjAiKX1gOwogIH0KICByZXR1cm4gbnVsbDsKfQoKZnVuY3Rpb24gZ2V0U2hhbmdoYWlXYWxsQ2xvY2tQYXJ0cyhkYXRlID0gbmV3IERhdGUoKSkgewogIGNvbnN0IHBhcnRzID0gbmV3IEludGwuRGF0ZVRpbWVGb3JtYXQoImVuLUdCIiwgewogICAgdGltZVpvbmU6ICJBc2lhL1NoYW5naGFpIiwKICAgIHllYXI6ICJudW1lcmljIiwKICAgIG1vbnRoOiAiMi1kaWdpdCIsCiAgICBkYXk6ICIyLWRpZ2l0IiwKICAgIGhvdXI6ICIyLWRpZ2l0IiwKICAgIG1pbnV0ZTogIjItZGlnaXQiLAogICAgaG91cjEyOiBmYWxzZSwKICB9KS5mb3JtYXRUb1BhcnRzKGRhdGUpOwogIGNvbnN0IGdldCA9ICh0eXBlKSA9PiBwYXJ0cy5maW5kKChwKSA9PiBwLnR5cGUgPT09IHR5cGUpPy52YWx1ZTsKICByZXR1cm4gewogICAgeTogTnVtYmVyKGdldCgieWVhciIpKSwKICAgIG06IE51bWJlcihnZXQoIm1vbnRoIikpLAogICAgZDogTnVtYmVyKGdldCgiZGF5IikpLAogICAgaDogTnVtYmVyKGdldCgiaG91ciIpKSwKICAgIG1pbjogTnVtYmVyKGdldCgibWludXRlIikpLAogIH07Cn0KCmZ1bmN0aW9uIGdldFRyYWRpbmdEYXRlS2V5QnkwODMwKGJhc2VEYXRlID0gbmV3IERhdGUoKSkgewogIGNvbnN0IHsgeSwgbSwgZCwgaCwgbWluIH0gPSBnZXRTaGFuZ2hhaVdhbGxDbG9ja1BhcnRzKGJhc2VEYXRlKTsKICBjb25zdCBjdXJyZW50ID0gYCR7eX0tJHtTdHJpbmcobSkucGFkU3RhcnQoMiwgIjAiKX0tJHtTdHJpbmcoZCkucGFkU3RhcnQoMiwgIjAiKX1gOwogIGlmIChoIDwgOCB8fCAoaCA9PT0gOCAmJiBtaW4gPCAzMCkpIHsKICAgIHJldHVybiBhZGRDYWxlbmRhckRheXMoY3VycmVudCwgLTEpOwogIH0KICByZXR1cm4gY3VycmVudDsKfQoKZnVuY3Rpb24gc2hvdWxkQ291bnRUb2RheVBvc2l0aW9uUG5sRnJvbVF1b3RlKHF1b3RlLCBub3cgPSBuZXcgRGF0ZSgpKSB7CiAgY29uc3QgdHJhZGluZ0tleSA9IGdldFRyYWRpbmdEYXRlS2V5QnkwODMwKG5vdyk7CiAgY29uc3QgcXVvdGVLZXkgPQogICAgKHF1b3RlICYmIHF1b3RlLm1hcmtldERhdGUpIHx8CiAgICAocXVvdGUgJiYgcXVvdGUucXVvdGVEYXRlKSB8fAogICAgKHF1b3RlICYmIHBhcnNlUXVvdGVUaW1lVG9EYXRlS2V5KHF1b3RlLnJhd1RpbWUpKSB8fAogICAgKHF1b3RlICYmIHBhcnNlUXVvdGVUaW1lVG9EYXRlS2V5KHF1b3RlLnRpbWUpKSB8fAogICAgbnVsbDsKICByZXR1cm4gISFxdW90ZUtleSAmJiBxdW90ZUtleSA9PT0gdHJhZGluZ0tleTsKfQoKZnVuY3Rpb24gcXVvdGVUaW1lU29ydEtleSh0aW1lU3RyKSB7CiAgaWYgKCF0aW1lU3RyIHx8IHR5cGVvZiB0aW1lU3RyICE9PSAic3RyaW5nIikgewogICAgcmV0dXJuIDA7CiAgfQogIGNvbnN0IHJhdyA9IFN0cmluZyh0aW1lU3RyKS50cmltKCk7CiAgaWYgKCFyYXcgfHwgcmF3ID09PSAiLS0iKSB7CiAgICByZXR1cm4gMDsKICB9CiAgY29uc3QgZGlnaXRzID0gcmF3LnJlcGxhY2UoL1xEL2csICIiKTsKICBpZiAoZGlnaXRzLmxlbmd0aCA+PSAxNCkgewogICAgcmV0dXJuIE51bWJlcihkaWdpdHMuc2xpY2UoMCwgMTQpKSB8fCAwOwogIH0KICBpZiAoZGlnaXRzLmxlbmd0aCA+PSA4KSB7CiAgICByZXR1cm4gTnVtYmVyKGAke2RpZ2l0cy5zbGljZSgwLCA4KX0wMDAwMDBgKSB8fCAwOwogIH0KICByZXR1cm4gMDsKfQoKZnVuY3Rpb24gcGlja0xhdGVzdFF1b3RlVGltZSh0aW1lcykgewogIGNvbnN0IGxpc3QgPSBBcnJheS5pc0FycmF5KHRpbWVzKSA/IHRpbWVzIDogW107CiAgbGV0IGJlc3QgPSAiIjsKICBsZXQgYmVzdEtleSA9IDA7CiAgZm9yIChjb25zdCBpdGVtIG9mIGxpc3QpIHsKICAgIGNvbnN0IHRpbWUgPSBTdHJpbmcoaXRlbSB8fCAiIikudHJpbSgpOwogICAgY29uc3Qga2V5ID0gcXVvdGVUaW1lU29ydEtleSh0aW1lKTsKICAgIGlmIChrZXkgPiBiZXN0S2V5KSB7CiAgICAgIGJlc3QgPSB0aW1lOwogICAgICBiZXN0S2V5ID0ga2V5OwogICAgfQogIH0KICByZXR1cm4gYmVzdCB8fCAiLS0iOwp9CgpmdW5jdGlvbiBwYXJzZVRlbmNlbnRRdW90ZVJlY29yZChzeW1ib2wsIHJhd1RleHQpIHsKICBpZiAoIXJhd1RleHQgfHwgdHlwZW9mIHJhd1RleHQgIT09ICJzdHJpbmciKSB7CiAgICByZXR1cm4gbnVsbDsKICB9CiAgY29uc3QgcGFydHMgPSByYXdUZXh0LnNwbGl0KCJ+Iik7CiAgaWYgKHBhcnRzLmxlbmd0aCA8IDYpIHsKICAgIHJldHVybiBudWxsOwogIH0KICBjb25zdCBuYW1lID0gU3RyaW5nKHBhcnRzWzFdIHx8ICIiKS50cmltKCkgfHwgc3ltYm9sOwogIGNvbnN0IGN1cnJlbnQgPSBwYXJzZVRlbmNlbnRQcmljZUZpZWxkKHBhcnRzWzNdKTsKICBjb25zdCBwcmV2Q2xvc2UgPSBwYXJzZVRlbmNlbnRQcmljZUZpZWxkKHBhcnRzWzRdKTsKICBjb25zdCByYXdUaW1lID0gU3RyaW5nKHBhcnRzWzMwXSB8fCBwYXJ0c1szMV0gfHwgIi0tIikudHJpbSgpOwogIGNvbnN0IHRpbWUgPSByYXdUaW1lOwogIGNvbnN0IG1hcmtldERhdGUgPSBwYXJzZVF1b3RlVGltZVRvRGF0ZUtleShyYXdUaW1lKSB8fCBwYXJzZVF1b3RlVGltZVRvRGF0ZUtleSh0aW1lKTsKICBpZiAoIU51bWJlci5pc0Zpbml0ZShjdXJyZW50KSB8fCBjdXJyZW50IDw9IDApIHsKICAgIHJldHVybiBudWxsOwogIH0KICByZXR1cm4gewogICAgbmFtZSwKICAgIGN1cnJlbnQsCiAgICBwcmV2Q2xvc2U6IE51bWJlci5pc0Zpbml0ZShwcmV2Q2xvc2UpICYmIHByZXZDbG9zZSA+IDAgPyBwcmV2Q2xvc2UgOiBjdXJyZW50LAogICAgdGltZTogdGltZSB8fCAiLS0iLAogICAgcmF3VGltZTogcmF3VGltZSB8fCAiLS0iLAogICAgbWFya2V0RGF0ZSwKICAgIHF1b3RlRGF0ZTogbWFya2V0RGF0ZSwKICB9Owp9CgpmdW5jdGlvbiBwYXJzZVRlbmNlbnRGb3JleFF1b3RlUGF5bG9hZChyYXdUZXh0KSB7CiAgaWYgKCFyYXdUZXh0IHx8IHR5cGVvZiByYXdUZXh0ICE9PSAic3RyaW5nIikgewogICAgcmV0dXJuIG51bGw7CiAgfQogIGNvbnN0IHBhcnRzID0gcmF3VGV4dC5zcGxpdCgifiIpOwogIGlmIChwYXJ0cy5sZW5ndGggPCA0KSB7CiAgICByZXR1cm4gbnVsbDsKICB9CiAgY29uc3QgY3VycmVudCA9IHBhcnNlVGVuY2VudFByaWNlRmllbGQocGFydHNbM10pOwogIGNvbnN0IHByZXZDbG9zZSA9IHBhcnNlVGVuY2VudFByaWNlRmllbGQocGFydHNbNF0pOwogIGNvbnN0IHRpbWUgPSBTdHJpbmcocGFydHNbcGFydHMubGVuZ3RoIC0gMV0gfHwgcGFydHNbMTBdIHx8ICIiKS50cmltKCkgfHwgIi0tIjsKICBpZiAoIU51bWJlci5pc0Zpbml0ZShjdXJyZW50KSB8fCBjdXJyZW50IDw9IDApIHsKICAgIHJldHVybiBudWxsOwogIH0KICByZXR1cm4gewogICAgY3VycmVudCwKICAgIHByZXZDbG9zZTogTnVtYmVyLmlzRmluaXRlKHByZXZDbG9zZSkgJiYgcHJldkNsb3NlID4gMCA/IHByZXZDbG9zZSA6IGN1cnJlbnQsCiAgICB0aW1lLAogIH07Cn0KCmFzeW5jIGZ1bmN0aW9uIGZldGNoU2luYURhaWx5QmF0Y2hXaXRoRmFsbGJhY2soaW5wdXRTeW1ib2xzLCBvcHRpb25zID0ge30pIHsKICBjb25zdCBzdGFydCA9IG9wdGlvbnMuc3RhcnQgIT0gbnVsbCA/IFN0cmluZyhvcHRpb25zLnN0YXJ0KSA6ICIiOwogIGNvbnN0IGVuZCA9IG9wdGlvbnMuZW5kICE9IG51bGwgPyBTdHJpbmcob3B0aW9ucy5lbmQpIDogIiI7CiAgY29uc3QgYXNjID0gb3B0aW9ucy5hc2MgIT0gbnVsbCA/IFN0cmluZyhvcHRpb25zLmFzYykgOiAiMCI7CiAgY29uc3QgbGVuID0gbm9ybWFsaXplTGVuUGFyYW0ob3B0aW9ucy5sZW4sIE1BUktFVF9LTElORV9ERUZBVUxUX0xFTik7CiAgY29uc3Qgc3ltYm9scyA9IFsuLi5uZXcgU2V0KChpbnB1dFN5bWJvbHMgfHwgW10pLm1hcCgocykgPT4gdG9TaW5hRGFpbHlLQmF0Y2hTeW1ib2wocykpLmZpbHRlcihCb29sZWFuKSldOwogIGlmICghc3ltYm9scy5sZW5ndGgpIHsKICAgIHJldHVybiB7IG9rOiBmYWxzZSwgZGF0YToge30sIGRlbGF5ZWQ6IGZhbHNlLCBzb3VyY2U6ICIiLCBlcnJvcjogImludmFsaWQgc3ltYm9sIG1hcHBpbmciIH07CiAgfQogIGxldCBwYXlsb2FkID0ge307CiAgbGV0IHVwc3RyZWFtT2sgPSBmYWxzZTsKICB0cnkgewogICAgY29uc3QgcmVzdWx0ID0gYXdhaXQgZmV0Y2hTaW5hRGFpbHlLQmF0Y2hGcm9tVXBzdHJlYW0oc3ltYm9scywgeyBsZW4sIGFzYywgc3RhcnQsIGVuZCB9KTsKICAgIGlmIChyZXN1bHQub2spIHsKICAgICAgdXBzdHJlYW1PayA9IHRydWU7CiAgICAgIHBheWxvYWQgPSByZXN1bHQuZGF0YSB8fCB7fTsKICAgICAgZm9yIChjb25zdCBzeW0gb2Ygc3ltYm9scykgewogICAgICAgIGNvbnN0IHJvd3MgPSBBcnJheS5pc0FycmF5KHBheWxvYWQ/LltzeW1dKSA/IHBheWxvYWRbc3ltXSA6IFtdOwogICAgICAgIGlmIChyb3dzLmxlbmd0aCkgewogICAgICAgICAgY2FjaGVTZXQoc2luYUtsaW5lTWVtb3J5Q2FjaGUsIHN5bSwgcm93cyk7CiAgICAgICAgfQogICAgICB9CiAgICB9CiAgfSBjYXRjaCB7CiAgICAvLyBpZ25vcmUgYW5kIGNvbnRpbnVlIHRvIGNhY2hlIGZhbGxiYWNrCiAgfQoKICBjb25zdCBkZWxheWVkU291cmNlcyA9IG5ldyBTZXQoKTsKICBmb3IgKGNvbnN0IHN5bSBvZiBzeW1ib2xzKSB7CiAgICBjb25zdCByb3dzID0gQXJyYXkuaXNBcnJheShwYXlsb2FkPy5bc3ltXSkgPyBwYXlsb2FkW3N5bV0gOiBbXTsKICAgIGlmIChyb3dzLmxlbmd0aCkgewogICAgICBjb250aW51ZTsKICAgIH0KICAgIGNvbnN0IGZhbGxiYWNrID0gYXdhaXQgbG9hZFNpbmFGYWxsYmFja1Jvd3Moc3ltLCB7IGxlbiwgc3RhcnQsIGVuZCB9KTsKICAgIGlmIChmYWxsYmFjay5yb3dzLmxlbmd0aCkgewogICAgICBwYXlsb2FkW3N5bV0gPSBmYWxsYmFjay5yb3dzOwogICAgICBkZWxheWVkU291cmNlcy5hZGQoZmFsbGJhY2suc291cmNlIHx8ICJjYWNoZSIpOwogICAgfQogIH0KCiAgaWYgKCFPYmplY3Qua2V5cyhwYXlsb2FkKS5sZW5ndGgpIHsKICAgIHJldHVybiB7IG9rOiBmYWxzZSwgZGF0YToge30sIGRlbGF5ZWQ6IGZhbHNlLCBzb3VyY2U6ICIiLCBlcnJvcjogInNpbmEga2xpbmUgZmFpbGVkIGFuZCBubyBjYWNoZSIgfTsKICB9CiAgY29uc3QgZGVsYXllZCA9IGRlbGF5ZWRTb3VyY2VzLnNpemUgPiAwIHx8ICF1cHN0cmVhbU9rOwogIHJldHVybiB7CiAgICBvazogdHJ1ZSwKICAgIGRhdGE6IHBheWxvYWQsCiAgICBkZWxheWVkLAogICAgc291cmNlOiBkZWxheWVkID8gWy4uLmRlbGF5ZWRTb3VyY2VzXS5qb2luKCIsIikgfHwgImNhY2hlIiA6ICIiLAogICAgZXJyb3I6ICIiLAogIH07Cn0KCmFzeW5jIGZ1bmN0aW9uIGZldGNoVGVuY2VudFF1b3RlUGF5bG9hZE1hcChyZXFLZXlzKSB7CiAgY29uc3Qga2V5cyA9IFsuLi5uZXcgU2V0KChyZXFLZXlzIHx8IFtdKS5tYXAoKHMpID0+IFN0cmluZyhzIHx8ICIiKS50cmltKCkpLmZpbHRlcihCb29sZWFuKSldOwogIGlmICgha2V5cy5sZW5ndGgpIHsKICAgIHJldHVybiB7IG9rOiBmYWxzZSwgcGF5bG9hZE1hcDogbmV3IE1hcCgpLCBkZWxheWVkOiBmYWxzZSwgc291cmNlOiAiIiwgZXJyb3I6ICJlbXB0eSBxIGtleXMiLCBtaXNzaW5nS2V5czogW10gfTsKICB9CiAgbGV0IHBheWxvYWRNYXAgPSBuZXcgTWFwKCk7CiAgbGV0IHVzZWRDYWNoZSA9IGZhbHNlOwogIGxldCB1cHN0cmVhbUVycm9yID0gIiI7CiAgdHJ5IHsKICAgIGNvbnN0IHVybCA9IGBodHRwczovL3F0Lmd0aW1nLmNuL3E9JHtlbmNvZGVVUklDb21wb25lbnQoa2V5cy5qb2luKCIsIikpfSZfPSR7RGF0ZS5ub3coKX1gOwogICAgY29uc3QgciA9IGF3YWl0IGZldGNoKHVybCwgewogICAgICBoZWFkZXJzOiB7ICJVc2VyLUFnZW50IjogIk1vemlsbGEvNS4wIChjb21wYXRpYmxlOyBzdG9ja3Jldmlldy8xLjApIiB9LAogICAgICBzaWduYWw6IEFib3J0U2lnbmFsLnRpbWVvdXQoMjBfMDAwKSwKICAgIH0pOwogICAgaWYgKHIub2spIHsKICAgICAgY29uc3QgYnVmID0gQnVmZmVyLmZyb20oYXdhaXQgci5hcnJheUJ1ZmZlcigpKTsKICAgICAgY29uc3QgdGV4dCA9IGljb252LmRlY29kZShidWYsICJnYmsiKTsKICAgICAgY29uc3QgbGl2ZU1hcCA9IHBhcnNlVGVuY2VudFF1b3RlVGV4dFRvTWFwKHRleHQpOwogICAgICBmb3IgKGNvbnN0IFtrLCBwYXlsb2FkXSBvZiBsaXZlTWFwLmVudHJpZXMoKSkgewogICAgICAgIGNhY2hlU2V0KHRlbmNlbnRRdW90ZU1lbW9yeUNhY2hlLCBrLCBwYXlsb2FkKTsKICAgICAgfQogICAgICBmb3IgKGNvbnN0IGtleSBvZiBrZXlzKSB7CiAgICAgICAgY29uc3QgayA9IFN0cmluZyhrZXkpLnRvTG93ZXJDYXNlKCk7CiAgICAgICAgaWYgKGxpdmVNYXAuaGFzKGspKSB7CiAgICAgICAgICBwYXlsb2FkTWFwLnNldChrLCBsaXZlTWFwLmdldChrKSk7CiAgICAgICAgICBjb250aW51ZTsKICAgICAgICB9CiAgICAgICAgY29uc3QgY2FjaGVkID0gY2FjaGVHZXQodGVuY2VudFF1b3RlTWVtb3J5Q2FjaGUsIGspOwogICAgICAgIGlmIChjYWNoZWQgIT0gbnVsbCkgewogICAgICAgICAgcGF5bG9hZE1hcC5zZXQoaywgY2FjaGVkKTsKICAgICAgICAgIHVzZWRDYWNoZSA9IHRydWU7CiAgICAgICAgfQogICAgICB9CiAgICB9IGVsc2UgewogICAgICB1cHN0cmVhbUVycm9yID0gYHRlbmNlbnQgJHtyLnN0YXR1c31gOwogICAgICBmb3IgKGNvbnN0IGtleSBvZiBrZXlzKSB7CiAgICAgICAgY29uc3QgY2FjaGVkID0gY2FjaGVHZXQodGVuY2VudFF1b3RlTWVtb3J5Q2FjaGUsIFN0cmluZyhrZXkpLnRvTG93ZXJDYXNlKCkpOwogICAgICAgIGlmIChjYWNoZWQgIT0gbnVsbCkgewogICAgICAgICAgcGF5bG9hZE1hcC5zZXQoU3RyaW5nKGtleSkudG9Mb3dlckNhc2UoKSwgY2FjaGVkKTsKICAgICAgICAgIHVzZWRDYWNoZSA9IHRydWU7CiAgICAgICAgfQogICAgICB9CiAgICB9CiAgfSBjYXRjaCAoZXJyb3IpIHsKICAgIHVwc3RyZWFtRXJyb3IgPSBlcnJvcj8ubWVzc2FnZSB8fCAidGVuY2VudCBxdW90ZSBmYWlsZWQiOwogICAgZm9yIChjb25zdCBrZXkgb2Yga2V5cykgewogICAgICBjb25zdCBjYWNoZWQgPSBjYWNoZUdldCh0ZW5jZW50UXVvdGVNZW1vcnlDYWNoZSwgU3RyaW5nKGtleSkudG9Mb3dlckNhc2UoKSk7CiAgICAgIGlmIChjYWNoZWQgIT0gbnVsbCkgewogICAgICAgIHBheWxvYWRNYXAuc2V0KFN0cmluZyhrZXkpLnRvTG93ZXJDYXNlKCksIGNhY2hlZCk7CiAgICAgICAgdXNlZENhY2hlID0gdHJ1ZTsKICAgICAgfQogICAgfQogIH0KICBpZiAoIXBheWxvYWRNYXAuc2l6ZSkgewogICAgcmV0dXJuIHsKICAgICAgb2s6IGZhbHNlLAogICAgICBwYXlsb2FkTWFwLAogICAgICBkZWxheWVkOiBmYWxzZSwKICAgICAgc291cmNlOiAiIiwKICAgICAgZXJyb3I6IHVwc3RyZWFtRXJyb3IgfHwgInRlbmNlbnQgcXVvdGUgZmFpbGVkIGFuZCBubyBjYWNoZSIsCiAgICAgIG1pc3NpbmdLZXlzOiBrZXlzLAogICAgfTsKICB9CiAgY29uc3QgbWlzc2luZ0tleXMgPSBrZXlzLmZpbHRlcigoZW50cnkpID0+ICFwYXlsb2FkTWFwLmhhcyhTdHJpbmcoZW50cnkpLnRvTG93ZXJDYXNlKCkpKTsKICByZXR1cm4gewogICAgb2s6IHRydWUsCiAgICBwYXlsb2FkTWFwLAogICAgZGVsYXllZDogdXNlZENhY2hlLAogICAgc291cmNlOiB1c2VkQ2FjaGUgPyAibWVtb3J5LWNhY2hlIiA6ICIiLAogICAgZXJyb3I6ICIiLAogICAgbWlzc2luZ0tleXM6IG1pc3NpbmdLZXlzLAogIH07Cn0KCmNvbnN0IFBST0JFX0RFRkFVTFRfVElNRU9VVF9NUyA9IDEyXzAwMDsKY29uc3QgUFJPQkVfTUFYX1RJTUVPVVRfTVMgPSAzMF8wMDA7CmNvbnN0IFBST0JFX0RFRkFVTFRfUk9VTkRTID0gMTsKY29uc3QgUFJPQkVfTUFYX1JPVU5EUyA9IDU7CmNvbnN0IERFRkFVTFRfQUxJWVVOX1BST0JFX1VSTCA9CiAgImh0dHBzOi8vbWFya2V0LW94eS1odHRwLW1hcmtldC1wcm94eS1wYmZ0b3ZkZm5lLmNuLWhhbmd6aG91LmZjYXBwLnJ1bi9hcGkvcHJvYmUvdXBzdHJlYW0iOwoKZnVuY3Rpb24gcGFyc2VQb3NpdGl2ZUludChpbnB1dCwgZmFsbGJhY2ssIG1pbiwgbWF4KSB7CiAgY29uc3QgbiA9IE51bWJlcihpbnB1dCk7CiAgaWYgKCFOdW1iZXIuaXNGaW5pdGUobikpIHsKICAgIHJldHVybiBmYWxsYmFjazsKICB9CiAgY29uc3QgdiA9IE1hdGguZmxvb3Iobik7CiAgcmV0dXJuIE1hdGgubWluKG1heCwgTWF0aC5tYXgobWluLCB2KSk7Cn0KCmZ1bmN0aW9uIHN1bW1hcml6ZVNpbmFQcm9iZUJvZHkodGV4dCkgewogIHRyeSB7CiAgICBjb25zdCBwYXlsb2FkID0gSlNPTi5wYXJzZShTdHJpbmcodGV4dCB8fCAiIikpOwogICAgY29uc3Qgcm9vdCA9IHBheWxvYWQ/LnJlc3VsdD8uZGF0YSB8fCBwYXlsb2FkPy5kYXRhIHx8IHt9OwogICAgY29uc3Qgc3ltYm9scyA9IE9iamVjdC5rZXlzKHJvb3QgfHwge30pOwogICAgbGV0IHRvdGFsQmFycyA9IDA7CiAgICBmb3IgKGNvbnN0IGtleSBvZiBzeW1ib2xzKSB7CiAgICAgIGNvbnN0IHJvd3MgPSBBcnJheS5pc0FycmF5KHJvb3Q/LltrZXldKSA/IHJvb3Rba2V5XSA6IFtdOwogICAgICB0b3RhbEJhcnMgKz0gcm93cy5sZW5ndGg7CiAgICB9CiAgICByZXR1cm4gewogICAgICBwYXJzZU9rOiB0cnVlLAogICAgICBzeW1ib2xzLAogICAgICB0b3RhbEJhcnMsCiAgICB9OwogIH0gY2F0Y2ggKGVycm9yKSB7CiAgICByZXR1cm4gewogICAgICBwYXJzZU9rOiBmYWxzZSwKICAgICAgcGFyc2VFcnJvcjogZXJyb3I/Lm1lc3NhZ2UgfHwgImludmFsaWQganNvbiIsCiAgICB9OwogIH0KfQoKZnVuY3Rpb24gc3VtbWFyaXplVGVuY2VudFByb2JlQm9keSh0ZXh0KSB7CiAgY29uc3QgbWFwID0gcGFyc2VUZW5jZW50UXVvdGVUZXh0VG9NYXAodGV4dCk7CiAgcmV0dXJuIHsKICAgIHBhcnNlT2s6IG1hcC5zaXplID4gMCwKICAgIHJlY29yZHM6IG1hcC5zaXplLAogICAga2V5czogWy4uLm1hcC5rZXlzKCldLnNsaWNlKDAsIDEyKSwKICB9Owp9CgphbGt5bmMgZnVuY3Rpb24gcnVuVXBzdHJlYW1IdHRwUHJvYmUoeyBuYW1lLCB1cmwsIHRpbWVvdXRNcywgcGFyc2VyIH0pIHsKICBjb25zdCBzdGFydGVkQXQgPSBEYXRlLm5vdygpOwogIGNvbnN0IHJlc3VsdCA9IHsKICAgIG5hbWUsCiAgICB1cmwsCiAgICB0aW1lb3V0TXMsCiAgICBzdGFydGVkQXQ6IG5ldyBEYXRlKHN0YXJ0ZWRBdCkudG9JU09TdHJpbmcoKSwKICAgIGVsYXBzZWRNczogMCwKICAgIG9rOiBmYWxzZSwKICAgIHN0YXR1czogMCwKICAgIHN0YXR1c1RleHQ6ICIiLAogICAgZXJyb3I6ICIiLAogICAgcmVzcG9uc2U6IHsKICAgICAgY29udGVudFR5cGU6ICIiLAogICAgICBjb250ZW50TGVuZ3RoOiAwLAogICAgICBwcmV2aWV3OiAiIiwKICAgICAgc3VtbWFyeTogW10sCiAgICB9LAogIH07CiAgdHJ5IHsKICAgIGNvbnN0IHJlc3BvbnNlID0gYXdhaXQgZmV0Y2godXJsLCB7CiAgICAgIGhlYWRlcnM6IHsgIlVzZXItQWdlbnQiOiAiTW96aWxsYS81LjAgKGNvbXBhdGlibGU7IHN0b2NrcmV2aWV3LXByb2JlLzEuMCkiIH0sCiAgICAgIHNpZ25hbDogQWJvcnRTaWduYWwudGltZW91dCh0aW1lb3V0TXMpLAogICAgfSk7CiAgICBjb25zdCB0ZXh0ID0gYXdhaXQgcmVzcG9uc2UudGV4dCgpOwogICAgcmVzdWx0Lm9rID0gcmVzcG9uc2Uub2s7CiAgICByZXN1bHQuc3RhdHVzID0gTnVtYmVyKHJlc3BvbnNlLnN0YXR1cyB8fCAwKTsKICAgIHJlc3VsdC5zdGF0dXNUZXh0ID0gU3RyaW5nKHJlc3BvbnNlLnN0YXR1c1RleHQgfHwgIiIpOwogICAgcmVzdWx0LnJlc3BvbnNlLmNvbnRlbnRUeXBlID0gU3RyaW5nKHJlc3BvbnNlLmhlYWRlcnMuZ2V0KCJjb250ZW50LXR5cGUiKSB8fCAiIik7CiAgICByZXN1bHQucmVzcG9uc2UuY29udGVudExlbmd0aCA9IEJ1ZmZlci5ieXRlTGVuZ3RoKHRleHQsICJ1dGY4Iik7CiAgICByZXN1bHQucmVzcG9uc2UucHJldmlldyA9IFN0cmluZyh0ZXh0IHx8ICIiKS5zbGljZSgwLCAyMjApOwogICAgcmVzdWx0LnJlc3BvbnNlLnN1bW1hcnkgPSB0eXBlb2YgcGFyc2VyID09PSAiZnVuY3Rpb24iID8gcGFyc2VyKHRleHQpIDogW107CiAgfSBjYXRjaCAoZXJyb3IpIHsKICAgIHJlc3VsdC5lcnJvciA9IGVycm9yPy5tZXNzYWdlIHx8IFN0cmluZyhlcnJvcik7CiAgfSBmaW5hbGx5IHsKICAgIHJlc3VsdC5lbGFwc2VkTXMgPSBEYXRlLm5vdygpIC0gc3RhcnRlZEF0OwogIH0KICByZXR1cm4gcmVzdWx0Owp9CgphbGt5bmMgZnVuY3Rpb24gcnVuVXBzdHJlYW1Qcm9iZVJvdW5kKHsgdGltZW91dE1zLCBzaW5hVXJsLCB0ZW5jZW50VXJsIH0pIHsKICBjb25zdCBbc2luYSwgdGVuY2VudF0gPSBhd2FpdCBQcm9taXNlLmFsbChbCiAgICBydW5VcHN0cmVhbUh0dHBQcm9iZSh7CiAgICAgIG5hbWU6ICJzaW5hIiwKICAgICAgdXJsOiBzaW5hVXJsLAogICAgICB0aW1lb3V0TXMsCiAgICAgIHBhcnNlcjogc3VtbWFyaXplU2luYVByb2JlQm9keSwKICAgIH0pLAogICAgcnVuVXBzdHJlYW1IdHRwUHJvYmUoewogICAgICBuYW1lOiAidGVuY2VudCIsCiAgICAgIHVybDogdGVuY2VudFVybCwKICAgICAgdGltZW91dE1zLAogICAgICBwYXJzZXI6IHN1bW1hcml6ZVRlbmNlbnRQcm9iZUJvZHksCiAgICB9KSwKICBdKTsKICByZXR1cm4geyBzaW5hLCB0ZW5jZW50IH07Cn0K
+const path = require("node:path");
+const fs = require("node:fs");
+const express = require("express");
+const compression = require("compression");
+const cors = require("cors");
+const iconv = require("iconv-lite");
+
+const {
+  fetchSinaKlineJsonFromUpstream,
+  fetchSinaDailyKBatchFromUpstream,
+  toSinaDailyKBatchSymbol,
+} = require("./src/sina-kline-upstream");
+const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill");
+
+const MARKET_KLINE_DEFAULT_LEN = 120;
+const MARKET_CACHE_TTL_MS = 30 * 60 * 1000;
+const ANALYSIS_DAILY_CACHE_TTL_MS = 20 * 1000;
+const DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS = 20 * 1000;
+const REALTIME_PATCH_CACHE_TTL_MS = 10 * 1000;
+const sinaKlineMemoryCache = new Map();
+const tencentQuoteMemoryCache = new Map();
+const analysisDailyMemoryCache = new Map();
+const dailyCloseForTradesMemoryCache = new Map();
+const realtimePatchMemoryCache = new Map();
+
+function cacheSet(map, key, value) {
+  map.set(String(key), { value, updatedAt: Date.now() });
+}
+
+function cacheGetWithTtl(map, key, ttlMs) {
+  const hit = map.get(String(key));
+  if (!hit) {
+    return null;
+  }
+  if (Date.now() - Number(hit.updatedAt || 0) > ttlMs) {
+    map.delete(String(key));
+    return null;
+  }
+  return hit.value;
+}
+
+function cacheGet(map, key) {
+  return cacheGetWithTtl(map, key, MARKET_CACHE_TTL_MS);
+}
+
+function clearUserScopedCache(map, userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const prefix = `u:${uid}:`;
+  for (const key of map.keys()) {
+    if (String(key).startsWith(prefix)) {
+      map.delete(key);
+    }
+  }
+}
+
+function invalidateDailyCloseAndAnalysisCache(userId) {
+  clearUserScopedCache(analysisDailyMemoryCache, userId);
+  clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
+  clearUserScopedCache(realtimePatchMemoryCache, userId);
+  const uid = String(userId || "").trim();
+  if (uid) {
+    setImmediate(() => scheduleMetricsRebuildForUser(uid));
+  }
+}
+
+function sanitizeSymbolList(input) {
+  const raw = String(input || "").trim();
+  if (!raw) {
+    return [];
+  }
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((s) => normalizeSymbol(String(s || "")))
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function normalizeLenParam(input, fallback = MARKET_KLINE_DEFAULT_LEN) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(5000, Math.max(2, Math.floor(n)));
+}
+
+function dateKeyDaysFromToday(deltaDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + Number(deltaDays || 0));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function mapSinaDailySymbolToDbSymbol(symbol) {
+  const canonical = toSinaDailyKBatchSymbol(symbol);
+  if (!canonical) {
+    return "";
+  }
+  if (/^cn_sh\d{6}$/i.test(canonical)) {
+    return `sh${canonical.slice(-6)}`;
+  }
+  if (/^cn_sz\d{6}$/i.test(canonical)) {
+    return `sz${canonical.slice(-6)}`;
+  }
+  if (/^hk_hk\d{5}$/i.test(canonical)) {
+    return `hk${canonical.slice(-5)}`;
+  }
+  if (/^us_[A-Z0-9._-]+$/i.test(canonical)) {
+    return canonical.slice(3).toLowerCase();
+  }
+  return "";
+}
+
+function mapDailyCloseRowsToSinaBars(rows) {
+  return (rows || [])
+    .map((r) => {
+      const day = String(r?.date || "").slice(0, 10);
+      const close = Number(r?.close);
+      if (!day || !Number.isFinite(close) || close <= 0) {
+        return null;
+      }
+      return {
+        day,
+        open: close,
+        high: close,
+        low: close,
+        close,
+        volume: 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+function clipRowsByRangeAndLen(rows, { len, start, end }) {
+  let out = Array.isArray(rows) ? [...rows] : [];
+  if (start) {
+    out = out.filter((r) => String(r?.day || "").slice(0, 10) >= start);
+  }
+  if (end) {
+    out = out.filter((r) => String(r?.day || "").slice(0, 10) <= end);
+  }
+  out.sort((a, b) => String(a.day).localeCompare(String(b.day)));
+  if (out.length > len) {
+    return out.slice(out.length - len);
+  }
+  return out;
+}
+
+async function loadSinaFallbackRows(requestSymbol, { len, start, end }) {
+  const dbSymbol = mapSinaDailySymbolToDbSymbol(requestSymbol);
+  if (dbSymbol) {
+    const to = end || dateKeyDaysFromToday(0);
+    const from = start || dateKeyDaysFromToday(-Math.max(30, len * 4));
+    try {
+      const dbRows = await getSymbolDailyCloseRange(dbSymbol, from, to);
+      if (Array.isArray(dbRows) && dbRows.length) {
+        return {
+          rows: clipRowsByRangeAndLen(mapDailyCloseRowsToSinaBars(dbRows), { len, start, end }),
+          source: "db-cache",
+        };
+      }
+    } catch {
+      // ignore DB fallback failure and continue to memory cache
+    }
+  }
+  const memoryRows = cacheGet(sinaKlineMemoryCache, requestSymbol);
+  if (Array.isArray(memoryRows) && memoryRows.length) {
+    return {
+      rows: clipRowsByRangeAndLen(memoryRows, { len, start, end }),
+      source: "memory-cache",
+    };
+  }
+  return { rows: [], source: "" };
+}
+
+function setDelayedHeaders(res, source) {
+  res.setHeader("X-Market-Data-Delayed", "1");
+  res.setHeader("X-Market-Data-Source", String(source || "cache"));
+}
+
+function parseTencentQuoteTextToMap(text) {
+  const out = new Map();
+  const re = /v_([A-Za-z0-9._]+)="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(String(text || ""))) !== null) {
+    out.set(String(m[1] || "").toLowerCase(), String(m[2] || ""));
+  }
+  return out;
+}
+
+function buildTencentQuoteTextFromMap(reqKeys, payloadMap) {
+  const lines = [];
+  for (const key of reqKeys) {
+    const payload = payloadMap.get(String(key || "").toLowerCase());
+    if (payload == null) {
+      continue;
+    }
+    lines.push(`v_${key}="${payload}";`);
+  }
+  return lines.join("\n");
+}
+
+function toTencentQuoteSymbol(rawSymbol) {
+  if (!rawSymbol) {
+    return "";
+  }
+  const src = String(rawSymbol).trim();
+  const raw = src.toLowerCase().replace(/\s+/g, "");
+  const orig = src.replace(/\s+/g, "");
+  if (/^sh\d{6}$/.test(raw) || /^sz\d{6}$/.test(raw) || /^hk\d{5}$/.test(raw)) {
+    return raw;
+  }
+  if (/^us_[a-z0-9._-]+$/i.test(src)) {
+    const base = src.replace(/^us_/i, "").replace(/\.(OQ|N)$/i, "");
+    return `us${base.toUpperCase()}`;
+  }
+  if (/^us[A-Z0-9._-]+$/i.test(orig)) {
+    const base = orig.replace(/^us/i, "").replace(/\.(OQ|N)$/i, "");
+    return `us${base.toUpperCase()}`;
+  }
+  if (/^gb_/i.test(raw)) {
+    return `us${raw.slice(3).toUpperCase()}`;
+  }
+  if (/^rt_hk/i.test(raw)) {
+    const code = raw.replace(/^rt_hk_?/i, "").replace(/\D/g, "").padStart(5, "0");
+    return `hk${code}`;
+  }
+  if (/^[a-z][a-z0-9._-]*$/i.test(raw)) {
+    return `us${raw.toUpperCase()}`;
+  }
+  return "";
+}
+
+function parseTencentPriceField(segment) {
+  if (segment == null) {
+    return NaN;
+  }
+  const t = String(segment).trim().replace(/,/g, "");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function parseQuoteTimeToDateKey(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") {
+    return null;
+  }
+  const t = timeStr.trim();
+  if (!t || t === "--") {
+    return null;
+  }
+  const compact = /^(\d{4})(\d{2})(\d{2})/.exec(t.replace(/\s/g, ""));
+  if (compact && compact[0].length >= 8) {
+    return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  }
+  const iso = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/.exec(t);
+  if (iso) {
+    return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}-${String(Number(iso[3])).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+function getShanghaiWallClockParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return {
+    y: Number(get("year")),
+    m: Number(get("month")),
+    d: Number(get("day")),
+    h: Number(get("hour")),
+    min: Number(get("minute")),
+  };
+}
+
+function getTradingDateKeyBy0830(baseDate = new Date()) {
+  const { y, m, d, h, min } = getShanghaiWallClockParts(baseDate);
+  const current = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  if (h < 8 || (h === 8 && min < 30)) {
+    return addCalendarDays(current, -1);
+  }
+  return current;
+}
+
+function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
+  const tradingKey = getTradingDateKeyBy0830(now);
+  const quoteKey =
+    (quote && quote.marketDate) ||
+    (quote && quote.quoteDate) ||
+    (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
+    (quote && parseQuoteTimeToDateKey(quote.time)) ||
+    null;
+  return !!quoteKey && quoteKey === tradingKey;
+}
+
+function quoteTimeSortKey(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") {
+    return 0;
+  }
+  const raw = String(timeStr).trim();
+  if (!raw || raw === "--") {
+    return 0;
+  }
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 14) {
+    return Number(digits.slice(0, 14)) || 0;
+  }
+  if (digits.length >= 8) {
+    return Number(`${digits.slice(0, 8)}000000`) || 0;
+  }
+  return 0;
+}
+
+function pickLatestQuoteTime(times) {
+  const list = Array.isArray(times) ? times : [];
+  let best = "";
+  let bestKey = 0;
+  for (const item of list) {
+    const time = String(item || "").trim();
+    const key = quoteTimeSortKey(time);
+    if (key > bestKey) {
+      best = time;
+      bestKey = key;
+    }
+  }
+  return best || "--";
+}
+
+function parseTencentQuoteRecord(symbol, rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return null;
+  }
+  const parts = rawText.split("~");
+  if (parts.length < 6) {
+    return null;
+  }
+  const name = String(parts[1] || "").trim() || symbol;
+  const current = parseTencentPriceField(parts[3]);
+  const prevClose = parseTencentPriceField(parts[4]);
+  const rawTime = String(parts[30] || parts[31] || "--").trim();
+  const time = rawTime;
+  const marketDate = parseQuoteTimeToDateKey(rawTime) || parseQuoteTimeToDateKey(time);
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    name,
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time: time || "--",
+    rawTime: rawTime || "--",
+    marketDate,
+    quoteDate: marketDate,
+  };
+}
+
+function parseTencentForexQuotePayload(rawText) {
+  if (!rawText || typeof rawText !== "string") {
+    return null;
+  }
+  const parts = rawText.split("~");
+  if (parts.length < 4) {
+    return null;
+  }
+  const current = parseTencentPriceField(parts[3]);
+  const prevClose = parseTencentPriceField(parts[4]);
+  const time = String(parts[parts.length - 1] || parts[10] || "").trim() || "--";
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time,
+  };
+}
+
+async function fetchSinaDailyBatchWithFallback(inputSymbols, options = {}) {
+  const start = options.start != null ? String(options.start) : "";
+  const end = options.end != null ? String(options.end) : "";
+  const asc = options.asc != null ? String(options.asc) : "0";
+  const len = normalizeLenParam(options.len, MARKET_KLINE_DEFAULT_LEN);
+  const symbols = [...new Set((inputSymbols || []).map((s) => toSinaDailyKBatchSymbol(s)).filter(Boolean))];
+  if (!symbols.length) {
+    return { ok: false, data: {}, delayed: false, source: "", error: "invalid symbol mapping" };
+  }
+  let payload = {};
+  let upstreamOk = false;
+  try {
+    const result = await fetchSinaDailyKBatchFromUpstream(symbols, { len, asc, start, end });
+    if (result.ok) {
+      upstreamOk = true;
+      payload = result.data || {};
+      for (const sym of symbols) {
+        const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
+        if (rows.length) {
+          cacheSet(sinaKlineMemoryCache, sym, rows);
+        }
+      }
+    }
+  } catch {
+    // ignore and continue to cache fallback
+  }
+
+  const delayedSources = new Set();
+  for (const sym of symbols) {
+    const rows = Array.isArray(payload?.[sym]) ? payload[sym] : [];
+    if (rows.length) {
+      continue;
+    }
+    const fallback = await loadSinaFallbackRows(sym, { len, start, end });
+    if (fallback.rows.length) {
+      payload[sym] = fallback.rows;
+      delayedSources.add(fallback.source || "cache");
+    }
+  }
+
+  if (!Object.keys(payload).length) {
+    return { ok: false, data: {}, delayed: false, source: "", error: "sina kline failed and no cache" };
+  }
+  const delayed = delayedSources.size > 0 || !upstreamOk;
+  return {
+    ok: true,
+    data: payload,
+    delayed,
+    source: delayed ? [...delayedSources].join(",") || "cache" : "",
+    error: "",
+  };
+}
+
+async function fetchTencentQuotePayloadMap(reqKeys) {
+  const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!keys.length) {
+    return { ok: false, payloadMap: new Map(), delayed: false, source: "", error: "empty q keys", missingKeys: [] };
+  }
+  let payloadMap = new Map();
+  let usedCache = false;
+  let upstreamError = "";
+  try {
+    const url = `https://qt.gtimg.cn/q=${encodeURIComponent(keys.join(","))}&_=${Date.now()}`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (r.ok) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      const text = iconv.decode(buf, "gbk");
+      const liveMap = parseTencentQuoteTextToMap(text);
+      for (const [k, payload] of liveMap.entries()) {
+        cacheSet(tencentQuoteMemoryCache, k, payload);
+      }
+      for (const key of keys) {
+        const k = String(key).toLowerCase();
+        if (liveMap.has(k)) {
+          payloadMap.set(k, liveMap.get(k));
+          continue;
+        }
+        const cached = cacheGet(tencentQuoteMemoryCache, k);
+        if (cached != null) {
+          payloadMap.set(k, cached);
+          usedCache = true;
+        }
+      }
+    } else {
+      upstreamError = `tencent ${r.status}`;
+      for (const key of keys) {
+        const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+        if (cached != null) {
+          payloadMap.set(String(key).toLowerCase(), cached);
+          usedCache = true;
+        }
+      }
+    }
+  } catch (error) {
+    upstreamError = error?.message || "tencent quote failed";
+    for (const key of keys) {
+      const cached = cacheGet(tencentQuoteMemoryCache, String(key).toLowerCase());
+      if (cached != null) {
+        payloadMap.set(String(key).toLowerCase(), cached);
+        usedCache = true;
+      }
+    }
+  }
+  if (!payloadMap.size) {
+    return {
+      ok: false,
+      payloadMap,
+      delayed: false,
+      source: "",
+      error: upstreamError || "tencent quote failed and no cache",
+      missingKeys: keys,
+    };
+  }
+  const missingKeys = keys.filter((key) => !payloadMap.has(String(key).toLowerCase()));
+  return {
+    ok: true,
+    payloadMap,
+    delayed: usedCache,
+    source: usedCache ? "memory-cache" : "",
+    error: "",
+    missingKeys,
+  };
+}
+
+const PROBE_DEFAULT_TIMEOUT_MS = 12_000;
+const PROBE_MAX_TIMEOUT_MS = 30_000;
+const PROBE_DEFAULT_ROUNDS = 1;
+const PROBE_MAX_ROUNDS = 5;
+const DEFAULT_ALIYUN_PROBE_URL =
+  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/probe/upstream";
+
+function parsePositiveInt(input, fallback, min, max) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  const v = Math.floor(n);
+  return Math.min(max, Math.max(min, v));
+}
+
+function summarizeSinaProbeBody(text) {
+  try {
+    const payload = JSON.parse(String(text || ""));
+    const root = payload?.result?.data || payload?.data || {};
+    const symbols = Object.keys(root || {});
+    let totalBars = 0;
+    for (const key of symbols) {
+      const rows = Array.isArray(root?.[key]) ? root[key] : [];
+      totalBars += rows.length;
+    }
+    return {
+      parseOk: true,
+      symbols,
+      totalBars,
+    };
+  } catch (error) {
+    return {
+      parseOk: false,
+      parseError: error?.message || "invalid json",
+    };
+  }
+}
+
+function summarizeTencentProbeBody(text) {
+  const map = parseTencentQuoteTextToMap(text);
+  return {
+    parseOk: map.size > 0,
+    records: map.size,
+    keys: [...map.keys()].slice(0, 12),
+  };
+}
+
+async function runUpstreamHttpProbe({ name, url, timeoutMs, parser }) {
+  const startedAt = Date.now();
+  const result = {
+    name,
+    url,
+    timeoutMs,
+    startedAt: new Date(startedAt).toISOString(),
+    elapsedMs: 0,
+    ok: false,
+    status: 0,
+    statusText: "",
+    error: "",
+    response: {
+      contentType: "",
+      contentLength: 0,
+      preview: "",
+      summary: {},
+    },
+  };
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview-probe/1.0)" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await response.text();
+    result.ok = response.ok;
+    result.status = Number(response.status || 0);
+    result.statusText = String(response.statusText || "");
+    result.response.contentType = String(response.headers.get("content-type") || "");
+    result.response.contentLength = Buffer.byteLength(text, "utf8");
+    result.response.preview = String(text || "").slice(0, 220);
+    result.response.summary = typeof parser === "function" ? parser(text) : {};
+  } catch (error) {
+    result.error = error?.message || String(error);
+  } finally {
+    result.elapsedMs = Date.now() - startedAt;
+  }
+  return result;
+}
+
+async function runUpstreamProbeRound({ timeoutMs, sinaUrl, tencentUrl }) {
+  const [sina, tencent] = await Promise.all([
+    runUpstreamHttpProbe({
+      name: "sina",
+      url: sinaUrl,
+      timeoutMs,
+      parser: summarizeSinaProbeBody,
+    }),
+    runUpstreamHttpProbe({
+      name: "tencent",
+      url: tencentUrl,
+      timeoutMs,
+      parser: summarizeTencentProbeBody,
+    }),
+  ]);
+  return { sina, tencent };
+}
+
+/**
+ * 新浪 DailyK_Batch 代理：优先上游实时，失败时回退 DB/内存缓存并显式标记延迟数据。
+ */
+async function handleSinaKlineProxy(req, res) {
+  const symbol = req.query.symbol != null ? String(req.query.symbol) : "";
+  const symbolsRaw = req.query.symbols != null ? String(req.query.symbols) : "";
+  const datalen = req.query.datalen != null ? String(req.query.datalen) : String(MARKET_KLINE_DEFAULT_LEN);
+  const lenRaw = req.query.len != null ? String(req.query.len) : datalen;
+  const asc = req.query.asc != null ? String(req.query.asc) : "0";
+  const start = req.query.start != null ? String(req.query.start) : "";
+  const end = req.query.end != null ? String(req.query.end) : "";
+  const inputSymbols = (symbolsRaw ? symbolsRaw.split(",") : [symbol])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  if (!inputSymbols.length || inputSymbols.some((sym) => sym.length > 64 || !/^[a-zA-Z0-9._-]+$/.test(sym))) {
+    res.status(400).json({ ok: false, error: "invalid symbol" });
+    return;
+  }
+  if (!/^\d+$/.test(lenRaw) || !/^[01]$/.test(asc)) {
+    res.status(400).json({ ok: false, error: "invalid len or asc" });
+    return;
+  }
+  if ((start && !/^\d{4}-\d{2}-\d{2}$/.test(start)) || (end && !/^\d{4}-\d{2}-\d{2}$/.test(end))) {
+    res.status(400).json({ ok: false, error: "invalid start or end" });
+    return;
+  }
+  const symbols = [...new Set(inputSymbols.map((s) => toSinaDailyKBatchSymbol(s)).filter(Boolean))];
+  if (!symbols.length) {
+    res.status(400).json({ ok: false, error: "invalid symbol mapping" });
+    return;
+  }
+  const isBatch = symbolsRaw || symbols.length > 1;
+
+  const result = await fetchSinaDailyBatchWithFallback(symbols, {
+    len: lenRaw,
+    asc,
+    start,
+    end,
+  });
+  if (!result.ok) {
+    res.status(502).json({ ok: false, error: result.error || "sina kline failed" });
+    return;
+  }
+  if (result.delayed) {
+    setDelayedHeaders(res, result.source);
+  }
+  res.setHeader("Cache-Control", "no-store");
+  if (isBatch) {
+    res.json(result.data || {});
+  } else {
+    res.json((result.data || {})[symbols[0]] || []);
+  }
+}
+
+function ensureDataDir() {
+  if (process.env.VERCEL) return; // Serverless 环境文件系统只读，直接跳过
+  const dataDir = path.join(__dirname, "data");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+}
+
+ensureDataDir();
+
+/**
+ * 浏览器静态根目录。本地优先仓库根（与 server.js 同级的 index.html）；Vercel 上由 `npm run build`
+ * 把资源复制到 api/public/ 并由 includeFiles 打进函数包，避免 sendFile ENOENT。
+ */
+function resolveWebStaticRoot() {
+  const cands = [__dirname, path.join(__dirname, ".."), path.join(__dirname, "api", "public")];
+  for (const dir of cands) {
+    if (fs.existsSync(path.join(dir, "app.js")) && fs.existsSync(path.join(dir, "index.html"))) {
+      return dir;
+    }
+  }
+  return __dirname;
+}
+
+const WEB_ROOT = resolveWebStaticRoot();
+const STATIC_ASSET_LONG_CACHE =
+  process.env.VERCEL === "1" ||
+  String(process.env.VERCEL || "").toLowerCase() === "true" ||
+  process.env.NODE_ENV === "production";
+
+const {
+  DEFAULT_SETTINGS,
+  normalizeSymbol,
+  normalizeTrade,
+  getTrades,
+  upsertTrade,
+  importTrades,
+  deleteTradeById,
+  getCashTransfers,
+  upsertCashTransfer,
+  importCashTransfers,
+  deleteCashTransferById,
+  getAccounts,
+  getDailyReturns,
+  upsertDailyReturn,
+  importDailyReturns,
+  deleteDailyReturn,
+  getSettings,
+  setSettings,
+  getState,
+  insertCronJobRun,
+  listCronJobRuns,
+  getSymbolDailyPnl,
+  upsertSymbolDailyPnlBatch,
+  getAnalysisDailySnapshots,
+  upsertAnalysisDailySnapshot,
+  upsertSymbolDailyCloseBatch,
+  getSymbolDailyCloseRange,
+  getLatestAnalysisSnapshotDate,
+  getPerformancePresetSnapshot,
+  getSymbolNameMap,
+  upsertSymbolNameMapBatch,
+  createSymbolNameMapTableNow,
+  getTradeWindowForDailyClose,
+  getSnapshotWatermark,
+  setSnapshotWatermark,
+  verifyUserLogin,
+  createRegisteredUser,
+  updateUserPassword,
+  verifyUserPasswordById,
+  getUserPhone,
+  isValidPhone,
+  isValidPasswordDigits,
+  getUserCommunityRow,
+  updateUserCommunityProfile,
+  setCommunityFollow,
+  removeCommunityFollow,
+  isCommunityFollowing,
+  pingDatabase,
+  getHomeSummaryForUser,
+  ensureHomeSummaryTables,
+  buildAccountKpiSurfaceForScope,
+} = require("./src/db");
+const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
+const { rebuildHomeSummaryForUser } = require("./src/home-summary-service");
+
+/** 合并短时间内的多次失效触发，避免 rebuild 占满 Neon 连接导致全站 API pending */
+const homeSummaryRebuildTimers = new Map();
+const HOME_SUMMARY_REBUILD_DEBOUNCE_MS = Math.max(
+  300,
+  Math.min(300_000, Number(process.env.HOME_SUMMARY_REBUILD_DEBOUNCE_MS) || 12_000)
+);
+
+function scheduleRebuildHomeSummaryForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const prev = homeSummaryRebuildTimers.get(uid);
+  if (prev) {
+    clearTimeout(prev);
+  }
+  const t = setTimeout(() => {
+    homeSummaryRebuildTimers.delete(uid);
+    rebuildHomeSummaryForUser(uid).catch(() => {});
+  }, HOME_SUMMARY_REBUILD_DEBOUNCE_MS);
+  homeSummaryRebuildTimers.set(uid, t);
+}
+
+const {
+  maskPhone,
+  displayNameForUser,
+  getLeaderboard,
+  getPublicProfileDetail,
+  getFollowingCards,
+  getFeedTrades,
+  enrichFeedRowsWithTencent,
+  enrichCardsTopPositionsWithTencent,
+  enrichLeaderboardPayloadWithTencent,
+  enrichPublicProfileDetailWithTencent,
+} = require("./src/community-service");
+const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
+const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
+const { runDailyCloseSync } = require("./src/daily-close-sync-service");
+
+const app = express();
+const PORT = Number(process.env.PORT || 3030);
+
+// 诊断中间件：在最前面打印进入与响应耗时。build=v4 版本戳（含 url 兜底还原）。
+app.use((req, res, next) => {
+  const started = Date.now();
+  // 兜底：Vercel 的 legacy routes 会把 /api/xxx 的 URL 改写成 /api 甚至 /
+  // 导致 Express 落到 SPA 兜底。如果 req.url 看上去被剥短了，优先用 Vercel 透传的 header 还原。
+  try {
+    const original =
+      req.headers["x-forwarded-uri"] ||
+      req.headers["x-original-url"] ||
+      req.headers["x-matched-path"];
+    const reqPathOnly = String(req.url || "").split("?")[0] || "/";
+    const looksStripped =
+      reqPathOnly === "/" || reqPathOnly === "/api" || reqPathOnly === "/api/" || reqPathOnly === "/api/index";
+    const origPathOnly = typeof original === "string" ? String(original.split("?")[0] || "/") || "/" : "";
+    if (
+      looksStripped &&
+      typeof original === "string" &&
+      original.startsWith("/api/") &&
+      origPathOnly !== "/api" &&
+      origPathOnly !== "/api/"
+    ) {
+      console.log("[req.url-restore] from=%s to=%s", req.url, original);
+      req.url = original;
+    }
+  } catch (_) {}
+  console.log(
+    "[req.in] build=v4 method=%s url=%s x-matched-path=%s x-forwarded-uri=%s",
+    req.method,
+    req.url,
+    req.headers["x-matched-path"] || "-",
+    req.headers["x-forwarded-uri"] || req.headers["x-original-url"] || "-"
+  );
+  res.on("finish", () => {
+    console.log(
+      "[req.out] build=v4 method=%s url=%s status=%d ms=%d",
+      req.method,
+      req.url,
+      res.statusCode,
+      Date.now() - started
+    );
+  });
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      console.log(
+        "[req.closed-early] build=v4 method=%s url=%s ms=%d",
+        req.method,
+        req.url,
+        Date.now() - started
+      );
+    }
+  });
+  next();
+});
+
+app.use(compression());
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: "5mb" }));
+
+// 强力禁止 Vercel CDN/浏览器缓存任何 API 响应，防止串号和数据泄露
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
+
+function requireAuth(req, res, next) {
+  const userId = readUserIdFromRequest(req);
+  if (!userId) {
+    res.status(401).json({ ok: false, error: "请先登录" });
+    return;
+  }
+  req.userId = userId;
+  next();
+}
+
+function parseBooleanInput(input, fallback = false) {
+  if (input == null) {
+    return fallback;
+  }
+  const v = String(input).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(v)) {
+    return false;
+  }
+  return fallback;
+}
+
+function extractBearerToken(req) {
+  const auth = String(req.headers?.authorization || "").trim();
+  if (!auth.toLowerCase().startsWith("bearer ")) {
+    return "";
+  }
+  return auth.slice(7).trim();
+}
+
+function isCronAuthorized(req) {
+  const cronHeader = req.headers?.["x-vercel-cron"];
+  if (cronHeader != null) {
+    return true;
+  }
+  const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+  if (!configuredSecret) {
+    return false;
+  }
+  const bearer = extractBearerToken(req);
+  const queryToken = String(req.query?.token || req.body?.token || "").trim();
+  return bearer === configuredSecret || queryToken === configuredSecret;
+}
+
+async function collectLiveSymbolsForUser(userId, accountId = "all") {
+  const allTrades = await getTrades(userId);
+  const wantedAccount = String(accountId || "all").trim() || "all";
+  const trades =
+    wantedAccount === "all" ? allTrades : allTrades.filter((trade) => String(trade.accountId || "default") === wantedAccount);
+  const holdings = new Map();
+  for (const trade of trades.sort((a, b) => {
+    const ad = new Date(a.date).getTime();
+    const bd = new Date(b.date).getTime();
+    if (ad !== bd) {
+      return ad - bd;
+    }
+    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+  })) {
+    const symbol = normalizeSymbol(trade.symbol);
+    if (!symbol) {
+      continue;
+    }
+    const current = holdings.get(symbol) || 0;
+    holdings.set(symbol, current + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)));
+  }
+  return [...holdings.entries()]
+    .filter(([, qty]) => qty > 1e-6)
+    .map(([symbol]) => symbol);
+}
+
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, node: process.version });
+});
+
+/**
+ * 上游可达性探针：
+ * - 默认重定向至阿里云 FC 探针（避免 Vercel 下载附件或超时，浏览器可直接展示 JSON）。
+ * - 若需强制探测当前 Vercel 运行时，请加 query: target=vercel。
+ * 浏览器可直接访问：
+ * /api/probe/upstream
+ * /api/probe/upstream?rounds=3&timeoutMs=15000&len=120&target=vercel
+ */
+app.get("/api/probe/upstream", async (req, res) => {
+  const target = String(req.query.target || "aliyun").trim().toLowerCase();
+  if (target !== "vercel") {
+    const upstreamBase = String(process.env.ALIYUN_PROBE_UPSTREAM_URL || DEFAULT_ALIYUN_PROBE_URL).trim();
+    const qs = new URLSearchParams();
+    Object.entries(req.query || {}).forEach(([k, v]) => {
+      if (k === "target" || v == null) {
+        return;
+      }
+      if (Array.isArray(v)) {
+        v.forEach((item) => qs.append(k, String(item)));
+      } else {
+        qs.set(k, String(v));
+      }
+    });
+    const redirectUrl = qs.toString() ? `${upstreamBase}?${qs.toString()}` : upstreamBase;
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(307, redirectUrl);
+    return;
+  }
+
+  const rounds = parsePositiveInt(req.query.rounds, PROBE_DEFAULT_ROUNDS, 1, PROBE_MAX_ROUNDS);
+  const timeoutMs = parsePositiveInt(
+    req.query.timeoutMs,
+    PROBE_DEFAULT_TIMEOUT_MS,
+    1_000,
+    PROBE_MAX_TIMEOUT_MS
+  );
+  const len = parsePositiveInt(req.query.len, MARKET_KLINE_DEFAULT_LEN, 2, 5000);
+  const sinaSymbolsRaw =
+    req.query.sinaSymbols != null ? String(req.query.sinaSymbols) : "us_TSM,cn_sh601899,fx_USDCNY";
+  const tencentQRaw =
+    req.query.tencentQ != null ? String(req.query.tencentQ) : "usTSM,sh601899,whUSDCNY";
+  const sinaSymbols = [...new Set(sinaSymbolsRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  const tencentQ = [...new Set(tencentQRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!sinaSymbols.length || !tencentQ.length) {
+    res.status(400).json({ ok: false, error: "sinaSymbols/tencentQ required" });
+    return;
+  }
+
+  const sinaUrl =
+    "https://quotes.sina.cn/hq/api/openapi.php/MarketCenterService.getDailyK_Batch?" +
+    new URLSearchParams({
+      symbols: sinaSymbols.join(","),
+      len: String(len),
+      asc: "0",
+    }).toString();
+  const tencentUrl = `https://qt.gtimg.cn/q=${encodeURIComponent(tencentQ.join(","))}`;
+
+  const probeStartedAt = Date.now();
+  const roundsOut = [];
+  for (let i = 0; i < rounds; i += 1) {
+    const roundStartedAt = Date.now();
+    const upstream = await runUpstreamProbeRound({ timeoutMs, sinaUrl, tencentUrl });
+    roundsOut.push({
+      round: i + 1,
+      startedAt: new Date(roundStartedAt).toISOString(),
+      elapsedMs: Date.now() - roundStartedAt,
+      upstream,
+    });
+  }
+
+  const all = roundsOut.flatMap((r) => [r.upstream.sina, r.upstream.tencent]);
+  const okCount = all.filter((x) => x.ok).length;
+  const timeoutCount = all.filter((x) => /timed out/i.test(String(x.error || ""))).length;
+  const errorCount = all.length - okCount;
+  const avgElapsedMs =
+    all.length > 0
+      ? Math.round(all.reduce((sum, x) => sum + (Number(x.elapsedMs) || 0), 0) / all.length)
+      : 0;
+
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    message: "Runs from current server runtime, not browser network.",
+    runtime: {
+      node: process.version,
+      env: process.env.VERCEL ? "vercel" : "local",
+      vercelRegion: process.env.VERCEL_REGION || null,
+      vercelUrl: process.env.VERCEL_URL || null,
+      requestHost: req.headers.host || null,
+      xVercelId: req.headers["x-vercel-id"] || null,
+      ts: Date.now(),
+    },
+    config: {
+      rounds,
+      timeoutMs,
+      len,
+      sinaSymbols,
+      tencentQ,
+    },
+    summary: {
+      totalChecks: all.length,
+      okCount,
+      errorCount,
+      timeoutCount,
+      avgElapsedMs,
+      totalElapsedMs: Date.now() - probeStartedAt,
+    },
+    rounds: roundsOut,
+  });
+});
+
+// 部署版本自证端点：直接硬编码当前构建号，便于在浏览器判断 Vercel 是否跑的是最新代码
+app.get("/api/diag/v3", (_req, res) => {
+  res.json({
+    ok: true,
+    build: "v3",
+    commit: "1f6d9ce-plus-diag",
+    node: process.version,
+    env: process.env.VERCEL ? "vercel" : "local",
+    ts: Date.now(),
+  });
+});
+
+/** 数据库连通性探活（会走 initPool + 一次只读 SQL；勿对外暴露敏感信息） */
+app.get("/api/health/db", async (_req, res) => {
+  try {
+    const row = await pingDatabase();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      database: row.db != null ? String(row.db) : null,
+      schema: row.schema != null ? String(row.schema) : null,
+      serverTime: row.server_time != null ? String(row.server_time) : null,
+    });
+  } catch (error) {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(503).json({
+      ok: false,
+      error: error?.message || "database unreachable",
+    });
+  }
+});
+
+app.get("/api/auth/me", async (req, res) => {
+  try {
+    console.log("[auth.me] start");
+    const userId = readUserIdFromRequest(req);
+    if (!userId) {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    const phone = await getUserPhone(userId);
+    const row = await getUserCommunityRow(userId);
+    console.log("[auth.me] ok userId=", userId);
+    res.json({
+      ok: true,
+      user: {
+        id: userId,
+        phone,
+        phoneMasked: maskPhone(phone),
+        nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
+        communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+        displayName: row ? displayNameForUser(row) : maskPhone(phone),
+      },
+    });
+  } catch (error) {
+    console.error("[auth.me] error:", error?.message || error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message || "auth/me failed",
+      code: error?.code || null,
+    });
+  }
+});
+
+app.patch("/api/me/community-profile", requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const u = await updateUserCommunityProfile(req.userId, {
+      nickname: body.nickname,
+      communityPublic: body.communityPublic,
+    });
+    res.json({
+      ok: true,
+      profile: {
+        nickname: u.nickname != null && String(u.nickname).trim() ? String(u.nickname).trim() : null,
+        communityPublic: !!Number(u.community_public),
+        displayName: displayNameForUser(u),
+      },
+    });
+  } catch (error) {
+    const msg = error?.message || "更新失败";
+    if (msg.includes("nickname taken")) {
+      res.status(409).json({ ok: false, error: "昵称已被占用" });
+      return;
+    }
+    if (msg.includes("too long")) {
+      res.status(400).json({ ok: false, error: "昵称最长 20 个字符" });
+      return;
+    }
+    res.status(400).json({ ok: false, error: msg });
+  }
+});
+
+app.get("/api/community/leaderboard", requireAuth, async (_req, res) => {
+  try {
+    const data = await getLeaderboard();
+    await enrichLeaderboardPayloadWithTencent(data);
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "leaderboard failed" });
+  }
+});
+
+app.get("/api/community/following", requireAuth, async (req, res) => {
+  try {
+    const cards = await getFollowingCards(req.userId);
+    await enrichCardsTopPositionsWithTencent(cards);
+    res.json({ ok: true, data: cards });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "following failed" });
+  }
+});
+
+app.get("/api/community/feed", requireAuth, async (req, res) => {
+  try {
+    const rows = await getFeedTrades(req.userId);
+    await enrichFeedRowsWithTencent(rows);
+    res.json({ ok: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "feed failed" });
+  }
+});
+
+app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const detail = await getPublicProfileDetail(req.userId, targetId);
+    if (detail.error === "unauthorized") {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    if (detail.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.set("Cache-Control", "no-store");
+    await enrichPublicProfileDetailWithTencent(detail);
+    res.json({ ok: true, data: detail });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "profile failed" });
+  }
+});
+
+app.get("/api/community/users/:targetId/performance-preset", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const preset = req.query.preset != null ? String(req.query.preset).trim() : "";
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "all";
+    const asOfDate =
+      req.query.asOfDate != null && String(req.query.asOfDate).trim()
+        ? String(req.query.asOfDate).trim().slice(0, 10)
+        : "";
+    if (!targetId || !PERFORMANCE_PRESET_API_KEYS.has(preset)) {
+      res.status(400).json({ ok: false, error: "invalid request" });
+      return;
+    }
+    const viewerId = String(req.userId || "").trim();
+    const isSelf = viewerId === targetId;
+    const row = await getUserCommunityRow(targetId);
+    if (!row || (!isSelf && !Number(row.community_public))) {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    const snap = await getPerformancePresetSnapshot(targetId, accountId || "all", preset, asOfDate || null);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: jsonPerformancePresetFromSnap(snap, preset) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "community performance preset failed" });
+  }
+});
+
+app.post("/api/community/follow/:targetId", requireAuth, async (req, res) => {
+  const targetId = String(req.params.targetId || "").trim();
+  if (!targetId) {
+    res.status(400).json({ ok: false, error: "invalid target" });
+    return;
+  }
+  await setCommunityFollow(req.userId, targetId);
+  res.json({ ok: true, following: await isCommunityFollowing(req.userId, targetId) });
+});
+
+app.delete("/api/community/follow/:targetId", requireAuth, async (req, res) => {
+  const targetId = String(req.params.targetId || "").trim();
+  await removeCommunityFollow(req.userId, targetId);
+  res.json({ ok: true });
+});
+
+const REGISTER_INVITE_CODE = "20260422";
+
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
+    const password = req.body?.password != null ? String(req.body.password) : "";
+    const inviteCode =
+      req.body?.inviteCode != null ? String(req.body.inviteCode).trim() : "";
+    if (!isValidPhone(phone)) {
+      res.status(400).json({ ok: false, error: "请输入 11 位手机号" });
+      return;
+    }
+    if (!isValidPasswordDigits(password)) {
+      res.status(400).json({ ok: false, error: "密码为不少于 6 位的数字" });
+      return;
+    }
+    if (inviteCode !== REGISTER_INVITE_CODE) {
+      res.status(400).json({ ok: false, error: "邀请码错误" });
+      return;
+    }
+    const u = await createRegisteredUser(phone, password);
+    setSessionCookie(res, u.id);
+    res.json({ ok: true, user: { phone: u.phone } });
+  } catch (error) {
+    const msg = error?.message || "注册失败";
+    if (msg.includes("already registered")) {
+      res.status(409).json({ ok: false, error: "该手机号已注册" });
+      return;
+    }
+    res.status(400).json({ ok: false, error: msg });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    console.log("[auth.login] start");
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : "";
+    const password = req.body?.password != null ? String(req.body.password) : "";
+    const u = await verifyUserLogin(phone, password);
+    if (!u) {
+      res.status(401).json({ ok: false, error: "手机号或密码错误" });
+      return;
+    }
+    setSessionCookie(res, u.id);
+    console.log("[auth.login] ok userId=", u.id);
+    res.json({ ok: true, user: { phone: u.phone } });
+  } catch (error) {
+    console.error("[auth.login] error:", error?.message || error);
+    res.status(500).json({
+      ok: false,
+      error: error?.message || "auth/login failed",
+      code: error?.code || null,
+    });
+  }
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/password", requireAuth, async (req, res) => {
+  try {
+    const oldPw = req.body?.oldPassword != null ? String(req.body.oldPassword) : "";
+    const newPw = req.body?.newPassword != null ? String(req.body.newPassword) : "";
+    if (!isValidPasswordDigits(newPw)) {
+      res.status(400).json({ ok: false, error: "新密码为不少于 6 位的数字" });
+      return;
+    }
+    if (!(await verifyUserPasswordById(req.userId, oldPw))) {
+      res.status(400).json({ ok: false, error: "原密码错误" });
+      return;
+    }
+    await updateUserPassword(req.userId, newPw);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "修改失败" });
+  }
+});
+
+/** 可选子路径部署，如 BASE_PATH=myapp → /myapp/api/sina-kline */
+const PUBLIC_BASE_PATH = String(process.env.BASE_PATH || "")
+  .trim()
+  .replace(/^\/+|\/+$/g, "");
+const escapePathRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 新浪 K 线代理：先注册字面路径（避免个别环境 RegExp 未命中仍落 404），再补正则变体与可选子路径 */
+app.get("/api/sina-kline", handleSinaKlineProxy);
+app.get("/api/sina_kline", handleSinaKlineProxy);
+app.get("/api/sinakline", handleSinaKlineProxy);
+app.get("/api/sina-kline/", handleSinaKlineProxy);
+app.get("/api/sina_kline/", handleSinaKlineProxy);
+app.get(/^\/api\/sina([-_])?kline\/?$/i, handleSinaKlineProxy);
+if (PUBLIC_BASE_PATH) {
+  const pb = escapePathRegex(PUBLIC_BASE_PATH);
+  app.get(`/${PUBLIC_BASE_PATH}/api/sina-kline`, handleSinaKlineProxy);
+  app.get(`/${PUBLIC_BASE_PATH}/api/sina_kline`, handleSinaKlineProxy);
+  app.get(
+    new RegExp(`^/${pb}/api/sina([-_])?kline/?$`, "i"),
+    handleSinaKlineProxy
+  );
+}
+
+function eastmoneySuggestQueryInput(normalized) {
+  const n = String(normalized || "").toLowerCase();
+  if (n.startsWith("sz") || n.startsWith("sh")) {
+    return n.slice(2);
+  }
+  if (n.startsWith("hk")) {
+    return n.slice(2).padStart(5, "0");
+  }
+  return "";
+}
+
+function pickEastmoneySuggestRow(normalized, json) {
+  const rows = json?.QuotationCodeTable?.Data;
+  if (!Array.isArray(rows) || !rows.length) {
+    return null;
+  }
+  const n = String(normalized).toLowerCase();
+  if (n.startsWith("hk")) {
+    const hk5 = n.slice(2).padStart(5, "0");
+    return (
+      rows.find(
+        (r) =>
+          String(r.Code).padStart(5, "0") === hk5 &&
+          (r.Classify === "HK" || String(r.QuoteID || "").startsWith("116"))
+      ) ||
+      rows.find((r) => String(r.Code).padStart(5, "0") === hk5) ||
+      null
+    );
+  }
+  if (n.startsWith("sz") || n.startsWith("sh")) {
+    const c6 = n.slice(2);
+    return rows.find((r) => String(r.Code) === c6) || rows[0];
+  }
+  return rows[0];
+}
+
+app.get("/api/stock/name", async (req, res) => {
+  try {
+    const raw = req.query.symbol != null ? String(req.query.symbol) : "";
+    const normalized = normalizeSymbol(raw);
+    if (!normalized) {
+      res.status(400).json({ ok: false, error: "symbol required" });
+      return;
+    }
+    const mapped = await getSymbolNameMap([normalized]);
+    if (mapped?.[normalized]) {
+      res.json({ ok: true, name: mapped[normalized], symbol: normalized });
+      return;
+    }
+    const input = eastmoneySuggestQueryInput(normalized);
+    if (!input) {
+      res.json({ ok: true, name: "", symbol: normalized });
+      return;
+    }
+    const url = `https://searchadapter.eastmoney.com/api/suggest/get?input=${encodeURIComponent(input)}&type=14`;
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)",
+        Referer: "https://www.eastmoney.com/",
+      },
+    });
+    if (!response.ok) {
+      res.json({ ok: true, name: "", symbol: normalized });
+      return;
+    }
+    const json = await response.json();
+    const row = pickEastmoneySuggestRow(normalized, json);
+    const name = String(row?.Name || "").trim();
+    if (name) {
+      void upsertSymbolNameMapBatch([{ symbol: normalized, nameCn: name, source: "eastmoney" }]).catch(() => {});
+    }
+    res.json({ ok: true, name, symbol: normalized });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "name lookup failed" });
+  }
+});
+
+app.get("/api/symbol-name-map", requireAuth, async (req, res) => {
+  try {
+    const raw = req.query.symbols != null ? String(req.query.symbols) : "";
+    const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+    if (symbols.length > 600) {
+      res.status(400).json({ ok: false, error: "too many symbols" });
+      return;
+    }
+    if (!symbols.length) {
+      res.json({ ok: true, data: {} });
+      return;
+    }
+    const data = await getSymbolNameMap(symbols);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "symbol name map failed" });
+  }
+});
+
+app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => {
+  try {
+    const created = await createSymbolNameMapTableNow();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, created });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "create symbol_name_map failed" });
+  }
+});
+
+app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const count = await upsertSymbolNameMapBatch(rows);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, count });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "upsert symbol_name_map failed" });
+  }
+});
+
+
+app.get("/api/metrics/returns", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsReturns(req.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics returns failed" });
+  }
+});
+
+app.get("/api/metrics/assets", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics assets failed" });
+  }
+});
+
+app.get("/api/series/daily-profit", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyProfit(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily profit series failed" });
+  }
+});
+
+app.get("/api/series/daily-twr", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyTwr(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily twr series failed" });
+  }
+});
+
+app.get("/api/series/daily-asset", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
+    sendMetricsJson(res, await getSeriesDailyAsset(req.userId, accountScope, stage, metric));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "daily asset series failed" });
+  }
+});
+
+// Deprecated stub — kept so old frontend doesn't hit 404→apiReady:false.
+// New frontend uses /api/settings + /api/metrics/assets + /api/holdings instead.
+app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
+  try {
+    const data = await getSettings(req.userId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: { ...data, accounts: data.accounts || [], dataVersion: 0, rebuilding: false, frozenThrough: null } });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "bootstrap failed" });
+  }
+});
+
+app.get("/api/holdings", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getHoldings(req.userId, accountScope));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "holdings failed" });
+  }
+});
+
+app.get("/api/analysis/stock-rank", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getStockRank(req.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "stock rank failed" });
+  }
+});
+
+app.get("/api/series/benchmark", requireAuth, async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol || "").trim();
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getBenchmarkSeries(req.userId, symbol, stage));
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "benchmark series failed" });
+  }
+});
+
+app.get("/api/public/:targetId/metrics/returns", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsReturns(gate.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public metrics returns failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-twr", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyTwr(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily twr failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-profit", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getSeriesDailyProfit(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily profit failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/daily-asset", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
+    sendMetricsJson(res, await getSeriesDailyAsset(gate.userId, accountScope, stage, metric));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public daily asset failed" });
+  }
+});
+
+app.get("/api/public/:targetId/analysis/stock-rank", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getStockRank(gate.userId, accountScope, stage));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public stock rank failed" });
+  }
+});
+
+app.get("/api/public/:targetId/series/benchmark", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
+    const symbol = String(req.query.symbol || "").trim();
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    sendMetricsJson(res, await getBenchmarkSeries(gate.userId, symbol, stage));
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "public benchmark failed" });
+  }
+});
+
+app.get("/api/ops/cron-runs", requireAuth, async (req, res) => {
+  try {
+    if (!(await isMetricsOpsAdmin(req.userId))) {
+      res.status(403).json({ ok: false, error: "forbidden" });
+      return;
+    }
+    const data = await listCronJobRuns(req.query.limit);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "cron runs failed" });
+  }
+});
+
+app.get("/api/state", requireAuth, async (req, res) => {
+  const liteRaw = req.query.lite != null ? String(req.query.lite) : "";
+  const lite = liteRaw === "1" || liteRaw.toLowerCase() === "true";
+  res.json({ ok: true, data: await getState(req.userId, { lite }) });
+});
+
+app.get("/api/trades", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getTrades(req.userId) });
+});
+
+app.post("/api/trades", requireAuth, async (req, res) => {
+  try {
+    const trade = normalizeTrade(req.body || {});
+    if (!trade.symbol) {
+      res.status(400).json({ ok: false, error: "symbol is required" });
+      return;
+    }
+    const saved = await upsertTrade(trade, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+    res.json({ ok: true, data: saved });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "save trade failed" });
+  }
+});
+
+app.delete("/api/trades/:id", requireAuth, async (req, res) => {
+  const ok = await deleteTradeById(req.params.id, req.userId);
+  if (ok) {
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+  }
+  res.json({ ok: true, deleted: ok });
+});
+
+app.get("/api/cash-transfers", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getCashTransfers(req.userId) });
+});
+
+app.post("/api/cash-transfers", requireAuth, async (req, res) => {
+  try {
+    const row = await upsertCashTransfer(req.body || {}, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+    res.json({ ok: true, data: row });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "save cash transfer failed" });
+  }
+});
+
+app.delete("/api/cash-transfers/:id", requireAuth, async (req, res) => {
+  const ok = await deleteCashTransferById(req.params.id, req.userId);
+  if (ok) {
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+  }
+  res.json({ ok: true, deleted: ok });
+});
+
+app.post("/api/cash-transfers/import", requireAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const mode = payload.mode === "replace" ? "replace" : "append";
+    const rows = Array.isArray(payload.cashTransfers) ? payload.cashTransfers : [];
+    const data = await importCashTransfers(rows, mode, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+    res.json({ ok: true, count: data.length, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "import failed" });
+  }
+});
+
+app.post("/api/trades/import", requireAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const mode = payload.mode === "replace" ? "replace" : "append";
+    const trades = Array.isArray(payload.trades) ? payload.trades : [];
+    const normalized = trades.map((item) => normalizeTrade(item));
+    const data = await importTrades(normalized, mode, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId);
+    res.json({ ok: true, count: data.length, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "import failed" });
+  }
+});
+
+app.get("/api/settings", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getSettings(req.userId) });
+});
+
+app.patch("/api/settings", requireAuth, async (req, res) => {
+  try {
+    const patch = req.body && typeof req.body === "object" ? req.body : {};
+    const sanitized = {};
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (Object.hasOwn(patch, key)) {
+        sanitized[key] = patch[key];
+      }
+    }
+    const data = await setSettings(sanitized, req.userId);
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "update settings failed" });
+  }
+});
+
+app.get("/api/accounts", requireAuth, async (req, res) => {
+  res.json({ ok: true, data: await getAccounts(req.userId) });
+});
+
+app.get("/api/symbol-daily", requireAuth, async (req, res) => {
+  try {
+    const data = await getSymbolDailyPnl(
+      {
+        accountId: req.query.accountId,
+        from: req.query.from,
+        to: req.query.to,
+      },
+      req.userId
+    );
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "symbol daily failed" });
+  }
+});
+
+app.post("/api/symbol-daily/batch", requireAuth, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    await upsertSymbolDailyPnlBatch(rows, req.userId);
+    res.json({ ok: true, count: rows.length });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "symbol daily batch failed" });
+  }
+});
+
+app.get("/api/analysis-daily", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const cacheKey = `u:${req.userId}:analysis:account=${accountId || "*"}:from=${from}:to=${to}`;
+    const cached = cacheGetWithTtl(analysisDailyMemoryCache, cacheKey, ANALYSIS_DAILY_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: cached, cached: true });
+      return;
+    }
+    const data = await getAnalysisDailySnapshots(
+      {
+        accountId,
+        from,
+        to,
+      },
+      req.userId
+    );
+    cacheSet(analysisDailyMemoryCache, cacheKey, data);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "analysis daily failed" });
+  }
+});
+
+app.post("/api/analysis-daily", requireAuth, async (req, res) => {
+  try {
+    const row = await upsertAnalysisDailySnapshot(req.body || {}, req.userId);
+    clearUserScopedCache(analysisDailyMemoryCache, req.userId);
+    res.json({ ok: true, data: row });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
+  }
+});
+
+app.all("/api/cron/freeze-eod", async (req, res) => {
+  const sessionUser = readUserIdFromRequest(req);
+  if (!sessionUser && !isCronAuthorized(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized cron request" });
+    return;
+  }
+  const startedAt = Date.now();
+  try {
+    await ensureAppDerivedTables();
+    const forcedDate = req.query?.frozenDate || req.body?.frozenDate;
+    const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
+    const syncDailyClose = parseBooleanInput(req.query?.syncDailyClose ?? req.body?.syncDailyClose, false);
+    const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const result = await runDailyFreeze({
+      frozenDate: forcedDate,
+      force,
+      syncDailyClose,
+      userIds,
+      logger: console,
+    });
+    analysisDailyMemoryCache.clear();
+    dailyCloseForTradesMemoryCache.clear();
+    realtimePatchMemoryCache.clear();
+    await insertCronJobRun({
+      jobName: "freeze-eod",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: true,
+      metaJson: JSON.stringify({ frozenDate: result?.frozenDate, users: result?.users?.length }),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: result });
+  } catch (error) {
+    await insertCronJobRun({
+      jobName: "freeze-eod",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: false,
+      errorMessage: error?.message || String(error),
+    }).catch(() => {});
+    res.status(500).json({ ok: false, error: error?.message || "freeze failed" });
+  }
+});
+
+app.all("/api/cron/sync-daily-close", async (req, res) => {
+  const sessionUser = readUserIdFromRequest(req);
+  if (!sessionUser && !isCronAuthorized(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized cron request" });
+    return;
+  }
+  const startedAt = Date.now();
+  try {
+    await ensureAppDerivedTables();
+    const asOfDate = req.query?.asOfDate || req.body?.asOfDate;
+    const bodySymbols = Array.isArray(req.body?.symbols) ? req.body.symbols : [];
+    const querySymbols = sanitizeSymbolList(req.query?.symbols);
+    const symbols = [...new Set([...bodySymbols, ...querySymbols].map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+    const result = await runDailyCloseSync({
+      asOfDate,
+      symbols,
+      logger: console,
+    });
+    dailyCloseForTradesMemoryCache.clear();
+    realtimePatchMemoryCache.clear();
+    await insertCronJobRun({
+      jobName: "sync-daily-close",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: true,
+      metaJson: JSON.stringify({ rowsWritten: result?.rowsWritten, failedSymbols: result?.failedSymbols }),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: result });
+  } catch (error) {
+    await insertCronJobRun({
+      jobName: "sync-daily-close",
+      startedAt,
+      finishedAt: Date.now(),
+      ok: false,
+      errorMessage: error?.message || String(error),
+    }).catch(() => {});
+    res.status(500).json({ ok: false, error: error?.message || "sync daily close failed" });
+  }
+});
+
+app.get("/api/snapshot/watermark", async (_req, res) => {
+  try {
+    const data = await getSnapshotWatermark();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "watermark failed" });
+  }
+});
+
+const PERFORMANCE_PRESET_API_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
+
+function jsonPerformancePresetFromSnap(snap, preset) {
+  if (!snap) {
+    return { preset, asOfDate: null, twr: null, mwr: null };
+  }
+  let twrSeries = null;
+  if (snap.twr?.seriesJson) {
+    try {
+      twrSeries = JSON.parse(snap.twr.seriesJson);
+    } catch {
+      twrSeries = null;
+    }
+  }
+  let mwrSeries = null;
+  if (snap.mwr?.seriesJson) {
+    try {
+      mwrSeries = JSON.parse(snap.mwr.seriesJson);
+    } catch {
+      mwrSeries = null;
+    }
+  }
+  return {
+    preset,
+    asOfDate: snap.asOfDate,
+    twr: snap.twr
+      ? {
+          periodReturn: snap.twr.periodReturn,
+          ruleVersion: snap.twr.ruleVersion,
+          series: twrSeries,
+        }
+      : null,
+    mwr: snap.mwr
+      ? {
+          periodReturn: snap.mwr.periodReturn,
+          ruleVersion: snap.mwr.ruleVersion,
+          series: mwrSeries,
+        }
+      : null,
+  };
+}
+
+app.get("/api/snapshot/performance-preset", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const preset = req.query.preset != null ? String(req.query.preset).trim() : "";
+    const asOfDate =
+      req.query.asOfDate != null && String(req.query.asOfDate).trim()
+        ? String(req.query.asOfDate).trim().slice(0, 10)
+        : "";
+    if (!PERFORMANCE_PRESET_API_KEYS.has(preset)) {
+      res.status(400).json({ ok: false, error: "invalid preset" });
+      return;
+    }
+    const snap = await getPerformancePresetSnapshot(req.userId, accountId || "all", preset, asOfDate || null);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: jsonPerformancePresetFromSnap(snap, preset) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "performance preset snapshot failed" });
+  }
+});
+
+app.get("/api/snapshot/account-daily", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const cacheKey = `u:${req.userId}:snapshot-account:account=${accountId || "*"}:from=${from}:to=${to}`;
+    const cached = cacheGetWithTtl(analysisDailyMemoryCache, cacheKey, ANALYSIS_DAILY_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: cached, cached: true });
+      return;
+    }
+    const data = await getAnalysisDailySnapshots({ accountId, from, to }, req.userId);
+    cacheSet(analysisDailyMemoryCache, cacheKey, data);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot account failed" });
+  }
+});
+
+app.get("/api/snapshot/symbol-daily", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
+    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
+    const symbols = sanitizeSymbolList(req.query.symbols);
+    let rows = [];
+    if (!symbols.length) {
+      rows = await getSymbolDailyPnl({ accountId, from, to, symbol: req.query.symbol }, req.userId);
+    } else {
+      const chunks = await Promise.all(
+        symbols.map((symbol) => getSymbolDailyPnl({ accountId, from, to, symbol }, req.userId))
+      );
+      rows = chunks.flat();
+      rows.sort((a, b) => {
+        if (a.date !== b.date) {
+          return String(a.date).localeCompare(String(b.date));
+        }
+        return String(a.symbol).localeCompare(String(b.symbol));
+      });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot symbol daily failed" });
+  }
+});
+
+app.get("/api/snapshot/home-summary", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const raw = await getHomeSummaryForUser(req.userId, accountScope);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      data: {
+        accountScope,
+        account: raw.account,
+        symbols: raw.symbols,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot home summary failed" });
+  }
+});
+
+app.get("/api/surface/account-kpis", requireAuth, async (req, res) => {
+  try {
+    await ensureHomeSummaryTables();
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const surface = await buildAccountKpiSurfaceForScope(req.userId, accountScope);
+    res.setHeader("Cache-Control", "no-store");
+    if (!surface) {
+      res.json({ ok: true, data: null, accountScope });
+      return;
+    }
+    res.json({ ok: true, data: surface, accountScope });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "account kpis surface failed" });
+  }
+});
+
+app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
+  try {
+    const w = await getTradeWindowForDailyClose(req.userId);
+    if (!w.symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const requested = sanitizeSymbolList(req.query.symbols);
+    const wantedSet = requested.length ? new Set(requested) : null;
+    const symbols = wantedSet ? w.symbols.filter((sym) => wantedSet.has(sym)) : w.symbols;
+    if (!symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const days = parsePositiveInt(req.query.days, 240, 30, 4000);
+    const to = w.to || dateKeyDaysFromToday(0);
+    const floorFrom = dateKeyDaysFromToday(-days);
+    const from = w.from && w.from > floorFrom ? w.from : floorFrom;
+    const cacheKey = `u:${req.userId}:snapshot-close:from=${from}:to=${to}:symbols=${symbols.join(",")}`;
+    const cached = cacheGetWithTtl(dailyCloseForTradesMemoryCache, cacheKey, DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+    const data = {};
+    const rowsBySymbol = await Promise.all(symbols.map(async (sym) => [sym, await getSymbolDailyCloseRange(sym, from, to)]));
+    for (const [sym, rows] of rowsBySymbol) {
+      data[sym] = rows;
+    }
+    const payload = { data, from, to, symbols };
+    cacheSet(dailyCloseForTradesMemoryCache, cacheKey, payload);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "snapshot symbol close failed" });
+  }
+});
+
+app.post("/api/realtime/quote", requireAuth, async (req, res) => {
+  try {
+    const symbolsInput = Array.isArray(req.body?.symbols) ? req.body.symbols : sanitizeSymbolList(req.query.symbols);
+    const accountId = req.body?.accountId != null ? String(req.body.accountId) : String(req.query.accountId || "all");
+    const symbols = symbolsInput.length ? [...new Set(symbolsInput.map((s) => normalizeSymbol(s)).filter(Boolean))] : await collectLiveSymbolsForUser(req.userId, accountId);
+    if (!symbols.length) {
+      res.json({ ok: true, quoteMap: {}, quoteTime: "--", missing: [] });
+      return;
+    }
+    const tencentKeyToSymbols = new Map();
+    for (const symbol of symbols) {
+      const key = toTencentQuoteSymbol(symbol);
+      if (!key) {
+        continue;
+      }
+      const list = tencentKeyToSymbols.get(key) || [];
+      list.push(symbol);
+      tencentKeyToSymbols.set(key, list);
+    }
+    const tRes = await fetchTencentQuotePayloadMap([...tencentKeyToSymbols.keys()]);
+    if (!tRes.ok) {
+      res.status(502).json({ ok: false, error: tRes.error || "realtime quote failed" });
+      return;
+    }
+    if (tRes.delayed) {
+      setDelayedHeaders(res, tRes.source || "cache");
+    }
+    const quoteMap = {};
+    const symbolNameRows = [];
+    const missing = [];
+    for (const [key, locals] of tencentKeyToSymbols.entries()) {
+      const payload = tRes.payloadMap.get(String(key).toLowerCase());
+      if (!payload) {
+        missing.push(...locals);
+        continue;
+      }
+      for (const symbol of locals) {
+        const parsed = parseTencentQuoteRecord(symbol, payload);
+        if (parsed) {
+          quoteMap[symbol] = parsed;
+          if (parsed.name) {
+            symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
+          }
+        } else {
+          missing.push(symbol);
+        }
+      }
+    }
+    if (symbolNameRows.length) {
+      void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
+    }
+    const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      quoteMap,
+      quoteTime,
+      delayed: !!tRes.delayed,
+      delaySource: tRes.source || "",
+      missing: [...new Set(missing)],
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime quote failed" });
+  }
+});
+
+app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
+  try {
+    const tRes = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
+    if (!tRes.ok) {
+      res.status(502).json({ ok: false, error: tRes.error || "realtime fx failed" });
+      return;
+    }
+    if (tRes.delayed) {
+      setDelayedHeaders(res, tRes.source || "cache");
+    }
+    const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
+    const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
+    const fxSpot = {};
+    if (usd && Number.isFinite(usd.current) && usd.current > 0) {
+      fxSpot.USD = usd.current;
+    }
+    if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
+      fxSpot.HKD = hkd.current;
+    }
+    const quoteTime = pickLatestQuoteTime([usd?.time, hkd?.time]);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      fxSpot,
+      quoteTime,
+      delayed: !!tRes.delayed,
+      delaySource: tRes.source || "",
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime fx failed" });
+  }
+});
+
+app.post("/api/realtime/patch", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : "all";
+    const cacheKey = `u:${req.userId}:realtime-patch:account=${accountId || "all"}`;
+    const cached = cacheGetWithTtl(realtimePatchMemoryCache, cacheKey, REALTIME_PATCH_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+
+    const latestDate = await getLatestAnalysisSnapshotDate(req.userId, accountId || "all");
+    const baseRows = latestDate
+      ? await getAnalysisDailySnapshots({ accountId, from: latestDate, to: latestDate }, req.userId)
+      : [];
+    const baseSnapshot = baseRows[baseRows.length - 1] || null;
+
+    const symbols = await collectLiveSymbolsForUser(req.userId, accountId || "all");
+    const quoteReq = await fetchTencentQuotePayloadMap(symbols.map((s) => toTencentQuoteSymbol(s)).filter(Boolean));
+    const fxReq = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
+
+    const quoteMap = {};
+    if (quoteReq.ok) {
+      const keyToSymbol = new Map();
+      symbols.forEach((sym) => {
+        const key = toTencentQuoteSymbol(sym);
+        if (key) {
+          keyToSymbol.set(String(key).toLowerCase(), sym);
+        }
+      });
+      for (const [k, payload] of quoteReq.payloadMap.entries()) {
+        const sym = keyToSymbol.get(String(k).toLowerCase());
+        if (!sym) continue;
+        const parsed = parseTencentQuoteRecord(sym, payload);
+        if (parsed) {
+          quoteMap[sym] = parsed;
+        }
+      }
+    }
+
+    const fxSpot = {};
+    const usd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whusdcny")) : null;
+    const hkd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whhkdcny")) : null;
+    if (usd?.current > 0) fxSpot.USD = usd.current;
+    if (hkd?.current > 0) fxSpot.HKD = hkd.current;
+    const fxRate = (currency) => {
+      if (currency === "CNY") return 1;
+      if (currency === "USD") return Number(fxSpot.USD) > 0 ? Number(fxSpot.USD) : 7.2;
+      if (currency === "HKD") return Number(fxSpot.HKD) > 0 ? Number(fxSpot.HKD) : 0.92;
+      return 1;
+    };
+
+    const trades = await getTrades(req.userId);
+    const accountTrades =
+      accountId === "all"
+        ? trades
+        : trades.filter((trade) => String(trade.accountId || "default") === String(accountId));
+    accountTrades.sort((a, b) => {
+      const ad = new Date(a.date).getTime();
+      const bd = new Date(b.date).getTime();
+      if (ad !== bd) return ad - bd;
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+    const holdings = new Map();
+    accountTrades.forEach((trade) => {
+      const symbol = normalizeSymbol(trade.symbol);
+      if (!symbol) return;
+      const entry = holdings.get(symbol) || { quantity: 0 };
+      entry.quantity += trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0);
+      holdings.set(symbol, entry);
+    });
+
+    let liveMarketValue = 0;
+    let todayProfitCny = 0;
+    for (const [symbol, item] of holdings.entries()) {
+      if (!(item.quantity > 1e-6)) {
+        continue;
+      }
+      const quote = quoteMap[symbol];
+      if (!quote) {
+        continue;
+      }
+      const current = Number(quote.current) || 0;
+      const prevClose = Number(quote.prevClose) || current;
+      const currency = symbol.startsWith("hk") || symbol.startsWith("rt_hk") ? "HKD" : symbol.startsWith("sh") || symbol.startsWith("sz") ? "CNY" : "USD";
+      const rate = fxRate(currency);
+      liveMarketValue += item.quantity * current * rate;
+      if (shouldCountTodayPositionPnlFromQuote(quote)) {
+        todayProfitCny += item.quantity * (current - prevClose) * rate;
+      }
+    }
+
+    const todayKey = dateKeyDaysFromToday(0);
+    const liveTotalProfit = baseSnapshot
+      ? baseSnapshot.date === todayKey
+        ? Number(baseSnapshot.totalProfit || 0) - Number(baseSnapshot.profitCny || 0) + todayProfitCny
+        : Number(baseSnapshot.totalProfit || 0) + todayProfitCny
+      : todayProfitCny;
+
+    const payload = {
+      accountId,
+      frozenDate: latestDate || null,
+      liveDate: todayKey,
+      baseSnapshot,
+      todayProfitCny,
+      liveMarketValue,
+      liveTotalProfit,
+      quoteTime: pickLatestQuoteTime([usd?.time, hkd?.time, ...Object.values(quoteMap).map((item) => item?.time)]),
+      delayed: !!quoteReq.delayed || !!fxReq.delayed,
+    };
+    cacheSet(realtimePatchMemoryCache, cacheKey, payload);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "realtime patch failed" });
+  }
+});
+
+app.get("/api/daily-returns", requireAuth, async (req, res) => {
+  try {
+    const { accountId, from, to } = req.query || {};
+    const full =
+      req.query.full != null &&
+      (String(req.query.full).trim() === "1" || String(req.query.full).trim().toLowerCase() === "true");
+    const limit = req.query.limit != null ? String(req.query.limit) : "";
+    const offset = req.query.offset != null ? String(req.query.offset) : "";
+    const data = await getDailyReturns(
+      {
+        accountId: accountId != null ? String(accountId) : "",
+        from: from != null ? String(from) : "",
+        to: to != null ? String(to) : "",
+        allHistory: full,
+        limit,
+        offset,
+      },
+      req.userId
+    );
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "list daily returns failed" });
+  }
+});
+
+app.post("/api/daily-returns", requireAuth, async (req, res) => {
+  try {
+    const row = await upsertDailyReturn(req.body || {}, req.userId);
+    res.json({ ok: true, data: row });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "save daily return failed" });
+  }
+});
+
+app.post("/api/daily-returns/import", requireAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const mode = payload.mode === "replace" ? "replace" : "append";
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const data = await importDailyReturns(rows, mode, req.userId);
+    res.json({ ok: true, count: data.length, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "import daily returns failed" });
+  }
+});
+
+app.delete("/api/daily-returns", requireAuth, async (req, res) => {
+  try {
+    const accountId = req.query.accountId != null ? String(req.query.accountId) : "";
+    const date = req.query.date != null ? String(req.query.date) : "";
+    if (!accountId || !date) {
+      res.status(400).json({ ok: false, error: "accountId and date are required" });
+      return;
+    }
+    const deleted = await deleteDailyReturn(accountId, date, req.userId);
+    res.json({ ok: true, deleted });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "delete daily return failed" });
+  }
+});
+
+app.get("/api/fx/sina-dayk", async (req, res) => {
+  const pair = String(req.query.pair || "").toLowerCase().trim();
+  const symbol = pair === "usdcny" ? "fx_USDCNY" : pair === "hkdcny" ? "fx_HKDCNY" : "";
+  if (!symbol) {
+    res.status(400).json({ ok: false, error: "pair must be usdcny or hkdcny" });
+    return;
+  }
+  try {
+    const result = await fetchSinaKlineJsonFromUpstream({
+      symbol,
+      len: req.query.len != null ? String(req.query.len) : "5000",
+      asc: req.query.asc != null ? String(req.query.asc) : "0",
+      start: req.query.start != null ? String(req.query.start) : "",
+      end: req.query.end != null ? String(req.query.end) : "",
+    });
+    if (!result.ok) {
+      res.status(502).json({ ok: false, error: result.error || "sina dayk failed" });
+      return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: result.data || [] });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message || "sina dayk failed" });
+  }
+});
+
+/**
+ * 腾讯 qt.gtimg.cn 实时行情：服务端拉取并 gbk→utf8，避免浏览器 JSONP + window 变量在部分环境下取不到 usGOOG 等，导致回退成成交价（如 326）。
+ */
+app.get("/api/quote/tencent", async (req, res) => {
+  const q = req.query.q != null ? String(req.query.q) : "";
+  if (!q || q.length > 2048 || !/^[a-zA-Z0-9._,\-]+$/.test(q)) {
+    res.status(400).json({ ok: false, error: "invalid q" });
+    return;
+  }
+  const reqKeys = [...new Set(q.split(",").map((s) => String(s || "").trim()).filter(Boolean))];
+  if (!reqKeys.length) {
+    res.status(400).json({ ok: false, error: "invalid q keys" });
+    return;
+  }
+  const result = await fetchTencentQuotePayloadMap(reqKeys);
+  if (!result.ok) {
+    res.status(502).json({ ok: false, error: result.error || "tencent quote failed" });
+    return;
+  }
+  const text = buildTencentQuoteTextFromMap(reqKeys, result.payloadMap);
+  if (!text) {
+    res.status(502).json({ ok: false, error: "no quote payload available" });
+    return;
+  }
+  if (result.delayed) {
+    setDelayedHeaders(res, result.source);
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.type("text/plain; charset=utf-8");
+  res.send(text);
+});
+
+/**
+ * 行情快照：一次返回 quote + kline + fx，减少前端并发请求与补拉风暴。
+ */
+app.post("/api/market/snapshot", requireAuth, async (req, res) => {
+  const quoteSymbolsInput = Array.isArray(req.body?.quoteSymbols) ? req.body.quoteSymbols : [];
+  const klineSymbolsInput = Array.isArray(req.body?.klineSymbols) ? req.body.klineSymbols : [];
+  const includeFx = req.body?.includeFx !== false;
+  const klineLen = req.body?.klineLen != null ? req.body.klineLen : MARKET_KLINE_DEFAULT_LEN;
+
+  const quoteSymbols = [...new Set(quoteSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+  const klineSymbols = [...new Set(klineSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
+  if (quoteSymbols.length > 300 || klineSymbols.length > 300) {
+    res.status(400).json({ ok: false, error: "too many symbols" });
+    return;
+  }
+
+  const delayedSources = new Set();
+  const quoteMap = {};
+  const fxSpot = {};
+  const klineMap = {};
+  const symbolNameRows = [];
+  const missingQuotes = [];
+  const missingKline = [];
+
+  const tencentKeyToSymbols = new Map();
+  for (const symbol of quoteSymbols) {
+    const key = toTencentQuoteSymbol(symbol);
+    if (!key) {
+      missingQuotes.push(symbol);
+      continue;
+    }
+    const list = tencentKeyToSymbols.get(key) || [];
+    list.push(symbol);
+    tencentKeyToSymbols.set(key, list);
+  }
+  const tencentKeys = [...tencentKeyToSymbols.keys()];
+  if (includeFx) {
+    tencentKeys.push("whUSDCNY", "whHKDCNY");
+  }
+
+  if (tencentKeys.length) {
+    const tRes = await fetchTencentQuotePayloadMap(tencentKeys);
+    if (tRes.ok) {
+      if (tRes.delayed) {
+        delayedSources.add(tRes.source || "cache");
+      }
+      for (const [key, symbols] of tencentKeyToSymbols.entries()) {
+        const payload = tRes.payloadMap.get(String(key).toLowerCase());
+        if (!payload) {
+          missingQuotes.push(...symbols);
+          continue;
+        }
+        for (const symbol of symbols) {
+          const parsed = parseTencentQuoteRecord(symbol, payload);
+          if (parsed) {
+            quoteMap[symbol] = parsed;
+            if (parsed.name) {
+              symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
+            }
+          } else {
+            missingQuotes.push(symbol);
+          }
+        }
+      }
+      if (includeFx) {
+        const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
+        const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
+        if (usd && Number.isFinite(usd.current) && usd.current > 0) {
+          fxSpot.USD = usd.current;
+        }
+        if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
+          fxSpot.HKD = hkd.current;
+        }
+      }
+    } else {
+      missingQuotes.push(...quoteSymbols);
+      if (includeFx) {
+        delayedSources.add("quote-unavailable");
+      }
+    }
+  }
+
+  if (klineSymbols.length) {
+    const localBySinaSymbol = new Map();
+    for (const symbol of klineSymbols) {
+      const sinaSymbol = toSinaDailyKBatchSymbol(symbol);
+      if (!sinaSymbol) {
+        missingKline.push(symbol);
+        continue;
+      }
+      if (!localBySinaSymbol.has(sinaSymbol)) {
+        localBySinaSymbol.set(sinaSymbol, []);
+      }
+      localBySinaSymbol.get(sinaSymbol).push(symbol);
+    }
+    if (localBySinaSymbol.size) {
+      const kRes = await fetchSinaDailyBatchWithFallback([...localBySinaSymbol.keys()], {
+        len: klineLen,
+        asc: "0",
+      });
+      if (kRes.ok) {
+        if (kRes.delayed) {
+          delayedSources.add(kRes.source || "cache");
+        }
+        for (const [sinaSymbol, locals] of localBySinaSymbol.entries()) {
+          const rows = Array.isArray(kRes.data?.[sinaSymbol]) ? kRes.data[sinaSymbol] : [];
+          if (!rows.length) {
+            missingKline.push(...locals);
+            continue;
+          }
+          for (const symbol of locals) {
+            klineMap[symbol] = rows;
+          }
+        }
+      } else {
+        missingKline.push(...klineSymbols);
+      }
+    }
+  }
+
+  const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
+  const delayed = delayedSources.size > 0;
+  const delaySource = [...delayedSources].filter(Boolean).join(",");
+  if (symbolNameRows.length) {
+    void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
+  }
+  if (delayed) {
+    setDelayedHeaders(res, delaySource || "cache");
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    quoteMap,
+    klineMap,
+    fxSpot,
+    quoteTime,
+    delayed,
+    delaySource,
+    missing: {
+      quotes: [...new Set(missingQuotes)],
+      kline: [...new Set(missingKline)],
+    },
+  });
+});
+
+/**
+ * 美股：取「严格早于 before（YYYY-MM-DD）」的最后一个交易日收盘（新浪 DailyK_Batch，us_TICKER）。
+ */
+app.get("/api/us-historical-close", async (req, res) => {
+  const raw = req.query.symbol != null ? String(req.query.symbol) : "";
+  const before = req.query.before != null ? String(req.query.before) : "";
+  if (!raw.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(before)) {
+    res.status(400).json({ ok: false, error: "symbol and before=YYYY-MM-DD required" });
+    return;
+  }
+  let lowered = raw.trim().toLowerCase().replace(/\s+/g, "");
+  if (lowered.startsWith("gb_")) {
+    lowered = lowered.slice(3);
+  }
+  const stripped = lowered.replace(/^us/i, "").replace(/\.(OQ|N)$/i, "");
+  const ticker = /^[a-z0-9._-]+$/i.test(stripped) ? stripped.toUpperCase() : "";
+  if (!ticker || ticker.length > 32) {
+    res.status(400).json({ ok: false, error: "invalid symbol" });
+    return;
+  }
+  const sinaSymbol = `us_${ticker}`;
+  try {
+    const sinaRes = await fetchSinaKlineJsonFromUpstream({
+      symbol: sinaSymbol,
+      len: "5000",
+      asc: "0",
+    });
+    if (!sinaRes.ok) {
+      res.status(502).json({ ok: false, error: sinaRes.error || "sina failed" });
+      return;
+    }
+    const arr = sinaRes.data;
+    if (!Array.isArray(arr) || !arr.length) {
+      res.json({ ok: false, error: "no series" });
+      return;
+    }
+    let bestDay = "";
+    let bestClose = NaN;
+    for (const row of arr) {
+      const dayKey = String(row?.day ?? "")
+        .trim()
+        .slice(0, 10)
+        .replace(/\//g, "-");
+      const close = Number(String(row?.close ?? "").replace(/,/g, ""));
+      if (!dayKey || dayKey >= before) {
+        continue;
+      }
+      if (!Number.isFinite(close) || close <= 0) {
+        continue;
+      }
+      if (!bestDay || dayKey > bestDay) {
+        bestDay = dayKey;
+        bestClose = close;
+      }
+    }
+    if (!bestDay || !Number.isFinite(bestClose)) {
+      res.json({ ok: false, error: "no bar before date" });
+      return;
+    }
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.json({ ok: true, day: bestDay, close: bestClose });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message || "sina failed" });
+  }
+});
+
+/** 本地缓存的日收盘价（股票、日期、收盘），计算时优先进页前先 GET for-trades 灌入前端 */
+app.get("/api/daily-close", async (req, res) => {
+  try {
+    const raw = req.query.symbol != null ? String(req.query.symbol) : "";
+    const symbol = normalizeSymbol(raw);
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "symbol required" });
+      return;
+    }
+    const from = req.query.from != null ? String(req.query.from).trim() : "1970-01-01";
+    const to = req.query.to != null ? String(req.query.to).trim() : "9999-12-31";
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, data: await getSymbolDailyCloseRange(symbol, from, to) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
+  }
+});
+
+app.get("/api/daily-close/for-trades", requireAuth, async (req, res) => {
+  try {
+    const w = await getTradeWindowForDailyClose(req.userId);
+    if (!w.symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const requested = sanitizeSymbolList(req.query.symbols);
+    const wantedSet = requested.length ? new Set(requested) : null;
+    const symbols = wantedSet ? w.symbols.filter((sym) => wantedSet.has(sym)) : w.symbols;
+    if (!symbols.length) {
+      res.json({ ok: true, data: {}, from: null, to: null, symbols: [] });
+      return;
+    }
+    const days = parsePositiveInt(req.query.days, 240, 30, 1460);
+    const to = w.to || dateKeyDaysFromToday(0);
+    const floorFrom = dateKeyDaysFromToday(-days);
+    const from = w.from && w.from > floorFrom ? w.from : floorFrom;
+    const cacheKey = `u:${req.userId}:daily-close:from=${from}:to=${to}:symbols=${symbols.join(",")}`;
+    const cached = cacheGetWithTtl(dailyCloseForTradesMemoryCache, cacheKey, DAILY_CLOSE_FOR_TRADES_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, ...cached, cached: true });
+      return;
+    }
+    const data = {};
+    const rowsBySymbol = await Promise.all(
+      symbols.map(async (sym) => [sym, await getSymbolDailyCloseRange(sym, from, to)])
+    );
+    for (const [sym, rows] of rowsBySymbol) {
+      data[sym] = rows;
+    }
+    const payload = { data, from, to, symbols };
+    cacheSet(dailyCloseForTradesMemoryCache, cacheKey, payload);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, ...payload });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "daily-close failed" });
+  }
+});
+
+/** 从东财+新浪拉区间写入 symbol_daily_close（先跑回填再打开页面） */
+app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
+  try {
+    const w = await getTradeWindowForDailyClose(req.userId);
+    if (!w.symbols.length) {
+      res.json({ ok: true, message: "no trades", counts: {} });
+      return;
+    }
+    let symbols = w.symbols;
+    if (Array.isArray(req.body?.symbols) && req.body.symbols.length) {
+      const want = new Set(req.body.symbols.map((s) => normalizeSymbol(String(s))).filter(Boolean));
+      symbols = w.symbols.filter((s) => want.has(s));
+    }
+    const counts = {};
+    for (const sym of symbols) {
+      const rows = await fetchRemoteDailyClosesForSymbol(sym, w.from, w.to);
+      await upsertSymbolDailyCloseBatch(rows);
+      counts[sym] = rows.length;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    clearUserScopedCache(dailyCloseForTradesMemoryCache, req.userId);
+    res.json({ ok: true, from: w.from, to: w.to, counts });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message || "backfill failed" });
+  }
+});
+
+/**
+ * 新浪 suggest 搜索代理（免浏览器跨域、GBK 解码），供新增交易时按字联想。
+ * see https://suggest3.sinajs.cn/suggest/
+ */
+app.get("/api/sina/suggest", async (req, res) => {
+  const key = req.query.key != null ? String(req.query.key) : "";
+  if (!key || key.length > 64) {
+    res.status(400).json({ ok: false, error: "invalid key" });
+    return;
+  }
+  const url = `https://suggest3.sinajs.cn/suggest/?key=${encodeURIComponent(
+    key
+  )}&type=111,41,31,101&name=suggest&num=50`;
+  try {
+    const r = await fetch(url, {
+      headers: { "user-agent": "stockreview/1" },
+      signal: AbortSignal.timeout(6500),
+    });
+    if (!r.ok) {
+      res.status(502).json({ ok: false, error: "sina suggest http error" });
+      return;
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    let text = iconv.decode(buf, "gbk");
+    if (!/var suggest\s*=/.test(text) && /var suggest/.test(buf.toString("utf8"))) {
+      text = buf.toString("utf8");
+    }
+    const lines = parseSinaSuggestText(text);
+    const results = [];
+    for (const line of lines) {
+      const item = suggestLineToItem(line, normalizeSymbol);
+      if (item) {
+        results.push(item);
+      }
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, results });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error?.message || "sina suggest failed" });
+  }
+});
+
+app.use("/api", (_req, res) => {
+  res.status(404).json({ ok: false, error: "API route not found" });
+});
+
+// 生产环境对 app.js / styles.css 使用较短强缓存 + SWR，减轻重复访问体积；HTML 仍禁用强缓存以免旧壳引用错位。
+// 本地开发（非 VERCEL、NODE_ENV 非 production）维持 no-store，避免改代码后仍见旧脚本。
+app.use(
+  express.static(WEB_ROOT, {
+    setHeaders(res, filePath) {
+      const base = path.basename(String(filePath || ""));
+      if (STATIC_ASSET_LONG_CACHE && /^(app\.js|styles\.css)$/i.test(base)) {
+        res.setHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
+        return;
+      }
+      if (/\.(html|js|css|json|ico|svg)$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        res.setHeader("Pragma", "no-cache");
+      }
+    },
+  })
+);
+
+app.use((req, res) => {
+  if (req.url.startsWith("/api/")) {
+    res.status(404).json({ ok: false, error: "API Not Found", url: req.url });
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  const htmlPath = path.join(WEB_ROOT, "index.html");
+  if (fs.existsSync(htmlPath)) {
+    // Avoid res.sendFile in serverless environments as it can cause 300s hangs
+    // due to unclosed streams in serverless-http.
+    const html = fs.readFileSync(htmlPath, "utf-8");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } else {
+    res.status(404).send("Not Found");
+  }
+});
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  });
+}
+
+module.exports = app;
