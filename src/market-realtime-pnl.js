@@ -19,6 +19,20 @@ const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/tra
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 const quoteMem = new Map();
 
+function pickLatestQuoteTime(times) {
+  let best = "";
+  let bestKey = 0;
+  for (const item of (Array.isArray(times) ? times : [])) {
+    const t = String(item || "").trim();
+    const digits = t.replace(/\D/g, "");
+    const key = digits.length >= 14 ? Number(digits.slice(0, 14)) || 0
+              : digits.length >= 8  ? Number(`${digits.slice(0, 8)}000000`) || 0
+              : 0;
+    if (key > bestKey) { best = t; bestKey = key; }
+  }
+  return best || null;
+}
+
 function parseQuoteTimeToDateKey(timeStr) {
   if (!timeStr || typeof timeStr !== "string") {
     return null;
@@ -250,6 +264,7 @@ async function computeLiveMetrics(userId, accountScope = "all") {
       liveDate: null,
       frozenThrough: frozenThrough || null,
       delayed: false,
+      quoteTime: null,
       todayProfitCny: 0,
       liveMarketValueCny: mv,
       lastMarketValueCny,
@@ -353,6 +368,7 @@ async function computeLiveMetrics(userId, accountScope = "all") {
     liveDate,
     frozenThrough: frozenThrough || null,
     delayed: !!quoteReq.delayed,
+    quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
     todayProfitCny,
     liveMarketValueCny: liveMarketValue,
     lastMarketValueCny,
