@@ -49,6 +49,7 @@ function metaEnvelope(userId, scope, settings, live, extra = {}) {
     liveDate: live?.tradingDay ? live.liveDate : null,
     tradingDay: !!live?.tradingDay,
     delayed: !!live?.delayed,
+    quoteTime: live?.quoteTime ?? null,
     dataVersion: extra.dataVersion ?? 0,
     rebuilding: !!extra.rebuilding,
     ...extra,
