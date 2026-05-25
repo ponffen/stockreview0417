@@ -1905,9 +1905,7 @@ async function hydrateState() {
       homeSummaryRpcMemo = { key: memoKey, data: parsed.homeSummary, at: Date.now() };
     }
   }
-  if (apiReady && sessionPhone && (bootstrapKind === "lite" || bootstrapKind === "home")) {
-    await ensureLedgerDataLoaded();
-  }
+  // trades + cash-transfers are loaded lazily on trade/analysis routes, not on home page load
   if (!["month", "ytd", "total"].includes(state.stageRange)) {
     state.stageRange = "month";
   }
@@ -3178,10 +3176,19 @@ function renderAll() {
     renderOverviewAndStockTable();
   } else if (state.route === "analysis") {
     void renderAnalysis();
-  } else if (state.route === "trade-records" || state.route === "trade-cash") {
-    renderTradeTable();
-  } else if (state.route === "trade-search") {
-    /* 搜索股票页：表格在二级页，此处不渲染 */
+  } else if (
+    state.route === "trade" ||
+    state.route === "trade-records" ||
+    state.route === "trade-cash" ||
+    state.route === "trade-search"
+  ) {
+    void ensureLedgerDataLoaded().then(() => {
+      if (state.route === "trade-records" || state.route === "trade-cash") renderTradeTable();
+    });
+    if (state.route === "trade-records" || state.route === "trade-cash") {
+      renderTradeTable();
+    }
+    /* trade-search: 搜索股票页，表格在二级页，此处不单独渲染 */
   } else if (state.route === "stock-record" && state.activeRecordSymbol) {
     void renderStockRecordPage(state.activeRecordSymbol);
   } else if (state.route === "community-profile") {
@@ -7916,6 +7923,9 @@ async function renderAnalysis(options = {}) {
   if (state.route !== "analysis") {
     return;
   }
+  void ensureLedgerDataLoaded().then(() => {
+    if (state.route === "analysis") void renderAnalysis({ showLoading: false });
+  });
   const showLoading = options.showLoading !== false;
   if (showLoading) {
     showRouteLoading("数据正在加载中");
@@ -8324,6 +8334,7 @@ async function openStockRecordDialog(symbol, opts = {}) {
   window.scrollTo(0, 0);
   persistState();
 
+  await ensureLedgerDataLoaded();
   await ensureSymbolData(symbol);
   await renderStockRecordPage(symbol);
   // wait for layout settle on mobile after route switch
