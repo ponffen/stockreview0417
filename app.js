@@ -2048,57 +2048,25 @@ function persistState() {
   }
 }
 
-/**
- * 优先 GET /api/home/bootstrap（首屏：设置 + 成交/银证 + home-summary）；失败则回退 /api/state?lite=1。
- * 401 仍视为 API 可达，但不解析 body。
- */
-async function fetchLiteStateBootstrap() {
-  const r2 = await apiFetch(`${getApiBaseForFetch()}/state?lite=1`, {
-    cache: "no-store",
-    timeoutMs: 12_000,
-  });
-  if (!r2.ok && r2.status !== 401) {
-    return { apiReady: false, data: null, bootstrapKind: "none" };
-  }
-  if (r2.status === 401) {
-    return { apiReady: true, data: null, bootstrapKind: "none" };
-  }
-  const j2 = await r2.json().catch(() => ({}));
-  if (!j2?.ok || !j2.data) {
-    return { apiReady: true, data: null, bootstrapKind: "none" };
-  }
-  return { apiReady: true, data: j2.data, bootstrapKind: "lite" };
-}
-
 async function fetchApiStateBootstrap() {
-  const unreachable = () => ({ apiReady: false, data: null, bootstrapKind: "none" });
-  const unauthorized = () => ({ apiReady: true, data: null, bootstrapKind: "none" });
-  const BOOTSTRAP_TIMEOUT_MS = 12_000;
   try {
-    const response = await apiFetch(`${getApiBaseForFetch()}/home/bootstrap`, {
+    const response = await apiFetch(`${getApiBaseForFetch()}/settings`, {
       cache: "no-store",
-      timeoutMs: BOOTSTRAP_TIMEOUT_MS,
+      timeoutMs: 12_000,
     });
-    const reachable = response.ok || response.status === 401;
-    if (!reachable) {
-      return unreachable();
+    if (!response.ok && response.status !== 401) {
+      return { apiReady: false, data: null, bootstrapKind: "none" };
     }
     if (response.status === 401) {
-      return unauthorized();
+      return { apiReady: true, data: null, bootstrapKind: "none" };
     }
-    if (response.ok) {
-      const result = await response.json().catch(() => ({}));
-      if (result?.ok && result.data) {
-        return { apiReady: true, data: result.data, bootstrapKind: "home" };
-      }
+    const result = await response.json().catch(() => ({}));
+    if (result?.ok && result.data) {
+      return { apiReady: true, data: result.data, bootstrapKind: "lite" };
     }
-    return await fetchLiteStateBootstrap();
+    return { apiReady: true, data: null, bootstrapKind: "none" };
   } catch {
-    try {
-      return await fetchLiteStateBootstrap();
-    } catch {
-      return unreachable();
-    }
+    return { apiReady: false, data: null, bootstrapKind: "none" };
   }
 }
 
