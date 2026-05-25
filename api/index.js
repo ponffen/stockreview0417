@@ -681,7 +681,10 @@ module.exports = async function handler(req, res) {
         const frozenDate = getSearchParam(req, "frozenDate") || body?.frozenDate;
         const force = parseBooleanInput(getSearchParam(req, "force") || body?.force, false);
         const syncDailyClose = parseBooleanInput(getSearchParam(req, "syncDailyClose") || body?.syncDailyClose, false);
-        const userIds = Array.isArray(body?.userIds) ? body.userIds : [];
+        const userIdFromQuery = getSearchParam(req, "userId");
+        const userIds = Array.isArray(body?.userIds) && body.userIds.length
+          ? body.userIds
+          : userIdFromQuery ? [userIdFromQuery] : [];
         const data = await runDailyFreeze({ frozenDate, force, syncDailyClose, userIds, logger: console });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
