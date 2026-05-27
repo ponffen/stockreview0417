@@ -239,6 +239,54 @@ const HOME_BUNDLE_CACHE_MS = Math.max(
   0,
   Math.min(30_000, Number(process.env.HOME_BUNDLE_CACHE_MS || 12_000)),
 );
+const HOME_BUNDLE_DEADLINE_MS = Math.max(
+  8_000,
+  Math.min(55_000, Number(process.env.HOME_BUNDLE_DEADLINE_MS || 48_000)),
+);
+const LIVE_METRICS_MAX_MS = Math.max(
+  3_000,
+  Math.min(25_000, Number(process.env.LIVE_METRICS_MAX_MS || 18_000)),
+);
+
+function frozenOnlyLiveFromHomeAccount(homeAcc) {
+  const ft = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
+  const ta = Number(homeAcc?.eod_total_assets_cny) || 0;
+  const mv = Number(homeAcc?.eod_market_value_cny) || 0;
+  const cash = Number(homeAcc?.eod_cash_cny) || 0;
+  const total = ta || mv + cash;
+  return {
+    tradingDay: false,
+    liveDate: null,
+    frozenThrough: ft,
+    delayed: true,
+    quoteTime: null,
+    todayProfitCny: 0,
+    liveMarketValueCny: mv,
+    lastMarketValueCny: Number(homeAcc?.last_market_value_cny) || mv,
+    cashCny: cash,
+    totalAssetsCny: total,
+    cashRatio: total > 0 ? cash / total : (Number(homeAcc?.eod_cash_ratio) || 0) / 100,
+    principalCny: Number(homeAcc?.eod_principal_cny) || 0,
+    positions: [],
+    fxUsdCny: Number(homeAcc?.eod_fx_usd_cny) || 7.2,
+    fxHkdCny: Number(homeAcc?.eod_fx_hkd_cny) || 0.92,
+    degradedFrozen: true,
+  };
+}
+
+async function raceWithTimeout(promise, ms, onTimeout) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+
 
 async function loadMetricsScopeContext(userId, accountScope, diag = null) {
   const scope = String(accountScope || "all").trim() || "all";
@@ -266,20 +314,85 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
     lastEodRows = await mark("db.lastEodShares", () => getLastEodSharesForUser(userId));
   }
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
-  const live = await mark("live", () =>
-    getComputeLiveMetrics(userId, scope, {
-      preloaded: {
-        trades,
-        cashTransfers,
-        accounts,
-        homeAccount: home.account,
-        scopeCleared,
-        lastEodRows,
+  let liveFallback = false;
+  const live = await mark("live", () => {
+    if (scopeCleared) {
+      liveFallback = true;
+      return frozenOnlyLiveFromHomeAccount(home.account);
+    }
+    return raceWithTimeout(
+      getComputeLiveMetrics(userId, scope, {
+        preloaded: {
+          trades,
+          cashTransfers,
+          accounts,
+          homeAccount: home.account,
+          scopeCleared,
+          lastEodRows,
+        },
+      }),
+      LIVE_METRICS_MAX_MS,
+      () => {
+        liveFallback = true;
+        return frozenOnlyLiveFromHomeAccount(home.account);
       },
-    }),
-  );
+    );
+  });
+  if (phases && liveFallback) {
+    phases.liveFallback = true;
+  }
   if (phases) phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
   return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
+}
+
+
+async function loadMetricsScopeContextDbOnly(userId, accountScope, diag = null) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const phases = diag || null;
+  const mark = async (name, fn) => {
+    const t0 = Date.now();
+    const v = await fn();
+    if (phases) phases[name] = Date.now() - t0;
+    return v;
+  };
+  const [settings, home, um] = await runMetricsDbBatch([
+    () => mark("db.settings", () => getSettings(userId)),
+    () => mark("db.home", () => getHomeSummaryForUser(userId, scope)),
+    () => mark("db.userMeta", () => getUserMetricsMeta(userId, { light: true })),
+  ]);
+  const [trades, cashTransfers, accounts] = await runMetricsDbBatch([
+    () => mark("db.trades", () => getTrades(userId)),
+    () => mark("db.cashTransfers", () => getCashTransfers(userId)),
+    () => mark("db.accounts", () => getAccounts(userId)),
+  ]);
+  const accountMetaList = await mark("db.accountMeta", () => getAccountMetricsMetaForUser(userId));
+  const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
+  let lastEodRows = [];
+  if (!scopeCleared) {
+    lastEodRows = await mark("db.lastEodShares", () => getLastEodSharesForUser(userId));
+  }
+  home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
+  const live = frozenOnlyLiveFromHomeAccount(home.account);
+  if (phases) {
+    phases.live = 0;
+    phases.liveSkipped = true;
+    phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
+  }
+  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
+}
+
+async function probeMetricsHomeBundleDb(userId, accountScope) {
+  const phases = {};
+  const t0 = Date.now();
+  const ctx = await loadMetricsScopeContextDbOnly(userId, accountScope, phases);
+  phases.wallMs = Date.now() - t0;
+  return {
+    phases,
+    scopeCleared: !!ctx.scopeCleared,
+    symbolRows: ctx.home?.symbols?.length ?? 0,
+    hasHomeAccount: !!ctx.home?.account,
+    frozenThrough: ctx.live?.frozenThrough || null,
+  };
 }
 
 async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
@@ -397,12 +510,31 @@ async function getMetricsAssets(userId, accountScope) {
   return buildMetricsAssetsFromContext(ctx);
 }
 
+async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {}) {
+  const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
+  const assets = buildMetricsAssetsFromContext(ctx);
+  const holdings = await buildMetricsHoldingsFromContext(ctx);
+  const value = { returns, assets, holdings };
+  if (diag) {
+    value._diag = {
+      phases: diag,
+      scopeCleared: !!ctx.scopeCleared,
+      symbolRows: ctx.home?.symbols?.length ?? 0,
+      ...extraDiag,
+    };
+  }
+  return value;
+}
+
 async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
   const scope = String(accountScope || "all").trim() || "all";
   const stagesKey = String(stagesRaw || "").trim();
-  const wantDiag = opts.diag === true;
+  const wantDiag = opts.diag === true || opts.diagOnly === true;
   const cacheKey = `${String(userId || "").trim()}|${scope}|${stagesKey}`;
   const now = Date.now();
+  if (opts.diagOnly) {
+    return { _diag: await probeMetricsHomeBundleDb(userId, scope) };
+  }
   if (!wantDiag && HOME_BUNDLE_CACHE_MS > 0) {
     const hit = homeBundleCache.get(cacheKey);
     if (hit && now - hit.at < HOME_BUNDLE_CACHE_MS) {
@@ -410,17 +542,26 @@ async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) 
     }
   }
   const diag = wantDiag ? {} : null;
-  const ctx = await loadMetricsScopeContext(userId, accountScope, diag);
-  const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
-  const assets = buildMetricsAssetsFromContext(ctx);
-  const holdings = await buildMetricsHoldingsFromContext(ctx);
-  const value = { returns, assets, holdings };
-  if (wantDiag) {
-    value._diag = {
-      phases: diag,
-      scopeCleared: !!ctx.scopeCleared,
-      symbolRows: ctx.home?.symbols?.length ?? 0,
-    };
+  const buildFull = async () => {
+    const ctx = await loadMetricsScopeContext(userId, accountScope, diag);
+    return assembleHomeBundleFromContext(ctx, stagesRaw, diag);
+  };
+  let value;
+  try {
+    value = await raceWithTimeout(buildFull(), HOME_BUNDLE_DEADLINE_MS, null);
+    if (!value) {
+      throw new Error("HOME_BUNDLE_DEADLINE");
+    }
+  } catch (err) {
+    if (String(err?.message || err) !== "HOME_BUNDLE_DEADLINE") {
+      throw err;
+    }
+    const ctx = await loadMetricsScopeContextDbOnly(userId, accountScope, diag);
+    value = await assembleHomeBundleFromContext(ctx, stagesRaw, diag, {
+      degraded: true,
+      reason: "HOME_BUNDLE_DEADLINE",
+      deadlineMs: HOME_BUNDLE_DEADLINE_MS,
+    });
   }
   if (!wantDiag && HOME_BUNDLE_CACHE_MS > 0) {
     homeBundleCache.set(cacheKey, { at: now, value });
@@ -603,6 +744,7 @@ module.exports = {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  probeMetricsHomeBundleDb,
   getSeriesDailyProfit,
   getSeriesDailyTwr,
   getSeriesDailyAsset,

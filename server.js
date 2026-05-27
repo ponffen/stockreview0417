@@ -801,6 +801,7 @@ const {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  probeMetricsHomeBundleDb,
   getHoldings,
   getSeriesDailyProfit,
   getSeriesDailyTwr,
@@ -1535,13 +1536,27 @@ app.get("/api/metrics/assets", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/metrics/home-bundle-diag", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, { _diag: await probeMetricsHomeBundleDb(req.userId, accountScope) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle-diag failed" });
+  }
+});
+
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
   try {
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const wantDiag = String(req.query.diag || "") === "1";
+    const diagQ = String(req.query.diag || "").trim().toLowerCase();
+    const wantDiag = diagQ === "1" || diagQ === "true";
+    const diagOnly = diagQ === "only";
     sendMetricsJson(
       res,
-      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages, { diag: wantDiag }),
+      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages, {
+        diag: wantDiag || diagOnly,
+        diagOnly,
+      }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle failed" });
