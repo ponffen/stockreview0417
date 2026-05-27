@@ -18,7 +18,13 @@ const {
   fetchHomeBundleFrozenPack,
   normalizeSymbol,
 } = require("./db");
-const { fmtMoney, fmtPercentRatio, cnyScalarToBookAmount } = require("./account-kpi-surface");
+const {
+  fmtMoney,
+  fmtPlainAmount,
+  fmtPlainSignedAmount,
+  fmtPercentRatio,
+  cnyScalarToBookAmount,
+} = require("./account-kpi-surface");
 const {
   buildProfitSeries,
   rebaseRateSeriesByFirstDay,
@@ -611,7 +617,7 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
       rateTwr,
       rateMwr,
       rate,
-      profitDisplay: fmtMoney(profitCny, "CNY"),
+      profitDisplay: fmtPlainSignedAmount(profitCny),
       rateTwrDisplay: fmtPercentRatio(rateTwr),
       rateMwrDisplay: fmtPercentRatio(rateMwr),
       rateDisplay: fmtPercentRatio(rate),
@@ -654,11 +660,11 @@ function buildMetricsAssetsFromContext(ctx) {
     cashCny,
     cashRatio: taCny > 0 ? cashCny / taCny : 0,
     principalCny,
-    totalAssetsDisplay: fmtMoney(ta, book),
-    marketValueDisplay: fmtMoney(mv, book),
-    cashDisplay: fmtMoney(cash, book),
+    totalAssetsDisplay: fmtPlainAmount(ta),
+    marketValueDisplay: fmtPlainAmount(mv),
+    cashDisplay: fmtPlainAmount(cash),
     cashRatioDisplay: ratioStr,
-    principalDisplay: fmtMoney(principal, book),
+    principalDisplay: fmtPlainAmount(principal),
   };
 }
 
