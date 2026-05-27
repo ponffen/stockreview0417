@@ -5271,7 +5271,7 @@ function formatOverviewStockRatioFromTotals(totalAssetsBook, marketValueBook) {
   return `${formatNumber((mv / ta) * 100, 2)}%`;
 }
 
-/** 总览 KPI 六项：总资产、总市值、现金、股票占比、现金占比、本金。 */
+/** 总览 KPI 六项：总资产、总市值 | 现金、本金 | 股票占比、现金占比。 */
 function buildOverviewKpiEntries({
   totalAssets,
   marketValue,
@@ -5284,9 +5284,9 @@ function buildOverviewKpiEntries({
     { label: "总资产", value: totalAssets },
     { label: "总市值", value: marketValue },
     { label: "现金", value: cash },
+    { label: "本金", value: principal },
     { label: "股票占比", value: stockRatio },
     { label: "现金占比", value: cashRatio },
-    { label: "本金", value: principal },
   ];
 }
 
