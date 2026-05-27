@@ -97,14 +97,18 @@ function holdingsSymbolsFromTradesForFilter(trades, accountScope, lastEodRows = 
   }
   let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
   if (!lastEodRows?.length) return symbols;
-  const eodZero = new Set();
+  const eodSharesBySym = new Map();
   for (const row of lastEodRows) {
     const acc = String(row.accountId || row.account_id || "default");
     if (wanted !== "all" && acc !== wanted) continue;
     const sym = normalizeSymbol(row.symbol);
-    if (sym && (Number(row.eodShares ?? row.eod_shares) || 0) <= 1e-6) eodZero.add(sym);
+    if (!sym) continue;
+    const sh = Number(row.eodShares ?? row.eod_shares) || 0;
+    eodSharesBySym.set(sym, (eodSharesBySym.get(sym) || 0) + sh);
   }
-  if (eodZero.size) symbols = symbols.filter((s) => !eodZero.has(s));
+  if (eodSharesBySym.size) {
+    symbols = symbols.filter((s) => (eodSharesBySym.get(s) || 0) > 1e-6);
+  }
   return symbols;
 }
 

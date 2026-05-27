@@ -1,7 +1,7 @@
 /**
  * f 持仓表：symbol_home_summary（冻结）+ computeLiveMetrics（今日/现价），方案 A 全 display。
  */
-const { normalizeSymbol, formatSymbolForDisplay } = require("../db");
+const { normalizeSymbol, formatSymbolForDisplay, getSymbolNameMap } = require("../db");
 const { fmtMoney, fmtPercentRatio } = require("../account-kpi-surface");
 
 function inferMarket(symbol) {
@@ -45,6 +45,7 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
   const snapBySym = new Map((symbolRows || []).map((r) => [normalizeSymbol(r.symbol), r]));
 
   const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
+  const nameMap = await getSymbolNameMap([...keys]);
   const rowsOut = [];
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
@@ -71,9 +72,14 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
     const sigma = qty > 0 ? costNat / qty : 0;
     const totalRate = Math.abs(sigma * qty) > 0 ? totalNat / Math.abs(sigma * qty) : 0;
 
+    const snapName = String(snap?.name || "").trim();
+    const mappedName = String(nameMap[sym] || "").trim();
+    const displayName =
+      mappedName || (snapName && snapName.toLowerCase() !== sym.toLowerCase() ? snapName : "") || sym;
+
     rowsOut.push({
       symbol: sym,
-      name: snap?.name || sym,
+      name: displayName,
       marketTag: marketTag(inferMarket(sym)),
       stockCode: formatSymbolForDisplay(sym),
       priceDisplay: Number.isFinite(current) ? current.toFixed(3) : "—",
