@@ -773,6 +773,21 @@ async function getSeriesDailyProfit(userId, accountScope, stage) {
     profitCny: r.profitCny,
     profitDisplay: fmtMoney(r.profitCny, "CNY"),
   }));
+  const todayPt = todayPointForReturns(live, settings?.profitAlgoMode);
+  if (todayPt && todayPt.date >= start && todayPt.date <= end) {
+    const hit = points.findIndex((p) => p.date === todayPt.date);
+    const row = {
+      date: todayPt.date,
+      profitCny: todayPt.profitCny,
+      profitDisplay: todayPt.profitDisplay,
+    };
+    if (hit >= 0) {
+      points[hit] = row;
+    } else {
+      points.push(row);
+      points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    }
+  }
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage, points };
 }
 

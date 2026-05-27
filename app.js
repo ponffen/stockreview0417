@@ -5729,19 +5729,24 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
 
 function getPositionDayTradeContext(symbol, dateKey, trades = state.trades) {
   const tradeList = Array.isArray(trades) ? trades : state.trades;
-  const symbolTrades = tradeList.filter((trade) => trade.symbol === symbol).sort(sortTradeAsc);
+  const sym = normalizeSymbol(symbol);
+  const dk = String(dateKey || "").slice(0, 10);
+  const symbolTrades = tradeList
+    .filter((trade) => normalizeSymbol(trade.symbol) === sym)
+    .sort(sortTradeAsc);
   let startQuantity = 0;
   let endQuantity = 0;
   let dayFlowNative = 0;
   for (const trade of symbolTrades) {
+    const d = String(trade.date || "").slice(0, 10);
     const deltaQty = trade.side === "buy" ? trade.quantity : -trade.quantity;
-    if (trade.date < dateKey) {
+    if (d < dk) {
       startQuantity += deltaQty;
     }
-    if (trade.date <= dateKey) {
+    if (d <= dk) {
       endQuantity += deltaQty;
     }
-    if (trade.date === dateKey) {
+    if (d === dk) {
       dayFlowNative += signedAmount(trade);
     }
   }
@@ -7997,6 +8002,12 @@ async function renderAnalysis(options = {}) {
   const renderRequestId = ++analysisRenderRequestSeq;
   setAnalysisSummariesDash();
   clearAnalysisChartsToEmpty();
+  if (apiReady) {
+    const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId);
+    if (metricsPainted && renderRequestId === analysisRenderRequestSeq) {
+      return;
+    }
+  }
   const scope = getPortfolioScope();
   const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const todayKey = toDateKey(new Date());

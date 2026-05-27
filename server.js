@@ -796,62 +796,6 @@ const {
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
-const { scheduleMetricsRebuildForUser } = require("./src/metrics-rebuild-service");
-const {
-  getMetricsReturns,
-  getMetricsAssets,
-  getMetricsHomeBundle,
-  probeMetricsHomeBundleDb,
-  getHoldings,
-  getSeriesDailyProfit,
-  getSeriesDailyTwr,
-  getSeriesDailyAsset,
-  getStockRank,
-  getBenchmarkSeries,
-} = require("./src/metrics-api-service");
-
-function sendMetricsJson(res, data) {
-  res.setHeader("Cache-Control", "no-store");
-  res.json({ ok: true, data });
-}
-
-async function assertPublicMetricsTarget(viewerId, targetId) {
-  const vid = String(viewerId || "").trim();
-  const tid = String(targetId || "").trim();
-  if (!vid || !tid) {
-    return { ok: false, status: 401, error: "unauthorized" };
-  }
-  const row = await getUserCommunityRow(tid);
-  const isSelf = vid === tid;
-  if (!row || (!isSelf && !Number(row.community_public))) {
-    return { ok: false, status: 404, error: "hidden" };
-  }
-  return { ok: true, userId: tid };
-}
-
-async function isMetricsOpsAdmin(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return false;
-  }
-  const adminIds = String(process.env.ADMIN_USER_IDS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (adminIds.includes(uid)) {
-    return true;
-  }
-  const adminPhones = String(process.env.ADMIN_PHONES || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (!adminPhones.length) {
-    return false;
-  }
-  const phone = await getUserPhone(uid);
-  return !!phone && adminPhones.includes(String(phone).trim());
-}
-
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
@@ -1533,33 +1477,6 @@ app.get("/api/metrics/assets", requireAuth, async (req, res) => {
     sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "metrics assets failed" });
-  }
-});
-
-app.get("/api/metrics/home-bundle-diag", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, { _diag: await probeMetricsHomeBundleDb(req.userId, accountScope) });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle-diag failed" });
-  }
-});
-
-app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const diagQ = String(req.query.diag || "").trim().toLowerCase();
-    const wantDiag = diagQ === "1" || diagQ === "true";
-    const diagOnly = diagQ === "only";
-    sendMetricsJson(
-      res,
-      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages, {
-        diag: wantDiag || diagOnly,
-        diagOnly,
-      }),
-    );
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle failed" });
   }
 });
 
@@ -2344,6 +2261,7 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
 
     let liveMarketValue = 0;
     let todayProfitCny = 0;
+    const todayKey = liveDateKeyShanghai();
     for (const [symbol, item] of holdings.entries()) {
       if (!(item.quantity > 1e-6)) {
         continue;
@@ -2357,12 +2275,16 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
       const currency = symbol.startsWith("hk") || symbol.startsWith("rt_hk") ? "HKD" : symbol.startsWith("sh") || symbol.startsWith("sz") ? "CNY" : "USD";
       const rate = fxRate(currency);
       liveMarketValue += item.quantity * current * rate;
-      if (shouldCountTodayPositionPnlFromQuote(quote)) {
-        todayProfitCny += item.quantity * (current - prevClose) * rate;
-      }
+      todayProfitCny += todayProfitCnyForHolding({
+        quote,
+        symbol,
+        prevClose,
+        current,
+        rate,
+        trades: accountTrades,
+        todayKey,
+      });
     }
-
-    const todayKey = dateKeyDaysFromToday(0);
     const liveTotalProfit = baseSnapshot
       ? baseSnapshot.date === todayKey
         ? Number(baseSnapshot.totalProfit || 0) - Number(baseSnapshot.profitCny || 0) + todayProfitCny
