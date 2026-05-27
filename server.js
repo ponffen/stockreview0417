@@ -1538,9 +1538,10 @@ app.get("/api/metrics/assets", requireAuth, async (req, res) => {
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
   try {
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const wantDiag = String(req.query.diag || "") === "1";
     sendMetricsJson(
       res,
-      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages),
+      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages, { diag: wantDiag }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle failed" });

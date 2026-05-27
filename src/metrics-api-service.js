@@ -13,6 +13,9 @@ const {
   getSymbolDailyCloseRange,
   resolveBookCurrencyForAccountScope,
   getUserMetricsMeta,
+  getAccountMetricsMetaForUser,
+  getLastEodSharesForUser,
+  normalizeSymbol,
 } = require("./db");
 const { fmtMoney, fmtPercentRatio, cnyScalarToBookAmount } = require("./account-kpi-surface");
 const {
@@ -37,6 +40,74 @@ const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
 const METRICS_RULE_VERSION = 3;
 const BENCHMARK_SYMBOLS = new Set(["sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
 const STANDARD_RETURN_STAGES = new Set(["today", "mtd", "ytd", "inception"]);
+const METRICS_DB_BATCH_SIZE = Math.max(1, Math.min(3, Number(process.env.METRICS_DB_BATCH_SIZE || 3)));
+
+function useMetricsDbBatching() {
+  return process.env.METRICS_DB_BATCH === "1" || process.env.VERCEL === "1";
+}
+
+async function runMetricsDbBatch(tasks) {
+  const list = tasks.map((fn) => (typeof fn === "function" ? fn : () => fn));
+  if (!useMetricsDbBatching()) {
+    return Promise.all(list.map((fn) => fn()));
+  }
+  const out = [];
+  for (let i = 0; i < list.length; i += METRICS_DB_BATCH_SIZE) {
+    const chunk = list.slice(i, i + METRICS_DB_BATCH_SIZE);
+    const part = await Promise.all(chunk.map((fn) => fn()));
+    out.push(...part);
+  }
+  return out;
+}
+
+function isScopeMetricsCleared(scope, um, accountMetaList) {
+  if (um?.isCleared === true) {
+    return true;
+  }
+  const sc = String(scope || "all").trim() || "all";
+  if (sc === "all") {
+    return false;
+  }
+  const meta = (accountMetaList || []).find((m) => String(m.accountId) === sc);
+  return meta?.isCleared === true;
+}
+
+function filterActiveSymbolHomeRows(symbolRows, trades, scope, lastEodRows) {
+  const active = new Set(holdingsSymbolsFromTradesForFilter(trades, scope, lastEodRows));
+  if (!active.size) {
+    return [];
+  }
+  return (symbolRows || []).filter((r) => active.has(normalizeSymbol(r.symbol)));
+}
+
+function holdingsSymbolsFromTradesForFilter(trades, accountScope, lastEodRows = null) {
+  const wanted = String(accountScope || "all").trim() || "all";
+  const list =
+    wanted === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === wanted);
+  const holdings = new Map();
+  for (const trade of list) {
+    const symbol = normalizeSymbol(trade.symbol);
+    if (!symbol) continue;
+    holdings.set(
+      symbol,
+      (holdings.get(symbol) || 0) +
+        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
+    );
+  }
+  let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+  if (!lastEodRows?.length) return symbols;
+  const eodZero = new Set();
+  for (const row of lastEodRows) {
+    const acc = String(row.accountId || row.account_id || "default");
+    if (wanted !== "all" && acc !== wanted) continue;
+    const sym = normalizeSymbol(row.symbol);
+    if (sym && (Number(row.eodShares ?? row.eod_shares) || 0) <= 1e-6) eodZero.add(sym);
+  }
+  if (eodZero.size) symbols = symbols.filter((s) => !eodZero.has(s));
+  return symbols;
+}
+
+
 
 function metaEnvelope(userId, scope, settings, live, extra = {}) {
   const algo = String(settings?.algoMode || "twr").toLowerCase() === "mwr" ? "mwr" : "twr";
@@ -169,20 +240,46 @@ const HOME_BUNDLE_CACHE_MS = Math.max(
   Math.min(30_000, Number(process.env.HOME_BUNDLE_CACHE_MS || 12_000)),
 );
 
-async function loadMetricsScopeContext(userId, accountScope) {
+async function loadMetricsScopeContext(userId, accountScope, diag = null) {
   const scope = String(accountScope || "all").trim() || "all";
-  const [settings, home, um, trades, cashTransfers, accounts] = await Promise.all([
-    getSettings(userId),
-    getHomeSummaryForUser(userId, scope),
-    getUserMetricsMeta(userId),
-    getTrades(userId),
-    getCashTransfers(userId),
-    getAccounts(userId),
+  const phases = diag || null;
+  const mark = async (name, fn) => {
+    const t0 = Date.now();
+    const v = await fn();
+    if (phases) phases[name] = Date.now() - t0;
+    return v;
+  };
+  const [settings, home, um] = await runMetricsDbBatch([
+    () => mark("db.settings", () => getSettings(userId)),
+    () => mark("db.home", () => getHomeSummaryForUser(userId, scope)),
+    () => mark("db.userMeta", () => getUserMetricsMeta(userId, { light: true })),
   ]);
-  const live = await getComputeLiveMetrics(userId, scope, {
-    preloaded: { trades, cashTransfers, accounts, homeAccount: home.account },
-  });
-  return { userId, scope, settings, live, um, home };
+  const [trades, cashTransfers, accounts] = await runMetricsDbBatch([
+    () => mark("db.trades", () => getTrades(userId)),
+    () => mark("db.cashTransfers", () => getCashTransfers(userId)),
+    () => mark("db.accounts", () => getAccounts(userId)),
+  ]);
+  const accountMetaList = await mark("db.accountMeta", () => getAccountMetricsMetaForUser(userId));
+  const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
+  let lastEodRows = [];
+  if (!scopeCleared) {
+    lastEodRows = await mark("db.lastEodShares", () => getLastEodSharesForUser(userId));
+  }
+  home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
+  const live = await mark("live", () =>
+    getComputeLiveMetrics(userId, scope, {
+      preloaded: {
+        trades,
+        cashTransfers,
+        accounts,
+        homeAccount: home.account,
+        scopeCleared,
+        lastEodRows,
+      },
+    }),
+  );
+  if (phases) phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
+  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
 }
 
 async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
@@ -300,23 +397,32 @@ async function getMetricsAssets(userId, accountScope) {
   return buildMetricsAssetsFromContext(ctx);
 }
 
-async function getMetricsHomeBundle(userId, accountScope, stagesRaw) {
+async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
   const scope = String(accountScope || "all").trim() || "all";
   const stagesKey = String(stagesRaw || "").trim();
+  const wantDiag = opts.diag === true;
   const cacheKey = `${String(userId || "").trim()}|${scope}|${stagesKey}`;
   const now = Date.now();
-  if (HOME_BUNDLE_CACHE_MS > 0) {
+  if (!wantDiag && HOME_BUNDLE_CACHE_MS > 0) {
     const hit = homeBundleCache.get(cacheKey);
     if (hit && now - hit.at < HOME_BUNDLE_CACHE_MS) {
       return hit.value;
     }
   }
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  const diag = wantDiag ? {} : null;
+  const ctx = await loadMetricsScopeContext(userId, accountScope, diag);
   const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
   const assets = buildMetricsAssetsFromContext(ctx);
   const holdings = await buildMetricsHoldingsFromContext(ctx);
   const value = { returns, assets, holdings };
-  if (HOME_BUNDLE_CACHE_MS > 0) {
+  if (wantDiag) {
+    value._diag = {
+      phases: diag,
+      scopeCleared: !!ctx.scopeCleared,
+      symbolRows: ctx.home?.symbols?.length ?? 0,
+    };
+  }
+  if (!wantDiag && HOME_BUNDLE_CACHE_MS > 0) {
     homeBundleCache.set(cacheKey, { at: now, value });
   }
   return value;

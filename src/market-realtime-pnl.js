@@ -277,7 +277,7 @@ function getSymbolCurrency(symbol) {
   return "USD";
 }
 
-function holdingsSymbolsFromTrades(trades, accountScope) {
+function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
   const wanted = String(accountScope || "all").trim() || "all";
   const list =
     wanted === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === wanted);
@@ -300,7 +300,72 @@ function holdingsSymbolsFromTrades(trades, accountScope) {
         (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
     );
   }
-  return [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+  let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+  if (!lastEodRows?.length) {
+    return symbols;
+  }
+  const eodZero = new Set();
+  for (const row of lastEodRows) {
+    const acc = String(row.accountId || row.account_id || "default");
+    if (wanted !== "all" && acc !== wanted) {
+      continue;
+    }
+    const sym = normalizeSymbol(row.symbol);
+    const sh = Number(row.eodShares ?? row.eod_shares) || 0;
+    if (sym && sh <= 1e-6) {
+      eodZero.add(sym);
+    }
+  }
+  if (eodZero.size) {
+    symbols = symbols.filter((s) => !eodZero.has(s));
+  }
+  return symbols;
+}
+
+function buildLiveFromHomeFrozen({
+  tradingDay,
+  liveDate,
+  frozenThrough,
+  homeAcc,
+  trades,
+  cashTransfers,
+  accounts,
+  scope,
+  fxUsdMap,
+  fxHkdMap,
+  fxUsdFrozen,
+  fxHkdFrozen,
+  lastMarketValueCny,
+}) {
+  const asOf = tradingDay ? liveDate : frozenThrough || liveDate;
+  const cashCny = computeLedgerCashCnyUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const ta =
+    Number(homeAcc?.eod_total_assets_cny) ||
+    (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
+    lastMarketValueCny ||
+    0;
+  const mv = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
+  const cashUse = Number(homeAcc?.eod_cash_cny) || cashCny;
+  const totalAssetsCny = ta || mv + cashUse;
+  return {
+    tradingDay: !!tradingDay,
+    liveDate: tradingDay ? liveDate : null,
+    frozenThrough: frozenThrough || null,
+    delayed: false,
+    quoteTime: null,
+    todayProfitCny: 0,
+    liveMarketValueCny: mv,
+    lastMarketValueCny,
+    cashCny: cashUse,
+    totalAssetsCny,
+    cashRatio: totalAssetsCny > 0 ? cashUse / totalAssetsCny : 0,
+    principalCny: Number(homeAcc?.eod_principal_cny) || principalCny,
+    positions: [],
+    fxUsdCny: fxUsdFrozen || FX_FALLBACK.USD,
+    fxHkdCny: fxHkdFrozen || FX_FALLBACK.HKD,
+    clearedScope: true,
+  };
 }
 
 function liveMetricsCacheKey(userId, scope) {
@@ -387,7 +452,24 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     };
   }
 
-  const symbols = holdingsSymbolsFromTrades(trades, scope);
+  const symbols = holdingsSymbolsFromTrades(trades, scope, pre.lastEodRows);
+  if (pre.scopeCleared || symbols.length === 0) {
+    return buildLiveFromHomeFrozen({
+      tradingDay: true,
+      liveDate,
+      frozenThrough,
+      homeAcc,
+      trades,
+      cashTransfers,
+      accounts,
+      scope,
+      fxUsdMap,
+      fxHkdMap,
+      fxUsdFrozen,
+      fxHkdFrozen,
+      lastMarketValueCny,
+    });
+  }
   const quoteKeys = [
     ...symbols.map((s) => toTencentQuoteKey(s)).filter(Boolean),
     "whUSDCNY",
