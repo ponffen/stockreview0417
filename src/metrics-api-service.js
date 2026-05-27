@@ -163,12 +163,25 @@ function frozenMetricsFromHomeAccount(acc) {
 }
 
 
+const homeBundleCache = new Map();
+const HOME_BUNDLE_CACHE_MS = Math.max(
+  0,
+  Math.min(30_000, Number(process.env.HOME_BUNDLE_CACHE_MS || 12_000)),
+);
+
 async function loadMetricsScopeContext(userId, accountScope) {
   const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const home = await getHomeSummaryForUser(userId, scope);
-  const um = await getUserMetricsMeta(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
+  const [settings, home, um, trades, cashTransfers, accounts] = await Promise.all([
+    getSettings(userId),
+    getHomeSummaryForUser(userId, scope),
+    getUserMetricsMeta(userId),
+    getTrades(userId),
+    getCashTransfers(userId),
+    getAccounts(userId),
+  ]);
+  const live = await getComputeLiveMetrics(userId, scope, {
+    preloaded: { trades, cashTransfers, accounts, homeAccount: home.account },
+  });
   return { userId, scope, settings, live, um, home };
 }
 
@@ -288,11 +301,25 @@ async function getMetricsAssets(userId, accountScope) {
 }
 
 async function getMetricsHomeBundle(userId, accountScope, stagesRaw) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const stagesKey = String(stagesRaw || "").trim();
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${stagesKey}`;
+  const now = Date.now();
+  if (HOME_BUNDLE_CACHE_MS > 0) {
+    const hit = homeBundleCache.get(cacheKey);
+    if (hit && now - hit.at < HOME_BUNDLE_CACHE_MS) {
+      return hit.value;
+    }
+  }
   const ctx = await loadMetricsScopeContext(userId, accountScope);
   const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
   const assets = buildMetricsAssetsFromContext(ctx);
   const holdings = await buildMetricsHoldingsFromContext(ctx);
-  return { returns, assets, holdings };
+  const value = { returns, assets, holdings };
+  if (HOME_BUNDLE_CACHE_MS > 0) {
+    homeBundleCache.set(cacheKey, { at: now, value });
+  }
+  return value;
 }
 
 

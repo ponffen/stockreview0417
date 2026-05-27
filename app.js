@@ -7371,7 +7371,7 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   const prefix = publicTargetId ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}` : getApiBaseForFetch();
   const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
   const pathNorm = String(path || "");
-  const timeoutMs = pathNorm.includes("home-bundle") ? 45_000 : 28_000;
+  const timeoutMs = pathNorm.includes("home-bundle") ? 55_000 : 28_000;
   try {
     const res = await apiFetch(url, { cache: "no-store", timeoutMs });
     const j = await res.json().catch(() => ({}));

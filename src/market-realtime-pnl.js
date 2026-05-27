@@ -19,7 +19,12 @@ const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/tra
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 const quoteMem = new Map();
 const QUOTE_CHUNK_SIZE = 55;
-const QUOTE_FETCH_TIMEOUT_MS = 8_000;
+const QUOTE_FETCH_TIMEOUT_MS = 5_000;
+const QUOTE_TOTAL_BUDGET_MS = Math.max(
+  2000,
+  Math.min(12_000, Number(process.env.QUOTE_TOTAL_BUDGET_MS || 7000)),
+);
+const QUOTE_CHUNK_CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.QUOTE_CHUNK_CONCURRENCY || 2)));
 const QUOTE_PROXY_BASE =
   String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
   "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
@@ -139,6 +144,23 @@ function parseTencentQuoteTextToMap(text) {
   return map;
 }
 
+async function mapPool(items, limit, fn) {
+  const n = items.length;
+  if (!n) {
+    return [];
+  }
+  const out = new Array(n);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, n) }, async () => {
+    while (next < n) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 async function fetchTencentQuoteChunk(keys) {
   const url = `${QUOTE_PROXY_BASE}/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
   const r = await fetch(url, {
@@ -151,21 +173,22 @@ async function fetchTencentQuoteChunk(keys) {
   return { ok: true, map: parseTencentQuoteTextToMap(text) };
 }
 
-async function fetchTencentQuotePayloadMap(reqKeys) {
+async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
   const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
   if (!keys.length) {
     return { ok: false, payloadMap: new Map(), delayed: true };
   }
+  const budget = Math.max(1000, Number(budgetMs) || QUOTE_TOTAL_BUDGET_MS);
   const payloadMap = new Map();
   let delayed = false;
   const chunks = [];
   for (let i = 0; i < keys.length; i += QUOTE_CHUNK_SIZE) {
     chunks.push(keys.slice(i, i + QUOTE_CHUNK_SIZE));
   }
-  try {
-    const parts = await Promise.all(chunks.map((c) => fetchTencentQuoteChunk(c)));
+  const work = (async () => {
+    const parts = await mapPool(chunks, QUOTE_CHUNK_CONCURRENCY, (c) => fetchTencentQuoteChunk(c));
     for (const part of parts) {
-      if (!part.ok) {
+      if (!part?.ok) {
         delayed = true;
         continue;
       }
@@ -174,7 +197,22 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
         payloadMap.set(k, payload);
       }
     }
+  })();
+  let timedOut = false;
+  try {
+    await Promise.race([
+      work,
+      new Promise((resolve) => {
+        setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, budget);
+      }),
+    ]);
   } catch {
+    delayed = true;
+  }
+  if (timedOut) {
     delayed = true;
   }
   for (const key of keys) {
@@ -269,28 +307,46 @@ function liveMetricsCacheKey(userId, scope) {
   return `${String(userId || "").trim()}|${String(scope || "all").trim() || "all"}`;
 }
 
-async function computeLiveMetrics(userId, accountScope = "all") {
+async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
   const tradingDay = shouldEmitTodayLivePoint();
   const liveDate = liveDateKeyShanghai();
-  const frozenThrough = await getLatestAnalysisSnapshotDate(uid, scope);
-  const baseRows = frozenThrough
-    ? await getAnalysisDailySnapshots({ accountId: scope, from: frozenThrough, to: frozenThrough }, uid)
-    : [];
-  const lastSnap = baseRows[baseRows.length - 1] || null;
-  const fxUsdFrozen = Number(lastSnap?.fxUsdCny ?? lastSnap?.fx_usd_cny) || FX_FALLBACK.USD;
-  const fxHkdFrozen = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || FX_FALLBACK.HKD;
+  const homeAcc = opts?.preloaded?.homeAccount || null;
+  let frozenThrough = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
+  if (!frozenThrough) {
+    frozenThrough = await getLatestAnalysisSnapshotDate(uid, scope);
+  }
+  let fxUsdFrozen = Number(homeAcc?.eod_fx_usd_cny) || 0;
+  let fxHkdFrozen = Number(homeAcc?.eod_fx_hkd_cny) || 0;
+  let lastMarketValueCny = Number(homeAcc?.last_market_value_cny) || Number(homeAcc?.eod_market_value_cny) || 0;
+  if (!homeAcc || !(fxUsdFrozen > 0) || !(fxHkdFrozen > 0) || !(lastMarketValueCny > 0)) {
+    const baseRows = frozenThrough
+      ? await getAnalysisDailySnapshots({ accountId: scope, from: frozenThrough, to: frozenThrough }, uid)
+      : [];
+    const lastSnap = baseRows[baseRows.length - 1] || null;
+    if (!(fxUsdFrozen > 0)) {
+      fxUsdFrozen = Number(lastSnap?.fxUsdCny ?? lastSnap?.fx_usd_cny) || FX_FALLBACK.USD;
+    }
+    if (!(fxHkdFrozen > 0)) {
+      fxHkdFrozen = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || FX_FALLBACK.HKD;
+    }
+    if (!(lastMarketValueCny > 0)) {
+      lastMarketValueCny =
+        Number(lastSnap?.marketValue ?? lastSnap?.market_value) ||
+        Number(lastSnap?.totalAssets ?? lastSnap?.total_assets) ||
+        0;
+    }
+  }
   const fxUsdMap = fxUsdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxUsdFrozen } : {};
   const fxHkdMap = fxHkdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxHkdFrozen } : {};
-  const lastMarketValueCny =
-    Number(lastSnap?.marketValue ?? lastSnap?.market_value) ||
-    Number(lastSnap?.totalAssets ?? lastSnap?.total_assets) ||
-    0;
 
-  const trades = await getTrades(uid);
-  const cashTransfers = await getCashTransfers(uid);
-  const accounts = await getAccounts(uid);
+  const pre = opts?.preloaded || {};
+  const [trades, cashTransfers, accounts] = await Promise.all([
+    pre.trades ? Promise.resolve(pre.trades) : getTrades(uid),
+    pre.cashTransfers ? Promise.resolve(pre.cashTransfers) : getCashTransfers(uid),
+    pre.accounts ? Promise.resolve(pre.accounts) : getAccounts(uid),
+  ]);
 
   if (!tradingDay) {
     const cashCny = frozenThrough
@@ -304,8 +360,12 @@ async function computeLiveMetrics(userId, accountScope = "all") {
           frozenThrough,
         )
       : 0;
-    const ta = Number(lastSnap?.totalAssets ?? lastSnap?.total_assets ?? 0) || 0;
-    const mv = Number(lastSnap?.marketValue ?? lastSnap?.market_value ?? 0) || 0;
+    const ta =
+      Number(homeAcc?.eod_total_assets_cny) ||
+      (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
+      lastMarketValueCny ||
+      0;
+    const mv = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
     return {
       tradingDay: false,
       liveDate: null,
@@ -328,11 +388,14 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   }
 
   const symbols = holdingsSymbolsFromTrades(trades, scope);
-  const closeFallback = await batchLastCloseForSymbols(symbols, liveDate);
-  const quoteReq = await fetchTencentQuotePayloadMap([
+  const quoteKeys = [
     ...symbols.map((s) => toTencentQuoteKey(s)).filter(Boolean),
     "whUSDCNY",
     "whHKDCNY",
+  ];
+  const [closeFallback, quoteReq] = await Promise.all([
+    batchLastCloseForSymbols(symbols, liveDate),
+    fetchTencentQuotePayloadMap(quoteKeys, QUOTE_TOTAL_BUDGET_MS),
   ]);
   const fxSpot = { CNY: 1, USD: FX_FALLBACK.USD, HKD: FX_FALLBACK.HKD };
   const payloadMap = quoteReq.payloadMap || new Map();
@@ -433,7 +496,7 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   };
 }
 
-async function getComputeLiveMetrics(userId, accountScope = "all") {
+async function getComputeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
   const key = liveMetricsCacheKey(uid, scope);
@@ -445,7 +508,7 @@ async function getComputeLiveMetrics(userId, accountScope = "all") {
   if (liveMetricsInflight.has(key)) {
     return liveMetricsInflight.get(key);
   }
-  const task = computeLiveMetrics(uid, scope)
+  const task = computeLiveMetrics(uid, scope, opts)
     .then((value) => {
       liveMetricsRecent.set(key, { at: Date.now(), value });
       return value;
