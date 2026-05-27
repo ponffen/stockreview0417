@@ -255,6 +255,9 @@ function homeBundleUsesLiveQuotes() {
 }
 
 function filterSymbolHomeRowsByEod(symbolRows, scope, lastEodRows) {
+  if (!lastEodRows?.length) {
+    return symbolRows || [];
+  }
   const wanted = String(scope || "all").trim() || "all";
   const active = new Set();
   for (const row of lastEodRows || []) {

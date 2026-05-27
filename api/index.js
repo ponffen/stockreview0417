@@ -208,6 +208,51 @@ module.exports = async function handler(req, res) {
 
   const pathOnly = urlPathOnly(req.url);
 
+  // home-bundle：直连 metrics 服务，不 require 整个 server.js（避免冷启动 50s+ 断连）
+  if (
+    req.method === "GET" &&
+    (pathOnly === "/api/metrics/home-bundle-diag" || pathOnly === "/api/metrics/home-bundle")
+  ) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const { probeMetricsHomeBundleDb, getMetricsHomeBundle } = require("../src/metrics-api-service");
+      if (pathOnly === "/api/metrics/home-bundle-diag") {
+        const _diag = await probeMetricsHomeBundleDb(userId, accountScope);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: { _diag, direct: true, build: "v7-home-bundle" } }));
+        return;
+      }
+      const diagQ = String(getSearchParam(req, "diag") || "").trim().toLowerCase();
+      const data = await getMetricsHomeBundle(userId, accountScope, getSearchParam(req, "stages"), {
+        diag: diagQ === "1" || diagQ === "true",
+        diagOnly: diagQ === "only",
+      });
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v7-home-bundle" } }));
+      return;
+    } catch (error) {
+      console.error("[api/index.js] direct home-bundle error:", error);
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: error?.message || "home-bundle direct failed",
+          build: "v7-home-bundle",
+        }),
+      );
+      return;
+    }
+  }
+
   // ---------------------------------------------------------
   // 极端防御：直接在 Vercel Handler 层拦截登录和用户信息接口，彻底绕过 Express
   // ---------------------------------------------------------

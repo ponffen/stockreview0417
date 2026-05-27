@@ -135,6 +135,33 @@ function releaseVercelDbSlot() {
     next();
   }
 }
+function isServerlessRuntime() {
+  return !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
+async function withOneShotDbClient(fn) {
+  if (isServerlessRuntime()) {
+    return withVercelDbClient(fn);
+  }
+  const dbUrl = getPgConnectionString();
+  if (!dbUrl) {
+    throw new Error("Database URL is not configured (DATABASE_URL / POSTGRES_URL)");
+  }
+  const connectMs = Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000);
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: getSslOption(),
+    connectionTimeoutMillis: connectMs,
+    query_timeout: connectMs,
+  });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function withVercelDbClient(fn) {
   if (!process.env.VERCEL) {
     throw new Error("withVercelDbClient only for VERCEL");
@@ -1871,36 +1898,44 @@ function mapUserMetricsMetaRow(row) {
 async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
-  if (!uid || !process.env.VERCEL) {
+  if (!uid) {
     return null;
   }
-  return withVercelDbClient(async (client) => {
+  return withOneShotDbClient(async (client) => {
     const cq = (text, params) => client.query(text, params);
-    const [settingsRes, homeAccRes, symRes, umRes, accMetaRes, eodRes, accountsRes] = await Promise.all([
-      cq("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]),
-      cq("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, scope]),
-      cq(
-        "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
-        [uid, scope],
-      ),
-      cq(
-        "SELECT data_version, rebuilding, frozen_through, is_cleared, cleared_at FROM user_metrics_meta WHERE user_id = $1",
-        [uid],
-      ),
-      cq(
+    const settingsRes = await cq("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]);
+    const homeAccRes = await cq(
+      "SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2",
+      [uid, scope],
+    );
+    const symRes = await cq(
+      "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
+      [uid, scope],
+    );
+    const umRes = await cq(
+      "SELECT data_version, rebuilding, frozen_through, is_cleared, cleared_at FROM user_metrics_meta WHERE user_id = $1",
+      [uid],
+    );
+    const accountsRes = await cq(
+      "SELECT id, name, currency, created_at, updated_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC",
+      [uid],
+    );
+    let accountMetaList = [];
+    try {
+      const accMetaRes = await cq(
         "SELECT account_id, is_cleared, cleared_at, frozen_through, updated_at FROM account_metrics_meta WHERE user_id = $1",
         [uid],
-      ),
-      cq(
-        `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
-         FROM symbol_daily_pnl WHERE user_id = $1
-         ORDER BY account_id, symbol, date DESC`,
-        [uid],
-      ),
-      cq("SELECT id, name, currency, created_at, updated_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC", [
-        uid,
-      ]),
-    ]);
+      );
+      accountMetaList = (accMetaRes.rows || []).map((r) => ({
+        accountId: String(r.account_id),
+        isCleared: r.is_cleared === true,
+        clearedAt: r.cleared_at || null,
+        frozenThrough: r.frozen_through || null,
+        updatedAt: Number(r.updated_at) || 0,
+      }));
+    } catch {
+      accountMetaList = [];
+    }
     const accounts = (accountsRes.rows || []).map((r) => ({
       id: String(r.id),
       name: String(r.name || ""),
@@ -1908,26 +1943,37 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       createdAt: Number(r.created_at) || 0,
       updatedAt: Number(r.updated_at) || 0,
     }));
-    const settings = parseAppSettingsFromRows(settingsRes.rows, accounts);
-    const um = mapUserMetricsMetaRow(umRes.rows[0]);
-    const accountMetaList = (accMetaRes.rows || []).map((r) => ({
-      accountId: String(r.account_id),
-      isCleared: r.is_cleared === true,
-      clearedAt: r.cleared_at || null,
-      frozenThrough: r.frozen_through || null,
-      updatedAt: Number(r.updated_at) || 0,
-    }));
-    const lastEodRows = (eodRes.rows || []).map((r) => ({
-      accountId: String(r.account_id),
-      symbol: String(r.symbol),
-      eodShares: Number(r.eod_shares),
-      date: String(r.date),
-    }));
+    const homeAccount = homeAccRes.rows[0] || null;
+    const frozenThrough = String(homeAccount?.frozen_through || "").slice(0, 10);
+    let lastEodRows = [];
+    if (frozenThrough && String(process.env.HOME_BUNDLE_SKIP_EOD || "").trim() !== "1") {
+      const from = addCalendarDays(frozenThrough, -14);
+      const eodSql =
+        scope === "all"
+          ? `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
+             FROM symbol_daily_pnl WHERE user_id = $1 AND date >= $2 AND date <= $3
+             ORDER BY account_id, symbol, date DESC`
+          : `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
+             FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date >= $3 AND date <= $4
+             ORDER BY account_id, symbol, date DESC`;
+      const eodParams = scope === "all" ? [uid, from, frozenThrough] : [uid, scope, from, frozenThrough];
+      try {
+        const eodRes = await cq(eodSql, eodParams);
+        lastEodRows = (eodRes.rows || []).map((r) => ({
+          accountId: String(r.account_id),
+          symbol: String(r.symbol),
+          eodShares: Number(r.eod_shares),
+          date: String(r.date),
+        }));
+      } catch {
+        lastEodRows = [];
+      }
+    }
     return {
       scope,
-      settings,
-      home: { account: homeAccRes.rows[0] || null, symbols: symRes.rows || [] },
-      um,
+      settings: parseAppSettingsFromRows(settingsRes.rows, accounts),
+      home: { account: homeAccount, symbols: symRes.rows || [] },
+      um: mapUserMetricsMetaRow(umRes.rows[0]),
       accountMetaList,
       lastEodRows,
       singleConnection: true,
