@@ -1,7 +1,6 @@
 /**
  * 服务端实时盈亏：与 /api/realtime/patch 同口径，供 metrics a/b/f 共用。
  */
-const iconv = require("iconv-lite");
 const {
   getTrades,
   getCashTransfers,
@@ -130,13 +129,12 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
   const payloadMap = new Map();
   let delayed = false;
   try {
-    const url = `https://qt.gtimg.cn/q=${encodeURIComponent(keys.join(","))}&_=${Date.now()}`;
+    const url = `https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
     const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
       signal: AbortSignal.timeout(20_000),
     });
     if (r.ok) {
-      const text = iconv.decode(Buffer.from(await r.arrayBuffer()), "gbk");
+      const text = await r.text();
       for (const [k, payload] of parseTencentQuoteTextToMap(text).entries()) {
         quoteMem.set(k, payload);
         payloadMap.set(k, payload);

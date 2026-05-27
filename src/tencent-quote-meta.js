@@ -3,7 +3,6 @@
  * 规则与浏览器端 toTencentQuoteSymbol 一致：sh/sz/hk、美股 usTICKER、gb_ → us。
  */
 
-const iconv = require("iconv-lite");
 const { normalizeSymbol, formatSymbolForDisplay } = require("./db");
 
 function toTencentQuoteKey(rawSymbol) {
@@ -108,17 +107,16 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
   for (let i = 0; i < keys.length; i += CHUNK) {
     const chunk = keys.slice(i, i + CHUNK);
     const q = chunk.join(",");
-    const url = `https://qt.gtimg.cn/q=${encodeURIComponent(q)}&_=${Date.now()}`;
+    const url = `https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent?q=${encodeURIComponent(q)}`;
     let text = "";
     try {
       const r = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)" },
+        signal: AbortSignal.timeout(20_000),
       });
       if (!r.ok) {
         continue;
       }
-      const buf = Buffer.from(await r.arrayBuffer());
-      text = iconv.decode(buf, "gbk");
+      text = await r.text();
     } catch {
       continue;
     }
