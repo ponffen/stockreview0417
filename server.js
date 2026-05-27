@@ -796,6 +796,8 @@ const {
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
+const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
+const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
