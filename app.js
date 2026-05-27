@@ -865,7 +865,7 @@ function getPortfolioScope(overrideAccountId) {
 
 function resolveStockSortKeyValue(row, key) {
   if (key === "currentPrice") {
-    return row.currentPrice;
+    return Number(row.dayChangeRate) || 0;
   }
   if (key === "marketValue") {
     return row.marketValue;
@@ -7413,7 +7413,7 @@ function metricHeadlineHtml(profitDisplay, rateDisplay, profitCny, rate) {
 const METRICS_TABLE_MARKET_SORT = { "A股": 1, "港股": 2, "美股": 3 };
 
 function resolveMetricsStockSortKeyValue(row, key) {
-  if (key === "currentPrice") return Number(row.currentPriceNum) || 0;
+  if (key === "currentPrice") return Number(row.dayChangeRate) || 0;
   if (key === "marketValue") return Number(row.marketValueNum) || 0;
   if (key === "weight") return Number(row.weightNum) || 0;
   if (key === "cost") return Number(row.costNum) || 0;
