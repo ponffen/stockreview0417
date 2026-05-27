@@ -796,6 +796,61 @@ const {
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
+const { scheduleMetricsRebuildForUser } = require("./src/metrics-rebuild-service");
+const {
+  getMetricsReturns,
+  getMetricsAssets,
+  getMetricsHomeBundle,
+  getHoldings,
+  getSeriesDailyProfit,
+  getSeriesDailyTwr,
+  getSeriesDailyAsset,
+  getStockRank,
+  getBenchmarkSeries,
+} = require("./src/metrics-api-service");
+
+function sendMetricsJson(res, data) {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, data });
+}
+
+async function assertPublicMetricsTarget(viewerId, targetId) {
+  const vid = String(viewerId || "").trim();
+  const tid = String(targetId || "").trim();
+  if (!vid || !tid) {
+    return { ok: false, status: 401, error: "unauthorized" };
+  }
+  const row = await getUserCommunityRow(tid);
+  const isSelf = vid === tid;
+  if (!row || (!isSelf && !Number(row.community_public))) {
+    return { ok: false, status: 404, error: "hidden" };
+  }
+  return { ok: true, userId: tid };
+}
+
+async function isMetricsOpsAdmin(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return false;
+  }
+  const adminIds = String(process.env.ADMIN_USER_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (adminIds.includes(uid)) {
+    return true;
+  }
+  const adminPhones = String(process.env.ADMIN_PHONES || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!adminPhones.length) {
+    return false;
+  }
+  const phone = await getUserPhone(uid);
+  return !!phone && adminPhones.includes(String(phone).trim());
+}
+
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
@@ -1477,6 +1532,18 @@ app.get("/api/metrics/assets", requireAuth, async (req, res) => {
     sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "metrics assets failed" });
+  }
+});
+
+app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(
+      res,
+      await getMetricsHomeBundle(req.userId, accountScope, req.query.stages),
+    );
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "metrics home-bundle failed" });
   }
 });
 

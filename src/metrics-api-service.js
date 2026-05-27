@@ -22,7 +22,7 @@ const {
   metricsForWindow,
   lastAnalysisDailyRowOnOrBefore,
 } = require("./home-summary-maths");
-const { computeLiveMetrics } = require("./market-realtime-pnl");
+const { getComputeLiveMetrics } = require("./market-realtime-pnl");
 const {
   ALL_STAGES,
   parseStagesParam,
@@ -36,6 +36,7 @@ const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
 
 const METRICS_RULE_VERSION = 3;
 const BENCHMARK_SYMBOLS = new Set(["sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
+const STANDARD_RETURN_STAGES = new Set(["today", "mtd", "ytd", "inception"]);
 
 function metaEnvelope(userId, scope, settings, live, extra = {}) {
   const algo = String(settings?.algoMode || "twr").toLowerCase() === "mwr" ? "mwr" : "twr";
@@ -161,13 +162,21 @@ function frozenMetricsFromHomeAccount(acc) {
   };
 }
 
-async function getMetricsReturns(userId, accountScope, stagesRaw) {
+
+async function loadMetricsScopeContext(userId, accountScope) {
   const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
+  const [settings, live, um, home] = await Promise.all([
+    getSettings(userId),
+    getComputeLiveMetrics(userId, scope),
+    getUserMetricsMeta(userId),
+    getHomeSummaryForUser(userId, scope),
+  ]);
+  return { userId, scope, settings, live, um, home };
+}
+
+async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
+  const { userId, scope, settings, live, um, home } = ctx;
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
-  const home = await getHomeSummaryForUser(userId, scope);
   const frozen = frozenMetricsFromHomeAccount(home.account);
   const want = parseStagesParam(stagesRaw);
   const customStages = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
@@ -217,13 +226,9 @@ async function getMetricsReturns(userId, accountScope, stagesRaw) {
   };
 }
 
-async function getMetricsAssets(userId, accountScope) {
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
+function buildMetricsAssetsFromContext(ctx) {
+  const { userId, scope, settings, live, um, home } = ctx;
   const book = resolveBookCurrencyForAccountScope(settings, scope);
-  const home = await getHomeSummaryForUser(userId, scope);
   const acc = home.account;
   const fxU = Number(acc?.eod_fx_usd_cny) || live.fxUsdCny || 0;
   const fxH = Number(acc?.eod_fx_hkd_cny) || live.fxHkdCny || 0;
@@ -260,10 +265,43 @@ async function getMetricsAssets(userId, accountScope) {
   };
 }
 
+async function buildMetricsHoldingsFromContext(ctx) {
+  const { userId, scope, settings, live, um, home } = ctx;
+  const rows = await buildHoldingsPayload({
+    userId,
+    accountScope: scope,
+    settings,
+    live,
+    symbolRows: home.symbols,
+    accountRow: home.account,
+  });
+  return { meta: metaEnvelope(userId, scope, settings, live, um), rows };
+}
+
+
+async function getMetricsReturns(userId, accountScope, stagesRaw) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildMetricsReturnsFromContext(ctx, stagesRaw);
+}
+
+async function getMetricsAssets(userId, accountScope) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildMetricsAssetsFromContext(ctx);
+}
+
+async function getMetricsHomeBundle(userId, accountScope, stagesRaw) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
+  const assets = buildMetricsAssetsFromContext(ctx);
+  const holdings = await buildMetricsHoldingsFromContext(ctx);
+  return { returns, assets, holdings };
+}
+
+
 async function getSeriesDailyProfit(userId, accountScope, stage) {
   const scope = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const trades = await getTrades(userId);
@@ -284,7 +322,7 @@ async function getSeriesDailyProfit(userId, accountScope, stage) {
 async function getSeriesDailyTwr(userId, accountScope, stage) {
   const scope = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const snap = await getPerformancePresetSnapshot(userId, scope, stage, asOf);
@@ -333,7 +371,7 @@ async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
   }
   const scope = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const book = resolveBookCurrencyForAccountScope(settings, scope);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
@@ -370,26 +408,14 @@ async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
 }
 
 async function getHoldings(userId, accountScope) {
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
-  const home = await getHomeSummaryForUser(userId, scope);
-  const rows = await buildHoldingsPayload({
-    userId,
-    accountScope: scope,
-    settings,
-    live,
-    symbolRows: home.symbols,
-    accountRow: home.account,
-  });
-  return { meta: metaEnvelope(userId, scope, settings, live, um), rows };
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildMetricsHoldingsFromContext(ctx);
 }
 
 async function getStockRank(userId, accountScope, stage) {
   const scope = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const payload = await buildStockRankPayload({ userId, accountScope: scope, stage, live });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
@@ -402,7 +428,7 @@ async function getBenchmarkSeries(userId, symbol, stage) {
   }
   const scope = "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const payload = await buildBenchmarkSeriesPayload({ userId, symbol: sym, stage, live });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
@@ -445,6 +471,7 @@ module.exports = {
   homeUiStageToApi,
   getMetricsReturns,
   getMetricsAssets,
+  getMetricsHomeBundle,
   getSeriesDailyProfit,
   getSeriesDailyTwr,
   getSeriesDailyAsset,

@@ -7459,11 +7459,13 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     if (!apiReady) {
       return;
     }
-    const [ret, assets, hold] = await Promise.all([
-      fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: `today,${stageKey}` }),
-      fetchMetricsApi("/metrics/assets", { accountScope: aid }),
-      fetchMetricsApi("/holdings", { accountScope: aid }),
-    ]);
+    const bundle = await fetchMetricsApi("/metrics/home-bundle", {
+      accountScope: aid,
+      stages: `today,${stageKey}`,
+    });
+    const ret = bundle?.returns;
+    const assets = bundle?.assets;
+    const hold = bundle?.holdings;
     if (seq !== overviewProfitRefreshSeq) {
       return;
     }
