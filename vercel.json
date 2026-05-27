@@ -5,7 +5,8 @@
       "includeFiles": "api/public/**"
     },
     "api/index.js": {
-      "includeFiles": "api/public/**"
+      "includeFiles": "api/public/**",
+      "maxDuration": 60
     },
     "api/static.js": {
       "includeFiles": "api/public/**"

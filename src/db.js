@@ -2805,6 +2805,7 @@ module.exports = {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,
+  batchLatestSymbolDailyCloseOnOrBefore,
   getSymbolDailyCloseBounds,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,

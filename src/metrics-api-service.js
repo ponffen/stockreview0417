@@ -165,12 +165,10 @@ function frozenMetricsFromHomeAccount(acc) {
 
 async function loadMetricsScopeContext(userId, accountScope) {
   const scope = String(accountScope || "all").trim() || "all";
-  const [settings, live, um, home] = await Promise.all([
-    getSettings(userId),
-    getComputeLiveMetrics(userId, scope),
-    getUserMetricsMeta(userId),
-    getHomeSummaryForUser(userId, scope),
-  ]);
+  const settings = await getSettings(userId);
+  const home = await getHomeSummaryForUser(userId, scope);
+  const um = await getUserMetricsMeta(userId);
+  const live = await getComputeLiveMetrics(userId, scope);
   return { userId, scope, settings, live, um, home };
 }
 

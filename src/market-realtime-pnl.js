@@ -8,6 +8,7 @@ const {
   getLatestAnalysisSnapshotDate,
   getAnalysisDailySnapshots,
   getSymbolDailyCloseRange,
+  batchLatestSymbolDailyCloseOnOrBefore,
   normalizeSymbol,
   addCalendarDays,
 } = require("./db");
@@ -18,7 +19,7 @@ const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/tra
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 const quoteMem = new Map();
 const QUOTE_CHUNK_SIZE = 55;
-const QUOTE_FETCH_TIMEOUT_MS = 12_000;
+const QUOTE_FETCH_TIMEOUT_MS = 8_000;
 const QUOTE_PROXY_BASE =
   String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
   "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
@@ -219,28 +220,13 @@ async function lastCloseForSymbol(sym, asOf) {
 }
 
 async function batchLastCloseForSymbols(symbols, asOf) {
-  const out = new Map();
-  const list = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
-  if (!list.length) {
-    return out;
+  try {
+    return await batchLatestSymbolDailyCloseOnOrBefore(symbols, asOf);
+  } catch {
+    return new Map();
   }
-  const results = await Promise.all(
-    list.map(async (sym) => {
-      try {
-        const close = await lastCloseForSymbol(sym, asOf);
-        return close != null ? [sym, close] : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
-  for (const item of results) {
-    if (item) {
-      out.set(item[0], item[1]);
-    }
-  }
-  return out;
 }
+
 
 function getSymbolCurrency(symbol) {
   const s = String(symbol || "");
@@ -342,6 +328,7 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   }
 
   const symbols = holdingsSymbolsFromTrades(trades, scope);
+  const closeFallback = await batchLastCloseForSymbols(symbols, liveDate);
   const quoteReq = await fetchTencentQuotePayloadMap([
     ...symbols.map((s) => toTencentQuoteKey(s)).filter(Boolean),
     "whUSDCNY",
@@ -359,7 +346,6 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   }
   const fxRate = (ccy) => (ccy === "CNY" ? 1 : ccy === "USD" ? fxSpot.USD : ccy === "HKD" ? fxSpot.HKD : 1);
 
-  const missingForClose = [];
   const quoteMap = {};
   for (const sym of symbols) {
     const key = toTencentQuoteKey(sym);
@@ -368,21 +354,16 @@ async function computeLiveMetrics(userId, accountScope = "all") {
       q = parseTencentQuoteRecord(sym, q);
     }
     if (!q) {
-      missingForClose.push(sym);
-    } else {
-      quoteMap[sym] = q;
-    }
-  }
-  if (missingForClose.length) {
-    const closes = await batchLastCloseForSymbols(missingForClose, liveDate);
-    for (const sym of missingForClose) {
-      const close = closes.get(sym);
+      const close = closeFallback.get(sym);
       if (close != null) {
-        quoteMap[sym] = { current: close, prevClose: close, marketDate: liveDate };
+        q = { current: close, prevClose: close, marketDate: liveDate };
         if (!quoteReq.ok) {
           quoteReq.delayed = true;
         }
       }
+    }
+    if (q) {
+      quoteMap[sym] = q;
     }
   }
 
