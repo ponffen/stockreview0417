@@ -2027,71 +2027,6 @@ async function getLatestSymbolDailyClose(symbol) {
   return { close: Number(rows[0].close), date: String(rows[0].date) };
 }
 
-/** 批量取各标的 asOf 当日（含）前最近收盘价，一次查询，避免 N 次 Neon 连接排队。 */
-async function batchLatestSymbolDailyCloseOnOrBefore(symbols, asOf) {
-  const asOfKey = String(asOf || "").slice(0, 10);
-  if (!asOfKey) {
-    return new Map();
-  }
-  const normToCandidates = new Map();
-  const allCandidates = new Set();
-  for (const raw of symbols || []) {
-    const norm = normalizeSymbol(raw);
-    if (!norm) {
-      continue;
-    }
-    const cands = symbolQueryCandidates(norm);
-    if (!cands.length) {
-      continue;
-    }
-    normToCandidates.set(norm, cands);
-    for (const c of cands) {
-      allCandidates.add(c);
-    }
-  }
-  if (!allCandidates.size) {
-    return new Map();
-  }
-  const from = addCalendarDays(asOfKey, -14);
-  const { rows } = await q(
-    `SELECT symbol, date, close, updated_at
-     FROM symbol_daily_close
-     WHERE symbol = ANY($1::text[])
-       AND date >= $2
-       AND date <= $3
-     ORDER BY symbol ASC, date DESC, updated_at DESC`,
-    [[...allCandidates], from, asOfKey],
-  );
-  const out = new Map();
-  for (const [norm, cands] of normToCandidates.entries()) {
-    const candSet = new Set(cands);
-    let bestDate = "";
-    let bestClose = null;
-    for (const row of rows || []) {
-      const sym = String(row.symbol || "");
-      if (!candSet.has(sym)) {
-        continue;
-      }
-      const date = String(row.date || "").slice(0, 10);
-      if (!date || date > asOfKey) {
-        continue;
-      }
-      const close = Number(row.close);
-      if (!Number.isFinite(close) || close <= 0) {
-        continue;
-      }
-      if (!bestDate || date > bestDate) {
-        bestDate = date;
-        bestClose = close;
-      }
-    }
-    if (bestClose != null) {
-      out.set(norm, bestClose);
-    }
-  }
-  return out;
-}
-
 async function getSymbolDailyCloseBounds(symbol, fromDate, toDate) {
   const candidates = symbolQueryCandidates(symbol);
   if (!candidates.length) {
@@ -2866,11 +2801,11 @@ module.exports = {
   upsertAccountHomeSummaryRow,
   upsertSymbolHomeSummaryBatch,
   getHomeSummaryForUser,
+  resolveBookCurrencyForAccountScope,
   deleteAllDataForUser,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,
-  batchLatestSymbolDailyCloseOnOrBefore,
   getSymbolDailyCloseBounds,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
