@@ -8,7 +8,6 @@ const {
   getLatestAnalysisSnapshotDate,
   getAnalysisDailySnapshots,
   getSymbolDailyCloseRange,
-  batchLatestSymbolDailyCloseOnOrBefore,
   normalizeSymbol,
   addCalendarDays,
 } = require("./db");
@@ -84,6 +83,46 @@ function getTradingDateKeyBy0830(baseDate = new Date()) {
     return addCalendarDays(current, -1);
   }
   return current;
+}
+
+
+function tradeSignedAmount(trade) {
+  const sign = trade.side === "buy" ? 1 : -1;
+  return sign * Math.abs(Number(trade.amount) || 0);
+}
+
+/** 与 app.js getPositionDayTradeContext 一致：自然日 dateKey 上的数量与当日买卖现金流（原币） */
+function getPositionDayTradeContext(symbol, dateKey, trades) {
+  const sym = normalizeSymbol(symbol);
+  const dk = String(dateKey || "").slice(0, 10);
+  const list = (trades || [])
+    .filter((t) => normalizeSymbol(t.symbol) === sym)
+    .sort((a, b) => {
+      const ad = new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (ad !== 0) return ad;
+      return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+    });
+  let startQuantity = 0;
+  let endQuantity = 0;
+  let dayFlowNative = 0;
+  for (const trade of list) {
+    const d = String(trade.date || "").slice(0, 10);
+    const deltaQty = trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0);
+    if (d < dk) startQuantity += deltaQty;
+    if (d <= dk) endQuantity += deltaQty;
+    if (d === dk) dayFlowNative += tradeSignedAmount(trade);
+  }
+  return { startQuantity, endQuantity, dayFlowNative };
+}
+
+function todayProfitCnyForHolding({ quote, symbol, qty, prevClose, current, rate, trades, todayKey }) {
+  if (!shouldCountTodayPositionPnlFromQuote(quote)) {
+    return 0;
+  }
+  const dayCtx = getPositionDayTradeContext(symbol, todayKey, trades);
+  const todayStartMvNat = dayCtx.startQuantity * prevClose;
+  const todayProfitNat = dayCtx.endQuantity * current - todayStartMvNat - dayCtx.dayFlowNative;
+  return todayProfitNat * rate;
 }
 
 function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
@@ -258,13 +297,26 @@ async function lastCloseForSymbol(sym, asOf) {
 }
 
 async function batchLastCloseForSymbols(symbols, asOf) {
-  try {
-    return await batchLatestSymbolDailyCloseOnOrBefore(symbols, asOf);
-  } catch {
-    return new Map();
-  }
+  const out = new Map();
+  const list = [...new Set((symbols || []).map((sym) => normalizeSymbol(sym)).filter(Boolean))];
+  await Promise.all(
+    list.map(async (sym) => {
+      const rows = await getSymbolDailyCloseRange(sym, addCalendarDays(asOf, -10), asOf);
+      let best = null;
+      for (const r of rows || []) {
+        const d = String(r.date || "").slice(0, 10);
+        if (d <= asOf && (!best || d > best.date)) {
+          best = r;
+        }
+      }
+      const c = Number(best?.close);
+      if (Number.isFinite(c) && c > 0) {
+        out.set(sym, { close: c, date: String(best.date || "").slice(0, 10) });
+      }
+    }),
+  );
+  return out;
 }
-
 
 function getSymbolCurrency(symbol) {
   const s = String(symbol || "");
@@ -500,9 +552,15 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       q = parseTencentQuoteRecord(sym, q);
     }
     if (!q) {
-      const close = closeFallback.get(sym);
-      if (close != null) {
-        q = { current: close, prevClose: close, marketDate: liveDate };
+      const fb = closeFallback.get(normalizeSymbol(sym)) || closeFallback.get(sym);
+      if (fb && Number(fb.close) > 0) {
+        const md = String(fb.date || "").slice(0, 10);
+        q = {
+          current: Number(fb.close),
+          prevClose: Number(fb.close),
+          marketDate: md || undefined,
+          quoteDate: md || undefined,
+        };
         if (!quoteReq.ok) {
           quoteReq.delayed = true;
         }
@@ -551,12 +609,17 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     const rate = fxRate(getSymbolCurrency(symbol));
     const mv = qty * current * rate;
     liveMarketValue += mv;
-    const todayPByPrice = qty * (current - prevClose) * rate;
-    const todayP = shouldCountTodayPositionPnlFromQuote(quote)
-      ? todayPByPrice
-      : Math.abs(current - prevClose) > 1e-12
-        ? todayPByPrice
-        : 0;
+    const todayKey = liveDateKeyShanghai();
+    const todayP = todayProfitCnyForHolding({
+      quote,
+      symbol,
+      qty,
+      prevClose,
+      current,
+      rate,
+      trades: scoped,
+      todayKey,
+    });
     todayProfitCny += todayP;
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }
