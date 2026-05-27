@@ -28,16 +28,46 @@ function marketTag(market) {
   return "OT";
 }
 
-function formatRegret(rate, side) {
-  const r = Number(rate);
-  if (!Number.isFinite(r)) {
-    return "—";
-  }
-  const s = String(side || "").toLowerCase() === "sell" ? "卖" : "买";
-  return `${s}后 ${fmtPercentRatio(r)}`;
+function formatRegretRateWithSide(rate, side) {
+  const normalizedSide = String(side || "").trim().toLowerCase();
+  const suffix = normalizedSide === "buy" ? "B" : normalizedSide === "sell" ? "S" : "";
+  const safe = Number.isFinite(Number(rate)) ? Number(rate) : 0;
+  const num = (safe * 100).toFixed(2);
+  const rateText = `${safe > 0 ? "+" : ""}${num}%`;
+  return suffix ? `${rateText} ${suffix}` : rateText;
 }
 
-async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, accountRow }) {
+function lastTradeBySymbol(trades, accountScope) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const list =
+    scope === "all"
+      ? trades || []
+      : (trades || []).filter((t) => String(t.accountId || "default") === scope);
+  const sorted = [...list].sort((a, b) => {
+    const ad = new Date(a.date).getTime();
+    const bd = new Date(b.date).getTime();
+    if (ad !== bd) {
+      return ad - bd;
+    }
+    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
+  });
+  const map = new Map();
+  for (const trade of sorted) {
+    const sym = normalizeSymbol(trade.symbol);
+    if (!sym) {
+      continue;
+    }
+    const price = Number(trade.price);
+    map.set(sym, {
+      lastTradePrice: Number.isFinite(price) && price > 0 ? price : 0,
+      lastTradeSide: trade.side,
+      lastTradeDate: trade.date,
+    });
+  }
+  return map;
+}
+
+async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, accountRow, trades }) {
   const fxU = Number(accountRow?.eod_fx_usd_cny) || live.fxUsdCny || 7.2;
   const fxH = Number(accountRow?.eod_fx_hkd_cny) || live.fxHkdCny || 0.92;
   const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
@@ -45,6 +75,7 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
 
   const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
   const nameMap = await getSymbolNameMap([...keys]);
+  const tradeBySym = lastTradeBySymbol(trades, accountScope);
   const rowsOut = [];
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
@@ -63,13 +94,8 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
     const totalFrozenNative = Number(snap?.total_profit_native) || 0;
     const current = Number(liveP?.current) || 0;
     const prev = Number(liveP?.prevClose) || current;
-    const todayProfitNative =
-      live.tradingDay && Number.isFinite(current) && Number.isFinite(prev) ? qty * (current - prev) : 0;
-    let todayProfitCny = todayProfitNative * (isCnyStock ? 1 : fx);
-    const liveTodayCny = live.tradingDay ? Number(liveP?.todayProfitCny) : 0;
-    if (live.tradingDay && Number.isFinite(liveTodayCny) && Math.abs(liveTodayCny) > 1e-9) {
-      todayProfitCny = liveTodayCny;
-    }
+    const todayProfitCny = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const todayProfitNative = isCnyStock ? todayProfitCny : fx > 0 ? todayProfitCny / fx : 0;
     const monthNative = monthFrozenNative + todayProfitNative;
     const yearNative = yearFrozenNative + todayProfitNative;
     const totalNative = totalFrozenNative + todayProfitNative;
@@ -90,10 +116,15 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
     const mappedName = String(nameMap[sym] || "").trim();
     const displayName =
       mappedName || (snapName && snapName.toLowerCase() !== sym.toLowerCase() ? snapName : "") || sym;
+    const lastTr = tradeBySym.get(sym) || {};
+    const lastTradePrice = Number(lastTr.lastTradePrice) || 0;
+    const regretRate =
+      lastTradePrice > 0 ? (current - lastTradePrice) / lastTradePrice : 0;
 
     rowsOut.push({
       symbol: sym,
       name: displayName,
+      market,
       currency: ccy,
       isCnyStock,
       marketTag: marketTag(market),
@@ -117,7 +148,14 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
       totalProfitDisplayCny: fmtPlainSignedAmount(totalCny),
       totalRateDisplay: fmtPercentRatio(totalRate),
       totalRateNum: totalRate,
-      regretDisplay: "—",
+      regretDisplay: formatRegretRateWithSide(regretRate, lastTr.lastTradeSide),
+      regretRateNum: regretRate,
+      lastTradeSide: lastTr.lastTradeSide || "",
+      lastTradeDate: lastTr.lastTradeDate || "",
+      lastTradeDateMs: Date.parse(lastTr.lastTradeDate || 0) || 0,
+      currentPriceNum: current,
+      marketValueNum: mvCny,
+      costNum: sigma,
       dayChangeRate: dayChg,
       todayProfitNativeNum: todayProfitNative,
       todayProfitCnyNum: todayProfitCny,
@@ -155,9 +193,15 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
     const monthCny = (Number(snap?.month_profit_native) || 0) + todayCny;
     const yearCny = (Number(snap?.ytd_profit_native) || 0) + todayCny;
     const mv = Number(liveP?.marketValueCny) || 0;
-    row.weightDisplay = totalAssets > 0 ? fmtPercentRatio(mv / totalAssets) : "0.00%";
-    row.monthWeightDisplay = monthDen > 0 ? fmtPercentRatio(monthCny / monthDen) : "0.00%";
-    row.yearWeightDisplay = yearDen > 0 ? fmtPercentRatio(yearCny / yearDen) : "0.00%";
+    const weight = totalAssets > 0 ? mv / totalAssets : 0;
+    const monthW = monthDen > 0 ? monthCny / monthDen : 0;
+    const yearW = yearDen > 0 ? yearCny / yearDen : 0;
+    row.weightDisplay = totalAssets > 0 ? fmtPercentRatio(weight) : "0.00%";
+    row.monthWeightDisplay = monthDen > 0 ? fmtPercentRatio(monthW) : "0.00%";
+    row.yearWeightDisplay = yearDen > 0 ? fmtPercentRatio(yearW) : "0.00%";
+    row.weightNum = weight;
+    row.monthWeightNum = monthW;
+    row.yearWeightNum = yearW;
   }
 
   rowsOut.sort((a, b) => {

@@ -670,13 +670,14 @@ function buildMetricsAssetsFromContext(ctx) {
 
 async function buildMetricsHoldingsFromContext(ctx) {
   const { userId, scope, settings, live, um, home } = ctx;
+  const trades = await getTrades(userId);
   const rows = await buildHoldingsPayload({
-    userId,
     accountScope: scope,
     settings,
     live,
     symbolRows: home.symbols,
     accountRow: home.account,
+    trades,
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), rows };
 }
