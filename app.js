@@ -224,15 +224,14 @@ const state = {
   tradeSearchReturnRoute: "trade",
   /** 从「我的」子页返回时的父路由：从交易页打开 mine-algo / mine-accounts 时为 "trade" */
   mineReturnRoute: null,
-  /** 首页快照区：避免仅因行情 tick 重复拉日快照接口 */
-  overviewSnapshotUi: {
+  /** 首页 metrics a/b/f：齐套后才展示，避免本地 portfolio 占位闪屏 */
+  overviewMetricsUi: {
     ready: false,
-    cacheKey: "",
-    dataKey: "",
-    homePayload: null,
-    snapBySym: null,
-    monthInnerHTML: "",
-    monthClass: "",
+    loading: false,
+    key: "",
+    returns: null,
+    assets: null,
+    holdings: null,
   },
 };
 let apiReady = false;
@@ -719,15 +718,19 @@ async function startAppAfterAuth(options = {}) {
     renderAll();
   });
   renderAll();
-  void refreshMarketData({ skipFinalRender: true }).finally(() => {
-    renderAll();
-    if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
-      refreshPublicProfileEarningPanel();
-      if (state.communityProfileTab === "analysis") {
-        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+  if (state.route === "earning") {
+    void refreshOverviewProfitRowFromSnapshots();
+  } else {
+    void refreshMarketData({ skipFinalRender: true }).finally(() => {
+      renderAll();
+      if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
+        refreshPublicProfileEarningPanel();
+        if (state.communityProfileTab === "analysis") {
+          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        }
       }
-    }
-  });
+    });
+  }
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
@@ -2394,6 +2397,7 @@ function bindEvents() {
   algoModeSelectMine?.addEventListener("change", () => {
     state.algoMode = normalizeProfitAlgoMode(algoModeSelectMine.value);
     persistState();
+    invalidateOverviewMetricsUi();
     renderOverviewAndStockTable();
     void renderAnalysis();
     renderMineSection();
@@ -2435,14 +2439,18 @@ function bindEvents() {
   stageRangeSelect?.addEventListener("change", () => {
     state.stageRange = stageRangeSelect.value;
     persistState();
+    invalidateOverviewMetricsUi();
     renderOverviewAndStockTable();
   });
 
   accountFilterSelect?.addEventListener("change", () => {
     state.selectedAccountId = resolveValidAccountFilter(accountFilterSelect.value);
     persistState();
+    invalidateOverviewMetricsUi();
     renderAll();
-    void refreshMarketData();
+    if (state.route !== "earning") {
+      void refreshMarketData();
+    }
   });
   analysisAccountSelect?.addEventListener("change", () => {
     state.selectedAccountId = resolveValidAccountFilter(analysisAccountSelect.value);
@@ -3163,10 +3171,11 @@ function renderAll() {
     (prevSnap === "earning" && state.route !== "earning") ||
     (state.route === "earning" && prevSnap != null && prevSnap !== "earning")
   ) {
-    invalidateOverviewSnapshotUi();
+    invalidateOverviewMetricsUi();
   }
   if (state.route === "earning" && prevSnap != null && prevSnap !== "earning") {
-    void refreshMarketData();
+    invalidateOverviewMetricsUi();
+    void refreshOverviewProfitRowFromSnapshots();
   }
   previousRenderAllRouteForOverviewSnapshot = state.route;
   renderControls();
@@ -5172,20 +5181,18 @@ function refreshPublicProfileEarningPanel() {
   syncPublicProfileStockSortControls();
 }
 
-function invalidateOverviewSnapshotUi() {
-  state.overviewSnapshotUi.ready = false;
-  state.overviewSnapshotUi.cacheKey = "";
-  state.overviewSnapshotUi.dataKey = "";
-  state.overviewSnapshotUi.homePayload = null;
-  state.overviewSnapshotUi.snapBySym = null;
-  state.overviewSnapshotUi.monthInnerHTML = "";
-  state.overviewSnapshotUi.monthClass = "";
-  homeSummaryFetchGen += 1;
-  homeSummaryRpcMemo = { key: "", data: null, at: 0 };
-  homeSummaryInflightByKey.clear();
-  state.accountKpisByScope = {};
-  _kpiInFlightByScope.clear();
+function invalidateOverviewMetricsUi() {
+  state.overviewMetricsUi.ready = false;
+  state.overviewMetricsUi.loading = false;
+  state.overviewMetricsUi.key = "";
+  state.overviewMetricsUi.returns = null;
+  state.overviewMetricsUi.assets = null;
+  state.overviewMetricsUi.holdings = null;
   _overviewProfitInflight = null;
+}
+
+function invalidateOverviewSnapshotUi() {
+  invalidateOverviewMetricsUi();
 }
 
 function overviewTradesLedgerKey() {
@@ -5222,11 +5229,7 @@ function buildOverviewSnapshotDataKey() {
 }
 
 function overviewSnapshotSnapMapFromState() {
-  const o = state.overviewSnapshotUi.snapBySym;
-  if (!o || typeof o !== "object") {
-    return null;
-  }
-  return new Map(Object.entries(o));
+  return null;
 }
 
 /** 总览「现金占比」：现金 / 总资产 × 100%（与当前展示的 totalAssets、overviewCash 同口径）。 */
@@ -5396,70 +5399,37 @@ function renderOverviewAndStockTable() {
     void paintOverviewSnapshotUiTestMode();
     return;
   }
-  if (quoteTime) {
-    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
-    quoteTime.textContent = timeText;
-    quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
-    quoteTime.setAttribute("title", state.marketDataDelayed && state.marketDataDelaySource
-      ? `已使用缓存数据（${state.marketDataDelaySource}）`
-      : "数据来自实时接口");
-  }
-  const scope = getPortfolioScope(state.selectedAccountId);
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
   const aid = String(state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId));
-  void ensureAccountKpiSurfaceLoaded(aid).then(() => {
-    if (state.route === "earning" && state.accountKpisByScope[aid]) {
-      renderOverviewAndStockTable();
-    }
-  });
-  const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const surf = state.accountKpisByScope[aid];
-  const surfDisp = surf && surf.display && typeof surf.display === "object" ? surf.display : null;
-  if (surfDisp && surf.frozenThrough) {
-    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-      { label: "总资产", value: String(surfDisp.totalAssets) },
-      { label: "总市值", value: String(surfDisp.marketValue) },
-      { label: "现金", value: String(surfDisp.cash) },
-      { label: "现金占比", value: String(surfDisp.cashRatio) },
-      { label: "本金", value: String(surfDisp.principal) },
-    ]);
-  } else {
-    const ratioStr = formatOverviewCashRatioFromTotals(portfolio.totalAssets, portfolio.overviewCash);
-    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-      { label: "总资产", value: formatOverviewPlainMoney(portfolio.totalAssets, bookCcy) },
-      { label: "总市值", value: formatOverviewPlainMoney(portfolio.totalMarketValue, bookCcy) },
-      { label: "现金", value: formatOverviewPlainMoney(portfolio.overviewCash, bookCcy) },
-      { label: "现金占比", value: ratioStr },
-      { label: "本金", value: formatOverviewPlainMoney(portfolio.overviewPrincipal, bookCcy) },
-    ]);
+  const stageKey = metricsStageFromHome();
+  const metricsKey = `${aid}|${stageKey}|${state.algoMode}`;
+
+  if (!apiReady) {
+    setOverviewProfitKpisDash();
+    setOverviewAssetsGridDash();
+    paintOverviewStockTableLoading("请先登录后查看持仓。");
+    return;
   }
 
-  const dataKey = buildOverviewSnapshotDataKey();
-  const fullKey = buildOverviewSnapshotCacheKey();
-  if (state.overviewSnapshotUi.ready && todayProfitMain && monthProfitMain) {
-    if (state.overviewSnapshotUi.homePayload && state.overviewSnapshotUi.dataKey === dataKey) {
-      if (paintOverviewHeadlineFromHomePayload(state.overviewSnapshotUi.homePayload, portfolio, bookCcy)) {
-        paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
-        return;
-      }
-    }
-    if (
-      !state.overviewSnapshotUi.homePayload &&
-      state.overviewSnapshotUi.cacheKey === fullKey &&
-      state.overviewSnapshotUi.snapBySym
-    ) {
-      todayProfitMain.innerHTML = metricValueWithRate(portfolio.todayProfit, portfolio.todayRate);
-      todayProfitMain.className = `profit-main ${portfolio.todayProfit >= 0 ? "up" : "down"}`;
-      monthProfitMain.innerHTML = state.overviewSnapshotUi.monthInnerHTML;
-      monthProfitMain.className = state.overviewSnapshotUi.monthClass;
-      paintOverviewStockTableFromSnapshots(portfolio, overviewSnapshotSnapMapFromState());
-      return;
-    }
+  if (
+    state.overviewMetricsUi.ready &&
+    state.overviewMetricsUi.key === metricsKey &&
+    state.overviewMetricsUi.returns &&
+    state.overviewMetricsUi.assets &&
+    state.overviewMetricsUi.holdings
+  ) {
+    paintOverviewFromMetricsBundle(
+      state.overviewMetricsUi.returns,
+      state.overviewMetricsUi.assets,
+      state.overviewMetricsUi.holdings,
+      stageKey,
+    );
+    return;
   }
 
   setOverviewProfitKpisDash();
+  setOverviewAssetsGridDash();
+  paintOverviewStockTableLoading("数据加载中…");
   void refreshOverviewProfitRowFromSnapshots();
-  paintOverviewStockTableFromSnapshots(portfolio, null);
 }
 
 function getStageStartKey(stageRange, firstDate) {
@@ -6710,6 +6680,85 @@ function setOverviewProfitKpisDash() {
   monthProfitMain.className = "profit-main";
 }
 
+function setOverviewAssetsGridDash() {
+  if (!overviewGrid) {
+    return;
+  }
+  const dash = "–";
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
+    { label: "总资产", value: dash },
+    { label: "总市值", value: dash },
+    { label: "现金", value: dash },
+    { label: "现金占比", value: dash },
+    { label: "本金", value: dash },
+  ]);
+}
+
+function paintOverviewStockTableLoading(message = "数据加载中…") {
+  if (!stockTableBody) {
+    return;
+  }
+  stockTableBody.innerHTML = `<tr><td colspan="14"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
+}
+
+function applyOverviewMetricsMeta(meta) {
+  if (!meta || typeof meta !== "object") {
+    return;
+  }
+  if (meta.quoteTime) {
+    state.quoteTime = String(meta.quoteTime);
+  }
+  state.marketDataDelayed = !!meta.delayed;
+  state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
+}
+
+function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
+  if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
+    return false;
+  }
+  const today = returns.stages.today;
+  const stage = returns.stages[stageKey];
+  if (todayProfitMain && monthProfitMain) {
+    todayProfitMain.innerHTML = metricHeadlineHtml(
+      today.profitDisplay,
+      today.rateDisplay,
+      today.profitCny,
+      today.rate,
+    );
+    todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
+    monthProfitMain.innerHTML = metricHeadlineHtml(
+      stage.profitDisplay,
+      stage.rateDisplay,
+      stage.profitCny,
+      stage.rate,
+    );
+    monthProfitMain.className = `profit-main ${Number(stage.profitCny) >= 0 ? "up" : "down"}`;
+  }
+  if (overviewGrid) {
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
+      { label: "总资产", value: String(assets.totalAssetsDisplay || "–") },
+      { label: "总市值", value: String(assets.marketValueDisplay || "–") },
+      { label: "现金", value: String(assets.cashDisplay || "–") },
+      { label: "现金占比", value: String(assets.cashRatioDisplay || "–") },
+      { label: "本金", value: String(assets.principalDisplay || "–") },
+    ]);
+  }
+  paintOverviewStockTableFromMetricsRows(holdings.rows || []);
+  applyOverviewMetricsMeta(returns.meta || assets.meta || holdings.meta);
+  if (quoteTime) {
+    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
+    quoteTime.textContent = timeText;
+    quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
+    quoteTime.setAttribute(
+      "title",
+      state.marketDataDelayed
+        ? "行情或指标延迟，数字为最近一次成功计算结果"
+        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
+    );
+  }
+  return true;
+}
+
 function setAnalysisSummariesDash() {
   if (analysisRateSummary) {
     analysisRateSummary.textContent =
@@ -7395,7 +7444,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (!todayProfitMain || !monthProfitMain) return;
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const stageKey = metricsStageFromHome();
-  const reqKey = `${aid}|${stageKey}`;
+  const reqKey = `${aid}|${stageKey}|${state.algoMode}`;
   if (_overviewProfitInflight?.key === reqKey) return _overviewProfitInflight.promise;
   const seq = ++overviewProfitRefreshSeq;
   const promise = _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey);
@@ -7404,176 +7453,58 @@ async function refreshOverviewProfitRowFromSnapshots() {
 }
 
 async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
+  const metricsKey = `${aid}|${stageKey}|${state.algoMode}`;
+  state.overviewMetricsUi.loading = true;
   try {
-  if (apiReady) {
-    const ret = await fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: `today,${stageKey}` });
-    const hold = await fetchMetricsApi("/holdings", { accountScope: aid });
-    if (seq === overviewProfitRefreshSeq && ret?.stages?.today && ret?.stages?.[stageKey]) {
-      const today = ret.stages.today;
-      const stage = ret.stages[stageKey];
-      todayProfitMain.innerHTML = metricHeadlineHtml(today.profitDisplay, today.rateDisplay, today.profitCny, today.rate);
-      todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
-      monthProfitMain.innerHTML = metricHeadlineHtml(stage.profitDisplay, stage.rateDisplay, stage.profitCny, stage.rate);
-      monthProfitMain.className = `profit-main ${Number(stage.profitCny) >= 0 ? "up" : "down"}`;
-      paintOverviewStockTableFromMetricsRows(hold?.rows || []);
-      state.overviewSnapshotUi.ready = true;
-      state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
-      state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
+    if (!apiReady) {
       return;
     }
-  }
-  const scope = getPortfolioScope(state.selectedAccountId);
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const vis = portfolio.visiblePositions;
-  if (!apiReady) {
-    setOverviewProfitKpisDash();
-    paintOverviewStockTableFromSnapshots(portfolio, null);
-    return;
-  }
-  const bookCcy = portfolio.overviewBookCurrency || "CNY";
-  const bounds = overviewAccountDailyFetchBounds(scope, state.stageRange);
-  const symList = [...new Set(vis.map((p) => normalizeSymbol(p.symbol)).filter(Boolean))];
-  let homeData = null;
-  let homeCoversSymbols = false;
-  if (aid === "all") {
-    homeData = await fetchHomeSummaryRemote();
-    if (homeData?.account && Array.isArray(homeData.symbols)) {
-      const have = new Set(homeData.symbols.map((s) => normalizeSymbol(s.symbol)));
-      homeCoversSymbols = symList.length === 0 || symList.every((s) => have.has(s));
+    const [ret, assets, hold] = await Promise.all([
+      fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: `today,${stageKey}` }),
+      fetchMetricsApi("/metrics/assets", { accountScope: aid }),
+      fetchMetricsApi("/holdings", { accountScope: aid }),
+    ]);
+    if (seq !== overviewProfitRefreshSeq) {
+      return;
     }
-  }
-  if (seq !== overviewProfitRefreshSeq) {
-    return;
-  }
-  const useHomeAccount = aid === "all" && homeData?.account;
-  let dbRows = [];
-  let symRows = [];
-  try {
-    const accP = useHomeAccount
-      ? Promise.resolve([])
-      : fetchAnalysisDailyRowsRemote({
-          accountId: aid,
-          from: bounds.from,
-          to: bounds.to,
-        });
-    const symP =
-      homeCoversSymbols && aid === "all"
-        ? Promise.resolve([])
-        : symList.length > 0
-          ? fetchSymbolDailyRowsRemote({
-              accountId: aid,
-              symbols: symList,
-              from: bounds.from,
-              to: bounds.to,
-            })
-          : Promise.resolve([]);
-    [dbRows, symRows] = await Promise.all([accP, symP]);
+    const ok =
+      ret?.stages?.today &&
+      ret?.stages?.[stageKey] &&
+      assets?.totalAssetsDisplay != null &&
+      Array.isArray(hold?.rows);
+    if (!ok) {
+      state.overviewMetricsUi.ready = false;
+      setOverviewProfitKpisDash();
+      setOverviewAssetsGridDash();
+      paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
+      return;
+    }
+    state.overviewMetricsUi = {
+      ready: true,
+      loading: false,
+      key: metricsKey,
+      returns: ret,
+      assets,
+      holdings: hold,
+    };
+    if (state.route === "earning") {
+      paintOverviewFromMetricsBundle(ret, assets, hold, stageKey);
+    }
   } catch {
-    dbRows = [];
-    symRows = [];
-  }
-  if (seq !== overviewProfitRefreshSeq) {
-    return;
-  }
-  if (!useHomeAccount && (!Array.isArray(dbRows) || !dbRows.length)) {
     if (seq === overviewProfitRefreshSeq) {
+      state.overviewMetricsUi.ready = false;
       setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
+      setOverviewAssetsGridDash();
+      paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
     }
-    return;
-  }
-  if (symList.length && !homeCoversSymbols && (!Array.isArray(symRows) || !symRows.length)) {
-    if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
-    }
-    return;
-  }
-  let stageOut = null;
-  let todayOut = null;
-  let snapMap = new Map();
-  if (useHomeAccount) {
-    const h = computeOverviewHeadlineFromHomeAccount(homeData, portfolio);
-    if (h) {
-      todayOut = { todayProfitCny: h.todayProfitCny, todayRate: h.todayRate };
-      stageOut = { stageProfit: h.stageProfit, stageRate: h.stageRate };
-    }
-    if (symList.length > 0) {
-      snapMap =
-        homeCoversSymbols && homeData.symbols
-          ? buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeData.symbols, bounds.todayKey)
-          : buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey);
-    }
-    if (Array.isArray(dbRows) && dbRows.length) {
-      mergeFxRatesFromAnalysisDailyRows(dbRows);
-    }
-  } else {
-    const tradeList = Array.isArray(scope.trades) ? scope.trades : [];
-    const firstTradeDate =
-      tradeList.length > 0 ? [...tradeList].sort(sortTradeAsc)[0].date : toDateKey(new Date());
-    const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-    const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, bounds.todayKey, scope.cashTransfers);
-    const merged = mergeAnalysisSliceWithLive(
-      sorted.map((row) => ({ ...row })),
-      portfolio,
-      bounds.todayKey,
-      liveByMode,
-      scope.cashTransfers,
-    );
-    stageOut = computeStageOverviewFromMergedRows(merged, state.stageRange, state.algoMode, firstTradeDate);
-    todayOut = todayProfitRateCnyFromMergedRows(merged, bounds.todayKey);
-    snapMap =
-      symList.length > 0 ? buildSymbolSnapshotProfitMap(vis, symRows, scope.trades, bounds.todayKey) : new Map();
-  }
-  if (seq !== overviewProfitRefreshSeq) {
-    return;
-  }
-  if (
-    !stageOut ||
-    !todayOut ||
-    !Number.isFinite(Number(stageOut.stageProfit)) ||
-    !Number.isFinite(Number(stageOut.stageRate)) ||
-    !Number.isFinite(Number(todayOut.todayProfitCny)) ||
-    !Number.isFinite(Number(todayOut.todayRate))
-  ) {
-    if (seq === overviewProfitRefreshSeq) {
-      setOverviewProfitKpisDash();
-      paintOverviewStockTableFromSnapshots(portfolio, null);
-    }
-    return;
-  }
-  const sp = Number(stageOut.stageProfit);
-  const sr = Number(stageOut.stageRate);
-  const todayBook = amountBookFromCny(Number(todayOut.todayProfitCny), bookCcy);
-  const stageBook = amountBookFromCny(sp, bookCcy);
-  const tr = Number(todayOut.todayRate);
-  if (seq === overviewProfitRefreshSeq) {
-    todayProfitMain.innerHTML = metricValueWithRate(todayBook, tr);
-    todayProfitMain.className = `profit-main ${todayBook >= 0 ? "up" : "down"}`;
-    monthProfitMain.innerHTML = metricValueWithRate(stageBook, sr);
-    monthProfitMain.className = `profit-main ${stageBook >= 0 ? "up" : "down"}`;
-    paintOverviewStockTableFromSnapshots(portfolio, snapMap);
-    state.overviewSnapshotUi.ready = true;
-    state.overviewSnapshotUi.dataKey = buildOverviewSnapshotDataKey();
-    state.overviewSnapshotUi.homePayload = useHomeAccount ? homeData : null;
-    state.overviewSnapshotUi.cacheKey = buildOverviewSnapshotCacheKey();
-    state.overviewSnapshotUi.snapBySym = Object.fromEntries(
-      [...snapMap.entries()].map(([k, v]) => [
-        k,
-        {
-          monthHistNative: Number(v.monthHistNative) || 0,
-          yearHistNative: Number(v.yearHistNative) || 0,
-          totalHistNative: Number(v.totalHistNative) || 0,
-        },
-      ]),
-    );
-    state.overviewSnapshotUi.monthInnerHTML = monthProfitMain.innerHTML;
-    state.overviewSnapshotUi.monthClass = monthProfitMain.className;
-  }
   } finally {
-    if (_overviewProfitInflight?.key === reqKey) _overviewProfitInflight = null;
+    state.overviewMetricsUi.loading = false;
+    if (_overviewProfitInflight?.key === reqKey) {
+      _overviewProfitInflight = null;
+    }
   }
 }
+
 
 async function fetchAnalysisDailyRowsRemote({ accountId, from, to }) {
   if (!apiReady) {

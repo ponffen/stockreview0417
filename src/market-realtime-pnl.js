@@ -17,17 +17,34 @@ const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/tra
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 const quoteMem = new Map();
+const QUOTE_CHUNK_SIZE = 55;
+const QUOTE_FETCH_TIMEOUT_MS = 12_000;
+const QUOTE_PROXY_BASE =
+  String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
+  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
+const LIVE_METRICS_DEDUP_MS = Math.max(
+  1000,
+  Math.min(8000, Number(process.env.LIVE_METRICS_DEDUP_MS || 4000)),
+);
+const liveMetricsInflight = new Map();
+const liveMetricsRecent = new Map();
 
 function pickLatestQuoteTime(times) {
   let best = "";
   let bestKey = 0;
-  for (const item of (Array.isArray(times) ? times : [])) {
+  for (const item of Array.isArray(times) ? times : []) {
     const t = String(item || "").trim();
     const digits = t.replace(/\D/g, "");
-    const key = digits.length >= 14 ? Number(digits.slice(0, 14)) || 0
-              : digits.length >= 8  ? Number(`${digits.slice(0, 8)}000000`) || 0
-              : 0;
-    if (key > bestKey) { best = t; bestKey = key; }
+    const key =
+      digits.length >= 14
+        ? Number(digits.slice(0, 14)) || 0
+        : digits.length >= 8
+          ? Number(`${digits.slice(0, 8)}000000`) || 0
+          : 0;
+    if (key > bestKey) {
+      best = t;
+      bestKey = key;
+    }
   }
   return best || null;
 }
@@ -121,6 +138,18 @@ function parseTencentQuoteTextToMap(text) {
   return map;
 }
 
+async function fetchTencentQuoteChunk(keys) {
+  const url = `${QUOTE_PROXY_BASE}/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
+  const r = await fetch(url, {
+    signal: AbortSignal.timeout(QUOTE_FETCH_TIMEOUT_MS),
+  });
+  if (!r.ok) {
+    return { ok: false, map: new Map() };
+  }
+  const text = await r.text();
+  return { ok: true, map: parseTencentQuoteTextToMap(text) };
+}
+
 async function fetchTencentQuotePayloadMap(reqKeys) {
   const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
   if (!keys.length) {
@@ -128,19 +157,21 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
   }
   const payloadMap = new Map();
   let delayed = false;
+  const chunks = [];
+  for (let i = 0; i < keys.length; i += QUOTE_CHUNK_SIZE) {
+    chunks.push(keys.slice(i, i + QUOTE_CHUNK_SIZE));
+  }
   try {
-    const url = `https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
-    const r = await fetch(url, {
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (r.ok) {
-      const text = await r.text();
-      for (const [k, payload] of parseTencentQuoteTextToMap(text).entries()) {
+    const parts = await Promise.all(chunks.map((c) => fetchTencentQuoteChunk(c)));
+    for (const part of parts) {
+      if (!part.ok) {
+        delayed = true;
+        continue;
+      }
+      for (const [k, payload] of part.map.entries()) {
         quoteMem.set(k, payload);
         payloadMap.set(k, payload);
       }
-    } else {
-      delayed = true;
     }
   } catch {
     delayed = true;
@@ -187,6 +218,30 @@ async function lastCloseForSymbol(sym, asOf) {
   return Number.isFinite(c) && c > 0 ? c : null;
 }
 
+async function batchLastCloseForSymbols(symbols, asOf) {
+  const out = new Map();
+  const list = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
+  if (!list.length) {
+    return out;
+  }
+  const results = await Promise.all(
+    list.map(async (sym) => {
+      try {
+        const close = await lastCloseForSymbol(sym, asOf);
+        return close != null ? [sym, close] : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  for (const item of results) {
+    if (item) {
+      out.set(item[0], item[1]);
+    }
+  }
+  return out;
+}
+
 function getSymbolCurrency(symbol) {
   const s = String(symbol || "");
   if (s.startsWith("hk") || s.startsWith("rt_hk")) {
@@ -198,8 +253,7 @@ function getSymbolCurrency(symbol) {
   return "USD";
 }
 
-async function collectHoldingsSymbols(userId, accountScope) {
-  const trades = await getTrades(userId);
+function holdingsSymbolsFromTrades(trades, accountScope) {
   const wanted = String(accountScope || "all").trim() || "all";
   const list =
     wanted === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === wanted);
@@ -218,10 +272,15 @@ async function collectHoldingsSymbols(userId, accountScope) {
     }
     holdings.set(
       symbol,
-      (holdings.get(symbol) || 0) + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
+      (holdings.get(symbol) || 0) +
+        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
     );
   }
   return [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+}
+
+function liveMetricsCacheKey(userId, scope) {
+  return `${String(userId || "").trim()}|${String(scope || "all").trim() || "all"}`;
 }
 
 async function computeLiveMetrics(userId, accountScope = "all") {
@@ -243,12 +302,16 @@ async function computeLiveMetrics(userId, accountScope = "all") {
     Number(lastSnap?.totalAssets ?? lastSnap?.total_assets) ||
     0;
 
+  const trades = await getTrades(uid);
+  const cashTransfers = await getCashTransfers(uid);
+  const accounts = await getAccounts(uid);
+
   if (!tradingDay) {
     const cashCny = frozenThrough
       ? computeLedgerCashCnyUpToDate(
-          await getTrades(uid),
-          await getCashTransfers(uid),
-          await getAccounts(uid),
+          trades,
+          cashTransfers,
+          accounts,
           scope === "all" ? "all" : scope,
           fxUsdMap,
           fxHkdMap,
@@ -270,13 +333,15 @@ async function computeLiveMetrics(userId, accountScope = "all") {
       totalAssetsCny: ta || mv + cashCny,
       cashRatio: ta > 0 ? cashCny / ta : 0,
       principalCny: frozenThrough
-        ? principalCnyUpToDate(await getCashTransfers(uid), await getAccounts(uid), scope, fxUsdMap, fxHkdMap, frozenThrough)
+        ? principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, frozenThrough)
         : 0,
       positions: [],
+      fxUsdCny: fxUsdFrozen,
+      fxHkdCny: fxHkdFrozen,
     };
   }
 
-  const symbols = await collectHoldingsSymbols(uid, scope);
+  const symbols = holdingsSymbolsFromTrades(trades, scope);
   const quoteReq = await fetchTencentQuotePayloadMap([
     ...symbols.map((s) => toTencentQuoteKey(s)).filter(Boolean),
     "whUSDCNY",
@@ -294,6 +359,7 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   }
   const fxRate = (ccy) => (ccy === "CNY" ? 1 : ccy === "USD" ? fxSpot.USD : ccy === "HKD" ? fxSpot.HKD : 1);
 
+  const missingForClose = [];
   const quoteMap = {};
   for (const sym of symbols) {
     const key = toTencentQuoteKey(sym);
@@ -302,17 +368,24 @@ async function computeLiveMetrics(userId, accountScope = "all") {
       q = parseTencentQuoteRecord(sym, q);
     }
     if (!q) {
-      const close = await lastCloseForSymbol(sym, liveDate);
-      if (close != null) {
-        q = { current: close, prevClose: close, marketDate: liveDate };
-      }
-    }
-    if (q) {
+      missingForClose.push(sym);
+    } else {
       quoteMap[sym] = q;
     }
   }
+  if (missingForClose.length) {
+    const closes = await batchLastCloseForSymbols(missingForClose, liveDate);
+    for (const sym of missingForClose) {
+      const close = closes.get(sym);
+      if (close != null) {
+        quoteMap[sym] = { current: close, prevClose: close, marketDate: liveDate };
+        if (!quoteReq.ok) {
+          quoteReq.delayed = true;
+        }
+      }
+    }
+  }
 
-  const trades = await getTrades(uid);
   const scoped =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
   const holdings = new Map();
@@ -330,7 +403,8 @@ async function computeLiveMetrics(userId, accountScope = "all") {
     }
     holdings.set(
       symbol,
-      (holdings.get(symbol) || 0) + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
+      (holdings.get(symbol) || 0) +
+        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
     );
   }
 
@@ -355,8 +429,6 @@ async function computeLiveMetrics(userId, accountScope = "all") {
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }
 
-  const cashTransfers = await getCashTransfers(uid);
-  const accounts = await getAccounts(uid);
   const cashCny = computeLedgerCashCnyUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
   const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
   const totalAssetsCny = liveMarketValue + cashCny;
@@ -380,4 +452,33 @@ async function computeLiveMetrics(userId, accountScope = "all") {
   };
 }
 
-module.exports = { computeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey };
+async function getComputeLiveMetrics(userId, accountScope = "all") {
+  const uid = String(userId || "").trim();
+  const scope = String(accountScope || "all").trim() || "all";
+  const key = liveMetricsCacheKey(uid, scope);
+  const now = Date.now();
+  const cached = liveMetricsRecent.get(key);
+  if (cached && now - cached.at < LIVE_METRICS_DEDUP_MS) {
+    return cached.value;
+  }
+  if (liveMetricsInflight.has(key)) {
+    return liveMetricsInflight.get(key);
+  }
+  const task = computeLiveMetrics(uid, scope)
+    .then((value) => {
+      liveMetricsRecent.set(key, { at: Date.now(), value });
+      return value;
+    })
+    .finally(() => {
+      liveMetricsInflight.delete(key);
+    });
+  liveMetricsInflight.set(key, task);
+  return task;
+}
+
+module.exports = {
+  computeLiveMetrics,
+  getComputeLiveMetrics,
+  fetchTencentQuotePayloadMap,
+  toTencentQuoteKey,
+};

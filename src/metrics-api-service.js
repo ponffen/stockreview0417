@@ -164,19 +164,31 @@ function frozenMetricsFromHomeAccount(acc) {
 async function getMetricsReturns(userId, accountScope, stagesRaw) {
   const scope = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(userId);
-  const live = await computeLiveMetrics(userId, scope);
+  const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
   const home = await getHomeSummaryForUser(userId, scope);
   const frozen = frozenMetricsFromHomeAccount(home.account);
-  const trades = await getTrades(userId);
-  const firstTrade =
-    trades.length > 0
-      ? [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date
-      : asOf;
-  const rowsAsc = await loadSnapshotRowsAsc(userId, scope, "2000-01-01", asOf);
-  const stages = {};
   const want = parseStagesParam(stagesRaw);
+  const customStages = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
+  let firstTrade =
+    String(home.account?.first_trade_date || home.account?.firstTradeDate || "").slice(0, 10) || asOf;
+  let rowsAsc = [];
+  if (customStages.length) {
+    const trades = await getTrades(userId);
+    if (trades.length > 0) {
+      firstTrade = [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
+    }
+    let minStart = asOf;
+    for (const key of customStages) {
+      const { start } = resolveStageRange(key, asOf, firstTrade);
+      if (start < minStart) {
+        minStart = start;
+      }
+    }
+    rowsAsc = await loadSnapshotRowsAsc(userId, scope, minStart, asOf);
+  }
+  const stages = {};
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   for (const key of want) {
     const { profitCny, rateTwr, rateMwr } = stageProfitFromFrozenAndLive(
