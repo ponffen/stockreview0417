@@ -32,35 +32,6 @@ function fmtPercentRatio(n) {
   return `${pct.toFixed(2)}%`;
 }
 
-
-/** 纯数字金额（无 ¥ / US$ 等币种符号），供首页总览与个股原币种列。 */
-function fmtPlainAmount(n, fraction = 2) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) {
-    return "—";
-  }
-  const abs = Math.abs(v).toLocaleString("zh-CN", {
-    minimumFractionDigits: fraction,
-    maximumFractionDigits: fraction,
-  });
-  const sign = v < 0 ? "-" : "";
-  return `${sign}${abs}`;
-}
-
-/** 带 +/- 的纯数字金额（无币种符号）。 */
-function fmtPlainSignedAmount(n, fraction = 2) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) {
-    return "—";
-  }
-  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
-  const abs = Math.abs(v).toLocaleString("zh-CN", {
-    minimumFractionDigits: fraction,
-    maximumFractionDigits: fraction,
-  });
-  return `${sign}${abs}`;
-}
-
 function rowNum(row, camel, snake, fallback = 0) {
   const v = row[camel] != null ? row[camel] : row[snake];
   const n = Number(v);
@@ -117,6 +88,8 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
   const cash = cnyScalarToBookAmount(cashCny, book, fxUsd, fxHkd);
   const principal = cnyScalarToBookAmount(principalCny, book, fxUsd, fxHkd);
   const ratioStr = Number.isFinite(taCny) && taCny > 0 && Number.isFinite(cashCny) ? fmtPercentRatio(cashCny / taCny) : fmtPercentRatio(ratioDb);
+  const stockRatioStr =
+    Number.isFinite(taCny) && taCny > 0 && Number.isFinite(mvCny) ? fmtPercentRatio(mvCny / taCny) : fmtPercentRatio(0);
 
   const stage = (profitCamel, profitSnake, rtCamel, rtSnake, rmCamel, rmSnake) => {
     const p = rowNum(row, profitCamel, profitSnake, 0);
@@ -158,7 +131,5 @@ module.exports = {
   buildAccountKpiSurfacePayload,
   cnyScalarToBookAmount,
   fmtMoney,
-  fmtPlainAmount,
-  fmtPlainSignedAmount,
   fmtPercentRatio,
 };

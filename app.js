@@ -5261,9 +5261,38 @@ function formatOverviewCashRatioFromTotals(totalAssetsBook, cashBook) {
   return `${formatNumber((c / ta) * 100, 2)}%`;
 }
 
+/** 总览「股票占比」：持仓总市值 / 总资产 × 100%（全部股票仓位合计）。 */
+function formatOverviewStockRatioFromTotals(totalAssetsBook, marketValueBook) {
+  const ta = Number(totalAssetsBook);
+  const mv = Number(marketValueBook);
+  if (!Number.isFinite(ta) || ta <= 0 || !Number.isFinite(mv)) {
+    return "0.00%";
+  }
+  return `${formatNumber((mv / ta) * 100, 2)}%`;
+}
+
+/** 总览 KPI 六项：总资产、总市值、现金、股票占比、现金占比、本金。 */
+function buildOverviewKpiEntries({
+  totalAssets,
+  marketValue,
+  cash,
+  stockRatio,
+  cashRatio,
+  principal,
+}) {
+  return [
+    { label: "总资产", value: totalAssets },
+    { label: "总市值", value: marketValue },
+    { label: "现金", value: cash },
+    { label: "股票占比", value: stockRatio },
+    { label: "现金占比", value: cashRatio },
+    { label: "本金", value: principal },
+  ];
+}
+
 /**
- * 总览区 2×3 栅格：总资产、总市值 | 现金、现金占比 | 本金、（空）。
- * @param {{ label: string, value: string }[]} entries 共 5 条
+ * 总览区 2 列栅格；条目数为奇数时末尾补空单元格。
+ * @param {{ label: string, value: string }[]} entries
  */
 function buildOverviewKpiGridInnerHtml(entries) {
   const cells = entries
@@ -5276,7 +5305,10 @@ function buildOverviewKpiGridInnerHtml(entries) {
     `,
     )
     .join("");
-  return `${cells}<article class="kpi-item kpi-item--empty" aria-hidden="true"></article>`;
+  if (entries.length % 2 === 1) {
+    return `${cells}<article class="kpi-item kpi-item--empty" aria-hidden="true"></article>`;
+  }
+  return cells;
 }
 
 function stubVisiblePositionsFromHomeSummarySymbols(symbols) {
@@ -5329,13 +5361,16 @@ async function paintOverviewSnapshotUiTestMode() {
   if (state.selectedAccountId !== "all") {
     const bookCcy = getOverviewBookCurrency();
     const dash = "—";
-    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-      { label: "总资产", value: dash },
-      { label: "总市值", value: dash },
-      { label: "现金", value: dash },
-      { label: "现金占比", value: dash },
-      { label: "本金", value: dash },
-    ]);
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+      buildOverviewKpiEntries({
+        totalAssets: dash,
+        marketValue: dash,
+        cash: dash,
+        stockRatio: dash,
+        cashRatio: dash,
+        principal: dash,
+      }),
+    );
     setOverviewProfitKpisDash();
     if (stockTableBody) {
       stockTableBody.innerHTML = `
@@ -5350,13 +5385,16 @@ async function paintOverviewSnapshotUiTestMode() {
   const bookCcy = "CNY";
   if (!apiReady) {
     const dash = "—";
-    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-      { label: "总资产", value: dash },
-      { label: "总市值", value: dash },
-      { label: "现金", value: dash },
-      { label: "现金占比", value: dash },
-      { label: "本金", value: dash },
-    ]);
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+      buildOverviewKpiEntries({
+        totalAssets: dash,
+        marketValue: dash,
+        cash: dash,
+        stockRatio: dash,
+        cashRatio: dash,
+        principal: dash,
+      }),
+    );
     setOverviewProfitKpisDash();
     if (stockTableBody) {
       stockTableBody.innerHTML = `
@@ -5387,15 +5425,19 @@ async function paintOverviewSnapshotUiTestMode() {
   const principal = last ? Number(last.principal) || 0 : 0;
   const totalAssets = last ? Number(last.totalAssets) || 0 : 0;
   const cash = last ? Number(last.cash) || 0 : 0;
-  const ratioStr = formatOverviewCashRatioFromTotals(totalAssets, cash);
+  const cashRatioStr = formatOverviewCashRatioFromTotals(totalAssets, cash);
+  const stockRatioStr = formatOverviewStockRatioFromTotals(totalAssets, mv);
 
-  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-    { label: "总资产", value: formatOverviewPlainMoney(totalAssets, bookCcy) },
-    { label: "总市值", value: formatOverviewPlainMoney(mv, bookCcy) },
-    { label: "现金", value: formatOverviewPlainMoney(cash, bookCcy) },
-    { label: "现金占比", value: ratioStr },
-    { label: "本金", value: formatOverviewPlainMoney(principal, bookCcy) },
-  ]);
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+    buildOverviewKpiEntries({
+      totalAssets: formatOverviewPlainMoney(totalAssets, bookCcy),
+      marketValue: formatOverviewPlainMoney(mv, bookCcy),
+      cash: formatOverviewPlainMoney(cash, bookCcy),
+      stockRatio: stockRatioStr,
+      cashRatio: cashRatioStr,
+      principal: formatOverviewPlainMoney(principal, bookCcy),
+    }),
+  );
 
   setOverviewProfitKpisDash();
 
@@ -6709,13 +6751,16 @@ function setOverviewAssetsGridDash() {
     return;
   }
   const dash = "–";
-  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-    { label: "总资产", value: dash },
-    { label: "总市值", value: dash },
-    { label: "现金", value: dash },
-    { label: "现金占比", value: dash },
-    { label: "本金", value: dash },
-  ]);
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+    buildOverviewKpiEntries({
+      totalAssets: dash,
+      marketValue: dash,
+      cash: dash,
+      stockRatio: dash,
+      cashRatio: dash,
+      principal: dash,
+    }),
+  );
 }
 
 function paintOverviewStockTableLoading(message = "数据加载中…") {
@@ -6759,13 +6804,16 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
     monthProfitMain.className = `profit-main ${Number(stage.profitCny) >= 0 ? "up" : "down"}`;
   }
   if (overviewGrid) {
-    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml([
-      { label: "总资产", value: String(assets.totalAssetsDisplay || "–") },
-      { label: "总市值", value: String(assets.marketValueDisplay || "–") },
-      { label: "现金", value: String(assets.cashDisplay || "–") },
-      { label: "现金占比", value: String(assets.cashRatioDisplay || "–") },
-      { label: "本金", value: String(assets.principalDisplay || "–") },
-    ]);
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+      buildOverviewKpiEntries({
+        totalAssets: String(assets.totalAssetsDisplay || "–"),
+        marketValue: String(assets.marketValueDisplay || "–"),
+        cash: String(assets.cashDisplay || "–"),
+        stockRatio: String(assets.stockRatioDisplay || "–"),
+        cashRatio: String(assets.cashRatioDisplay || "–"),
+        principal: String(assets.principalDisplay || "–"),
+      }),
+    );
   }
   const holdRows = holdings.rows || [];
   for (const row of holdRows) {
