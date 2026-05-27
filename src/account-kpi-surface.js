@@ -32,6 +32,42 @@ function fmtPercentRatio(n) {
   return `${pct.toFixed(2)}%`;
 }
 
+function fmtPlainAmount(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    return "—";
+  }
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtPlainSignedAmount(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    return "—";
+  }
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  const abs = Math.abs(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sign}${abs}`;
+}
+
+function fmtPlainAmount(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    return "—";
+  }
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtPlainSignedAmount(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    return "—";
+  }
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  const abs = Math.abs(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sign}${abs}`;
+}
+
 function rowNum(row, camel, snake, fallback = 0) {
   const v = row[camel] != null ? row[camel] : row[snake];
   const n = Number(v);
@@ -88,8 +124,6 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
   const cash = cnyScalarToBookAmount(cashCny, book, fxUsd, fxHkd);
   const principal = cnyScalarToBookAmount(principalCny, book, fxUsd, fxHkd);
   const ratioStr = Number.isFinite(taCny) && taCny > 0 && Number.isFinite(cashCny) ? fmtPercentRatio(cashCny / taCny) : fmtPercentRatio(ratioDb);
-  const stockRatioStr =
-    Number.isFinite(taCny) && taCny > 0 && Number.isFinite(mvCny) ? fmtPercentRatio(mvCny / taCny) : fmtPercentRatio(0);
 
   const stage = (profitCamel, profitSnake, rtCamel, rtSnake, rmCamel, rmSnake) => {
     const p = rowNum(row, profitCamel, profitSnake, 0);
@@ -131,5 +165,7 @@ module.exports = {
   buildAccountKpiSurfacePayload,
   cnyScalarToBookAmount,
   fmtMoney,
+  fmtPlainAmount,
+  fmtPlainSignedAmount,
   fmtPercentRatio,
 };
