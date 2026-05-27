@@ -15,6 +15,7 @@ const {
   getUserMetricsMeta,
   getAccountMetricsMetaForUser,
   getLastEodSharesForUser,
+  fetchHomeBundleFrozenPack,
   normalizeSymbol,
 } = require("./db");
 const { fmtMoney, fmtPercentRatio, cnyScalarToBookAmount } = require("./account-kpi-surface");
@@ -248,6 +249,56 @@ const LIVE_METRICS_MAX_MS = Math.max(
   Math.min(25_000, Number(process.env.LIVE_METRICS_MAX_MS || 18_000)),
 );
 
+
+function homeBundleUsesLiveQuotes() {
+  return String(process.env.HOME_BUNDLE_LIVE || "").trim() === "1";
+}
+
+function filterSymbolHomeRowsByEod(symbolRows, scope, lastEodRows) {
+  const wanted = String(scope || "all").trim() || "all";
+  const active = new Set();
+  for (const row of lastEodRows || []) {
+    const acc = String(row.accountId || row.account_id || "default");
+    if (wanted !== "all" && acc !== wanted) {
+      continue;
+    }
+    const sym = normalizeSymbol(row.symbol);
+    if (sym && (Number(row.eodShares ?? row.eod_shares) || 0) > 1e-6) {
+      active.add(sym);
+    }
+  }
+  if (!active.size) {
+    return [];
+  }
+  return (symbolRows || []).filter((r) => active.has(normalizeSymbol(r.symbol)));
+}
+
+function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
+  const base = frozenOnlyLiveFromHomeAccount(homeAcc);
+  const positions = [];
+  const wanted = String(scope || "all").trim() || "all";
+  for (const row of lastEodRows || []) {
+    const acc = String(row.accountId || "default");
+    if (wanted !== "all" && acc !== wanted) {
+      continue;
+    }
+    const qty = Number(row.eodShares ?? row.eod_shares) || 0;
+    if (qty <= 1e-6) {
+      continue;
+    }
+    positions.push({
+      symbol: normalizeSymbol(row.symbol),
+      quantity: qty,
+      current: 0,
+      prevClose: 0,
+      todayProfitCny: 0,
+      marketValueCny: 0,
+    });
+  }
+  return { ...base, positions, snapshotOnly: true };
+}
+
+
 function frozenOnlyLiveFromHomeAccount(homeAcc) {
   const ft = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
   const ta = Number(homeAcc?.eod_total_assets_cny) || 0;
@@ -381,10 +432,57 @@ async function loadMetricsScopeContextDbOnly(userId, accountScope, diag = null) 
   return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
 }
 
+
+async function loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag = null) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const phases = diag || null;
+  const mark = async (name, fn) => {
+    const t0 = Date.now();
+    const v = await fn();
+    if (phases) phases[name] = Date.now() - t0;
+    return v;
+  };
+
+  const pack = await mark("db.pack", () => fetchHomeBundleFrozenPack(userId, scope));
+  if (pack) {
+    const scopeCleared = isScopeMetricsCleared(scope, pack.um, pack.accountMetaList);
+    const symbols = filterSymbolHomeRowsByEod(pack.home.symbols, scope, pack.lastEodRows);
+    pack.home.symbols = symbols;
+    const live = liveFromFrozenPack(pack.home.account, pack.lastEodRows, scope);
+    if (phases) {
+      phases.live = 0;
+      phases.liveSkipped = true;
+      phases.snapshotOnly = true;
+      phases.singleConnection = true;
+      phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
+    }
+    return {
+      userId,
+      scope,
+      settings: pack.settings,
+      live,
+      um: pack.um,
+      home: pack.home,
+      accountMetaList: pack.accountMetaList,
+      scopeCleared,
+      snapshotOnly: true,
+    };
+  }
+
+  return loadMetricsScopeContextDbOnly(userId, accountScope, diag);
+}
+
+async function loadMetricsScopeContextForHome(userId, accountScope, diag = null) {
+  if (homeBundleUsesLiveQuotes()) {
+    return loadMetricsScopeContext(userId, accountScope, diag);
+  }
+  return loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag);
+}
+
 async function probeMetricsHomeBundleDb(userId, accountScope) {
   const phases = {};
   const t0 = Date.now();
-  const ctx = await loadMetricsScopeContextDbOnly(userId, accountScope, phases);
+  const ctx = await loadMetricsScopeContextSnapshotOnly(userId, accountScope, phases);
   phases.wallMs = Date.now() - t0;
   return {
     phases,
@@ -520,6 +618,7 @@ async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {
       phases: diag,
       scopeCleared: !!ctx.scopeCleared,
       symbolRows: ctx.home?.symbols?.length ?? 0,
+      snapshotOnly: !!ctx.snapshotOnly,
       ...extraDiag,
     };
   }
@@ -543,7 +642,7 @@ async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) 
   }
   const diag = wantDiag ? {} : null;
   const buildFull = async () => {
-    const ctx = await loadMetricsScopeContext(userId, accountScope, diag);
+    const ctx = await loadMetricsScopeContextForHome(userId, accountScope, diag);
     return assembleHomeBundleFromContext(ctx, stagesRaw, diag);
   };
   let value;
@@ -556,7 +655,7 @@ async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) 
     if (String(err?.message || err) !== "HOME_BUNDLE_DEADLINE") {
       throw err;
     }
-    const ctx = await loadMetricsScopeContextDbOnly(userId, accountScope, diag);
+    const ctx = await loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag);
     value = await assembleHomeBundleFromContext(ctx, stagesRaw, diag, {
       degraded: true,
       reason: "HOME_BUNDLE_DEADLINE",

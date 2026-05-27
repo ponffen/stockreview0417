@@ -1236,7 +1236,7 @@ async function getUserMetricsMeta(userId, opts = {}) {
     await ensureMetricsOpsTables();
   }
   const { rows } = await q(
-    `SELECT data_version, rebuilding, frozen_through FROM user_metrics_meta WHERE user_id = $1`,
+    `SELECT data_version, rebuilding, frozen_through, is_cleared, cleared_at FROM user_metrics_meta WHERE user_id = $1`,
     [uid]
   );
   const row = rows[0];
@@ -1832,6 +1832,109 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
   return { account: ar[0] || null, symbols: sr };
 }
 
+function parseAppSettingsFromRows(rows, accounts = []) {
+  const settings = { ...DEFAULT_SETTINGS };
+  for (const row of rows || []) {
+    if (row.key === "accounts") {
+      continue;
+    }
+    if (!(row.key in settings)) {
+      continue;
+    }
+    try {
+      settings[row.key] = JSON.parse(row.value);
+    } catch {
+      settings[row.key] = row.value;
+    }
+  }
+  settings.accounts = accounts;
+  return settings;
+}
+
+function mapUserMetricsMetaRow(row) {
+  if (!row) {
+    return { dataVersion: 0, rebuilding: false, frozenThrough: null, isCleared: false, clearedAt: null };
+  }
+  return {
+    dataVersion: Number(row.data_version) || 0,
+    rebuilding: row.rebuilding === true,
+    frozenThrough: row.frozen_through || null,
+    isCleared: row.is_cleared === true,
+    clearedAt: row.cleared_at || null,
+  };
+}
+
+/**
+ * Vercel：一次 Neon 连接拉齐首页冻结包，避免每表单独 q() 重复 connect（8 次可达 60s+）。
+ * 非 Vercel 返回 null，由调用方走常规多 q() 路径。
+ */
+async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
+  const uid = String(userId || "").trim();
+  const scope = String(accountScope || "all").trim() || "all";
+  if (!uid || !process.env.VERCEL) {
+    return null;
+  }
+  return withVercelDbClient(async (client) => {
+    const cq = (text, params) => client.query(text, params);
+    const [settingsRes, homeAccRes, symRes, umRes, accMetaRes, eodRes, accountsRes] = await Promise.all([
+      cq("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]),
+      cq("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, scope]),
+      cq(
+        "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
+        [uid, scope],
+      ),
+      cq(
+        "SELECT data_version, rebuilding, frozen_through, is_cleared, cleared_at FROM user_metrics_meta WHERE user_id = $1",
+        [uid],
+      ),
+      cq(
+        "SELECT account_id, is_cleared, cleared_at, frozen_through, updated_at FROM account_metrics_meta WHERE user_id = $1",
+        [uid],
+      ),
+      cq(
+        `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
+         FROM symbol_daily_pnl WHERE user_id = $1
+         ORDER BY account_id, symbol, date DESC`,
+        [uid],
+      ),
+      cq("SELECT id, name, currency, created_at, updated_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC", [
+        uid,
+      ]),
+    ]);
+    const accounts = (accountsRes.rows || []).map((r) => ({
+      id: String(r.id),
+      name: String(r.name || ""),
+      currency: String(r.currency || "CNY").toUpperCase(),
+      createdAt: Number(r.created_at) || 0,
+      updatedAt: Number(r.updated_at) || 0,
+    }));
+    const settings = parseAppSettingsFromRows(settingsRes.rows, accounts);
+    const um = mapUserMetricsMetaRow(umRes.rows[0]);
+    const accountMetaList = (accMetaRes.rows || []).map((r) => ({
+      accountId: String(r.account_id),
+      isCleared: r.is_cleared === true,
+      clearedAt: r.cleared_at || null,
+      frozenThrough: r.frozen_through || null,
+      updatedAt: Number(r.updated_at) || 0,
+    }));
+    const lastEodRows = (eodRes.rows || []).map((r) => ({
+      accountId: String(r.account_id),
+      symbol: String(r.symbol),
+      eodShares: Number(r.eod_shares),
+      date: String(r.date),
+    }));
+    return {
+      scope,
+      settings,
+      home: { account: homeAccRes.rows[0] || null, symbols: symRes.rows || [] },
+      um,
+      accountMetaList,
+      lastEodRows,
+      singleConnection: true,
+    };
+  });
+}
+
 const PERFORMANCE_PRESET_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
 
 /**
@@ -2025,71 +2128,6 @@ async function getLatestSymbolDailyClose(symbol) {
     return null;
   }
   return { close: Number(rows[0].close), date: String(rows[0].date) };
-}
-
-/** 批量取各标的 asOf 当日（含）前最近收盘价，一次查询，避免 N 次 Neon 连接排队。 */
-async function batchLatestSymbolDailyCloseOnOrBefore(symbols, asOf) {
-  const asOfKey = String(asOf || "").slice(0, 10);
-  if (!asOfKey) {
-    return new Map();
-  }
-  const normToCandidates = new Map();
-  const allCandidates = new Set();
-  for (const raw of symbols || []) {
-    const norm = normalizeSymbol(raw);
-    if (!norm) {
-      continue;
-    }
-    const cands = symbolQueryCandidates(norm);
-    if (!cands.length) {
-      continue;
-    }
-    normToCandidates.set(norm, cands);
-    for (const c of cands) {
-      allCandidates.add(c);
-    }
-  }
-  if (!allCandidates.size) {
-    return new Map();
-  }
-  const from = addCalendarDays(asOfKey, -14);
-  const { rows } = await q(
-    `SELECT symbol, date, close, updated_at
-     FROM symbol_daily_close
-     WHERE symbol = ANY($1::text[])
-       AND date >= $2
-       AND date <= $3
-     ORDER BY symbol ASC, date DESC, updated_at DESC`,
-    [[...allCandidates], from, asOfKey],
-  );
-  const out = new Map();
-  for (const [norm, cands] of normToCandidates.entries()) {
-    const candSet = new Set(cands);
-    let bestDate = "";
-    let bestClose = null;
-    for (const row of rows || []) {
-      const sym = String(row.symbol || "");
-      if (!candSet.has(sym)) {
-        continue;
-      }
-      const date = String(row.date || "").slice(0, 10);
-      if (!date || date > asOfKey) {
-        continue;
-      }
-      const close = Number(row.close);
-      if (!Number.isFinite(close) || close <= 0) {
-        continue;
-      }
-      if (!bestDate || date > bestDate) {
-        bestDate = date;
-        bestClose = close;
-      }
-    }
-    if (bestClose != null) {
-      out.set(norm, bestClose);
-    }
-  }
-  return out;
 }
 
 async function getSymbolDailyCloseBounds(symbol, fromDate, toDate) {
@@ -2866,12 +2904,12 @@ module.exports = {
   upsertAccountHomeSummaryRow,
   upsertSymbolHomeSummaryBatch,
   getHomeSummaryForUser,
+  fetchHomeBundleFrozenPack,
   resolveBookCurrencyForAccountScope,
   deleteAllDataForUser,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestSymbolDailyClose,
-  batchLatestSymbolDailyCloseOnOrBefore,
   getSymbolDailyCloseBounds,
   getSymbolNameMap,
   upsertSymbolNameMapBatch,
