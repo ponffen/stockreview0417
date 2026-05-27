@@ -551,7 +551,12 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     const rate = fxRate(getSymbolCurrency(symbol));
     const mv = qty * current * rate;
     liveMarketValue += mv;
-    const todayP = shouldCountTodayPositionPnlFromQuote(quote) ? qty * (current - prevClose) * rate : 0;
+    const todayPByPrice = qty * (current - prevClose) * rate;
+    const todayP = shouldCountTodayPositionPnlFromQuote(quote)
+      ? todayPByPrice
+      : Math.abs(current - prevClose) > 1e-12
+        ? todayPByPrice
+        : 0;
     todayProfitCny += todayP;
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }

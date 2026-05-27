@@ -65,7 +65,11 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
     const prev = Number(liveP?.prevClose) || current;
     const todayProfitNative =
       live.tradingDay && Number.isFinite(current) && Number.isFinite(prev) ? qty * (current - prev) : 0;
-    const todayProfitCny = live.tradingDay ? Number(liveP?.todayProfitCny) || todayProfitNative * (isCnyStock ? 1 : fx) : 0;
+    let todayProfitCny = todayProfitNative * (isCnyStock ? 1 : fx);
+    const liveTodayCny = live.tradingDay ? Number(liveP?.todayProfitCny) : 0;
+    if (live.tradingDay && Number.isFinite(liveTodayCny) && Math.abs(liveTodayCny) > 1e-9) {
+      todayProfitCny = liveTodayCny;
+    }
     const monthNative = monthFrozenNative + todayProfitNative;
     const yearNative = yearFrozenNative + todayProfitNative;
     const totalNative = totalFrozenNative + todayProfitNative;
@@ -112,7 +116,17 @@ async function buildHoldingsPayload({ accountScope, settings, live, symbolRows, 
       totalProfitDisplay: fmtPlainSignedAmount(totalNative),
       totalProfitDisplayCny: fmtPlainSignedAmount(totalCny),
       totalRateDisplay: fmtPercentRatio(totalRate),
+      totalRateNum: totalRate,
       regretDisplay: "—",
+      dayChangeRate: dayChg,
+      todayProfitNativeNum: todayProfitNative,
+      todayProfitCnyNum: todayProfitCny,
+      monthProfitNativeNum: monthNative,
+      monthProfitCnyNum: monthCny,
+      yearProfitNativeNum: yearNative,
+      yearProfitCnyNum: yearCny,
+      totalProfitNativeNum: totalNative,
+      totalProfitCnyNum: totalCny,
     });
   }
 
