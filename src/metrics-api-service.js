@@ -653,16 +653,20 @@ function buildMetricsAssetsFromContext(ctx) {
   const principal = cnyScalarToBookAmount(principalCny, book, fxU, fxH);
   const ratioStr =
     Number.isFinite(taCny) && taCny > 0 ? fmtPercentRatio(cashCny / taCny) : fmtPercentRatio(ratio / 100);
+  const stockRatioStr =
+    Number.isFinite(taCny) && taCny > 0 ? fmtPercentRatio(mvCny / taCny) : fmtPercentRatio(0);
   return {
     meta: metaEnvelope(userId, scope, settings, live, um),
     totalAssetsCny: taCny,
     marketValueCny: mvCny,
     cashCny,
     cashRatio: taCny > 0 ? cashCny / taCny : 0,
+    stockRatio: taCny > 0 ? mvCny / taCny : 0,
     principalCny,
     totalAssetsDisplay: fmtPlainAmount(ta),
     marketValueDisplay: fmtPlainAmount(mv),
     cashDisplay: fmtPlainAmount(cash),
+    stockRatioDisplay: stockRatioStr,
     cashRatioDisplay: ratioStr,
     principalDisplay: fmtPlainAmount(principal),
   };
