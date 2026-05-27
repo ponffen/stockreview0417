@@ -250,8 +250,8 @@ const LIVE_METRICS_MAX_MS = Math.max(
 );
 
 
-function homeBundleUsesLiveQuotes() {
-  return String(process.env.HOME_BUNDLE_LIVE || "").trim() === "1";
+function homeBundleUsesFrozenOnly() {
+  return String(process.env.HOME_BUNDLE_FROZEN_ONLY || "").trim() === "1";
 }
 
 function filterSymbolHomeRowsByEod(symbolRows, scope, lastEodRows) {
@@ -475,11 +475,82 @@ async function loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag = 
   return loadMetricsScopeContextDbOnly(userId, accountScope, diag);
 }
 
-async function loadMetricsScopeContextForHome(userId, accountScope, diag = null) {
-  if (homeBundleUsesLiveQuotes()) {
+async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = null) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const phases = diag || null;
+  const mark = async (name, fn) => {
+    const t0 = Date.now();
+    const v = await fn();
+    if (phases) phases[name] = Date.now() - t0;
+    return v;
+  };
+
+  const pack = await mark("db.pack", () => fetchHomeBundleFrozenPack(userId, scope));
+  if (!pack) {
     return loadMetricsScopeContext(userId, accountScope, diag);
   }
-  return loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag);
+
+  const { settings, home, um, accountMetaList, lastEodRows, trades, cashTransfers, accounts } = {
+    settings: pack.settings,
+    home: pack.home,
+    um: pack.um,
+    accountMetaList: pack.accountMetaList,
+    lastEodRows: pack.lastEodRows,
+    trades: pack.trades || [],
+    cashTransfers: pack.cashTransfers || [],
+    accounts: pack.settings?.accounts || [],
+  };
+  const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
+  home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
+
+  let liveFallback = false;
+  const live = await mark("live", () => {
+    if (scopeCleared) {
+      liveFallback = true;
+      return frozenOnlyLiveFromHomeAccount(home.account);
+    }
+    return raceWithTimeout(
+      getComputeLiveMetrics(userId, scope, {
+        preloaded: {
+          trades,
+          cashTransfers,
+          accounts,
+          homeAccount: home.account,
+          scopeCleared,
+          lastEodRows,
+        },
+      }),
+      LIVE_METRICS_MAX_MS,
+      () => {
+        liveFallback = true;
+        return frozenOnlyLiveFromHomeAccount(home.account);
+      },
+    );
+  });
+  if (phases) {
+    if (liveFallback) phases.liveFallback = true;
+    phases.snapshotOnly = false;
+    phases.singleConnection = true;
+    phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
+  }
+  return {
+    userId,
+    scope,
+    settings,
+    live,
+    um,
+    home,
+    accountMetaList,
+    scopeCleared,
+    snapshotOnly: false,
+  };
+}
+
+async function loadMetricsScopeContextForHome(userId, accountScope, diag = null) {
+  if (homeBundleUsesFrozenOnly()) {
+    return loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag);
+  }
+  return loadMetricsScopeContextLiveFromPack(userId, accountScope, diag);
 }
 
 async function probeMetricsHomeBundleDb(userId, accountScope) {
@@ -621,7 +692,8 @@ async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {
       phases: diag,
       scopeCleared: !!ctx.scopeCleared,
       symbolRows: ctx.home?.symbols?.length ?? 0,
-      snapshotOnly: !!ctx.snapshotOnly,
+      snapshotOnly: ctx.snapshotOnly === true,
+      liveQuotes: ctx.snapshotOnly !== true,
       ...extraDiag,
     };
   }

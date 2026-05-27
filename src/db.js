@@ -1893,7 +1893,7 @@ function mapUserMetricsMetaRow(row) {
 
 /**
  * Vercel：一次 Neon 连接拉齐首页冻结包，避免每表单独 q() 重复 connect（8 次可达 60s+）。
- * 非 Vercel 返回 null，由调用方走常规多 q() 路径。
+ * 单次连接拉齐首页所需库表（含 trades/cash），供 home-bundle 实时路径复用。
  */
 async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
   const uid = String(userId || "").trim();
@@ -1918,6 +1918,16 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
     );
     const accountsRes = await cq(
       "SELECT id, name, currency, created_at, updated_at FROM accounts WHERE user_id = $1 ORDER BY created_at ASC",
+      [uid],
+    );
+    const tradesRes = await cq(
+      `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+       FROM trades WHERE user_id = $1 ORDER BY trade_date ASC, created_at ASC`,
+      [uid],
+    );
+    const cashRes = await cq(
+      `SELECT id, account_id, transfer_date, direction, amount, note, created_at
+       FROM cash_transfers WHERE user_id = $1 ORDER BY transfer_date DESC, created_at DESC`,
       [uid],
     );
     let accountMetaList = [];
@@ -1976,6 +1986,8 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       um: mapUserMetricsMetaRow(umRes.rows[0]),
       accountMetaList,
       lastEodRows,
+      trades: (tradesRes.rows || []).map(rowToTrade),
+      cashTransfers: (cashRes.rows || []).map(rowToCashTransfer),
       singleConnection: true,
     };
   });
