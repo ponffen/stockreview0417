@@ -12,7 +12,7 @@ const {
   addCalendarDays,
 } = require("./db");
 const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger-metrics");
-const { applyEodPlusLiveTotals } = require("./metrics/snapshot-plus-live");
+const { applyEodPlusLiveTotals, todayProfitCnyFromTotals } = require("./metrics/snapshot-plus-live");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
@@ -556,19 +556,31 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     externalFlowTodayCny = hybrid.externalFlowTodayCny;
   }
 
+  const todayProfitFromTa = todayProfitCnyFromTotals({
+    tradingDay: true,
+    eodTotalAssetsCny,
+    totalAssetsCny,
+    externalFlowTodayCny,
+  });
+  const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
+  const principalLive =
+    eodPrincipal > 0
+      ? eodPrincipal + externalFlowTodayCny
+      : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+
   return {
     tradingDay: true,
     liveDate,
     frozenThrough: frozenThrough || null,
     delayed: !!quoteReq.delayed,
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
-    todayProfitCny,
+    todayProfitCny: todayProfitFromTa,
     liveMarketValueCny,
     lastMarketValueCny,
     cashCny,
     totalAssetsCny,
     cashRatio,
-    principalCny,
+    principalCny: principalLive,
     eodTotalAssetsCny,
     externalFlowTodayCny,
     positions,

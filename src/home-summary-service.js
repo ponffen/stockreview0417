@@ -92,6 +92,7 @@ async function rebuildHomeSummaryForScope(userId, accountScope, shared) {
     Number(lastSnap?.cashRatio ?? lastSnap?.cash_ratio) || (eodTa > 0 ? (eodCash / eodTa) * 100 : 0);
   const eodFxU = Number(lastSnap?.fxUsdCny ?? lastSnap?.fx_usd_cny) || 0;
   const eodFxH = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || 0;
+  const eodPrincipal = Number(lastSnap?.principal ?? 0) || 0;
   const now = Date.now();
   const F = String(frozen).slice(0, 10);
   const ms = monthStartKeyShanghai(todayShanghai);
@@ -177,6 +178,7 @@ async function rebuildHomeSummaryForScope(userId, accountScope, shared) {
       eodMarketValueCny: eodMv,
       eodCashCny: eodCash,
       eodCashRatio: eodCashRatio,
+      eodPrincipalCny: eodPrincipal,
       eodFxUsdCny: eodFxU,
       eodFxHkdCny: eodFxH,
       sourceVersion,

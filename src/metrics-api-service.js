@@ -32,6 +32,8 @@ const {
   computeTimeWeightedSeries,
   metricsForWindow,
   lastAnalysisDailyRowOnOrBefore,
+  xirrTodayOnly,
+  xirrStageToLive,
 } = require("./home-summary-maths");
 const { getComputeLiveMetrics } = require("./market-realtime-pnl");
 const {
@@ -45,12 +47,13 @@ const { buildHoldingsPayload } = require("./metrics/holdings-display");
 const {
   chainTwrRate,
   accountDailyTwrReturn,
+  todayProfitCnyFromTotals,
 } = require("./metrics/snapshot-plus-live");
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
 
-const METRICS_RULE_VERSION = 3;
+const METRICS_RULE_VERSION = 4;
 const BENCHMARK_SYMBOLS = new Set(["sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
 const STANDARD_RETURN_STAGES = new Set(["today", "mtd", "ytd", "inception"]);
 const METRICS_DB_BATCH_SIZE = Math.max(1, Math.min(3, Number(process.env.METRICS_DB_BATCH_SIZE || 3)));
@@ -143,7 +146,12 @@ async function loadSnapshotRowsAsc(userId, scope, from, to) {
 }
 
 function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeDate, rowsAsc, asOf) {
-  const { start, end } = resolveStageRange(stageKey, asOf, firstTradeDate);
+  const liveDate = live.tradingDay
+    ? String(live.liveDate || "").slice(0, 10)
+    : String(live.frozenThrough || asOf).slice(0, 10);
+  const rangeAsOf = liveDate || String(asOf).slice(0, 10);
+  const { start } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
+  const todayP = todayProfitCnyFromTotals(live);
   let frozenProfit = 0;
   let rateTwr = 0;
   let rateMwr = 0;
@@ -160,49 +168,66 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
     rateTwr = frozenMetrics.totalRateTwr;
     rateMwr = frozenMetrics.totalRateMwr;
   } else if (stageKey !== "today") {
+    const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
     const m = metricsForWindow(rowsAsc, start, end);
     frozenProfit = m.profitCny;
     rateTwr = m.rateTwr;
     rateMwr = m.rateMwr;
   }
+  const frozenTa =
+    Number(live.eodTotalAssetsCny) || Number(frozenMetrics.eodTotalAssetsCny) || 0;
+  const flowToday = Number(live.externalFlowTodayCny) || 0;
+  const liveTa = Number(live.totalAssetsCny) || frozenTa;
+  const frozenDate = String(live.frozenThrough || asOf).slice(0, 10);
+
   let profitCny = frozenProfit;
   if (stageKey === "today") {
-    profitCny = live.tradingDay ? live.todayProfitCny : 0;
-    const baseTa =
-      Number(live.eodTotalAssetsCny) ||
-      Number(frozenMetrics.eodTotalAssetsCny) ||
-      Number(frozenMetrics.lastMarketValueCny) ||
-      0;
-    rateTwr = baseTa > 0 && live.tradingDay ? live.todayProfitCny / baseTa : 0;
-    rateMwr = rateTwr;
-  } else if (live.tradingDay && stageKey !== "today") {
-    profitCny = frozenProfit + live.todayProfitCny;
-    const frozenTa =
-      Number(live.eodTotalAssetsCny) || Number(frozenMetrics.eodTotalAssetsCny) || 0;
-    const flowToday = Number(live.externalFlowTodayCny) || 0;
-    const rToday = accountDailyTwrReturn(frozenTa, live.totalAssetsCny, flowToday);
+    profitCny = todayP;
+    rateTwr = live.tradingDay ? accountDailyTwrReturn(frozenTa, liveTa, flowToday) : 0;
+    rateMwr = live.tradingDay
+      ? xirrTodayOnly(frozenDate, frozenTa, liveDate, liveTa, flowToday)
+      : 0;
+  } else if (live.tradingDay) {
+    profitCny = frozenProfit + todayP;
+    const rToday = accountDailyTwrReturn(frozenTa, liveTa, flowToday);
     rateTwr = chainTwrRate(rateTwr, rToday);
-    rateMwr = chainTwrRate(rateMwr, rToday);
+    const rowsForMwr = appendLiveSnapshotRow(rowsAsc, live, liveDate);
+    rateMwr = xirrStageToLive(rowsForMwr, start, liveDate, liveTa);
+  } else if (STANDARD_RETURN_STAGES.has(stageKey) && ["mtd", "ytd", "inception"].includes(stageKey)) {
+    const taEnd = live.tradingDay
+      ? liveTa
+      : Number(frozenMetrics.eodTotalAssetsCny) || liveTa;
+    rateMwr = rowsAsc.length ? xirrStageToLive(rowsAsc, start, rangeAsOf, taEnd) : rateMwr;
   }
   return { profitCny, rateTwr, rateMwr };
 }
 
-/** 仅非标准 stage 需拉 analysis 日快照；标准阶段交易日用冻结率×今日日收益连乘。 */
-function stageKeysNeedingSnapshotRows(want, live) {
-  return want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
+/** 非标准 stage，或 MWR/交易日需 analysis 日快照 */
+function stageKeysNeedingSnapshotRows(want, live, mwrMode) {
+  const set = new Set(want);
+  const out = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
+  if (mwrMode || live.tradingDay) {
+    for (const k of ["mtd", "ytd", "inception"]) {
+      if (set.has(k) && !out.includes(k)) {
+        out.push(k);
+      }
+    }
+  }
+  return out;
 }
 
 function appendLiveSnapshotRow(rowsAsc, live, liveDate) {
-  if (!live.tradingDay || !liveDate) {
+  if (!liveDate) {
     return rowsAsc;
   }
-  const out = rowsAsc.filter((r) => r.date < liveDate);
+  const ld = String(liveDate).slice(0, 10);
+  const out = rowsAsc.filter((r) => r.date < ld);
   out.push({
-    date: liveDate,
-    totalAssets: live.totalAssetsCny,
-    marketValue: live.liveMarketValueCny,
-    externalFlowCny: 0,
-    profitCny: live.todayProfitCny,
+    date: ld,
+    totalAssets: Number(live.totalAssetsCny) || 0,
+    marketValue: Number(live.liveMarketValueCny) || 0,
+    externalFlowCny: Number(live.externalFlowTodayCny) || 0,
+    profitCny: todayProfitCnyFromTotals(live),
   });
   return out;
 }
@@ -580,7 +605,8 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
   const frozen = frozenMetricsFromHomeAccount(home.account);
   const want = parseStagesParam(stagesRaw);
-  const stagesNeedingRows = stageKeysNeedingSnapshotRows(want, live);
+  const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
+  const stagesNeedingRows = stageKeysNeedingSnapshotRows(want, live, mwrMode);
   let firstTrade =
     String(home.account?.first_trade_date || home.account?.firstTradeDate || "").slice(0, 10) || asOf;
   let rowsAsc = [];
@@ -589,9 +615,12 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
     if (trades.length > 0) {
       firstTrade = [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
     }
-    let minStart = asOf;
+    const rangeAsOf = live.tradingDay
+      ? String(live.liveDate || "").slice(0, 10)
+      : String(live.frozenThrough || asOf).slice(0, 10);
+    let minStart = rangeAsOf;
     for (const key of stagesNeedingRows) {
-      const { start } = resolveStageRange(key, asOf, firstTrade);
+      const { start } = resolveStageRange(key, rangeAsOf, firstTrade);
       if (start < minStart) {
         minStart = start;
       }
@@ -599,7 +628,6 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
     rowsAsc = await loadSnapshotRowsAsc(userId, scope, minStart, asOf);
   }
   const stages = {};
-  const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   for (const key of want) {
     const { profitCny, rateTwr, rateMwr } = stageProfitFromFrozenAndLive(
       key,
@@ -642,6 +670,7 @@ function buildMetricsAssetsFromContext(ctx) {
     taCny = Number(live.totalAssetsCny) || taCny;
     mvCny = Number(live.liveMarketValueCny) || mvCny;
     cashCny = Number(live.cashCny) || cashCny;
+    principalCny = Number(live.principalCny) || principalCny;
     ratio = taCny > 0 ? (cashCny / taCny) * 100 : ratio;
   }
   const ta = cnyScalarToBookAmount(taCny, book, fxU, fxH);
@@ -673,6 +702,7 @@ async function buildMetricsHoldingsFromContext(ctx, overviewStages) {
   const { userId, scope, settings, live, um, home } = ctx;
   const trades = await getTrades(userId);
   const rows = await buildHoldingsPayload({
+    userId,
     accountScope: scope,
     settings,
     live,

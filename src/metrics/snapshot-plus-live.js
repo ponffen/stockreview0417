@@ -21,6 +21,29 @@ function accountDailyTwrReturn(frozenTotalAssetsCny, liveTotalAssetsCny, externa
   return (live - base - flow) / denom;
 }
 
+/** 今日收益（账户）：当前总资产 − 冻结日总资产 − 今日银证净额 */
+function todayProfitCnyFromTotals(live) {
+  if (!live?.tradingDay) {
+    return 0;
+  }
+  const frozenTa = Number(live.eodTotalAssetsCny) || 0;
+  const flow = Number(live.externalFlowTodayCny) || 0;
+  const ta = Number(live.totalAssetsCny) || 0;
+  return ta - frozenTa - flow;
+}
+
+/** 个股日 TWR：市值=总资产，当日买卖=出入金 */
+function positionDailyTwrReturn(startMarketValueNat, liveMarketValueNat, todayProfitNative, todayTradeFlowNative) {
+  const base = Number(startMarketValueNat) || 0;
+  const flow = Number(todayTradeFlowNative) || 0;
+  const profit = Number(todayProfitNative) || 0;
+  const denom = base + Math.max(flow, 0);
+  if (denom <= 0) {
+    return 0;
+  }
+  return profit / denom;
+}
+
 /**
  * 总资产 = 冻结市值 + (实时市值-冻结市值) + 冻结现金 + (账本现金_live-账本现金_冻结)。
  * 与全量重放 ledger 到 live 日区分，避免与 EOD 快照现金不一致。
@@ -80,5 +103,7 @@ function applyEodPlusLiveTotals({
 module.exports = {
   chainTwrRate,
   accountDailyTwrReturn,
+  todayProfitCnyFromTotals,
+  positionDailyTwrReturn,
   applyEodPlusLiveTotals,
 };

@@ -6,9 +6,15 @@ const {
   formatSymbolForDisplay,
   getSymbolNameMap,
   resolveBookCurrencyForAccountScope,
+  getSymbolDailyPnl,
 } = require("../db");
 const { fmtPlainAmount, fmtPlainSignedAmount, fmtPercentRatio, cnyScalarToBookAmount } = require("../account-kpi-surface");
-const { chainTwrRate } = require("./snapshot-plus-live");
+const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live");
+const { xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
+const {
+  getPositionDayTradeContext,
+  getTradingDateKeyBy0830,
+} = require("../position-today-pnl");
 
 function profitShareRatio(stockProfitCny, overviewProfitCny, book, fxUsdCny, fxHkdCny) {
   const stockBook = cnyScalarToBookAmount(stockProfitCny, book, fxUsdCny, fxHkdCny);
@@ -82,7 +88,59 @@ function lastTradeBySymbol(trades, accountScope) {
   return map;
 }
 
+function symbolPnlToValueFlowPoints(pnlRows) {
+  const pts = [];
+  for (const r of pnlRows || []) {
+    const d = String(r.date || "").slice(0, 10);
+    const sh = Number(r.eodShares ?? r.eod_shares) || 0;
+    const px = Number(r.dayClosePrice ?? r.day_close_price);
+    const flow = Number(r.dayTradeFlowNative ?? r.day_trade_flow_native) || 0;
+    if (!d || !(sh > 0) || !(px > 0)) {
+      continue;
+    }
+    pts.push({ date: d, value: sh * px, flow });
+  }
+  pts.sort((a, b) => a.date.localeCompare(b.date));
+  return pts;
+}
+
+function symbolTotalRates({
+  snap,
+  liveP,
+  live,
+  trades,
+  sym,
+  todayProfitNative,
+  pnlRows,
+  mwrMode,
+}) {
+  const current = Number(liveP?.current) || 0;
+  const prev = Number(liveP?.prevClose) || current;
+  const qty = Number(liveP?.quantity) || 0;
+  const mvNat = qty * current;
+  const todayKey = live.tradingDay ? String(live.liveDate || getTradingDateKeyBy0830()).slice(0, 10) : "";
+  const dayCtx = todayKey ? getPositionDayTradeContext(sym, todayKey, trades) : { startQuantity: 0, dayFlowNative: 0 };
+  const startMv = (Number(dayCtx.startQuantity) || 0) * prev;
+  const flowNat = Number(dayCtx.dayFlowNative) || 0;
+  const frozenTotalRateTwr = Number(snap?.total_rate_twr);
+  let rateTwr = Number.isFinite(frozenTotalRateTwr) ? frozenTotalRateTwr : 0;
+  if (live.tradingDay && Number.isFinite(frozenTotalRateTwr)) {
+    const rToday = positionDailyTwrReturn(startMv, mvNat, todayProfitNative, flowNat);
+    rateTwr = chainTwrRate(frozenTotalRateTwr, rToday);
+  }
+  const pts = symbolPnlToValueFlowPoints(pnlRows);
+  const frozenThrough = String(snap?.frozen_through || live.frozenThrough || "").slice(0, 10);
+  const endDate = live.tradingDay ? todayKey : frozenThrough;
+  let rateMwr = Number(snap?.total_rate_mwr) || 0;
+  if (pts.length || mvNat > 0) {
+    const histPts = live.tradingDay && todayKey ? pts.filter((p) => p.date < todayKey) : pts;
+    rateMwr = xirrFromSymbolValueFlowPoints(histPts, endDate, mvNat);
+  }
+  return { rateTwr, rateMwr: mwrMode ? rateMwr : rateTwr, totalRate: mwrMode ? rateMwr : rateTwr };
+}
+
 async function buildHoldingsPayload({
+  userId,
   accountScope,
   settings,
   live,
@@ -94,6 +152,7 @@ async function buildHoldingsPayload({
   const fxU = Number(accountRow?.eod_fx_usd_cny) || live.fxUsdCny || 7.2;
   const fxH = Number(accountRow?.eod_fx_hkd_cny) || live.fxHkdCny || 0.92;
   const book = resolveBookCurrencyForAccountScope(settings, accountScope);
+  const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const overviewMonthCny = Number(overviewStages?.mtd?.profitCny) || 0;
   const overviewYearCny = Number(overviewStages?.ytd?.profitCny) || 0;
   const overviewTotalCny = Number(overviewStages?.inception?.profitCny) || 0;
@@ -103,6 +162,33 @@ async function buildHoldingsPayload({
   const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
   const nameMap = await getSymbolNameMap([...keys]);
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
+  const scopeId = String(accountScope || "all").trim() || "all";
+  const frozenThrough = String(
+    accountRow?.frozen_through || symbolRows?.[0]?.frozen_through || live.frozenThrough || "",
+  ).slice(0, 10);
+  const firstTrade = String(accountRow?.first_trade_date || accountRow?.firstTradeDate || frozenThrough || "1970-01-01").slice(
+    0,
+    10,
+  );
+  const pnlTo = live.tradingDay
+    ? String(live.liveDate || frozenThrough).slice(0, 10)
+    : frozenThrough;
+  const allPnl =
+    userId && pnlTo
+      ? await getSymbolDailyPnl(
+          { accountId: scopeId === "all" ? "" : scopeId, from: firstTrade, to: pnlTo },
+          userId,
+        )
+      : [];
+  const pnlBySym = new Map();
+  for (const r of allPnl) {
+    const sym = normalizeSymbol(r.symbol);
+    if (!pnlBySym.has(sym)) {
+      pnlBySym.set(sym, []);
+    }
+    pnlBySym.get(sym).push(r);
+  }
+
   const rowsOut = [];
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
@@ -137,15 +223,16 @@ async function buildHoldingsPayload({
         ? mvNat - totalNative
         : mvNat;
     const sigma = qty > 0 ? costNat / qty : 0;
-    const frozenTotalRate = Number(snap?.total_rate_twr);
-    let totalRate = Number.isFinite(frozenTotalRate)
-      ? frozenTotalRate
-      : Math.abs(sigma * qty) > 0
-        ? totalNative / Math.abs(sigma * qty)
-        : 0;
-    if (live.tradingDay && Number.isFinite(frozenTotalRate) && Number.isFinite(dayChg)) {
-      totalRate = chainTwrRate(frozenTotalRate, dayChg);
-    }
+    const { totalRate, rateTwr, rateMwr } = symbolTotalRates({
+      snap,
+      liveP,
+      live,
+      trades,
+      sym,
+      todayProfitNative,
+      pnlRows: pnlBySym.get(sym) || [],
+      mwrMode,
+    });
 
     const snapName = String(snap?.name || "").trim();
     const mappedName = String(nameMap[sym] || "").trim();
@@ -187,6 +274,8 @@ async function buildHoldingsPayload({
       totalWeightNum: 0,
       totalRateDisplay: fmtPercentRatio(totalRate),
       totalRateNum: totalRate,
+      totalRateTwrNum: rateTwr,
+      totalRateMwrNum: rateMwr,
       regretDisplay: formatRegretRateWithSide(regretRate, lastTr.lastTradeSide),
       regretRateNum: regretRate,
       lastTradeSide: lastTr.lastTradeSide || "",
