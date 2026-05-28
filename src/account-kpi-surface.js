@@ -28,8 +28,7 @@ function fmtPercentRatio(n) {
   if (!Number.isFinite(v)) {
     return "—";
   }
-  const pct = Math.abs(v) <= 1.00001 ? v * 100 : v;
-  return `${pct.toFixed(2)}%`;
+  return `${(v * 100).toFixed(2)}%`;
 }
 
 /** 收益率展示（总览 headline）：正值带 + 号，如 +0.65% */
@@ -134,7 +133,10 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
   const mv = cnyScalarToBookAmount(mvCny, book, fxUsd, fxHkd);
   const cash = cnyScalarToBookAmount(cashCny, book, fxUsd, fxHkd);
   const principal = cnyScalarToBookAmount(principalCny, book, fxUsd, fxHkd);
-  const ratioStr = Number.isFinite(taCny) && taCny > 0 && Number.isFinite(cashCny) ? fmtPercentRatio(cashCny / taCny) : fmtPercentRatio(ratioDb);
+  const ratioStr =
+    Number.isFinite(taCny) && taCny > 0 && Number.isFinite(cashCny)
+      ? fmtPercentRatio(cashCny / taCny)
+      : fmtPercentRatio(Number.isFinite(ratioDb) ? ratioDb / 100 : 0);
 
   const stage = (profitCamel, profitSnake, rtCamel, rtSnake, rmCamel, rmSnake) => {
     const p = rowNum(row, profitCamel, profitSnake, 0);

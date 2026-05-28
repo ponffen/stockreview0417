@@ -7199,6 +7199,8 @@ function buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeSymbols, _todayKey
       monthHistNative: Number(r.month_profit_native) || 0,
       yearHistNative: Number(r.ytd_profit_native) || 0,
       totalHistNative: Number(r.total_profit_native) || 0,
+      totalRateTwr: Number(r.total_rate_twr) || 0,
+      totalRateMwr: Number(r.total_rate_mwr) || 0,
     });
   }
   return map;
@@ -7251,7 +7253,19 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
         hasSnap && monthDen > 0 ? applyFxForOverview(row, monthN) / monthDen : hasSnap ? 0 : null;
       const yearW = hasSnap && yearDen > 0 ? applyFxForOverview(row, yearN) / yearDen : hasSnap ? 0 : null;
       const sigmaAbs = Math.abs(Number(row.sigmaAmountNative) || 0);
-      const totalRateSnap = hasSnap && sigmaAbs > 1e-9 ? totalN / sigmaAbs : hasSnap ? 0 : null;
+      const useMwrRate = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+      const materializedRate = hasSnap
+        ? useMwrRate
+          ? Number(s.totalRateMwr)
+          : Number(s.totalRateTwr)
+        : NaN;
+      const totalRateSnap = hasSnap
+        ? Number.isFinite(materializedRate)
+          ? materializedRate
+          : sigmaAbs > 1e-9
+            ? totalN / sigmaAbs
+            : 0
+        : null;
 
       const dayClass = hasSnap ? (applyFxForOverview(row, todayN) >= 0 ? "up" : "down") : "";
       const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
