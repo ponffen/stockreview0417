@@ -189,15 +189,29 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
   } else if (live.tradingDay && stageKey !== "today") {
     profitCny = frozenProfit + live.todayProfitCny;
     const winEnd = live.liveDate || asOf;
-    const mLive = metricsForWindow(
-      appendLiveSnapshotRow(rowsAsc, live, winEnd),
-      start,
-      winEnd,
-    );
-    rateTwr = mLive.rateTwr;
-    rateMwr = mLive.rateMwr;
+    const series = appendLiveSnapshotRow(rowsAsc, live, winEnd);
+    const inWin = series.filter((r) => r.date >= start && r.date <= winEnd);
+    if (inWin.length >= 2) {
+      const mLive = metricsForWindow(series, start, winEnd);
+      rateTwr = mLive.rateTwr;
+      rateMwr = mLive.rateMwr;
+    }
   }
   return { profitCny, rateTwr, rateMwr };
+}
+
+/** 交易日重算 mtd/ytd/inception 收益率需日快照；标准阶段默认不拉库，此处显式列入。 */
+function stageKeysNeedingSnapshotRows(want, live) {
+  const keys = new Set(want);
+  const out = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
+  if (live?.tradingDay) {
+    for (const k of ["mtd", "ytd", "inception"]) {
+      if (keys.has(k)) {
+        out.push(k);
+      }
+    }
+  }
+  return [...new Set(out)];
 }
 
 function appendLiveSnapshotRow(rowsAsc, live, liveDate) {
@@ -582,17 +596,17 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
   const frozen = frozenMetricsFromHomeAccount(home.account);
   const want = parseStagesParam(stagesRaw);
-  const customStages = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
+  const stagesNeedingRows = stageKeysNeedingSnapshotRows(want, live);
   let firstTrade =
     String(home.account?.first_trade_date || home.account?.firstTradeDate || "").slice(0, 10) || asOf;
   let rowsAsc = [];
-  if (customStages.length) {
+  if (stagesNeedingRows.length) {
     const trades = await getTrades(userId);
     if (trades.length > 0) {
       firstTrade = [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
     }
     let minStart = asOf;
-    for (const key of customStages) {
+    for (const key of stagesNeedingRows) {
       const { start } = resolveStageRange(key, asOf, firstTrade);
       if (start < minStart) {
         minStart = start;

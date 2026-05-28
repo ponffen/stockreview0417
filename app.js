@@ -2458,7 +2458,6 @@ function bindEvents() {
   stageRangeSelect?.addEventListener("change", () => {
     state.stageRange = stageRangeSelect.value;
     persistState();
-    invalidateOverviewMetricsUi();
     renderOverviewAndStockTable();
   });
 
@@ -5462,7 +5461,7 @@ function renderOverviewAndStockTable() {
   }
   const aid = String(state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId));
   const stageKey = metricsStageFromHome();
-  const metricsKey = `${aid}|${stageKey}|${state.algoMode}`;
+  const metricsKey = overviewMetricsBundleCacheKey(aid);
 
   if (!apiReady) {
     setOverviewProfitKpisDash();
@@ -7430,7 +7429,17 @@ async function fetchHomeSummaryRemote() {
 }
 
 const METRICS_HOME_STAGE = { month: "mtd", ytd: "ytd", total: "inception" };
+/** 首屏 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
+const METRICS_HOME_BUNDLE_STAGES = "today,mtd,ytd,inception";
+const METRICS_HOME_BUNDLE_STAGE_KEYS = ["today", "mtd", "ytd", "inception"];
 function metricsStageFromHome() { return METRICS_HOME_STAGE[state.stageRange] || "mtd"; }
+function overviewMetricsBundleCacheKey(aid) {
+  return `${aid}|${state.algoMode}`;
+}
+function overviewReturnsHasAllHomeStages(ret) {
+  if (!ret?.stages) return false;
+  return METRICS_HOME_BUNDLE_STAGE_KEYS.every((k) => ret.stages[k]);
+}
 function metricsStageFromAnalysis() {
   const preset = resolvePerformancePresetKeyFromAnalysisState();
   if (preset) return preset;
@@ -7605,7 +7614,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
   if (!todayProfitMain || !monthProfitMain) return;
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const stageKey = metricsStageFromHome();
-  const reqKey = `${aid}|${stageKey}|${state.algoMode}`;
+  const reqKey = overviewMetricsBundleCacheKey(aid);
   if (_overviewProfitInflight?.key === reqKey) return _overviewProfitInflight.promise;
   const seq = ++overviewProfitRefreshSeq;
   const promise = _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey);
@@ -7614,7 +7623,7 @@ async function refreshOverviewProfitRowFromSnapshots() {
 }
 
 async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
-  const metricsKey = `${aid}|${stageKey}|${state.algoMode}`;
+  const metricsKey = overviewMetricsBundleCacheKey(aid);
   state.overviewMetricsUi.loading = true;
   try {
     if (!apiReady) {
@@ -7622,7 +7631,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     }
     const bundle = await fetchMetricsApi("/metrics/home-bundle", {
       accountScope: aid,
-      stages: `today,${stageKey}`,
+      stages: METRICS_HOME_BUNDLE_STAGES,
     });
     const ret = bundle?.returns;
     const assets = bundle?.assets;
@@ -7631,8 +7640,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
       return;
     }
     const ok =
-      ret?.stages?.today &&
-      ret?.stages?.[stageKey] &&
+      overviewReturnsHasAllHomeStages(ret) &&
       assets?.totalAssetsDisplay != null &&
       Array.isArray(hold?.rows);
     if (!ok) {
@@ -7651,7 +7659,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
       holdings: hold,
     };
     if (state.route === "earning") {
-      paintOverviewFromMetricsBundle(ret, assets, hold, stageKey);
+      paintOverviewFromMetricsBundle(ret, assets, hold, metricsStageFromHome());
     }
   } catch {
     if (seq === overviewProfitRefreshSeq) {
