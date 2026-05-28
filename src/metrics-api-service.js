@@ -42,6 +42,10 @@ const {
 } = require("./metrics/stages");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { buildHoldingsPayload } = require("./metrics/holdings-display");
+const {
+  chainTwrRate,
+  accountDailyTwrReturn,
+} = require("./metrics/snapshot-plus-live");
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
@@ -164,35 +168,28 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
   let profitCny = frozenProfit;
   if (stageKey === "today") {
     profitCny = live.tradingDay ? live.todayProfitCny : 0;
-    const baseMv = Number(frozenMetrics.lastMarketValueCny) || 0;
-    rateTwr = baseMv > 0 && live.tradingDay ? live.todayProfitCny / baseMv : 0;
+    const baseTa =
+      Number(live.eodTotalAssetsCny) ||
+      Number(frozenMetrics.eodTotalAssetsCny) ||
+      Number(frozenMetrics.lastMarketValueCny) ||
+      0;
+    rateTwr = baseTa > 0 && live.tradingDay ? live.todayProfitCny / baseTa : 0;
     rateMwr = rateTwr;
   } else if (live.tradingDay && stageKey !== "today") {
     profitCny = frozenProfit + live.todayProfitCny;
-    const winEnd = live.liveDate || asOf;
-    const series = appendLiveSnapshotRow(rowsAsc, live, winEnd);
-    const inWin = series.filter((r) => r.date >= start && r.date <= winEnd);
-    if (inWin.length >= 2) {
-      const mLive = metricsForWindow(series, start, winEnd);
-      rateTwr = mLive.rateTwr;
-      rateMwr = mLive.rateMwr;
-    }
+    const frozenTa =
+      Number(live.eodTotalAssetsCny) || Number(frozenMetrics.eodTotalAssetsCny) || 0;
+    const flowToday = Number(live.externalFlowTodayCny) || 0;
+    const rToday = accountDailyTwrReturn(frozenTa, live.totalAssetsCny, flowToday);
+    rateTwr = chainTwrRate(rateTwr, rToday);
+    rateMwr = chainTwrRate(rateMwr, rToday);
   }
   return { profitCny, rateTwr, rateMwr };
 }
 
-/** 交易日重算 mtd/ytd/inception 收益率需日快照；标准阶段默认不拉库，此处显式列入。 */
+/** 仅非标准 stage 需拉 analysis 日快照；标准阶段交易日用冻结率×今日日收益连乘。 */
 function stageKeysNeedingSnapshotRows(want, live) {
-  const keys = new Set(want);
-  const out = want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
-  if (live?.tradingDay) {
-    for (const k of ["mtd", "ytd", "inception"]) {
-      if (keys.has(k)) {
-        out.push(k);
-      }
-    }
-  }
-  return [...new Set(out)];
+  return want.filter((k) => !STANDARD_RETURN_STAGES.has(k));
 }
 
 function appendLiveSnapshotRow(rowsAsc, live, liveDate) {
@@ -223,6 +220,9 @@ function frozenMetricsFromHomeAccount(acc) {
       totalRateTwr: 0,
       totalRateMwr: 0,
       lastMarketValueCny: 0,
+      eodTotalAssetsCny: 0,
+      eodMarketValueCny: 0,
+      eodCashCny: 0,
     };
   }
   return {
@@ -236,6 +236,9 @@ function frozenMetricsFromHomeAccount(acc) {
     totalRateTwr: Number(acc.total_rate_twr) || 0,
     totalRateMwr: Number(acc.total_rate_mwr) || 0,
     lastMarketValueCny: Number(acc.last_market_value_cny) || Number(acc.eod_market_value_cny) || 0,
+    eodTotalAssetsCny: Number(acc.eod_total_assets_cny) || 0,
+    eodMarketValueCny: Number(acc.eod_market_value_cny) || 0,
+    eodCashCny: Number(acc.eod_cash_cny) || 0,
   };
 }
 
@@ -636,11 +639,10 @@ function buildMetricsAssetsFromContext(ctx) {
   let principalCny = Number(acc?.eod_principal_cny) || 0;
   let ratio = Number(acc?.eod_cash_ratio) || 0;
   if (live.tradingDay) {
-    taCny = live.totalAssetsCny;
-    mvCny = live.liveMarketValueCny;
-    cashCny = live.cashCny;
-    principalCny = live.principalCny;
-    ratio = live.cashRatio * 100;
+    taCny = Number(live.totalAssetsCny) || taCny;
+    mvCny = Number(live.liveMarketValueCny) || mvCny;
+    cashCny = Number(live.cashCny) || cashCny;
+    ratio = taCny > 0 ? (cashCny / taCny) * 100 : ratio;
   }
   const ta = cnyScalarToBookAmount(taCny, book, fxU, fxH);
   const mv = cnyScalarToBookAmount(mvCny, book, fxU, fxH);

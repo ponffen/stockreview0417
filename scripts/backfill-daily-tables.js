@@ -17,7 +17,12 @@ const { deletePerformanceSeriesForUser } = require(path.join(__dirname, "..", "s
 
 async function main() {
   await ensurePerformanceSchemaV2();
+  const phoneArg = process.argv[2] || process.env.STOCKREVIEW_PHONE;
+  if (phoneArg) {
+    process.env.STOCKREVIEW_PHONE = String(phoneArg).trim();
+  }
   const uid = await getCliUserId();
+  console.log("[backfill] user", uid, "phone", process.env.STOCKREVIEW_PHONE || "(cli default)");
   await deletePerformanceSeriesForUser(uid);
   await deleteAllSymbolDailyPnl(uid);
   await deleteAllAnalysisDailySnapshot(uid);

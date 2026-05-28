@@ -8,6 +8,7 @@ const {
   resolveBookCurrencyForAccountScope,
 } = require("../db");
 const { fmtPlainAmount, fmtPlainSignedAmount, fmtPercentRatio, cnyScalarToBookAmount } = require("../account-kpi-surface");
+const { chainTwrRate } = require("./snapshot-plus-live");
 
 function profitShareRatio(stockProfitCny, overviewProfitCny, book, fxUsdCny, fxHkdCny) {
   const stockBook = cnyScalarToBookAmount(stockProfitCny, book, fxUsdCny, fxHkdCny);
@@ -136,7 +137,15 @@ async function buildHoldingsPayload({
         ? mvNat - totalNative
         : mvNat;
     const sigma = qty > 0 ? costNat / qty : 0;
-    const totalRate = Math.abs(sigma * qty) > 0 ? totalNative / Math.abs(sigma * qty) : 0;
+    const frozenTotalRate = Number(snap?.total_rate_twr);
+    let totalRate = Number.isFinite(frozenTotalRate)
+      ? frozenTotalRate
+      : Math.abs(sigma * qty) > 0
+        ? totalNative / Math.abs(sigma * qty)
+        : 0;
+    if (live.tradingDay && Number.isFinite(frozenTotalRate) && Number.isFinite(dayChg)) {
+      totalRate = chainTwrRate(frozenTotalRate, dayChg);
+    }
 
     const snapName = String(snap?.name || "").trim();
     const mappedName = String(nameMap[sym] || "").trim();

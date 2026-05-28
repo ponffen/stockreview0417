@@ -12,6 +12,7 @@ const {
   addCalendarDays,
 } = require("./db");
 const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger-metrics");
+const { applyEodPlusLiveTotals } = require("./metrics/snapshot-plus-live");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
@@ -510,9 +511,50 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }
 
-  const cashCny = computeLedgerCashCnyUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+  const ledgerCashAtLive = computeLedgerCashCnyUpToDate(
+    trades,
+    cashTransfers,
+    accounts,
+    scope,
+    fxUsdMap,
+    fxHkdMap,
+    liveDate,
+  );
   const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
-  const totalAssetsCny = liveMarketValue + cashCny;
+  let cashCny = ledgerCashAtLive;
+  let liveMarketValueCny = liveMarketValue;
+  let totalAssetsCny = liveMarketValue + cashCny;
+  let cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
+  let eodTotalAssetsCny = Number(homeAcc?.eod_total_assets_cny) || 0;
+  let externalFlowTodayCny = 0;
+
+  const fxLiveMap = {
+    [String(liveDate)]: fxSpot.USD,
+  };
+  const fxHkdLiveMap = {
+    [String(liveDate)]: fxSpot.HKD,
+  };
+  const hybrid = applyEodPlusLiveTotals({
+    homeAcc,
+    frozenThrough,
+    liveDate,
+    liveMarketValueCny: liveMarketValue,
+    ledgerCashAtLive,
+    trades,
+    cashTransfers,
+    accounts,
+    scope,
+    fxUsdMap: { ...fxUsdMap, ...fxLiveMap },
+    fxHkdMap: { ...fxHkdMap, ...fxHkdLiveMap },
+  });
+  if (hybrid) {
+    liveMarketValueCny = hybrid.liveMarketValueCny;
+    cashCny = hybrid.cashCny;
+    totalAssetsCny = hybrid.totalAssetsCny;
+    cashRatio = hybrid.cashRatio;
+    eodTotalAssetsCny = hybrid.eodTotalAssetsCny;
+    externalFlowTodayCny = hybrid.externalFlowTodayCny;
+  }
 
   return {
     tradingDay: true,
@@ -521,12 +563,14 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     delayed: !!quoteReq.delayed,
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
     todayProfitCny,
-    liveMarketValueCny: liveMarketValue,
+    liveMarketValueCny,
     lastMarketValueCny,
     cashCny,
     totalAssetsCny,
-    cashRatio: totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0,
+    cashRatio,
     principalCny,
+    eodTotalAssetsCny,
+    externalFlowTodayCny,
     positions,
     fxUsdCny: fxSpot.USD,
     fxHkdCny: fxSpot.HKD,

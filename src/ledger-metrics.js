@@ -131,9 +131,35 @@ function principalCnyUpToDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMap,
   return sum;
 }
 
+/** 单日银证出入金（CNY），与 analysis_daily_snapshot.external_flow_cny 口径一致。 */
+function externalFlowCnyForDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMap, dateKey) {
+  const dk = String(dateKey || "").slice(0, 10);
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const filtered =
+    String(accountId || "all").trim() === "all"
+      ? cashRows || []
+      : (cashRows || []).filter((c) => String(c.accountId || "default") === String(accountId));
+  let sum = 0;
+  for (const r of filtered) {
+    if (String(r.date || "").slice(0, 10) !== dk) {
+      continue;
+    }
+    const acc = accById.get(String(r.accountId || "default")) || { currency: "CNY" };
+    const ccy = String(acc.currency || "CNY").toUpperCase();
+    const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
+    const nat = sign * Math.abs(Number(r.amount) || 0);
+    if (!Number.isFinite(nat) || nat === 0) {
+      continue;
+    }
+    sum += ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk);
+  }
+  return sum;
+}
+
 module.exports = {
   computeLedgerCashCnyUpToDate,
   principalCnyUpToDate,
+  externalFlowCnyForDate,
   tradeSignedCashNativeForLedger,
   tradeCashFlowInAccountCurrency,
 };
