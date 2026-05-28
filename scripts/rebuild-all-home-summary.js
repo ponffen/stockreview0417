@@ -15,8 +15,19 @@ async function main() {
   for (const uid of ids) {
     try {
       const r = await rebuildHomeSummaryForUser(uid);
-      if (r?.ok) ok += 1;
-      else if (r?.skip) skip += 1;
+      if (r?.ok) {
+        ok += 1;
+        console.log(
+          "[rebuild-home-summary]",
+          uid,
+          "frozen=",
+          r.frozenThrough,
+          "scopes=",
+          r.scopeCount,
+          "symbols=",
+          r.symbolCount,
+        );
+      } else if (r?.skip) skip += 1;
       else fail += 1;
     } catch (e) {
       console.error("[rebuild-home-summary]", uid, e?.message || e);

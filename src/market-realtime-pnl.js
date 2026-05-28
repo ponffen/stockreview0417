@@ -14,6 +14,7 @@ const {
 const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger-metrics");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
+const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
 const {
   parseQuoteTimeToDateKey,
   todayProfitCnyForHolding,
@@ -250,52 +251,6 @@ function getSymbolCurrency(symbol) {
     return "CNY";
   }
   return "USD";
-}
-
-function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
-  const wanted = String(accountScope || "all").trim() || "all";
-  const list =
-    wanted === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === wanted);
-  const holdings = new Map();
-  for (const trade of list.sort((a, b) => {
-    const ad = new Date(a.date).getTime();
-    const bd = new Date(b.date).getTime();
-    if (ad !== bd) {
-      return ad - bd;
-    }
-    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
-  })) {
-    const symbol = normalizeSymbol(trade.symbol);
-    if (!symbol) {
-      continue;
-    }
-    holdings.set(
-      symbol,
-      (holdings.get(symbol) || 0) +
-        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
-    );
-  }
-  let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
-  if (!lastEodRows?.length) {
-    return symbols;
-  }
-  const eodSharesBySym = new Map();
-  for (const row of lastEodRows) {
-    const acc = String(row.accountId || row.account_id || "default");
-    if (wanted !== "all" && acc !== wanted) {
-      continue;
-    }
-    const sym = normalizeSymbol(row.symbol);
-    if (!sym) {
-      continue;
-    }
-    const sh = Number(row.eodShares ?? row.eod_shares) || 0;
-    eodSharesBySym.set(sym, (eodSharesBySym.get(sym) || 0) + sh);
-  }
-  if (eodSharesBySym.size) {
-    symbols = symbols.filter((s) => (eodSharesBySym.get(s) || 0) > 1e-6);
-  }
-  return symbols;
 }
 
 function buildLiveFromHomeFrozen({

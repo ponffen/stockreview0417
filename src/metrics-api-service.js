@@ -42,6 +42,7 @@ const {
 } = require("./metrics/stages");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { buildHoldingsPayload } = require("./metrics/holdings-display");
+const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
 
@@ -81,42 +82,11 @@ function isScopeMetricsCleared(scope, um, accountMetaList) {
 }
 
 function filterActiveSymbolHomeRows(symbolRows, trades, scope, lastEodRows) {
-  const active = new Set(holdingsSymbolsFromTradesForFilter(trades, scope, lastEodRows));
+  const active = new Set(holdingsSymbolsFromTrades(trades, scope, lastEodRows));
   if (!active.size) {
     return [];
   }
   return (symbolRows || []).filter((r) => active.has(normalizeSymbol(r.symbol)));
-}
-
-function holdingsSymbolsFromTradesForFilter(trades, accountScope, lastEodRows = null) {
-  const wanted = String(accountScope || "all").trim() || "all";
-  const list =
-    wanted === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === wanted);
-  const holdings = new Map();
-  for (const trade of list) {
-    const symbol = normalizeSymbol(trade.symbol);
-    if (!symbol) continue;
-    holdings.set(
-      symbol,
-      (holdings.get(symbol) || 0) +
-        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
-    );
-  }
-  let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
-  if (!lastEodRows?.length) return symbols;
-  const eodSharesBySym = new Map();
-  for (const row of lastEodRows) {
-    const acc = String(row.accountId || row.account_id || "default");
-    if (wanted !== "all" && acc !== wanted) continue;
-    const sym = normalizeSymbol(row.symbol);
-    if (!sym) continue;
-    const sh = Number(row.eodShares ?? row.eod_shares) || 0;
-    eodSharesBySym.set(sym, (eodSharesBySym.get(sym) || 0) + sh);
-  }
-  if (eodSharesBySym.size) {
-    symbols = symbols.filter((s) => (eodSharesBySym.get(s) || 0) > 1e-6);
-  }
-  return symbols;
 }
 
 
@@ -523,7 +493,7 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
     lastEodRows: pack.lastEodRows,
     trades: pack.trades || [],
     cashTransfers: pack.cashTransfers || [],
-    accounts: pack.settings?.accounts || [],
+    accounts: pack.accounts || [],
   };
   const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);

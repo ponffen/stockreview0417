@@ -3,6 +3,7 @@ const {
   ensureHomeSummaryTables,
   getTrades,
   getCashTransfers,
+  getAccounts,
   getLatestAnalysisSnapshotDate,
   getAnalysisDailySnapshots,
   getSymbolDailyPnl,
@@ -46,42 +47,49 @@ function firstTradeDateForSymbol(trades, sym) {
   return String(list[0].date || "").slice(0, 10);
 }
 
+function tradesForScope(trades, accountScope) {
+  const scope = String(accountScope || "all").trim() || "all";
+  if (scope === "all") {
+    return trades || [];
+  }
+  return (trades || []).filter((t) => String(t.accountId || "default") === scope);
+}
+
 /**
- * 重算并写入 account_scope=all 的首页汇总（截止到 analysis 日序列最大日期）。
+ * 重算单个 account_scope 的首页汇总（account_home_summary + symbol_home_summary）。
  */
-async function rebuildHomeSummaryForUser(userId) {
-  await ensureHomeSummaryTables();
+async function rebuildHomeSummaryForScope(userId, accountScope, shared) {
   const uid = String(userId || "").trim();
-  if (!uid) {
-    return { ok: false, error: "empty user" };
-  }
-  const frozen = await getLatestAnalysisSnapshotDate(uid, "all");
+  const scope = String(accountScope || "all").trim() || "all";
+  const { trades, cash, todayShanghai, sourceVersion, globalFrozen } = shared;
+  const scopedTrades = tradesForScope(trades, scope);
+
+  let frozen = await getLatestAnalysisSnapshotDate(uid, scope);
   if (!frozen) {
-    return { ok: false, skip: true, reason: "no analysis snapshot" };
+    frozen = globalFrozen;
   }
-  const trades = await getTrades(uid);
-  if (!trades.length) {
-    return { ok: false, skip: true, reason: "no trades" };
+  if (!frozen) {
+    return { ok: false, skip: true, scope, reason: "no analysis snapshot" };
   }
-  const cash = await getCashTransfers(uid);
-  const firstTrade = firstTradeDateFromTrades(trades);
-  const analysisRows = await getAnalysisDailySnapshots({ accountId: "all", from: "1970-01-01", to: frozen }, uid);
+  if (!scopedTrades.length && scope !== "all") {
+    return { ok: false, skip: true, scope, reason: "no trades for scope" };
+  }
+
+  const firstTrade = firstTradeDateFromTrades(scopedTrades.length ? scopedTrades : trades);
+  const analysisRows = await getAnalysisDailySnapshots({ accountId: scope, from: "1970-01-01", to: frozen }, uid);
   if (!analysisRows.length) {
-    return { ok: false, skip: true, reason: "no analysis rows" };
+    return { ok: false, skip: true, scope, reason: "no analysis rows" };
   }
-  // Use today's Shanghai date so MTD/YTD windows are relative to the current month/year,
-  // not the frozen date — ensures cleared users show 0% for the current period.
-  const todayShanghai = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+
   const acc = computeAccountHomeSummaryFromSnapshots(analysisRows, frozen, firstTrade, todayShanghai);
-  const sourceVersion = buildSourceVersion(trades, cash);
   const now = Date.now();
   const F = String(frozen).slice(0, 10);
   const ms = monthStartKeyShanghai(todayShanghai);
   const ys = yearStartKeyShanghai(todayShanghai);
 
-  const allSymPnl = await getSymbolDailyPnl({ accountId: "all", from: firstTrade || F, to: frozen }, uid);
+  const symPnl = await getSymbolDailyPnl({ accountId: scope, from: firstTrade || F, to: frozen }, uid);
   const bySym = new Map();
-  for (const r of allSymPnl) {
+  for (const r of symPnl) {
     const sym = String(r.symbol || "").toLowerCase().trim();
     if (!sym) continue;
     if (!bySym.has(sym)) bySym.set(sym, []);
@@ -92,7 +100,7 @@ async function rebuildHomeSummaryForUser(userId) {
   }
 
   const symKeys = new Set(bySym.keys());
-  for (const tr of trades) {
+  for (const tr of scopedTrades) {
     const s = String(tr.symbol || "").toLowerCase().trim();
     if (s) symKeys.add(s);
   }
@@ -100,7 +108,7 @@ async function rebuildHomeSummaryForUser(userId) {
   const symbolBatch = [];
   for (const sym of [...symKeys].sort()) {
     const arr = bySym.get(sym) || [];
-    const symFirst = firstTradeDateForSymbol(trades, sym) || firstTrade || F;
+    const symFirst = firstTradeDateForSymbol(scopedTrades.length ? scopedTrades : trades, sym) || firstTrade || F;
     let monthP = 0;
     let ytdP = 0;
     let totalP = 0;
@@ -136,13 +144,13 @@ async function rebuildHomeSummaryForUser(userId) {
     });
   }
 
-  await deleteSymbolHomeSummaryForScope(uid, "all");
+  await deleteSymbolHomeSummaryForScope(uid, scope);
   if (symbolBatch.length) {
-    await upsertSymbolHomeSummaryBatch(symbolBatch, uid, "all");
+    await upsertSymbolHomeSummaryBatch(symbolBatch, uid, scope);
   }
   await upsertAccountHomeSummaryRow(
     {
-      accountScope: "all",
+      accountScope: scope,
       frozenThrough: F,
       firstTradeDate: firstTrade,
       lastMarketValueCny: acc.lastMarketValueCny,
@@ -158,19 +166,71 @@ async function rebuildHomeSummaryForUser(userId) {
       sourceVersion,
       computedAt: now,
     },
-    uid
+    uid,
   );
 
   return {
     ok: true,
-    userId: uid,
+    scope,
     frozenThrough: F,
     symbolCount: symbolBatch.length,
+  };
+}
+
+/**
+ * 重算并写入全部 account_scope（all + 各子账户）的首页汇总。
+ */
+async function rebuildHomeSummaryForUser(userId) {
+  await ensureHomeSummaryTables();
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { ok: false, error: "empty user" };
+  }
+  const globalFrozen = await getLatestAnalysisSnapshotDate(uid, "all");
+  if (!globalFrozen) {
+    return { ok: false, skip: true, reason: "no analysis snapshot" };
+  }
+  const trades = await getTrades(uid);
+  if (!trades.length) {
+    return { ok: false, skip: true, reason: "no trades" };
+  }
+  const cash = await getCashTransfers(uid);
+  const accounts = await getAccounts(uid);
+  const todayShanghai = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+  const sourceVersion = buildSourceVersion(trades, cash);
+  const shared = { trades, cash, todayShanghai, sourceVersion, globalFrozen };
+
+  const scopes = ["all", ...accounts.map((a) => String(a.id || "").trim()).filter(Boolean)];
+  const scopeResults = [];
+  let totalSymbols = 0;
+  for (const scope of scopes) {
+    const r = await rebuildHomeSummaryForScope(uid, scope, shared);
+    scopeResults.push(r);
+    if (r.ok) {
+      totalSymbols += Number(r.symbolCount) || 0;
+    }
+  }
+
+  const anyOk = scopeResults.some((r) => r.ok);
+  if (!anyOk) {
+    const first = scopeResults.find((r) => r.reason) || scopeResults[0];
+    return { ok: false, skip: first?.skip, reason: first?.reason || "no scope rebuilt", scopeResults };
+  }
+
+  return {
+    ok: true,
+    userId: uid,
+    frozenThrough: String(globalFrozen).slice(0, 10),
+    symbolCount: totalSymbols,
+    scopeCount: scopeResults.filter((r) => r.ok).length,
+    scopeResults,
     sourceVersion,
   };
 }
 
 module.exports = {
   rebuildHomeSummaryForUser,
+  rebuildHomeSummaryForScope,
   buildSourceVersion,
+  tradesForScope,
 };
