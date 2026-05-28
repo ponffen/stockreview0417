@@ -17,7 +17,7 @@ function toTencentQuoteKey(rawSymbol) {
   if (/^sh\d{6}$/.test(raw) || /^sz\d{6}$/.test(raw) || /^hk\d{5}$/.test(raw)) {
     return raw;
   }
-  if (/^us[A-Z0-9._-]+$/i.test(orig)) {
+  if (/^us[A-Z0-9._-]+$/i.test(orig) && !/^us[_\.]/i.test(orig)) {
     const base = orig
       .replace(/^us/i, "")
       .replace(/\.(OQ|N)$/i, "");

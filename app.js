@@ -10512,7 +10512,11 @@ function supportsKline(symbol) {
 
 function normalizeTrade(input) {
   const trade = { ...input };
-  trade.symbol = normalizeSymbol(trade.symbol || "");
+  const rawSym = trade.symbol || trade.name || "";
+  trade.symbol = normalizeSymbol(rawSym);
+  if (!trade.symbol && trade.name) {
+    trade.symbol = normalizeSymbol(trade.name);
+  }
   trade.type = trade.type || "trade";
   trade.side = normalizedSide(trade.type, trade.side || "buy");
   trade.price = Number(trade.price || 0);
@@ -10562,6 +10566,18 @@ function signedAmount(trade) {
   return trade.side === "buy" ? trade.amount : -trade.amount;
 }
 
+const US_SYMBOL_ALIASES = {
+  英伟达: "nvda",
+  苹果: "aapl",
+  特斯拉: "tsla",
+  谷歌: "goog",
+  alphabet: "goog",
+  微软: "msft",
+  亚马逊: "amzn",
+  台积电: "tsm",
+  nvidia: "nvda",
+};
+
 function normalizeSymbol(rawSymbol) {
   const value = String(rawSymbol || "")
     .trim()
@@ -10572,6 +10588,18 @@ function normalizeSymbol(rawSymbol) {
   }
   if (value.startsWith("fx_") || /^wh(usd|hkd)cny$/.test(value) || value === "usdcny" || value === "hkdcny") {
     return value;
+  }
+  if (US_SYMBOL_ALIASES[value]) {
+    return US_SYMBOL_ALIASES[value];
+  }
+  if (/^us\.([a-z][a-z0-9._-]*)$/i.test(value)) {
+    const ticker = value
+      .slice(3)
+      .replace(/\.(oq|n)$/i, "")
+      .toLowerCase();
+    if (ticker) {
+      return ticker;
+    }
   }
   if (value.startsWith("us_")) {
     const ticker = value
