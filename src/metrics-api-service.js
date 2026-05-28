@@ -23,6 +23,7 @@ const {
   fmtPlainAmount,
   fmtPlainSignedAmount,
   fmtPercentRatio,
+  fmtSignedPercentRatio,
   cnyScalarToBookAmount,
 } = require("./account-kpi-surface");
 const {
@@ -632,9 +633,9 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
       rateMwr,
       rate,
       profitDisplay: fmtPlainSignedAmount(profitCny),
-      rateTwrDisplay: fmtPercentRatio(rateTwr),
-      rateMwrDisplay: fmtPercentRatio(rateMwr),
-      rateDisplay: fmtPercentRatio(rate),
+      rateTwrDisplay: fmtSignedPercentRatio(rateTwr),
+      rateMwrDisplay: fmtSignedPercentRatio(rateMwr),
+      rateDisplay: fmtSignedPercentRatio(rate),
     };
   }
   return {
@@ -939,7 +940,7 @@ function todayPointForReturns(live, algoMode) {
     profitCny: live.todayProfitCny,
     profitDisplay: fmtMoney(live.todayProfitCny, "CNY"),
     rate: mwr ? rateTwr : rateTwr,
-    rateDisplay: fmtPercentRatio(rateTwr),
+    rateDisplay: fmtSignedPercentRatio(rateTwr),
   };
 }
 

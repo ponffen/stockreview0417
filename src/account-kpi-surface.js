@@ -32,6 +32,17 @@ function fmtPercentRatio(n) {
   return `${pct.toFixed(2)}%`;
 }
 
+/** 收益率展示（总览 headline）：正值带 + 号，如 +0.65% */
+function fmtSignedPercentRatio(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    return "—";
+  }
+  const pct = Math.abs(v) <= 1.00001 ? v * 100 : v;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
 function fmtPlainAmount(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) {
@@ -132,7 +143,7 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
       profitCny: p,
       rate: r,
       profitDisplay: fmtMoney(p, "CNY"),
-      rateDisplay: fmtPercentRatio(r),
+      rateDisplay: fmtSignedPercentRatio(r),
     };
   };
 
@@ -168,4 +179,5 @@ module.exports = {
   fmtPlainAmount,
   fmtPlainSignedAmount,
   fmtPercentRatio,
+  fmtSignedPercentRatio,
 };
