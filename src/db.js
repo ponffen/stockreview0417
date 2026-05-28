@@ -1982,6 +1982,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
     return {
       scope,
       settings: parseAppSettingsFromRows(settingsRes.rows, accounts),
+      accounts,
       home: { account: homeAccount, symbols: symRes.rows || [] },
       um: mapUserMetricsMetaRow(umRes.rows[0]),
       accountMetaList,

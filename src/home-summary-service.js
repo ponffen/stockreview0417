@@ -82,6 +82,16 @@ async function rebuildHomeSummaryForScope(userId, accountScope, shared) {
   }
 
   const acc = computeAccountHomeSummaryFromSnapshots(analysisRows, frozen, firstTrade, todayShanghai);
+  const lastSnap =
+    [...analysisRows].reverse().find((r) => String(r.date || "").slice(0, 10) === String(frozen).slice(0, 10)) ||
+    analysisRows[analysisRows.length - 1];
+  const eodTa = Number(lastSnap?.totalAssets ?? lastSnap?.total_assets) || 0;
+  const eodMv = Number(lastSnap?.marketValue ?? lastSnap?.market_value) || 0;
+  const eodCash = Number(lastSnap?.cash ?? lastSnap?.cash_cny) || 0;
+  const eodCashRatio =
+    Number(lastSnap?.cashRatio ?? lastSnap?.cash_ratio) || (eodTa > 0 ? (eodCash / eodTa) * 100 : 0);
+  const eodFxU = Number(lastSnap?.fxUsdCny ?? lastSnap?.fx_usd_cny) || 0;
+  const eodFxH = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || 0;
   const now = Date.now();
   const F = String(frozen).slice(0, 10);
   const ms = monthStartKeyShanghai(todayShanghai);
@@ -163,6 +173,12 @@ async function rebuildHomeSummaryForScope(userId, accountScope, shared) {
       totalProfitCny: acc.totalProfitCny,
       totalRateTwr: acc.totalRateTwr,
       totalRateMwr: acc.totalRateMwr,
+      eodTotalAssetsCny: eodTa,
+      eodMarketValueCny: eodMv,
+      eodCashCny: eodCash,
+      eodCashRatio: eodCashRatio,
+      eodFxUsdCny: eodFxU,
+      eodFxHkdCny: eodFxH,
       sourceVersion,
       computedAt: now,
     },

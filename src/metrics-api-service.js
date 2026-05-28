@@ -81,6 +81,16 @@ function isScopeMetricsCleared(scope, um, accountMetaList) {
   return meta?.isCleared === true;
 }
 
+function accountsFromHomeBundlePack(pack) {
+  if (Array.isArray(pack?.accounts) && pack.accounts.length > 0) {
+    return pack.accounts;
+  }
+  if (Array.isArray(pack?.settings?.accounts) && pack.settings.accounts.length > 0) {
+    return pack.settings.accounts;
+  }
+  return [];
+}
+
 function filterActiveSymbolHomeRows(symbolRows, trades, scope, lastEodRows) {
   const active = new Set(holdingsSymbolsFromTrades(trades, scope, lastEodRows));
   if (!active.size) {
@@ -374,7 +384,7 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
         preloaded: {
           trades,
           cashTransfers,
-          accounts,
+          accounts: accounts.length > 0 ? accounts : undefined,
           homeAccount: home.account,
           scopeCleared,
           lastEodRows,
@@ -493,7 +503,7 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
     lastEodRows: pack.lastEodRows,
     trades: pack.trades || [],
     cashTransfers: pack.cashTransfers || [],
-    accounts: pack.accounts || [],
+    accounts: accountsFromHomeBundlePack(pack),
   };
   const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);

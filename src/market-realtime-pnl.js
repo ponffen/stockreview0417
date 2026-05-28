@@ -23,6 +23,13 @@ const {
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 const quoteMem = new Map();
+
+function resolvePreloadedAccounts(pre) {
+  if (Array.isArray(pre?.accounts) && pre.accounts.length > 0) {
+    return pre.accounts;
+  }
+  return null;
+}
 const QUOTE_CHUNK_SIZE = 55;
 const QUOTE_FETCH_TIMEOUT_MS = 5_000;
 const QUOTE_TOTAL_BUDGET_MS = Math.max(
@@ -338,10 +345,11 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const fxHkdMap = fxHkdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxHkdFrozen } : {};
 
   const pre = opts?.preloaded || {};
+  const preloadedAccounts = resolvePreloadedAccounts(pre);
   const [trades, cashTransfers, accounts] = await Promise.all([
     pre.trades ? Promise.resolve(pre.trades) : getTrades(uid),
     pre.cashTransfers ? Promise.resolve(pre.cashTransfers) : getCashTransfers(uid),
-    pre.accounts ? Promise.resolve(pre.accounts) : getAccounts(uid),
+    preloadedAccounts ? Promise.resolve(preloadedAccounts) : getAccounts(uid),
   ]);
 
   if (!tradingDay) {
