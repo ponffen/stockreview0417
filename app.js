@@ -877,19 +877,31 @@ function resolveStockSortKeyValue(row, key) {
     return row.cost;
   }
   if (key === "monthProfit") {
-    return applyFxForOverview(row, row.monthProfitNative ?? row.monthProfit);
+    return nativeToOverviewBook(
+      row,
+      row.monthProfitNative ?? row.monthProfit,
+      getOverviewBookCurrency(),
+    );
   }
   if (key === "monthWeight") {
     return row.monthWeight;
   }
   if (key === "yearProfit") {
-    return applyFxForOverview(row, row.yearProfitNative ?? row.yearProfit);
+    return nativeToOverviewBook(
+      row,
+      row.yearProfitNative ?? row.yearProfit,
+      getOverviewBookCurrency(),
+    );
   }
   if (key === "yearWeight") {
     return row.yearWeight;
   }
   if (key === "totalProfit") {
-    return applyFxForOverview(row, row.totalProfitNative ?? row.totalProfit);
+    return nativeToOverviewBook(
+      row,
+      row.totalProfitNative ?? row.totalProfit,
+      getOverviewBookCurrency(),
+    );
   }
   if (key === "totalRate") {
     return row.totalRate;
@@ -7479,11 +7491,11 @@ function resolveMetricsStockSortKeyValue(row, key) {
   if (key === "marketValue") return Number(row.marketValueNum) || 0;
   if (key === "weight") return Number(row.weightNum) || 0;
   if (key === "cost") return Number(row.costNum) || 0;
-  if (key === "monthProfit") return metricsRowSignedAmount(row, "monthProfit");
+  if (key === "monthProfit") return metricsRowProfitSortAmount(row, "monthProfit");
   if (key === "monthWeight") return Number(row.monthWeightNum) || 0;
-  if (key === "yearProfit") return metricsRowSignedAmount(row, "yearProfit");
+  if (key === "yearProfit") return metricsRowProfitSortAmount(row, "yearProfit");
   if (key === "yearWeight") return Number(row.yearWeightNum) || 0;
-  if (key === "totalProfit") return metricsRowSignedAmount(row, "totalProfit");
+  if (key === "totalProfit") return metricsRowProfitSortAmount(row, "totalProfit");
   if (key === "totalRate") return Number(row.totalRateNum) || 0;
   if (key === "todayProfit") return metricsRowSignedAmount(row, "todayProfit");
   if (key === "regretRate") return Number(row.regretRateNum) || 0;
@@ -7520,6 +7532,24 @@ function metricsRowSignedAmount(row, fieldBase) {
   const numKey = cnyOn ? `${fieldBase}CnyNum` : `${fieldBase}NativeNum`;
   const n = Number(row[numKey]);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** 个股表月/年/总收益排序：单账户按账户默认币种，全部账户按人民币（不受 ¥ 列切换影响） */
+function metricsRowProfitSortAmount(row, fieldBase) {
+  const book = getOverviewBookCurrency();
+  const cny = Number(row[`${fieldBase}CnyNum`]);
+  if (!Number.isFinite(cny)) {
+    return 0;
+  }
+  if (book === "CNY") {
+    return cny;
+  }
+  const ccy = String(row.currency || "").toUpperCase();
+  const native = Number(row[`${fieldBase}NativeNum`]);
+  if (ccy === book && Number.isFinite(native)) {
+    return native;
+  }
+  return amountBookFromCny(cny, book);
 }
 
 function metricsRowProfitClass(row, fieldBase) {
