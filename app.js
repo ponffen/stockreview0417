@@ -5386,7 +5386,7 @@ async function paintOverviewSnapshotUiTestMode() {
     if (stockTableBody) {
       stockTableBody.innerHTML = `
       <tr>
-        <td colspan="14"><p class="empty">「快照测试」请切换到<strong>全部账户</strong>；地址栏保留 <code>?snapshotUi=1</code>。</p></td>
+        <td colspan="15"><p class="empty">「快照测试」请切换到<strong>全部账户</strong>；地址栏保留 <code>?snapshotUi=1</code>。</p></td>
       </tr>
     `;
     }
@@ -5409,7 +5409,7 @@ async function paintOverviewSnapshotUiTestMode() {
     setOverviewProfitKpisDash();
     if (stockTableBody) {
       stockTableBody.innerHTML = `
-      <tr><td colspan="14"><p class="empty">请先登录后再测 snapshotUi=1。</p></td></tr>
+      <tr><td colspan="15"><p class="empty">请先登录后再测 snapshotUi=1。</p></td></tr>
     `;
     }
     return;
@@ -6778,7 +6778,7 @@ function paintOverviewStockTableLoading(message = "数据加载中…") {
   if (!stockTableBody) {
     return;
   }
-  stockTableBody.innerHTML = `<tr><td colspan="14"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
+  stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
 }
 
 function applyOverviewMetricsMeta(meta) {
@@ -7212,7 +7212,7 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
   if (!rows.length) {
     stockTableBody.innerHTML = `
       <tr>
-        <td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
+        <td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
       </tr>
     `;
     return;
@@ -7496,6 +7496,7 @@ function resolveMetricsStockSortKeyValue(row, key) {
   if (key === "yearProfit") return metricsRowProfitSortAmount(row, "yearProfit");
   if (key === "yearWeight") return Number(row.yearWeightNum) || 0;
   if (key === "totalProfit") return metricsRowProfitSortAmount(row, "totalProfit");
+  if (key === "totalWeight") return Number(row.totalWeightNum) || 0;
   if (key === "totalRate") return Number(row.totalRateNum) || 0;
   if (key === "todayProfit") return metricsRowSignedAmount(row, "todayProfit");
   if (key === "regretRate") return Number(row.regretRateNum) || 0;
@@ -7574,7 +7575,7 @@ function metricsHoldingsMoneyCell(row, fieldBase) {
 function paintOverviewStockTableFromMetricsRows(rows) {
   if (!stockTableBody) return;
   const sorted = sortMetricsHoldingsRows(rows);
-  if (!sorted.length) { stockTableBody.innerHTML = `<tr><td colspan="14"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`; return; }
+  if (!sorted.length) { stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`; return; }
   stockTableBody.innerHTML = sorted.map((row) => {
     const sym = normalizeSymbol(row.symbol);
     const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
@@ -7587,7 +7588,7 @@ function paintOverviewStockTableFromMetricsRows(rows) {
     const totalRateClass = Number.isFinite(totalRateNum) ? (totalRateNum >= 0 ? "up" : "down") : "";
     const regretN = Number(row.regretRateNum) || 0;
     const regretClass = regretN >= 0 ? "up" : "down";
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfitDisplay"))}</td><td><div class="cell-main">${escapeHtml(row.priceDisplay || "–")}</div><div class="cell-sub ${dayClass}">${escapeHtml(row.dayChangeDisplay || "–")}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValueDisplay"))}</div><div class="cell-sub">${escapeHtml(row.quantityDisplay || "–")}</div></td><td>${escapeHtml(row.weightDisplay || "–")}</td><td>${escapeHtml(row.costDisplay || "–")}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfitDisplay"))}</td><td>${escapeHtml(row.monthWeightDisplay || "–")}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfitDisplay"))}</td><td>${escapeHtml(row.yearWeightDisplay || "–")}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfitDisplay"))}</td><td class="${totalRateClass}">${escapeHtml(row.totalRateDisplay || "–")}</td><td class="${regretClass}">${escapeHtml(row.regretDisplay || "–")}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfitDisplay"))}</td><td><div class="cell-main">${escapeHtml(row.priceDisplay || "–")}</div><div class="cell-sub ${dayClass}">${escapeHtml(row.dayChangeDisplay || "–")}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValueDisplay"))}</div><div class="cell-sub">${escapeHtml(row.quantityDisplay || "–")}</div></td><td>${escapeHtml(row.weightDisplay || "–")}</td><td>${escapeHtml(row.costDisplay || "–")}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfitDisplay"))}</td><td>${escapeHtml(row.monthWeightDisplay || "–")}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfitDisplay"))}</td><td>${escapeHtml(row.yearWeightDisplay || "–")}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfitDisplay"))}</td><td>${escapeHtml(row.totalWeightDisplay || "–")}</td><td class="${totalRateClass}">${escapeHtml(row.totalRateDisplay || "–")}</td><td class="${regretClass}">${escapeHtml(row.regretDisplay || "–")}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }
 function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {

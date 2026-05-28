@@ -686,7 +686,7 @@ function buildMetricsAssetsFromContext(ctx) {
   };
 }
 
-async function buildMetricsHoldingsFromContext(ctx) {
+async function buildMetricsHoldingsFromContext(ctx, overviewStages) {
   const { userId, scope, settings, live, um, home } = ctx;
   const trades = await getTrades(userId);
   const rows = await buildHoldingsPayload({
@@ -696,6 +696,7 @@ async function buildMetricsHoldingsFromContext(ctx) {
     symbolRows: home.symbols,
     accountRow: home.account,
     trades,
+    overviewStages: overviewStages || {},
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), rows };
 }
@@ -714,7 +715,7 @@ async function getMetricsAssets(userId, accountScope) {
 async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {}) {
   const returns = await buildMetricsReturnsFromContext(ctx, stagesRaw);
   const assets = buildMetricsAssetsFromContext(ctx);
-  const holdings = await buildMetricsHoldingsFromContext(ctx);
+  const holdings = await buildMetricsHoldingsFromContext(ctx, returns.stages);
   const value = { returns, assets, holdings };
   if (diag) {
     value._diag = {
@@ -899,7 +900,8 @@ async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
 
 async function getHoldings(userId, accountScope) {
   const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildMetricsHoldingsFromContext(ctx);
+  const returns = await buildMetricsReturnsFromContext(ctx, "today,mtd,ytd,inception");
+  return buildMetricsHoldingsFromContext(ctx, returns.stages);
 }
 
 async function getStockRank(userId, accountScope, stage) {
