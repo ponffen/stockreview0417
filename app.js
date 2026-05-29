@@ -8102,9 +8102,6 @@ async function renderAnalysis(options = {}) {
   if (state.route !== "analysis") {
     return;
   }
-  void ensureLedgerDataLoaded().then(() => {
-    if (state.route === "analysis") void renderAnalysis({ showLoading: false });
-  });
   const showLoading = options.showLoading !== false;
   if (showLoading) {
     showRouteLoading("数据正在加载中");

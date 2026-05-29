@@ -112,6 +112,12 @@ function urlPathOnly(u) {
   return p || "/";
 }
 
+/** 去掉尾部斜杠，避免 rewrite 后 path 不一致漏掉直连白名单 */
+function apiPathKey(pathOnly) {
+  const p = String(pathOnly || "/").replace(/\/+$/, "") || "/";
+  return p;
+}
+
 function getSearchParam(req, key) {
   try {
     const u = new URL(String(req.url || "/"), "http://localhost");
@@ -207,69 +213,57 @@ module.exports = async function handler(req, res) {
   } catch (_) {}
 
   const pathOnly = urlPathOnly(req.url);
+  const pathKey = apiPathKey(pathOnly);
 
-  // metrics bundle：直连 metrics 服务，不 require 整个 server.js（避免冷启动 50s+ 断连）
-  const isHomeBundlePath =
-    pathOnly === "/api/metrics/home-bundle-diag" || pathOnly === "/api/metrics/home-bundle";
-  const isAnalysisBundlePath = pathOnly === "/api/metrics/analysis-bundle";
-  const isPublicHomeBundle = /^\/api\/public\/[^/]+\/metrics\/home-bundle$/.test(pathOnly);
-  const isPublicAnalysisBundle = /^\/api\/public\/[^/]+\/metrics\/analysis-bundle$/.test(pathOnly);
+  async function resolveMetricsBundleUserId(publicPath) {
+    const { readUserIdFromRequest } = require("../src/auth-session");
+    const { getUserCommunityRow } = require("../src/db");
+    const viewerId = readUserIdFromRequest(req);
+    if (!viewerId) {
+      return { ok: false, status: 401, error: "请先登录" };
+    }
+    if (!publicPath) {
+      return { ok: true, userId: viewerId };
+    }
+    const targetId = pathKey.split("/")[3];
+    const tid = String(targetId || "").trim();
+    if (viewerId === tid) {
+      return { ok: true, userId: tid };
+    }
+    const row = await getUserCommunityRow(tid);
+    if (!row) {
+      return { ok: false, status: 404, error: "用户不存在" };
+    }
+    if (!Number(row.community_public)) {
+      return { ok: false, status: 403, error: "未公开持仓" };
+    }
+    return { ok: true, userId: tid };
+  }
+
+  // home-bundle：直连 metrics，不 require server.js（避免冷启动 50s+ pending）
   if (
     req.method === "GET" &&
-    (isHomeBundlePath || isAnalysisBundlePath || isPublicHomeBundle || isPublicAnalysisBundle)
+    (pathKey === "/api/metrics/home-bundle-diag" || pathKey === "/api/metrics/home-bundle")
   ) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     try {
-      const { readUserIdFromRequest } = require("../src/auth-session");
-      const { getUserCommunityRow } = require("../src/db");
-      const viewerId = readUserIdFromRequest(req);
-      if (!viewerId) {
-        res.statusCode = 401;
-        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+      const gate = await resolveMetricsBundleUserId(false);
+      if (!gate.ok) {
+        res.statusCode = gate.status;
+        res.end(JSON.stringify({ ok: false, error: gate.error }));
         return;
-      }
-      let userId = viewerId;
-      if (isPublicHomeBundle || isPublicAnalysisBundle) {
-        const targetId = pathOnly.split("/")[3];
-        const tid = String(targetId || "").trim();
-        if (viewerId !== tid) {
-          const row = await getUserCommunityRow(tid);
-          if (!row) {
-            res.statusCode = 404;
-            res.end(JSON.stringify({ ok: false, error: "用户不存在" }));
-            return;
-          }
-          if (!Number(row.community_public)) {
-            res.statusCode = 403;
-            res.end(JSON.stringify({ ok: false, error: "未公开持仓" }));
-            return;
-          }
-        }
-        userId = tid;
       }
       const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
-      const {
-        probeMetricsHomeBundleDb,
-        getMetricsHomeBundle,
-        getMetricsAnalysisBundle,
-      } = require("../src/metrics-api-service");
-      if (pathOnly === "/api/metrics/home-bundle-diag") {
-        const _diag = await probeMetricsHomeBundleDb(userId, accountScope);
+      const { probeMetricsHomeBundleDb, getMetricsHomeBundle } = require("../src/metrics-api-service");
+      if (pathKey === "/api/metrics/home-bundle-diag") {
+        const _diag = await probeMetricsHomeBundleDb(gate.userId, accountScope);
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: { _diag, direct: true, build: "v8-metrics-bundle" } }));
-        return;
-      }
-      if (isAnalysisBundlePath || isPublicAnalysisBundle) {
-        const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
-        const symbol = String(getSearchParam(req, "symbol") || "").trim();
-        const data = await getMetricsAnalysisBundle(userId, accountScope, stage, symbol);
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-analysis-bundle" } }));
+        res.end(JSON.stringify({ ok: true, data: { _diag, direct: true, build: "v8-home-bundle" } }));
         return;
       }
       const diagQ = String(getSearchParam(req, "diag") || "").trim().toLowerCase();
-      const data = await getMetricsHomeBundle(userId, accountScope, getSearchParam(req, "stages"), {
+      const data = await getMetricsHomeBundle(gate.userId, accountScope, getSearchParam(req, "stages"), {
         diag: diagQ === "1" || diagQ === "true",
         diagOnly: diagQ === "only",
       });
@@ -277,13 +271,78 @@ module.exports = async function handler(req, res) {
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-home-bundle" } }));
       return;
     } catch (error) {
-      console.error("[api/index.js] direct metrics-bundle error:", error);
+      console.error("[api/index.js] direct home-bundle error:", error);
       res.statusCode = 500;
       res.end(
         JSON.stringify({
           ok: false,
-          error: error?.message || "metrics-bundle direct failed",
-          build: "v8-metrics-bundle",
+          error: error?.message || "home-bundle direct failed",
+          build: "v8-home-bundle",
+        }),
+      );
+      return;
+    }
+  }
+
+  // analysis-bundle：与 home-bundle 相同直连策略（勿落入 Express 懒加载）
+  const isPublicAnalysisBundle = /^\/api\/public\/[^/]+\/metrics\/analysis-bundle$/.test(pathKey);
+  if (req.method === "GET" && (pathKey === "/api/metrics/analysis-bundle" || isPublicAnalysisBundle)) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const gate = await resolveMetricsBundleUserId(isPublicAnalysisBundle);
+      if (!gate.ok) {
+        res.statusCode = gate.status;
+        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        return;
+      }
+      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
+      const symbol = String(getSearchParam(req, "symbol") || "").trim();
+      const { getMetricsAnalysisBundle } = require("../src/metrics-api-service");
+      const data = await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol);
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-analysis-bundle" } }));
+      return;
+    } catch (error) {
+      console.error("[api/index.js] direct analysis-bundle error:", error);
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: error?.message || "analysis-bundle direct failed",
+          build: "v8-analysis-bundle",
+        }),
+      );
+      return;
+    }
+  }
+
+  const isPublicHomeBundle = /^\/api\/public\/[^/]+\/metrics\/home-bundle$/.test(pathKey);
+  if (req.method === "GET" && isPublicHomeBundle) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const gate = await resolveMetricsBundleUserId(true);
+      if (!gate.ok) {
+        res.statusCode = gate.status;
+        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        return;
+      }
+      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const { getMetricsHomeBundle } = require("../src/metrics-api-service");
+      const data = await getMetricsHomeBundle(gate.userId, accountScope, getSearchParam(req, "stages"));
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-home-bundle" } }));
+      return;
+    } catch (error) {
+      console.error("[api/index.js] direct public home-bundle error:", error);
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: error?.message || "public home-bundle direct failed",
+          build: "v8-home-bundle",
         }),
       );
       return;
