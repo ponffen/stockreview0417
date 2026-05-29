@@ -755,8 +755,7 @@ const {
   ensureHomeSummaryTables,
   buildAccountKpiSurfaceForScope,
 } = require("./src/db");
-const { runDailyFreeze, resolveFrozenDate } = require("./src/eod-freeze-service");
-const { rebuildHomeSummaryForUser } = require("./src/home-summary-service");
+const { runDailyFreeze, resolveFrozenDate, freezeUserToDate } = require("./src/eod-freeze-service");
 
 /** 合并短时间内的多次失效触发，避免 rebuild 占满 Neon 连接导致全站 API pending */
 const homeSummaryRebuildTimers = new Map();
@@ -776,7 +775,7 @@ function scheduleRebuildHomeSummaryForUser(userId) {
   }
   const t = setTimeout(() => {
     homeSummaryRebuildTimers.delete(uid);
-    rebuildHomeSummaryForUser(uid).catch(() => {});
+    freezeUserToDate(uid, null, { force: false, syncDailyClose: false }).catch(() => {});
   }, HOME_SUMMARY_REBUILD_DEBOUNCE_MS);
   homeSummaryRebuildTimers.set(uid, t);
 }

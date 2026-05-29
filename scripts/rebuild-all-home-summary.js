@@ -1,40 +1,23 @@
 #!/usr/bin/env node
 /**
- * 为所有用户重算 account_home_summary / symbol_home_summary（需 DATABASE_URL）。
+ * @deprecated 使用 metrics v3：node scripts/backfill-daily-tables.js
  */
-process.env.VERCEL = process.env.VERCEL || "1";
-
-const { listAllUserIds } = require("../src/db");
-const { rebuildHomeSummaryForUser } = require("../src/home-summary-service");
+const path = require("node:path");
+const { listAllUserIds } = require(path.join(__dirname, "..", "src", "db"));
+const { runFreezeV3ForUser } = require(path.join(__dirname, "..", "src", "metrics/freeze-v3"));
+const { resolveFrozenDate } = require(path.join(__dirname, "..", "src", "eod-freeze-service"));
 
 async function main() {
-  const ids = await listAllUserIds();
-  let ok = 0;
-  let skip = 0;
-  let fail = 0;
-  for (const uid of ids) {
+  const uids = await listAllUserIds();
+  const frozenDate = resolveFrozenDate();
+  for (const uid of uids) {
     try {
-      const r = await rebuildHomeSummaryForUser(uid);
-      if (r?.ok) {
-        ok += 1;
-        console.log(
-          "[rebuild-home-summary]",
-          uid,
-          "frozen=",
-          r.frozenThrough,
-          "scopes=",
-          r.scopeCount,
-          "symbols=",
-          r.symbolCount,
-        );
-      } else if (r?.skip) skip += 1;
-      else fail += 1;
+      const r = await runFreezeV3ForUser(uid, { frozenDate, force: true, syncDailyClose: true, logger: console });
+      console.log("[rebuild-metrics-v3]", uid, r.skipped ? "skip" : "ok", r.frozenDate || r.reason);
     } catch (e) {
-      console.error("[rebuild-home-summary]", uid, e?.message || e);
-      fail += 1;
+      console.error("[rebuild-metrics-v3]", uid, e?.message || e);
     }
   }
-  console.log(JSON.stringify({ users: ids.length, ok, skip, fail }));
 }
 
 main().catch((e) => {

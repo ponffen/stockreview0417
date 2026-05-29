@@ -1211,7 +1211,7 @@ function resolveBookCurrencyForAccountScope(settings, accountScope) {
   return "CNY";
 }
 
-/** 供 HTTP：单 scope 的账户 KPI 展示态（依赖 account_home_summary 已由定时任务写入）。 */
+/** 供 HTTP：单 scope 的账户 KPI 展示态（analysis_daily_snapshot v3 冻结日行）。 */
 async function buildAccountKpiSurfaceForScope(userId, accountScope = "all") {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -1219,8 +1219,7 @@ async function buildAccountKpiSurfaceForScope(userId, accountScope = "all") {
   }
   const sc = String(accountScope || "all").trim() || "all";
   const settings = await getSettings(uid);
-  const { rows } = await q("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
-  const row = rows[0];
+  const { account: row } = await getHomeSummaryForUser(uid, sc);
   if (!row) {
     return null;
   }
@@ -1889,12 +1888,33 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
     return { account: null, symbols: [] };
   }
   const sc = String(accountScope || "all").trim() || "all";
-  const { rows: ar } = await q("SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
-  const { rows: sr } = await q(
-    "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
-    [uid, sc]
+  const { mapAnalysisRowToHomeAccount, mapSymbolRowToHomeSummary, resolveFrozenThrough } = require("./metrics/frozen-pack-v3");
+  const { rows: umRows } = await q(
+    "SELECT frozen_through FROM user_metrics_meta WHERE user_id = $1",
+    [uid],
   );
-  return { account: ar[0] || null, symbols: sr };
+  const ftMeta = umRows[0]?.frozen_through || null;
+  const { rows: ar } = await q(
+    `SELECT * FROM analysis_daily_snapshot WHERE user_id = $1 AND account_id = $2
+     ORDER BY date DESC LIMIT 1`,
+    [uid, sc],
+  );
+  const frozenThrough = resolveFrozenThrough({ frozen_through: ftMeta }, ar[0]);
+  const { rows: tr } = await q(
+    `SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`,
+    [uid],
+  );
+  const firstTrade = tr[0]?.d ? String(tr[0].d).slice(0, 10) : frozenThrough;
+  const homeAccount = mapAnalysisRowToHomeAccount(ar[0], frozenThrough, firstTrade);
+  let symRows = [];
+  if (frozenThrough) {
+    const { rows: sr } = await q(
+      `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
+      [uid, sc, frozenThrough],
+    );
+    symRows = sr.map((r) => mapSymbolRowToHomeSummary(r, frozenThrough));
+  }
+  return { account: homeAccount, symbols: symRows };
 }
 
 function parseAppSettingsFromRows(rows, accounts = []) {
@@ -1942,12 +1962,9 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
   return withOneShotDbClient(async (client) => {
     const cq = (text, params) => client.query(text, params);
     const settingsRes = await cq("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]);
+    const { mapAnalysisRowToHomeAccount, mapSymbolRowToHomeSummary, resolveFrozenThrough } = require("./metrics/frozen-pack-v3");
     const homeAccRes = await cq(
-      "SELECT * FROM account_home_summary WHERE user_id = $1 AND account_scope = $2",
-      [uid, scope],
-    );
-    const symRes = await cq(
-      "SELECT * FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2 ORDER BY symbol ASC",
+      `SELECT * FROM analysis_daily_snapshot WHERE user_id = $1 AND account_id = $2 ORDER BY date DESC LIMIT 1`,
       [uid, scope],
     );
     const umRes = await cq(
@@ -1991,8 +2008,20 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       createdAt: Number(r.created_at) || 0,
       updatedAt: Number(r.updated_at) || 0,
     }));
-    const homeAccount = homeAccRes.rows[0] || null;
-    const frozenThrough = String(homeAccount?.frozen_through || "").slice(0, 10);
+    const umRow = umRes.rows[0] || null;
+    const analysisRow = homeAccRes.rows[0] || null;
+    const frozenThrough = resolveFrozenThrough(umRow, analysisRow);
+    const firstTradeRes = await cq(`SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`, [uid]);
+    const firstTrade = firstTradeRes.rows[0]?.d ? String(firstTradeRes.rows[0].d).slice(0, 10) : frozenThrough;
+    const homeAccount = mapAnalysisRowToHomeAccount(analysisRow, frozenThrough, firstTrade);
+    const symRes =
+      frozenThrough && analysisRow
+        ? await cq(
+            `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
+            [uid, scope, frozenThrough],
+          )
+        : { rows: [] };
+    const symbolRows = (symRes.rows || []).map((r) => mapSymbolRowToHomeSummary(r, frozenThrough));
     let lastEodRows = [];
     if (frozenThrough && String(process.env.HOME_BUNDLE_SKIP_EOD || "").trim() !== "1") {
       const from = addCalendarDays(frozenThrough, -14);
@@ -2021,7 +2050,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       scope,
       settings: parseAppSettingsFromRows(settingsRes.rows, accounts),
       accounts,
-      home: { account: homeAccount, symbols: symRes.rows || [] },
+      home: { account: homeAccount, symbols: symbolRows },
       um: mapUserMetricsMetaRow(umRes.rows[0]),
       accountMetaList,
       lastEodRows,

@@ -1,5 +1,5 @@
 /**
- * 账户级 KPI「展示态」：由定时任务写入的 account_home_summary 行生成，
+ * 账户级 KPI「展示态」：由 analysis_daily_snapshot 冻结日行映射生成，
  * 供首页 / 分析 tab 共用（仅格式化与字段选择，不含业务重算）。
  */
 
@@ -93,7 +93,7 @@ function cnyScalarToBookAmount(cny, bookCurrency, fxUsdCny, fxHkdCny) {
 }
 
 /**
- * @param {object} row account_home_summary 一行（pg snake_case 或已 camel 化）
+ * @param {object} row 冻结账户快照行（v3 映射为 home_summary 字段名）
  * @param {string} bookCurrency CNY | USD | HKD
  * @param {string} algoMode twr | mwr — 决定 stages 内展示用收益率口径
  */

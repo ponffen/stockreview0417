@@ -9,7 +9,6 @@ const {
   deletePerformanceSeriesCacheForUser,
 } = require("./db");
 const { freezeUserToDate, resolveFrozenDate } = require("./eod-freeze-service");
-const { rebuildHomeSummaryForUser } = require("./home-summary-service");
 const { addCalendarDays } = require("./metrics/stages");
 
 const queueByUser = new Map();
@@ -61,10 +60,13 @@ async function runMetricsRebuildForUser(userId, opts = {}) {
   await upsertUserMetricsMeta(uid, { rebuilding: true, rebuildFrom });
   await deletePerformanceSeriesCacheForUser(uid);
   try {
-    for (const d of dates) {
-      await freezeUserToDate(uid, d, { logger: console, force: true, syncDailyClose: false });
-    }
-    await rebuildHomeSummaryForUser(uid);
+    const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
+    await runFreezeV3ForUser(uid, {
+      frozenDate: frozenEnd,
+      force: true,
+      syncDailyClose: false,
+      logger: console,
+    });
     const meta = await getUserMetricsMeta(uid);
     await upsertUserMetricsMeta(uid, {
       rebuilding: false,

@@ -13,6 +13,7 @@ const {
   setSnapshotWatermark,
   upsertUserMetricsMeta,
   upsertAccountMetricsMeta,
+  getLatestAnalysisSnapshotDate,
 } = require("../db");
 const { ensureMetricsSchemaV3, METRICS_SOURCE_VERSION } = require("./schema-v3");
 const { StageAccumulator } = require("./stage-accumulator");
@@ -428,7 +429,9 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
   const flowPts = [];
   let pi = 0;
   let qty = 0;
-  let lastRow = null;
+  let hadActivity = false;
+  let dayDRow = null;
+  let lastClose = 0;
 
   for (const day of dates) {
     while (pi < symTrades.length && symTrades[pi].date < day) {
@@ -445,12 +448,18 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
       pi += 1;
     }
     const qEod = qty;
-    if (qBod <= 0 && qEod <= 0) continue;
+    if (qBod <= 0 && qEod <= 0 && !dayTrades.length) {
+      continue;
+    }
 
-    const closeD = lastPositiveCloseOnOrBefore(kl.map((x) => ({ day: x.day, close: x.close })), day);
+    const closeD = lastPositiveCloseOnOrBefore(
+      kl.map((x) => ({ day: x.day, close: x.close })),
+      day,
+    );
     const closePrev = closeBefore(kl, day);
     if (!(closeD > 0)) continue;
     const prevPx = closePrev != null && closePrev > 0 ? closePrev : closeD;
+    lastClose = closeD;
 
     let dayFlow = 0;
     let dayAmt = 0;
@@ -464,11 +473,12 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
     const denom = qBod * prevPx + Math.max(dayFlow, 0);
     const rDay = denom > 0 ? pnl / denom : 0;
     stageAcc.onDay(day, pnl, rDay);
+    hadActivity = true;
     if (qEod > 0 && closeD > 0) {
       flowPts.push({ date: day, value: qEod * closeD, flow: dayFlow });
     }
     if (day === D) {
-      lastRow = {
+      dayDRow = {
         dailyProfit: pnl,
         dailyTradeQty: dayTurn,
         dailyTradeAmount: dayAmt,
@@ -476,16 +486,28 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
         dailyRateTwr: rDay,
         eodShares: qEod,
         eodPrice: closeD,
-        flowPts,
       };
     }
   }
-  if (!lastRow) return null;
+
+  if (!hadActivity) return null;
+
   const snap = stageAcc.snapshotTwr();
-  const endVal = lastRow.eodShares * lastRow.eodPrice;
+  const base =
+    dayDRow ||
+    {
+      dailyProfit: 0,
+      dailyTradeQty: 0,
+      dailyTradeAmount: 0,
+      dailyTradeFlow: 0,
+      dailyRateTwr: 0,
+      eodShares: 0,
+      eodPrice: lastClose,
+    };
+  const endVal = (Number(base.eodShares) || 0) * (Number(base.eodPrice) || 0);
   const mwr = xirrFromSymbolValueFlowPoints(flowPts, D, endVal);
   return {
-    ...lastRow,
+    ...base,
     ...snap,
     stageMtdRateMwr: mwr,
     stageYtdRateMwr: mwr,
@@ -494,6 +516,119 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
     stageLast30dRateMwr: mwr,
     stageLast90dRateMwr: mwr,
   };
+}
+
+function listAccountIdsForFreeze(allTrades, accounts) {
+  const ids = new Set(["all"]);
+  for (const a of accounts || []) {
+    if (a?.id) ids.add(String(a.id));
+  }
+  for (const t of allTrades || []) {
+    ids.add(String(t.accountId || "default"));
+  }
+  return [...ids].sort();
+}
+
+async function freezeSymbolsForUser(ctx) {
+  const {
+    uid,
+    frozenDate,
+    allTrades,
+    accounts,
+    allDates,
+    klineBySym,
+    client,
+    logger,
+    syncMissingCloses,
+  } = ctx;
+  const accountIds = listAccountIdsForFreeze(allTrades, accounts);
+  const unionSyms = new Set();
+  for (const accountId of accountIds) {
+    for (const sym of buildURankSymbols(allTrades, accountId, frozenDate)) {
+      unionSyms.add(sym);
+    }
+  }
+  if (syncMissingCloses) {
+    const minD = allDates[0];
+    for (const sym of unionSyms) {
+      if (klineBySym.has(sym)) continue;
+      try {
+        const rows = await fetchRemoteDailyClosesForSymbol(sym, minD, frozenDate);
+        if (rows.length) {
+          await upsertSymbolDailyCloseBatch(
+            rows.map((r) => ({ symbol: sym, date: r.date, close: r.close, source: r.source || "sina" })),
+          );
+          const list = rows
+            .map((r) => ({ day: String(r.date).slice(0, 10), close: Number(r.close) }))
+            .filter((r) => r.day && r.close > 0)
+            .sort((a, b) => a.day.localeCompare(b.day));
+          if (list.length) klineBySym.set(sym, list);
+        }
+      } catch (e) {
+        logger.warn?.("[freeze-v3] symbol close sync", sym, e?.message || e);
+      }
+    }
+  }
+
+  const symBuffer = [];
+  let symbolRowsWritten = 0;
+  for (const accountId of accountIds) {
+    const book = accountBookCurrency(accountId, accounts);
+    const accTrades = filterTradesForAccount(allTrades, accountId);
+    const uRank = buildURankSymbols(allTrades, accountId, frozenDate);
+    for (const sym of uRank) {
+      const kl = klineBySym.get(sym);
+      if (!kl) {
+        logger.warn?.("[freeze-v3] missing kline", accountId, sym);
+        continue;
+      }
+      const replay = replaySymbolToDate(sym, accountId, accTrades, allDates, kl, frozenDate);
+      if (!replay) continue;
+      const ccy = getSymbolCurrency(sym);
+      symBuffer.push({
+        accountId,
+        symbol: sym,
+        date: frozenDate,
+        bookCurrency: ccy || book,
+        currency: ccy,
+        dailyProfit: replay.dailyProfit,
+        dailyTradeQty: replay.dailyTradeQty,
+        dailyTradeAmount: replay.dailyTradeAmount,
+        dailyTradeFlow: replay.dailyTradeFlow,
+        dailyRateTwr: replay.dailyRateTwr,
+        eodShares: replay.eodShares,
+        eodPrice: replay.eodPrice,
+        stageMtdProfit: replay.stageMtdProfit,
+        stageMtdRateTwr: replay.stageMtdRateTwr,
+        stageMtdRateMwr: replay.stageMtdRateMwr,
+        stageYtdProfit: replay.stageYtdProfit,
+        stageYtdRateTwr: replay.stageYtdRateTwr,
+        stageYtdRateMwr: replay.stageYtdRateMwr,
+        stageInceptionProfit: replay.stageInceptionProfit,
+        stageInceptionRateTwr: replay.stageInceptionRateTwr,
+        stageInceptionRateMwr: replay.stageInceptionRateMwr,
+        stageLast7dProfit: replay.stageLast7dProfit,
+        stageLast7dRateTwr: replay.stageLast7dRateTwr,
+        stageLast7dRateMwr: replay.stageLast7dRateMwr,
+        stageLast30dProfit: replay.stageLast30dProfit,
+        stageLast30dRateTwr: replay.stageLast30dRateTwr,
+        stageLast30dRateMwr: replay.stageLast30dRateMwr,
+        stageLast90dProfit: replay.stageLast90dProfit,
+        stageLast90dRateTwr: replay.stageLast90dRateTwr,
+        stageLast90dRateMwr: replay.stageLast90dRateMwr,
+      });
+      if (symBuffer.length >= 200) {
+        const chunk = symBuffer.splice(0, symBuffer.length);
+        await upsertSymbolBatchV3(client, uid, chunk);
+        symbolRowsWritten += chunk.length;
+      }
+    }
+  }
+  if (symBuffer.length) {
+    await upsertSymbolBatchV3(client, uid, symBuffer);
+    symbolRowsWritten += symBuffer.length;
+  }
+  return { symbolRowsWritten, accountIds: accountIds.length };
 }
 
 async function runFreezeV3ForUser(userId, options = {}) {
@@ -516,13 +651,18 @@ async function runFreezeV3ForUser(userId, options = {}) {
     return { ok: false, reason: "trade-after-frozen" };
   }
 
+  const latest = await getLatestAnalysisSnapshotDate(uid, "all");
+  if (!options.force && !options.symbolsOnly && latest && latest >= String(frozenDate).slice(0, 10)) {
+    return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
+  }
+
   const allCash = await getCashTransfers(uid);
   const accounts = await getAccounts(uid);
   const allDates = enumerateDays(minD, frozenDate);
   const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
-  const accountIds = ["all", ...new Set(allTrades.map((t) => String(t.accountId || "default")))];
+  const accountIds = listAccountIdsForFreeze(allTrades, accounts);
 
-  if (options.syncDailyClose) {
+  if (options.syncDailyClose && !options.symbolsOnly) {
     for (const sym of symbols) {
       try {
         const rows = await fetchRemoteDailyClosesForSymbol(sym, minD, frozenDate);
@@ -557,84 +697,46 @@ async function runFreezeV3ForUser(userId, options = {}) {
 
   try {
     await client.query("BEGIN");
-    await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
-    await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
-
-    const t0 = Date.now();
-    for (const accountId of accountIds) {
-      const n = await freezeAccountHistory({
-        uid,
-        accountId,
-        allDates,
-        allTrades,
-        allCash,
-        accounts,
-        klineBySym,
-        fxUsdMap,
-        fxHkdMap,
-        client,
-      });
-      timing.accountRows += n;
+    if (options.symbolsOnly) {
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+    } else {
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+      await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
     }
-    timing.accountMs = Date.now() - t0;
+
+    if (!options.symbolsOnly) {
+      const t0 = Date.now();
+      for (const accountId of accountIds) {
+        const n = await freezeAccountHistory({
+          uid,
+          accountId,
+          allDates,
+          allTrades,
+          allCash,
+          accounts,
+          klineBySym,
+          fxUsdMap,
+          fxHkdMap,
+          client,
+        });
+        timing.accountRows += n;
+      }
+      timing.accountMs = Date.now() - t0;
+    }
 
     const t1 = Date.now();
-    const symBuffer = [];
-    let symbolRowsWritten = 0;
-    for (const accountId of accountIds) {
-      const book = accountBookCurrency(accountId, accounts);
-      const accTrades = filterTradesForAccount(allTrades, accountId);
-      const uRank = buildURankSymbols(allTrades, accountId, frozenDate);
-      for (const sym of uRank) {
-        const kl = klineBySym.get(sym);
-        if (!kl) continue;
-        const replay = replaySymbolToDate(sym, accountId, accTrades, allDates, kl, frozenDate);
-        if (!replay) continue;
-        const ccy = getSymbolCurrency(sym);
-        symBuffer.push({
-          accountId,
-          symbol: sym,
-          date: frozenDate,
-          bookCurrency: ccy || book,
-          currency: ccy,
-          dailyProfit: replay.dailyProfit,
-          dailyTradeQty: replay.dailyTradeQty,
-          dailyTradeAmount: replay.dailyTradeAmount,
-          dailyTradeFlow: replay.dailyTradeFlow,
-          dailyRateTwr: replay.dailyRateTwr,
-          eodShares: replay.eodShares,
-          eodPrice: replay.eodPrice,
-          stageMtdProfit: replay.stageMtdProfit,
-          stageMtdRateTwr: replay.stageMtdRateTwr,
-          stageMtdRateMwr: replay.stageMtdRateMwr,
-          stageYtdProfit: replay.stageYtdProfit,
-          stageYtdRateTwr: replay.stageYtdRateTwr,
-          stageYtdRateMwr: replay.stageYtdRateMwr,
-          stageInceptionProfit: replay.stageInceptionProfit,
-          stageInceptionRateTwr: replay.stageInceptionRateTwr,
-          stageInceptionRateMwr: replay.stageInceptionRateMwr,
-          stageLast7dProfit: replay.stageLast7dProfit,
-          stageLast7dRateTwr: replay.stageLast7dRateTwr,
-          stageLast7dRateMwr: replay.stageLast7dRateMwr,
-          stageLast30dProfit: replay.stageLast30dProfit,
-          stageLast30dRateTwr: replay.stageLast30dRateTwr,
-          stageLast30dRateMwr: replay.stageLast30dRateMwr,
-          stageLast90dProfit: replay.stageLast90dProfit,
-          stageLast90dRateTwr: replay.stageLast90dRateTwr,
-          stageLast90dRateMwr: replay.stageLast90dRateMwr,
-        });
-        if (symBuffer.length >= 200) {
-          const chunk = symBuffer.splice(0, symBuffer.length);
-          await upsertSymbolBatchV3(client, uid, chunk);
-          symbolRowsWritten += chunk.length;
-        }
-      }
-    }
-    if (symBuffer.length) {
-      await upsertSymbolBatchV3(client, uid, symBuffer);
-      symbolRowsWritten += symBuffer.length;
-    }
-    timing.symbolRows = symbolRowsWritten;
+    const symResult = await freezeSymbolsForUser({
+      uid,
+      frozenDate,
+      allTrades,
+      accounts,
+      allDates,
+      klineBySym,
+      client,
+      logger,
+      syncMissingCloses: true,
+    });
+    timing.symbolRows = symResult.symbolRowsWritten;
     timing.symbolMs = Date.now() - t1;
 
     await client.query("COMMIT");
@@ -660,7 +762,13 @@ async function runFreezeV3ForUser(userId, options = {}) {
   };
 }
 
+async function runSymbolsOnlyV3ForUser(userId, options = {}) {
+  return runFreezeV3ForUser(userId, { ...options, symbolsOnly: true, force: true });
+}
+
 module.exports = {
   runFreezeV3ForUser,
+  runSymbolsOnlyV3ForUser,
   buildURankSymbols,
+  freezeSymbolsForUser,
 };

@@ -1,0 +1,67 @@
+/**
+ * 将 analysis_daily_snapshot / symbol_daily_pnl（v3）映射为原 home_summary 读路径形状。
+ */
+const { addCalendarDays } = require("./stages");
+
+function mapAnalysisRowToHomeAccount(row, frozenThrough, firstTradeDate) {
+  if (!row) {
+    return null;
+  }
+  const ft = String(frozenThrough || row.date || "").slice(0, 10);
+  const ratio = Number(row.cash_ratio ?? row.cashRatio ?? 0);
+  return {
+    account_scope: String(row.account_id || row.accountId || "all"),
+    account_id: String(row.account_id || row.accountId || "all"),
+    frozen_through: ft,
+    first_trade_date: String(firstTradeDate || ft).slice(0, 10),
+    month_profit_cny: Number(row.stage_mtd_profit ?? 0),
+    month_rate_twr: Number(row.stage_mtd_rate_twr ?? 0),
+    month_rate_mwr: Number(row.stage_mtd_rate_mwr ?? 0),
+    ytd_profit_cny: Number(row.stage_ytd_profit ?? 0),
+    ytd_rate_twr: Number(row.stage_ytd_rate_twr ?? 0),
+    ytd_rate_mwr: Number(row.stage_ytd_rate_mwr ?? 0),
+    total_profit_cny: Number(row.stage_inception_profit ?? 0),
+    total_rate_twr: Number(row.stage_inception_rate_twr ?? 0),
+    total_rate_mwr: Number(row.stage_inception_rate_mwr ?? 0),
+    last_market_value_cny: Number(row.market_value ?? 0),
+    eod_total_assets_cny: Number(row.total_assets ?? 0),
+    eod_market_value_cny: Number(row.market_value ?? 0),
+    eod_cash_cny: Number(row.cash ?? 0),
+    eod_cash_ratio: ratio <= 1 ? ratio * 100 : ratio,
+    eod_principal_cny: Number(row.principal ?? 0),
+    eod_fx_usd_cny: Number(row.fx_usd_cny ?? 0),
+    eod_fx_hkd_cny: Number(row.fx_hkd_cny ?? 0),
+    book_currency: row.book_currency || "CNY",
+  };
+}
+
+function mapSymbolRowToHomeSummary(row, frozenThrough) {
+  if (!row) {
+    return null;
+  }
+  const ft = String(frozenThrough || row.date || "").slice(0, 10);
+  return {
+    symbol: String(row.symbol || ""),
+    account_scope: String(row.account_id || row.accountId || "all"),
+    frozen_through: ft,
+    currency: String(row.currency || row.book_currency || "CNY").toUpperCase(),
+    month_profit_native: Number(row.stage_mtd_profit ?? 0),
+    ytd_profit_native: Number(row.stage_ytd_profit ?? 0),
+    total_profit_native: Number(row.stage_inception_profit ?? 0),
+    total_rate_twr: Number(row.stage_inception_rate_twr ?? 0),
+    total_rate_mwr: Number(row.stage_inception_rate_mwr ?? 0),
+  };
+}
+
+function resolveFrozenThrough(umRow, analysisRow) {
+  return (
+    String(umRow?.frozen_through || umRow?.frozenThrough || analysisRow?.date || "").slice(0, 10) || ""
+  );
+}
+
+module.exports = {
+  mapAnalysisRowToHomeAccount,
+  mapSymbolRowToHomeSummary,
+  resolveFrozenThrough,
+  addCalendarDays,
+};

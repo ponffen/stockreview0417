@@ -182,7 +182,7 @@ const state = {
   trades: [],
   /** 银证转账 / 出入金 */
   cashTransfers: [],
-  /** 服务端 materialized 账户 KPI 展示态（与定时任务 account_home_summary 一致），按 accountScope 索引 */
+  /** 服务端 materialized 账户 KPI 展示态（analysis_daily_snapshot v3），按 accountScope 索引 */
   accountKpisByScope: {},
   /** 交易页子 Tab：trades | cash */
   tradePanelTab: "trades",
@@ -7179,7 +7179,7 @@ function buildSymbolSnapshotProfitMap(positions, symbolPnlRows, trades, todayKey
   return map;
 }
 
-/** 服务端 symbol_home_summary（截止到 frozen_through），与 buildSymbolSnapshotProfitMap 输出结构一致。 */
+/** 服务端 symbol_daily_pnl 冻结日行（v3），与 buildSymbolSnapshotProfitMap 输出结构一致。 */
 function buildSymbolSnapshotProfitMapFromHomeSummary(vis, homeSymbols, _todayKey) {
   const byNorm = new Map();
   for (const s of homeSymbols || []) {

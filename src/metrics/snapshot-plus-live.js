@@ -1,5 +1,5 @@
 /**
- * 冻结日 EOD（account_home_summary / analysis 快照）+ 盘中实时增量。
+ * 冻结日 EOD（analysis_daily_snapshot v3）+ 盘中实时增量。
  */
 const { normalizeSymbol } = require("../db");
 const { computeLedgerCashCnyUpToDate, externalFlowCnyForDate } = require("../ledger-metrics");

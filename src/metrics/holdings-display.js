@@ -1,5 +1,5 @@
 /**
- * f 持仓表：symbol_home_summary（冻结）+ computeLiveMetrics（今日/现价），方案 A 全 display。
+ * f 持仓表：symbol_daily_pnl 冻结日行（v3 stage_*）+ computeLiveMetrics（今日/现价）。
  */
 const {
   normalizeSymbol,
