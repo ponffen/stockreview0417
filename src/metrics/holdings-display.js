@@ -8,7 +8,13 @@ const {
   resolveBookCurrencyForAccountScope,
   getSymbolDailyPnl,
 } = require("../db");
-const { fmtPlainAmount, fmtPlainSignedAmount, fmtPercentRatio, cnyScalarToBookAmount } = require("../account-kpi-surface");
+const {
+  fmtPlainAmount,
+  fmtPlainSignedAmount,
+  fmtPercentRatio,
+  fmtSignedPercentRatio,
+  cnyScalarToBookAmount,
+} = require("../account-kpi-surface");
 const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live");
 const { xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
 const {
@@ -252,7 +258,7 @@ async function buildHoldingsPayload({
       marketTag: marketTag(market),
       stockCode: formatSymbolForDisplay(sym),
       price: Number.isFinite(current) ? current.toFixed(3) : "—",
-      dayChange: fmtPercentRatio(dayChg),
+      dayChange: fmtSignedPercentRatio(dayChg),
       marketValue: fmtPlainAmount(mvNat),
       marketValueCny: fmtPlainAmount(mvCny),
       quantity: String(Math.round(qty)),
