@@ -237,6 +237,8 @@ const state = {
 let apiReady = false;
 let tradeSearchSuggestController = null;
 let analysisRenderRequestSeq = 0;
+/** 分析页 analysis-bundle 资产四曲线缓存，切换「总资产/市值/现金/占比」仅本地重绘 */
+let cachedAnalysisAssetChartRows = null;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
 /** 与 account-daily 类似：合并并发、短缓存，避免连续 renderAll 打出两条相同 symbol-daily */
@@ -2606,6 +2608,10 @@ function bindEvents() {
   assetCurveModeSelect?.addEventListener("change", () => {
     state.capitalTrendMode = assetCurveModeSelect.value || "total_assets";
     persistState();
+    if (cachedAnalysisAssetChartRows?.length && state.route === "analysis") {
+      repaintAnalysisAssetChartFromCache();
+      return;
+    }
     void renderAnalysis();
   });
 
@@ -4753,7 +4759,6 @@ async function renderPublicProfileAnalysis(d) {
     const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
     const twrPack = pubBundle?.dailyTwr;
     const profitPack = pubBundle?.dailyProfit;
-    const assetPack = pubBundle?.dailyAsset;
     const benchPack = pubBundle?.benchmark;
     const rankPack = pubBundle?.stockRank;
     const retPack = pubBundle?.returns;
@@ -4766,7 +4771,11 @@ async function renderPublicProfileAnalysis(d) {
         const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
         const mySeries = trimMetricsSeriesPoints(twrPack.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
         const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
-        const assetIdx = trimMetricsSeriesPoints(assetPack?.points || []).map((p) => ({ date: p.date, value: Number(p.value) || 0 }));
+        const assetChartRows = analysisAssetChartRowsFromDailyAssets(pubBundle?.dailyAssets);
+        const assetIdx = trimMetricsSeriesPoints(assetChartRows).map((r) => ({
+          date: r.date,
+          value: Number(r.totalAssets) || 0,
+        }));
         const stageRet = retPack?.stages?.[stage];
         const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
         if (pubRate) {
@@ -6798,6 +6807,20 @@ function applyOverviewMetricsMeta(meta) {
   state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
 }
 
+function formatMetricsBundleMoneyCny(cnyVal) {
+  const book = getOverviewBookCurrency();
+  return formatSignedMoney(amountBookFromCny(Number(cnyVal) || 0, book), 2);
+}
+
+function formatMetricsBundlePlainCny(cnyVal) {
+  const book = getOverviewBookCurrency();
+  return formatNumber(amountBookFromCny(Number(cnyVal) || 0, book), 2);
+}
+
+function formatMetricsBundleRatio(ratio) {
+  return formatPercent(Number(ratio) || 0);
+}
+
 function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
     return false;
@@ -6806,15 +6829,15 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   const stage = returns.stages[stageKey];
   if (todayProfitMain && monthProfitMain) {
     todayProfitMain.innerHTML = metricHeadlineHtml(
-      today.profitDisplay,
-      today.rateDisplay,
+      formatMetricsBundleMoneyCny(today.profitCny),
+      formatMetricsBundleRatio(today.rate),
       today.profitCny,
       today.rate,
     );
     todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
     monthProfitMain.innerHTML = metricHeadlineHtml(
-      stage.profitDisplay,
-      stage.rateDisplay,
+      formatMetricsBundleMoneyCny(stage.profitCny),
+      formatMetricsBundleRatio(stage.rate),
       stage.profitCny,
       stage.rate,
     );
@@ -6823,12 +6846,12 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   if (overviewGrid) {
     overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
       buildOverviewKpiEntries({
-        totalAssets: String(assets.totalAssetsDisplay || "–"),
-        marketValue: String(assets.marketValueDisplay || "–"),
-        cash: String(assets.cashDisplay || "–"),
-        stockRatio: String(assets.stockRatioDisplay || "–"),
-        cashRatio: String(assets.cashRatioDisplay || "–"),
-        principal: String(assets.principalDisplay || "–"),
+        totalAssets: formatMetricsBundlePlainCny(assets.totalAssetsCny),
+        marketValue: formatMetricsBundlePlainCny(assets.marketValueCny),
+        cash: formatMetricsBundlePlainCny(assets.cashCny),
+        stockRatio: formatMetricsBundleRatio(assets.stockRatio),
+        cashRatio: formatMetricsBundleRatio(assets.cashRatio),
+        principal: formatMetricsBundlePlainCny(assets.principalCny),
       }),
     );
   }
@@ -7585,12 +7608,31 @@ function metricsHoldingsMoneyCell(row, fieldBase) {
   const cnyKey = `${fieldBase}Cny`;
   let text = cnyOn ? String(row[cnyKey] ?? row[nativeKey] ?? "").trim() : String(row[nativeKey] ?? "").trim();
   if (!text) {
+    const kind = String(fieldBase || "").replace(/Display$/i, "");
+    if (kind) {
+      const n = metricsRowSignedAmount(row, kind);
+      if (Number.isFinite(n)) {
+        text = formatSignedMoney(n, 2);
+      }
+    }
+  }
+  if (!text) {
     return "–";
   }
   if (cnyOn && !isCn) {
     return `¥ ${text}`;
   }
   return text;
+}
+
+function metricsHoldingsPlainCell(row, numKey, digits = 2) {
+  const n = Number(row[numKey]);
+  return Number.isFinite(n) ? formatNumber(n, digits) : "–";
+}
+
+function metricsHoldingsPercentCell(row, rateKey) {
+  const n = Number(row[rateKey]);
+  return Number.isFinite(n) ? formatPercent(n) : "–";
 }
 
 function paintOverviewStockTableFromMetricsRows(rows) {
@@ -7609,7 +7651,12 @@ function paintOverviewStockTableFromMetricsRows(rows) {
     const totalRateClass = Number.isFinite(totalRateNum) ? (totalRateNum >= 0 ? "up" : "down") : "";
     const regretN = Number(row.regretRateNum) || 0;
     const regretClass = regretN >= 0 ? "up" : "down";
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfitDisplay"))}</td><td><div class="cell-main">${escapeHtml(row.priceDisplay || "–")}</div><div class="cell-sub ${dayClass}">${escapeHtml(row.dayChangeDisplay || "–")}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValueDisplay"))}</div><div class="cell-sub">${escapeHtml(row.quantityDisplay || "–")}</div></td><td>${escapeHtml(row.weightDisplay || "–")}</td><td>${escapeHtml(row.costDisplay || "–")}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfitDisplay"))}</td><td>${escapeHtml(row.monthWeightDisplay || "–")}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfitDisplay"))}</td><td>${escapeHtml(row.yearWeightDisplay || "–")}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfitDisplay"))}</td><td>${escapeHtml(row.totalWeightDisplay || "–")}</td><td class="${totalRateClass}">${escapeHtml(row.totalRateDisplay || "–")}</td><td class="${regretClass}">${escapeHtml(row.regretDisplay || "–")}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
+    const qtyFromMv =
+      Number(row.marketValueNum) > 0 && Number(row.currentPriceNum) > 0
+        ? Math.round(Number(row.marketValueNum) / Number(row.currentPriceNum))
+        : NaN;
+    const qty = Number.isFinite(qtyFromMv) ? String(qtyFromMv) : "–";
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfitDisplay"))}</td><td><div class="cell-main">${escapeHtml(row.priceDisplay || metricsHoldingsPlainCell(row, "currentPriceNum", 3))}</div><div class="cell-sub ${dayClass}">${escapeHtml(row.dayChangeDisplay || metricsHoldingsPercentCell(row, "dayChangeRate"))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValueDisplay"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(row.weightDisplay || metricsHoldingsPercentCell(row, "weightNum"))}</td><td>${escapeHtml(row.costDisplay || metricsHoldingsPlainCell(row, "costNum", 3))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfitDisplay"))}</td><td>${escapeHtml(row.monthWeightDisplay || metricsHoldingsPercentCell(row, "monthWeightNum"))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfitDisplay"))}</td><td>${escapeHtml(row.yearWeightDisplay || metricsHoldingsPercentCell(row, "yearWeightNum"))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfitDisplay"))}</td><td>${escapeHtml(row.totalWeightDisplay || metricsHoldingsPercentCell(row, "totalWeightNum"))}</td><td class="${totalRateClass}">${escapeHtml(row.totalRateDisplay || metricsHoldingsPercentCell(row, "totalRateNum"))}</td><td class="${regretClass}">${escapeHtml(formatRegretRateWithSide(row.regretRateNum, row.lastTradeSide))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }
 function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {
@@ -7618,10 +7665,78 @@ function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = 
   const rows = Array.isArray(rankPayload?.rows) ? rankPayload.rows : [];
   if (!rows.length) { targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`; return; }
   targetBody.innerHTML = rows.map((row) => {
-    const profitCell = hideProfitCol ? "" : `<td>${escapeHtml(row.profitDisplay || "–")}</td>`;
+    const profitText =
+      row.profitDisplay != null && String(row.profitDisplay).trim() !== ""
+        ? String(row.profitDisplay)
+        : formatMetricsBundleMoneyCny(row.profitCny);
+    const pxText =
+      row.pxChangeDisplay != null && String(row.pxChangeDisplay).trim() !== ""
+        ? String(row.pxChangeDisplay)
+        : formatMetricsBundleRatio(row.pxChange);
+    const profitCell = hideProfitCol ? "" : `<td>${escapeHtml(profitText || "–")}</td>`;
     const holdCell = rankOpts.publicStockRankLayout ? `<td>${escapeHtml(row.holdIntervalsLabel || "–")}</td>` : `<td>${Number(row.heldDays) || 0} 天</td>`;
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(row.pxChangeDisplay || "–")}</td></tr>`;
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(pxText || "–")}</td></tr>`;
   }).join("");
+}
+
+function analysisAssetChartRowsFromDailyAssets(dailyAssets) {
+  if (!dailyAssets) {
+    return [];
+  }
+  if (Array.isArray(dailyAssets.points) && dailyAssets.points.length) {
+    return dailyAssets.points.map((p) => ({
+      date: String(p.date).slice(0, 10),
+      totalAssets: Number(p.value) || 0,
+      market: 0,
+      cash: 0,
+      cashRatio: 0,
+    }));
+  }
+  const series = dailyAssets?.series;
+  if (!series || typeof series !== "object") {
+    return [];
+  }
+  const dateSet = new Set();
+  for (const key of ["total_assets", "market_value", "cash", "cash_ratio"]) {
+    const pts = series[key]?.points;
+    if (!Array.isArray(pts)) {
+      continue;
+    }
+    for (const p of pts) {
+      if (p?.date) {
+        dateSet.add(String(p.date).slice(0, 10));
+      }
+    }
+  }
+  const pick = (metric, date) => {
+    const pts = series[metric]?.points || [];
+    const hit = pts.find((p) => String(p.date).slice(0, 10) === date);
+    return hit ? Number(hit.value) || 0 : 0;
+  };
+  return [...dateSet]
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => ({
+      date,
+      totalAssets: pick("total_assets", date),
+      market: pick("market_value", date),
+      cash: pick("cash", date),
+      cashRatio: pick("cash_ratio", date),
+    }));
+}
+
+function repaintAnalysisAssetChartFromCache() {
+  if (!cachedAnalysisAssetChartRows?.length || !analysisAssetChart) {
+    return;
+  }
+  const assetPayload = drawAssetChart(trimMetricsSeriesPoints(cachedAnalysisAssetChartRows));
+  const refreshAnalysisView = () => {
+    renderControls();
+    void renderAnalysis({ showLoading: false });
+  };
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, {
+    mode: "analysis",
+    onRefresh: refreshAnalysisView,
+  });
 }
 async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "") {
   const stage = metricsStageFromAnalysis();
@@ -7634,7 +7749,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
   const twrPack = bundle?.dailyTwr;
   const profitPack = bundle?.dailyProfit;
-  const assetPack = bundle?.dailyAsset;
+  const dailyAssets = bundle?.dailyAssets;
   const benchPack = bundle?.benchmark;
   const rankPack = bundle?.stockRank;
   const retPack = bundle?.returns;
@@ -7644,7 +7759,8 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   const mySeries = trimMetricsSeriesPoints(twrPack.points).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
   const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
   const profitSeries = trimMetricsSeriesPoints(profitPack.points).map((p) => ({ date: p.date, value: Number(p.profitCny) || 0 }));
-  const assetSeries = trimMetricsSeriesPoints(assetPack?.points || []).map((p) => ({ date: p.date, totalAssets: Number(p.value) || 0, market: 0, cash: 0, cashRatio: 0 }));
+  cachedAnalysisAssetChartRows = analysisAssetChartRowsFromDailyAssets(dailyAssets);
+  const assetSeries = trimMetricsSeriesPoints(cachedAnalysisAssetChartRows);
   const stageRet = retPack?.stages?.[stage];
   const ratePayload = useMwrUi ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries);
   const profitPayload = drawDualLineChart(analysisProfitChart, profitSeries.map((i) => ({ date: i.date, value: i.value })), null, "#f45a68", null, { keyA: "profit", labelA: "收益", yAxisMode: "left", leftLabel: "", xLabel: "", valueFormatter: (v) => formatNumber(v, 2), axisFormatter: (v) => formatNumber(v, 2), yRangePadding: { minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR, maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR } });
@@ -7653,7 +7769,9 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
     const lastMy = mySeries.at(-1)?.rate ?? 0; const lastBench = benchSeries.at(-1)?.rate ?? 0;
     analysisRateSummary.textContent = useMwrUi ? `我的收益率 ${formatPercent(stageRet?.rateMwr ?? 0)}` : state.benchmark === "none" ? `我的收益率 ${formatPercent(lastMy / 100)}` : `我的 ${formatPercent(lastMy / 100)} / 基准 ${formatPercent(lastBench / 100)} / 对比 ${formatPercent((lastMy - lastBench) / 100)}`;
   }
-  if (analysisProfitSummary && stageRet) analysisProfitSummary.textContent = `累计收益 ${stageRet.profitDisplay || "–"}`;
+  if (analysisProfitSummary && stageRet) {
+    analysisProfitSummary.textContent = `累计收益 ${formatMetricsBundleMoneyCny(stageRet.profitCny)}`;
+  }
   renderAnalysisStockRankFromMetrics(rankPack, analysisStockRankBody, {});
   const refreshAnalysisView = () => { renderControls(); void renderAnalysis({ showLoading: false }); };
   bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, { mode: "analysis", onRefresh: refreshAnalysisView });
@@ -8104,6 +8222,7 @@ async function renderAnalysis(options = {}) {
   }
   const showLoading = options.showLoading !== false;
   if (showLoading) {
+    cachedAnalysisAssetChartRows = null;
     showRouteLoading("数据正在加载中");
   }
   try {

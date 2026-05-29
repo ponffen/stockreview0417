@@ -53,6 +53,7 @@ const {
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
+const { finalizeMetricsBundlePayload } = require("./metrics/bundle-payload");
 
 const METRICS_RULE_VERSION = 4;
 const BENCHMARK_SYMBOLS = new Set(["sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
@@ -757,7 +758,7 @@ async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {
       ...extraDiag,
     };
   }
-  return value;
+  return finalizeMetricsBundlePayload(value);
 }
 
 async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
@@ -934,6 +935,35 @@ async function buildStockRankFromContext(ctx, stage) {
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
 
+/** 分析页资产图：一次返回总资产/总市值/现金/现金占比四条序列，切换下拉不再请求 */
+async function buildAnalysisDailyAssetsPackFromContext(ctx, stage, trades, rowsAscPreload) {
+  const { userId, scope, settings, live, um } = ctx;
+  const st = String(stage || "mtd").trim() || "mtd";
+  const asOf = live.frozenThrough || liveDateKeyShanghai();
+  const tradeList = trades || (await getTrades(userId));
+  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
+  const series = {
+    total_assets: { points: [] },
+    market_value: { points: [] },
+    cash: { points: [] },
+    cash_ratio: { points: [] },
+  };
+  for (const r of rows) {
+    if (r.date < start || r.date > end) {
+      continue;
+    }
+    series.total_assets.points.push({ date: r.date, value: r.totalAssets });
+    series.market_value.points.push({ date: r.date, value: r.marketValue });
+    series.cash.points.push({ date: r.date, value: r.cash });
+    const ratioRaw = Number(r.cashRatio) || 0;
+    const ratioPct = ratioRaw <= 1 && ratioRaw >= 0 ? ratioRaw * 100 : ratioRaw;
+    series.cash_ratio.points.push({ date: r.date, value: ratioPct });
+  }
+  return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, series };
+}
+
 async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, diag, extraDiag = {}) {
   const { userId, scope } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
@@ -946,16 +976,16 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const seriesTasks = [
     buildSeriesDailyTwrFromContext(ctx, st, trades),
     buildSeriesDailyProfitFromContext(ctx, st, trades, rowsAsc),
-    buildSeriesDailyAssetFromContext(ctx, st, trades, rowsAsc, "total_assets"),
+    buildAnalysisDailyAssetsPackFromContext(ctx, st, trades, rowsAsc),
     buildStockRankFromContext(ctx, st),
     buildMetricsReturnsFromContext(ctx, st),
   ];
-  const [dailyTwr, dailyProfit, dailyAsset, stockRank, returns] = await Promise.all(seriesTasks);
+  const [dailyTwr, dailyProfit, dailyAssets, stockRank, returns] = await Promise.all(seriesTasks);
   let benchmark = null;
   if (sym && BENCHMARK_SYMBOLS.has(sym)) {
     benchmark = await getBenchmarkSeries(userId, sym, st);
   }
-  const value = { stage: st, dailyTwr, dailyProfit, dailyAsset, stockRank, returns, benchmark };
+  const value = { stage: st, dailyTwr, dailyProfit, dailyAssets, stockRank, returns, benchmark };
   if (diag) {
     value._diag = {
       phases: diag,
@@ -964,7 +994,7 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
       ...extraDiag,
     };
   }
-  return value;
+  return finalizeMetricsBundlePayload(value);
 }
 
 async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSymbol, opts = {}) {
