@@ -246,12 +246,46 @@ function buildAssetsApi(ctx) {
   };
 }
 
+/** 分析「收益走势」：按所选 stage 取快照行 stage_*_profit（累计），非 daily_profit。 */
+function stageProfitCnyFromSnapshotRow(row, stageKey) {
+  const st = String(stageKey || "mtd").trim() || "mtd";
+  if (st === "today") {
+    return Number(row.dailyProfit ?? row.profitCny ?? 0);
+  }
+  if (st === "mtd") {
+    return Number(row.stageMtdProfit ?? 0);
+  }
+  if (st === "ytd") {
+    return Number(row.stageYtdProfit ?? 0);
+  }
+  if (st === "inception") {
+    return Number(row.stageInceptionProfit ?? 0);
+  }
+  if (st === "last_7d") {
+    return Number(row.stageLast7dProfit ?? 0);
+  }
+  if (st === "last_30d") {
+    return Number(row.stageLast30dProfit ?? 0);
+  }
+  if (st === "last_90d") {
+    return Number(row.stageLast90dProfit ?? 0);
+  }
+  return Number(row.dailyProfit ?? row.profitCny ?? 0);
+}
+
 async function loadSnapshotRowsAsc(userId, scope, from, to) {
   const rows = await getAnalysisDailySnapshots({ accountId: scope, from, to }, userId);
   return rows
     .map((r) => ({
       date: String(r.date || "").slice(0, 10),
       profitCny: Number(r.dailyProfit ?? r.profitCny ?? r.profit_cny ?? 0),
+      dailyProfit: Number(r.dailyProfit ?? r.profitCny ?? 0),
+      stageMtdProfit: Number(r.stageMtdProfit ?? 0),
+      stageYtdProfit: Number(r.stageYtdProfit ?? 0),
+      stageInceptionProfit: Number(r.stageInceptionProfit ?? 0),
+      stageLast7dProfit: Number(r.stageLast7dProfit ?? 0),
+      stageLast30dProfit: Number(r.stageLast30dProfit ?? 0),
+      stageLast90dProfit: Number(r.stageLast90dProfit ?? 0),
       totalAssets: Number(r.totalAssets ?? r.total_assets ?? 0) || Number(r.marketValue ?? r.market_value ?? 0),
       marketValue: Number(r.marketValue ?? r.market_value ?? 0),
       cash: Number(r.cash ?? 0),
@@ -865,17 +899,24 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
     .filter((r) => r.date >= start && r.date <= end)
     .map((r) => ({
       date: r.date,
-      profit: fmtPlainSignedAmountInBook(r.profitCny, book, fxU, fxH),
+      profit: fmtPlainSignedAmountInBook(stageProfitCnyFromSnapshotRow(r, st), book, fxU, fxH),
     }));
-  const todayPt = todayPointForReturns(live, book, fxU, fxH, settings?.algoMode);
-  if (todayPt && todayPt.date >= start && todayPt.date <= end) {
-    const hit = points.findIndex((p) => p.date === todayPt.date);
-    const row = { date: todayPt.date, profit: todayPt.profit };
-    if (hit >= 0) {
-      points[hit] = row;
-    } else {
-      points.push(row);
-      points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (live.tradingDay) {
+    const liveDate = String(live.liveDate || "").slice(0, 10);
+    if (liveDate >= start && liveDate <= end) {
+      const frozen = frozenMetricsFromHomeAccount(home?.account);
+      const { profitCny } = stageProfitFromFrozenAndLive(st, frozen, live, firstTrade, rows, asOf);
+      const row = {
+        date: liveDate,
+        profit: fmtPlainSignedAmountInBook(profitCny, book, fxU, fxH),
+      };
+      const hit = points.findIndex((p) => p.date === liveDate);
+      if (hit >= 0) {
+        points[hit] = row;
+      } else {
+        points.push(row);
+        points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      }
     }
   }
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
