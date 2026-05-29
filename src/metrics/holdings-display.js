@@ -21,6 +21,7 @@ const {
   getPositionDayTradeContext,
   getTradingDateKeyBy0830,
 } = require("../position-today-pnl");
+const { netHoldingsBySymbol } = require("./holdings-active-symbols");
 
 function profitShareRatio(stockProfitCny, overviewProfitCny, book, fxUsdCny, fxHkdCny) {
   const stockBook = cnyScalarToBookAmount(stockProfitCny, book, fxUsdCny, fxHkdCny);
@@ -164,8 +165,14 @@ async function buildHoldingsPayload({
   const overviewTotalCny = Number(overviewStages?.inception?.profitCny) || 0;
   const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
   const snapBySym = new Map((symbolRows || []).map((r) => [normalizeSymbol(r.symbol), r]));
+  const netBySym = netHoldingsBySymbol(trades, accountScope);
 
   const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
+  for (const [sym, q] of netBySym.entries()) {
+    if (q > 1e-6) {
+      keys.add(sym);
+    }
+  }
   const nameMap = await getSymbolNameMap([...keys]);
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
   const scopeId = String(accountScope || "all").trim() || "all";
@@ -199,7 +206,8 @@ async function buildHoldingsPayload({
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
     const snap = snapBySym.get(sym);
-    const qty = liveP?.quantity || 0;
+    const qtyLive = Number(liveP?.quantity) || 0;
+    const qty = qtyLive > 1e-6 ? qtyLive : Number(netBySym.get(sym)) || 0;
     if (!(qty > 1e-6)) {
       continue;
     }

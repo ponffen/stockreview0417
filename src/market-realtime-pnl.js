@@ -353,44 +353,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     preloadedAccounts ? Promise.resolve(preloadedAccounts) : getAccounts(uid),
   ]);
 
-  if (!tradingDay) {
-    const cashCny = frozenThrough
-      ? computeLedgerCashCnyUpToDate(
-          trades,
-          cashTransfers,
-          accounts,
-          scope === "all" ? "all" : scope,
-          fxUsdMap,
-          fxHkdMap,
-          frozenThrough,
-        )
-      : 0;
-    const ta =
-      Number(homeAcc?.eod_total_assets_cny) ||
-      (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
-      lastMarketValueCny ||
-      0;
-    const mv = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
-    return {
-      tradingDay: false,
-      liveDate: null,
-      frozenThrough: frozenThrough || null,
-      delayed: false,
-      quoteTime: null,
-      todayProfitCny: 0,
-      liveMarketValueCny: mv,
-      lastMarketValueCny,
-      cashCny,
-      totalAssetsCny: ta || mv + cashCny,
-      cashRatio: ta > 0 ? cashCny / ta : 0,
-      principalCny: frozenThrough
-        ? principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, frozenThrough)
-        : 0,
-      positions: [],
-      fxUsdCny: fxUsdFrozen,
-      fxHkdCny: fxHkdFrozen,
-    };
-  }
+  const priceAsOf = tradingDay ? liveDate : frozenThrough || liveDate;
 
   const symbols = holdingsSymbolsFromTrades(trades, scope, pre.lastEodRows);
   if (pre.scopeCleared || symbols.length === 0) {
@@ -416,7 +379,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     "whHKDCNY",
   ];
   const [closeFallback, quoteReq] = await Promise.all([
-    batchLastCloseForSymbols(symbols, liveDate),
+    batchLastCloseForSymbols(symbols, priceAsOf),
     fetchTencentQuotePayloadMap(quoteKeys, QUOTE_TOTAL_BUDGET_MS),
   ]);
   const fxSpot = { CNY: 1, USD: FX_FALLBACK.USD, HKD: FX_FALLBACK.HKD };
@@ -486,7 +449,22 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     if (!(qty > 1e-6)) {
       continue;
     }
-    const quote = quoteMap[symbol];
+    let quote = quoteMap[symbol];
+    if (!quote) {
+      const fb = closeFallback.get(normalizeSymbol(symbol)) || closeFallback.get(symbol);
+      if (fb && Number(fb.close) > 0) {
+        const md = String(fb.date || priceAsOf).slice(0, 10);
+        quote = {
+          current: Number(fb.close),
+          prevClose: Number(fb.close),
+          marketDate: md || undefined,
+          quoteDate: md || undefined,
+        };
+        if (!quoteReq.ok) {
+          quoteReq.delayed = true;
+        }
+      }
+    }
     if (!quote) {
       continue;
     }
@@ -495,20 +473,23 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     const rate = fxRate(getSymbolCurrency(symbol));
     const mv = qty * current * rate;
     liveMarketValue += mv;
-    const todayKey = liveDateKeyShanghai();
-    const todayP = todayProfitCnyForHolding({
-      quote,
-      symbol,
-      qty,
-      prevClose,
-      current,
-      rate,
-      trades: scoped,
-      todayKey,
-    });
+    const todayKey = tradingDay ? liveDateKeyShanghai() : priceAsOf;
+    const todayP = tradingDay
+      ? todayProfitCnyForHolding({
+          quote,
+          symbol,
+          qty,
+          prevClose,
+          current,
+          rate,
+          trades: scoped,
+          todayKey,
+        })
+      : 0;
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }
 
+  const cashAsOf = tradingDay ? liveDate : frozenThrough || liveDate;
   const ledgerCashAtLive = computeLedgerCashCnyUpToDate(
     trades,
     cashTransfers,
@@ -516,72 +497,108 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     scope,
     fxUsdMap,
     fxHkdMap,
-    liveDate,
+    cashAsOf,
   );
-  const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+  const principalBase = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, cashAsOf);
   let cashCny = ledgerCashAtLive;
   let liveMarketValueCny = liveMarketValue;
   let totalAssetsCny = liveMarketValue + cashCny;
   let cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
   let eodTotalAssetsCny = Number(homeAcc?.eod_total_assets_cny) || 0;
   let externalFlowTodayCny = 0;
+  let todayProfitCny = 0;
+  let principalLive = principalBase;
 
-  const fxLiveMap = {
-    [String(liveDate)]: fxSpot.USD,
-  };
-  const fxHkdLiveMap = {
-    [String(liveDate)]: fxSpot.HKD,
-  };
-  const hybrid = applyEodPlusLiveTotals({
-    homeAcc,
-    frozenThrough,
-    liveDate,
-    liveMarketValueCny: liveMarketValue,
-    ledgerCashAtLive,
-    trades,
-    cashTransfers,
-    accounts,
-    scope,
-    fxUsdMap: { ...fxUsdMap, ...fxLiveMap },
-    fxHkdMap: { ...fxHkdMap, ...fxHkdLiveMap },
-  });
-  if (hybrid) {
-    liveMarketValueCny = hybrid.liveMarketValueCny;
-    cashCny = hybrid.cashCny;
-    totalAssetsCny = hybrid.totalAssetsCny;
-    cashRatio = hybrid.cashRatio;
-    eodTotalAssetsCny = hybrid.eodTotalAssetsCny;
-    externalFlowTodayCny = hybrid.externalFlowTodayCny;
+  if (tradingDay) {
+    const fxLiveMap = {
+      [String(liveDate)]: fxSpot.USD,
+    };
+    const fxHkdLiveMap = {
+      [String(liveDate)]: fxSpot.HKD,
+    };
+    const hybrid = applyEodPlusLiveTotals({
+      homeAcc,
+      frozenThrough,
+      liveDate,
+      liveMarketValueCny: liveMarketValue,
+      ledgerCashAtLive,
+      trades,
+      cashTransfers,
+      accounts,
+      scope,
+      fxUsdMap: { ...fxUsdMap, ...fxLiveMap },
+      fxHkdMap: { ...fxHkdMap, ...fxHkdLiveMap },
+    });
+    if (hybrid) {
+      liveMarketValueCny = hybrid.liveMarketValueCny;
+      cashCny = hybrid.cashCny;
+      totalAssetsCny = hybrid.totalAssetsCny;
+      cashRatio = hybrid.cashRatio;
+      eodTotalAssetsCny = hybrid.eodTotalAssetsCny;
+      externalFlowTodayCny = hybrid.externalFlowTodayCny;
+    }
+
+    const liveForToday = {
+      tradingDay: true,
+      eodTotalAssetsCny,
+      totalAssetsCny,
+      externalFlowTodayCny,
+    };
+    todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap);
+    const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
+    principalLive =
+      eodPrincipal > 0
+        ? eodPrincipal + externalFlowTodayCny
+        : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+
+    return {
+      tradingDay: true,
+      liveDate,
+      frozenThrough: frozenThrough || null,
+      delayed: !!quoteReq.delayed,
+      quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
+      todayProfitCny,
+      liveMarketValueCny,
+      lastMarketValueCny,
+      cashCny,
+      totalAssetsCny,
+      cashRatio,
+      principalCny: principalLive,
+      eodTotalAssetsCny,
+      externalFlowTodayCny,
+      positions,
+      fxUsdCny: fxSpot.USD,
+      fxHkdCny: fxSpot.HKD,
+    };
   }
 
-  const liveForToday = {
-    tradingDay: true,
-    eodTotalAssetsCny,
-    totalAssetsCny,
-    externalFlowTodayCny,
-  };
-  const todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap);
-  const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
-  const principalLive =
-    eodPrincipal > 0
-      ? eodPrincipal + externalFlowTodayCny
-      : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+  const mvFrozen = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
+  liveMarketValueCny = liveMarketValue > 0 ? liveMarketValue : mvFrozen;
+  const taFrozen =
+    Number(homeAcc?.eod_total_assets_cny) ||
+    (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
+    lastMarketValueCny ||
+    0;
+  cashCny = Number(homeAcc?.eod_cash_cny) > 0 ? Number(homeAcc.eod_cash_cny) : cashCny;
+  totalAssetsCny = taFrozen > 0 ? taFrozen : liveMarketValueCny + cashCny;
+  cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
+  principalLive = Number(homeAcc?.eod_principal_cny) || principalBase;
 
   return {
-    tradingDay: true,
-    liveDate,
+    tradingDay: false,
+    liveDate: null,
     frozenThrough: frozenThrough || null,
     delayed: !!quoteReq.delayed,
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
-    todayProfitCny,
+    todayProfitCny: 0,
     liveMarketValueCny,
     lastMarketValueCny,
     cashCny,
     totalAssetsCny,
     cashRatio,
     principalCny: principalLive,
-    eodTotalAssetsCny,
-    externalFlowTodayCny,
+    eodTotalAssetsCny: taFrozen,
+    externalFlowTodayCny: 0,
     positions,
     fxUsdCny: fxSpot.USD,
     fxHkdCny: fxSpot.HKD,
