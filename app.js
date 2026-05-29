@@ -2905,6 +2905,7 @@ function bindEvents() {
   stockTableBody?.addEventListener("click", (event) => {
     const addTradeLink = event.target.closest("[data-stock-add-trade]");
     if (addTradeLink && stockTableBody.contains(addTradeLink)) {
+      event.preventDefault();
       const sym = addTradeLink.getAttribute("data-stock-add-trade");
       if (sym) {
         void openNewTradeDialogPrefilledForSymbol(sym, { accountSource: "overview" });
@@ -2912,11 +2913,14 @@ function bindEvents() {
       return;
     }
     const link = event.target.closest("[data-stock-record]");
-    if (!link) {
+    if (!link || !stockTableBody.contains(link)) {
       return;
     }
-    const symbol = link.dataset.stockRecord;
-    openStockRecordDialog(symbol);
+    event.preventDefault();
+    const symbol = link.getAttribute("data-stock-record");
+    if (symbol) {
+      void openStockRecordDialog(symbol);
+    }
   });
 
   closeStockRecordDialogBtn?.addEventListener("click", () => {
@@ -7391,7 +7395,7 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
           <td class="${totalClass}">${tdTotal}</td>
           <td class="${totalRateClass}">${tdTotalR}</td>
           <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
-          <td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(row.symbol)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(row.symbol)}">交易</a></td>
+          <td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(row.symbol)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(row.symbol)}">交易</a></td>
         </tr>
       `;
     })
@@ -7697,7 +7701,7 @@ function paintOverviewStockTableFromMetricsRows(rows) {
     const priceSort = parseBundleSignedAmount(row.price);
     const qtyFromMv = mvSort > 0 && priceSort > 0 ? Math.round(mvSort / priceSort) : NaN;
     const qty = Number.isFinite(qtyFromMv) ? String(qtyFromMv) : bundleFmtText(row.quantity);
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(sym)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }
 function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {
@@ -8372,6 +8376,7 @@ async function renderAnalysis(options = {}) {
   const showLoading = options.showLoading !== false;
   if (showLoading) {
     cachedAnalysisAssetChartRows = null;
+    cachedAnalysisMetricsCharts = null;
     showRouteLoading("数据正在加载中");
   }
   try {
@@ -8760,15 +8765,17 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.activeRecordSymbol = symbol;
   state.stockRecordAccountId = "all";
   state.previousRoute = state.route;
-  state.route = "stock-record";
   state.stockRecordWindow = 30;
   state.stockRecordOffset = 0;
+
+  await ensureLedgerDataLoaded();
+  await ensureSymbolData(symbol);
+
+  state.route = "stock-record";
   renderAll();
   window.scrollTo(0, 0);
   persistState();
 
-  await ensureLedgerDataLoaded();
-  await ensureSymbolData(symbol);
   await renderStockRecordPage(symbol);
   // wait for layout settle on mobile after route switch
   window.setTimeout(() => void renderStockRecordPage(symbol), 40);

@@ -275,7 +275,7 @@ async function buildHoldingsPayload({
       totalProfit: fmtPlainSignedAmount(totalNative),
       totalProfitCny: fmtPlainSignedAmount(totalCny),
       totalWeight: "—",
-      totalRate: fmtPercentRatio(totalRate),
+      totalRate: fmtSignedPercentRatio(totalRate),
       regret: formatRegretRateWithSide(regretRate, lastTr.lastTradeSide),
       lastTradeSide: lastTr.lastTradeSide || "",
       lastTradeDate: lastTr.lastTradeDate || "",

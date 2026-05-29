@@ -679,6 +679,14 @@ body {
   cursor: pointer;
 }
 
+.stock-table-op-cell {
+  white-space: nowrap;
+}
+
+.stock-table-op-cell .stock-table-record-link {
+  margin-right: 1.25em;
+}
+
 .panel {
   margin-top: 8px;
   background: var(--panel);
