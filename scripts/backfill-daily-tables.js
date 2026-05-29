@@ -1,40 +1,34 @@
 #!/usr/bin/env node
 /**
- * 历史回填：清空当前 CLI 用户的 symbol_daily_pnl、analysis_daily_snapshot 后，
- * 调用与线上相同的日终冻结逻辑（TWR/出入金、业绩缓存）。
- * 需 DATABASE_URL；默认用户见 STOCKREVIEW_PHONE / db.getCliUserId。
+ * Metrics v3 历史回填：账户表首笔→冻结日全量；个股表仅在冻结日写 U_rank 一行。
+ * Usage: STOCKREVIEW_PHONE=18310270720 node scripts/backfill-daily-tables.js
  */
 const path = require("node:path");
 
-const {
-  deleteAllSymbolDailyPnl,
-  deleteAllAnalysisDailySnapshot,
-  getCliUserId,
-  ensurePerformanceSchemaV2,
-} = require(path.join(__dirname, "..", "src", "db"));
-const { runDailyFreeze, resolveFrozenDate } = require(path.join(__dirname, "..", "src", "eod-freeze-service"));
-const { deletePerformanceSeriesForUser } = require(path.join(__dirname, "..", "src", "performance-cache-service"));
+const { getCliUserId } = require(path.join(__dirname, "..", "src", "db"));
+const { runFreezeV3ForUser } = require(path.join(__dirname, "..", "src", "metrics", "freeze-v3"));
+const { resolveFrozenDate } = require(path.join(__dirname, "..", "src", "eod-freeze-service"));
 
 async function main() {
-  await ensurePerformanceSchemaV2();
   const phoneArg = process.argv[2] || process.env.STOCKREVIEW_PHONE;
   if (phoneArg) {
     process.env.STOCKREVIEW_PHONE = String(phoneArg).trim();
   }
   const uid = await getCliUserId();
-  console.log("[backfill] user", uid, "phone", process.env.STOCKREVIEW_PHONE || "(cli default)");
-  await deletePerformanceSeriesForUser(uid);
-  await deleteAllSymbolDailyPnl(uid);
-  await deleteAllAnalysisDailySnapshot(uid);
   const frozenDate = resolveFrozenDate();
-  const data = await runDailyFreeze({
+  console.log("[backfill-v3] user", uid, "phone", process.env.STOCKREVIEW_PHONE || "", "frozen", frozenDate);
+  const t0 = Date.now();
+  const result = await runFreezeV3ForUser(uid, {
     frozenDate,
     force: true,
     syncDailyClose: true,
-    userIds: [uid],
     logger: console,
   });
-  console.log("[backfill] done", JSON.stringify(data, null, 2));
+  const wallMs = Date.now() - t0;
+  console.log("[backfill-v3] done", JSON.stringify({ ...result, wallMs }, null, 2));
+  if (!result.ok) {
+    process.exit(1);
+  }
 }
 
 main().catch((e) => {

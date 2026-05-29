@@ -1480,8 +1480,23 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
   const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
   const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
   const { rows } = await q(
-    `SELECT account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
-      total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at
+    `SELECT account_id, date,
+      COALESCE(NULLIF(daily_profit, 0), profit_cny) AS profit_cny,
+      COALESCE(NULLIF(daily_rate_twr, 0), tw_r_daily) AS tw_r_daily,
+      tw_r_cumulative,
+      COALESCE(NULLIF(daily_external_flow, 0), external_flow_cny) AS external_flow_cny,
+      external_flow_native,
+      total_profit, principal, market_value, total_assets,
+      COALESCE(NULLIF(cash, 0), cash_cny) AS cash_cny,
+      cash_ratio, fx_hkd_cny, fx_usd_cny,
+      daily_profit, daily_rate_twr, daily_external_flow, daily_cash_delta, cash, book_currency,
+      stage_mtd_profit, stage_mtd_rate_twr, stage_mtd_rate_mwr,
+      stage_ytd_profit, stage_ytd_rate_twr, stage_ytd_rate_mwr,
+      stage_inception_profit, stage_inception_rate_twr, stage_inception_rate_mwr,
+      stage_last_7d_profit, stage_last_7d_rate_twr, stage_last_7d_rate_mwr,
+      stage_last_30d_profit, stage_last_30d_rate_twr, stage_last_30d_rate_mwr,
+      stage_last_90d_profit, stage_last_90d_rate_twr, stage_last_90d_rate_mwr,
+      created_at
      FROM analysis_daily_snapshot
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1493,16 +1508,39 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
     accountId: row.account_id,
     date: row.date == null ? "" : shanghaiCalendarDateKey(row.date),
     profitCny: Number(row.profit_cny),
+    dailyProfit: Number(row.daily_profit ?? row.profit_cny),
     twRDaily: Number(row.tw_r_daily),
+    dailyRateTwr: Number(row.daily_rate_twr ?? row.tw_r_daily),
     twRCumulative: Number(row.tw_r_cumulative),
     externalFlowCny: Number(row.external_flow_cny),
+    dailyExternalFlow: Number(row.daily_external_flow ?? row.external_flow_cny),
     externalFlowNative: Number(row.external_flow_native),
+    dailyCashDelta: Number(row.daily_cash_delta ?? 0),
     totalProfit: Number(row.total_profit),
     principal: Number(row.principal),
     marketValue: Number(row.market_value),
     totalAssets: Number(row.total_assets ?? row.totalAssets ?? 0),
-    cash: Number(row.cash_cny ?? row.cash ?? 0),
+    cash: Number(row.cash ?? row.cash_cny ?? 0),
     cashRatio: Number(row.cash_ratio ?? row.cashRatio ?? 0),
+    bookCurrency: row.book_currency || "CNY",
+    stageMtdProfit: Number(row.stage_mtd_profit ?? 0),
+    stageMtdRateTwr: Number(row.stage_mtd_rate_twr ?? 0),
+    stageMtdRateMwr: Number(row.stage_mtd_rate_mwr ?? 0),
+    stageYtdProfit: Number(row.stage_ytd_profit ?? 0),
+    stageYtdRateTwr: Number(row.stage_ytd_rate_twr ?? 0),
+    stageYtdRateMwr: Number(row.stage_ytd_rate_mwr ?? 0),
+    stageInceptionProfit: Number(row.stage_inception_profit ?? 0),
+    stageInceptionRateTwr: Number(row.stage_inception_rate_twr ?? 0),
+    stageInceptionRateMwr: Number(row.stage_inception_rate_mwr ?? 0),
+    stageLast7dProfit: Number(row.stage_last_7d_profit ?? 0),
+    stageLast7dRateTwr: Number(row.stage_last_7d_rate_twr ?? 0),
+    stageLast7dRateMwr: Number(row.stage_last_7d_rate_mwr ?? 0),
+    stageLast30dProfit: Number(row.stage_last_30d_profit ?? 0),
+    stageLast30dRateTwr: Number(row.stage_last_30d_rate_twr ?? 0),
+    stageLast30dRateMwr: Number(row.stage_last_30d_rate_mwr ?? 0),
+    stageLast90dProfit: Number(row.stage_last_90d_profit ?? 0),
+    stageLast90dRateTwr: Number(row.stage_last_90d_rate_twr ?? 0),
+    stageLast90dRateMwr: Number(row.stage_last_90d_rate_mwr ?? 0),
     fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
     fxUsdCny: row.fx_usd_cny == null ? null : Number(row.fx_usd_cny),
     createdAt: Number(row.created_at),
@@ -2538,6 +2576,8 @@ async function ensurePerformanceSchemaV2() {
         console.error("[db] ensurePerformanceSchemaV2:", sql.slice(0, 80), e?.message || e);
       }
     }
+    const { ensureMetricsSchemaV3 } = require("./metrics/schema-v3");
+    await ensureMetricsSchemaV3();
   })();
   return perfSchemaV2Promise;
 }
@@ -2907,9 +2947,14 @@ async function selectSymbolDailyPositionsOnDate(userId, accountId, date) {
   return rows;
 }
 
+async function runSchemaDdl(sql) {
+  await q(sql);
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
+  runSchemaDdl,
   /** 与 `initPool` 建表语句一致；供 `scripts/migrate-sqlite-to-postgres.js` 等离线工具复用 */
   schemaDdl: DDL,
   SEED_USER_PHONE,
@@ -3006,4 +3051,5 @@ module.exports = {
   getSnapshotWatermark,
   setSnapshotWatermark,
   pingDatabase,
+  initPool,
 };

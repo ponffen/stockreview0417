@@ -133,13 +133,13 @@ async function loadSnapshotRowsAsc(userId, scope, from, to) {
   return rows
     .map((r) => ({
       date: String(r.date || "").slice(0, 10),
-      profitCny: Number(r.profitCny ?? r.profit_cny ?? 0),
+      profitCny: Number(r.dailyProfit ?? r.profitCny ?? r.profit_cny ?? 0),
       totalAssets: Number(r.totalAssets ?? r.total_assets ?? 0) || Number(r.marketValue ?? r.market_value ?? 0),
       marketValue: Number(r.marketValue ?? r.market_value ?? 0),
       cash: Number(r.cash ?? 0),
       cashRatio: Number(r.cashRatio ?? r.cash_ratio ?? 0),
       principal: Number(r.principal ?? 0),
-      externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
+      externalFlowCny: Number(r.dailyExternalFlow ?? r.externalFlowCny ?? r.external_flow_cny ?? 0),
       twRCumulative: Number(r.twRCumulative ?? r.tw_r_cumulative ?? 0),
     }))
     .filter((r) => r.date)
