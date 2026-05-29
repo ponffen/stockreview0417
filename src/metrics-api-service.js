@@ -22,6 +22,7 @@ const {
   fmtMoney,
   fmtPlainAmount,
   fmtPlainSignedAmount,
+  fmtPlainSignedAmountInBook,
   fmtPercentRatio,
   fmtSignedPercentRatio,
   cnyScalarToBookAmount,
@@ -630,6 +631,10 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
     }
     rowsAsc = await loadSnapshotRowsAsc(userId, scope, minStart, asOf);
   }
+  const book = resolveBookCurrencyForAccountScope(settings, scope);
+  const acc = home.account;
+  const fxU = Number(acc?.eod_fx_usd_cny) || live.fxUsdCny || 0;
+  const fxH = Number(acc?.eod_fx_hkd_cny) || live.fxHkdCny || 0;
   const stages = {};
   for (const key of want) {
     const { profitCny, rateTwr, rateMwr } = stageProfitFromFrozenAndLive(
@@ -646,7 +651,7 @@ async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
       rateTwr,
       rateMwr,
       rate,
-      profitDisplay: fmtPlainSignedAmount(profitCny),
+      profitDisplay: fmtPlainSignedAmountInBook(profitCny, book, fxU, fxH),
       rateTwrDisplay: fmtSignedPercentRatio(rateTwr),
       rateMwrDisplay: fmtSignedPercentRatio(rateMwr),
       rateDisplay: fmtSignedPercentRatio(rate),
@@ -795,6 +800,10 @@ async function getSeriesDailyProfit(userId, accountScope, stage) {
   const settings = await getSettings(userId);
   const live = await getComputeLiveMetrics(userId, scope);
   const um = await getUserMetricsMeta(userId);
+  const home = await getHomeSummaryForUser(userId, scope);
+  const book = resolveBookCurrencyForAccountScope(settings, scope);
+  const fxU = Number(home.account?.eod_fx_usd_cny) || live.fxUsdCny || 0;
+  const fxH = Number(home.account?.eod_fx_hkd_cny) || live.fxHkdCny || 0;
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const trades = await getTrades(userId);
   const firstTrade =
@@ -806,9 +815,9 @@ async function getSeriesDailyProfit(userId, accountScope, stage) {
   const points = rows.map((r) => ({
     date: r.date,
     profitCny: r.profitCny,
-    profitDisplay: fmtMoney(r.profitCny, "CNY"),
+    profitDisplay: fmtPlainSignedAmountInBook(r.profitCny, book, fxU, fxH),
   }));
-  const todayPt = todayPointForReturns(live, settings?.profitAlgoMode);
+  const todayPt = todayPointForReturns(live, book, fxU, fxH, settings?.profitAlgoMode);
   if (todayPt && todayPt.date >= start && todayPt.date <= end) {
     const hit = points.findIndex((p) => p.date === todayPt.date);
     const row = {
@@ -943,17 +952,18 @@ async function getBenchmarkSeries(userId, symbol, stage) {
 }
 
 /** 今日点：供分析图拼接（a/b 终值） */
-function todayPointForReturns(live, algoMode) {
+function todayPointForReturns(live, book, fxUsdCny, fxHkdCny, algoMode) {
   if (!live.tradingDay) {
     return null;
   }
   const mwr = String(algoMode || "twr").toLowerCase() === "mwr";
   const baseMv = Number(live.lastMarketValueCny) || 0;
   const rateTwr = baseMv > 0 ? live.todayProfitCny / baseMv : 0;
+  const profitCny = Number(live.todayProfitCny) || 0;
   return {
     date: live.liveDate,
-    profitCny: live.todayProfitCny,
-    profitDisplay: fmtMoney(live.todayProfitCny, "CNY"),
+    profitCny,
+    profitDisplay: fmtPlainSignedAmountInBook(profitCny, book, fxUsdCny, fxHkdCny),
     rate: mwr ? rateTwr : rateTwr,
     rateDisplay: fmtSignedPercentRatio(rateTwr),
   };

@@ -60,22 +60,9 @@ function fmtPlainSignedAmount(n) {
   return `${sign}${abs}`;
 }
 
-function fmtPlainAmount(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) {
-    return "—";
-  }
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtPlainSignedAmount(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) {
-    return "—";
-  }
-  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
-  const abs = Math.abs(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${sign}${abs}`;
+/** 人民币口径盈亏 → 记账币数值，再格式化为绿框同款无货币符号带正负号字符串 */
+function fmtPlainSignedAmountInBook(profitCny, bookCurrency, fxUsdCny, fxHkdCny) {
+  return fmtPlainSignedAmount(cnyScalarToBookAmount(profitCny, bookCurrency, fxUsdCny, fxHkdCny));
 }
 
 function rowNum(row, camel, snake, fallback = 0) {
@@ -144,7 +131,7 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
     return {
       profitCny: p,
       rate: r,
-      profitDisplay: fmtMoney(p, "CNY"),
+      profitDisplay: fmtPlainSignedAmountInBook(p, book, fxUsd, fxHkd),
       rateDisplay: fmtSignedPercentRatio(r),
     };
   };
@@ -180,6 +167,7 @@ module.exports = {
   fmtMoney,
   fmtPlainAmount,
   fmtPlainSignedAmount,
+  fmtPlainSignedAmountInBook,
   fmtPercentRatio,
   fmtSignedPercentRatio,
 };
