@@ -208,27 +208,64 @@ module.exports = async function handler(req, res) {
 
   const pathOnly = urlPathOnly(req.url);
 
-  // home-bundle：直连 metrics 服务，不 require 整个 server.js（避免冷启动 50s+ 断连）
+  // metrics bundle：直连 metrics 服务，不 require 整个 server.js（避免冷启动 50s+ 断连）
+  const isHomeBundlePath =
+    pathOnly === "/api/metrics/home-bundle-diag" || pathOnly === "/api/metrics/home-bundle";
+  const isAnalysisBundlePath = pathOnly === "/api/metrics/analysis-bundle";
+  const isPublicHomeBundle = /^\/api\/public\/[^/]+\/metrics\/home-bundle$/.test(pathOnly);
+  const isPublicAnalysisBundle = /^\/api\/public\/[^/]+\/metrics\/analysis-bundle$/.test(pathOnly);
   if (
     req.method === "GET" &&
-    (pathOnly === "/api/metrics/home-bundle-diag" || pathOnly === "/api/metrics/home-bundle")
+    (isHomeBundlePath || isAnalysisBundlePath || isPublicHomeBundle || isPublicAnalysisBundle)
   ) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     try {
       const { readUserIdFromRequest } = require("../src/auth-session");
-      const userId = readUserIdFromRequest(req);
-      if (!userId) {
+      const { getUserCommunityRow } = require("../src/db");
+      const viewerId = readUserIdFromRequest(req);
+      if (!viewerId) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
+      let userId = viewerId;
+      if (isPublicHomeBundle || isPublicAnalysisBundle) {
+        const targetId = pathOnly.split("/")[3];
+        const tid = String(targetId || "").trim();
+        if (viewerId !== tid) {
+          const row = await getUserCommunityRow(tid);
+          if (!row) {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ ok: false, error: "用户不存在" }));
+            return;
+          }
+          if (!Number(row.community_public)) {
+            res.statusCode = 403;
+            res.end(JSON.stringify({ ok: false, error: "未公开持仓" }));
+            return;
+          }
+        }
+        userId = tid;
+      }
       const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
-      const { probeMetricsHomeBundleDb, getMetricsHomeBundle } = require("../src/metrics-api-service");
+      const {
+        probeMetricsHomeBundleDb,
+        getMetricsHomeBundle,
+        getMetricsAnalysisBundle,
+      } = require("../src/metrics-api-service");
       if (pathOnly === "/api/metrics/home-bundle-diag") {
         const _diag = await probeMetricsHomeBundleDb(userId, accountScope);
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: { _diag, direct: true, build: "v7-home-bundle" } }));
+        res.end(JSON.stringify({ ok: true, data: { _diag, direct: true, build: "v8-metrics-bundle" } }));
+        return;
+      }
+      if (isAnalysisBundlePath || isPublicAnalysisBundle) {
+        const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
+        const symbol = String(getSearchParam(req, "symbol") || "").trim();
+        const data = await getMetricsAnalysisBundle(userId, accountScope, stage, symbol);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-analysis-bundle" } }));
         return;
       }
       const diagQ = String(getSearchParam(req, "diag") || "").trim().toLowerCase();
@@ -237,16 +274,16 @@ module.exports = async function handler(req, res) {
         diagOnly: diagQ === "only",
       });
       res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v7-home-bundle" } }));
+      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-home-bundle" } }));
       return;
     } catch (error) {
-      console.error("[api/index.js] direct home-bundle error:", error);
+      console.error("[api/index.js] direct metrics-bundle error:", error);
       res.statusCode = 500;
       res.end(
         JSON.stringify({
           ok: false,
-          error: error?.message || "home-bundle direct failed",
-          build: "v7-home-bundle",
+          error: error?.message || "metrics-bundle direct failed",
+          build: "v8-metrics-bundle",
         }),
       );
       return;

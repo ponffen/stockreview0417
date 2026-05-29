@@ -273,9 +273,18 @@ function frozenMetricsFromHomeAccount(acc) {
 
 
 const homeBundleCache = new Map();
+const analysisBundleCache = new Map();
 const HOME_BUNDLE_CACHE_MS = Math.max(
   0,
   Math.min(30_000, Number(process.env.HOME_BUNDLE_CACHE_MS || 12_000)),
+);
+const ANALYSIS_BUNDLE_CACHE_MS = Math.max(
+  0,
+  Math.min(30_000, Number(process.env.ANALYSIS_BUNDLE_CACHE_MS || 12_000)),
+);
+const ANALYSIS_BUNDLE_DEADLINE_MS = Math.max(
+  8_000,
+  Math.min(55_000, Number(process.env.ANALYSIS_BUNDLE_DEADLINE_MS || 48_000)),
 );
 const HOME_BUNDLE_DEADLINE_MS = Math.max(
   8_000,
@@ -795,29 +804,33 @@ async function getMetricsHomeBundle(userId, accountScope, stagesRaw, opts = {}) 
 }
 
 
-async function getSeriesDailyProfit(userId, accountScope, stage) {
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
-  const home = await getHomeSummaryForUser(userId, scope);
+function firstTradeDateFromTrades(trades, fallback) {
+  const asOf = String(fallback || "").slice(0, 10);
+  if (!Array.isArray(trades) || !trades.length) {
+    return asOf;
+  }
+  return [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
+}
+
+async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
+  const { userId, scope, settings, live, um, home } = ctx;
   const book = resolveBookCurrencyForAccountScope(settings, scope);
   const fxU = Number(home.account?.eod_fx_usd_cny) || live.fxUsdCny || 0;
   const fxH = Number(home.account?.eod_fx_hkd_cny) || live.fxHkdCny || 0;
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const trades = await getTrades(userId);
-  const firstTrade =
-    trades.length > 0
-      ? [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date
-      : asOf;
-  const { start, end } = resolveStageRange(stage, asOf, firstTrade);
-  const rows = await loadSnapshotRowsAsc(userId, scope, start, end);
-  const points = rows.map((r) => ({
-    date: r.date,
-    profitCny: r.profitCny,
-    profitDisplay: fmtPlainSignedAmountInBook(r.profitCny, book, fxU, fxH),
-  }));
-  const todayPt = todayPointForReturns(live, book, fxU, fxH, settings?.profitAlgoMode);
+  const tradeList = trades || (await getTrades(userId));
+  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const st = String(stage || "mtd").trim() || "mtd";
+  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const rows = rowsAsc || (await loadSnapshotRowsAsc(userId, scope, start, end));
+  const points = rows
+    .filter((r) => r.date >= start && r.date <= end)
+    .map((r) => ({
+      date: r.date,
+      profitCny: r.profitCny,
+      profitDisplay: fmtPlainSignedAmountInBook(r.profitCny, book, fxU, fxH),
+    }));
+  const todayPt = todayPointForReturns(live, book, fxU, fxH, settings?.algoMode);
   if (todayPt && todayPt.date >= start && todayPt.date <= end) {
     const hit = points.findIndex((p) => p.date === todayPt.date);
     const row = {
@@ -832,16 +845,14 @@ async function getSeriesDailyProfit(userId, accountScope, stage) {
       points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     }
   }
-  return { meta: metaEnvelope(userId, scope, settings, live, um), stage, points };
+  return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
 }
 
-async function getSeriesDailyTwr(userId, accountScope, stage) {
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
+async function buildSeriesDailyTwrFromContext(ctx, stage, trades) {
+  const { userId, scope, settings, live, um } = ctx;
+  const st = String(stage || "mtd").trim() || "mtd";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const snap = await getPerformancePresetSnapshot(userId, scope, stage, asOf);
+  const snap = await getPerformancePresetSnapshot(userId, scope, st, asOf);
   if (snap?.twr?.seriesJson) {
     try {
       const parsed = JSON.parse(snap.twr.seriesJson);
@@ -852,17 +863,14 @@ async function getSeriesDailyTwr(userId, accountScope, stage) {
         rate: Number(rates[i]) || 0,
         rateDisplay: fmtPercentRatio(Number(rates[i]) || 0),
       }));
-      return { meta: metaEnvelope(userId, scope, settings, live, um), stage, points };
+      return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
     } catch {
       /* fall through */
     }
   }
-  const trades = await getTrades(userId);
-  const firstTrade =
-    trades.length > 0
-      ? [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date
-      : asOf;
-  const { start, end } = resolveStageRange(stage, asOf, firstTrade);
+  const tradeList = trades || (await getTrades(userId));
+  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const { start, end } = resolveStageRange(st, asOf, firstTrade);
   const rows = await loadSnapshotRowsAsc(userId, scope, start, end);
   const pts = rows.map((r) => ({
     date: r.date,
@@ -875,52 +883,143 @@ async function getSeriesDailyTwr(userId, accountScope, stage) {
     rate: p.rate,
     rateDisplay: fmtPercentRatio(p.rate),
   }));
-  return { meta: metaEnvelope(userId, scope, settings, live, um), stage, points };
+  return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
 }
 
 const ASSET_METRICS = new Set(["total_assets", "market_value", "cash", "cash_ratio", "principal"]);
 
-async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
+async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, metric) {
   const m = String(metric || "total_assets").trim();
   if (!ASSET_METRICS.has(m)) {
     throw new Error("invalid metric");
   }
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
+  const { userId, scope, settings, live, um, home } = ctx;
   const book = resolveBookCurrencyForAccountScope(settings, scope);
-  const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const trades = await getTrades(userId);
-  const firstTrade =
-    trades.length > 0
-      ? [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date
-      : asOf;
-  const { start, end } = resolveStageRange(stage, asOf, firstTrade);
-  const rows = await loadSnapshotRowsAsc(userId, scope, start, end);
-  const home = await getHomeSummaryForUser(userId, scope);
   const fxU = Number(home.account?.eod_fx_usd_cny) || 0;
   const fxH = Number(home.account?.eod_fx_hkd_cny) || 0;
-  const points = rows.map((r) => {
-    let valueCny = 0;
-    if (m === "total_assets") {
-      valueCny = r.totalAssets;
-    } else if (m === "market_value") {
-      valueCny = r.marketValue;
-    } else if (m === "cash") {
-      valueCny = r.cash;
-    } else if (m === "cash_ratio") {
-      valueCny = r.cashRatio;
-    } else {
-      valueCny = r.principal;
+  const asOf = live.frozenThrough || liveDateKeyShanghai();
+  const tradeList = trades || (await getTrades(userId));
+  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const st = String(stage || "mtd").trim() || "mtd";
+  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const rows = rowsAsc || (await loadSnapshotRowsAsc(userId, scope, start, end));
+  const points = rows
+    .filter((r) => r.date >= start && r.date <= end)
+    .map((r) => {
+      let valueCny = 0;
+      if (m === "total_assets") {
+        valueCny = r.totalAssets;
+      } else if (m === "market_value") {
+        valueCny = r.marketValue;
+      } else if (m === "cash") {
+        valueCny = r.cash;
+      } else if (m === "cash_ratio") {
+        valueCny = r.cashRatio;
+      } else {
+        valueCny = r.principal;
+      }
+      const display =
+        m === "cash_ratio"
+          ? fmtPercentRatio(valueCny / 100)
+          : fmtMoney(cnyScalarToBookAmount(valueCny, book, fxU, fxH), book);
+      return { date: r.date, value: valueCny, valueDisplay: display };
+    });
+  return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, metric: m, points };
+}
+
+async function buildStockRankFromContext(ctx, stage) {
+  const { userId, scope, settings, live, um } = ctx;
+  const st = String(stage || "mtd").trim() || "mtd";
+  const payload = await buildStockRankPayload({ userId, accountScope: scope, stage: st, live });
+  return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
+}
+
+async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, diag, extraDiag = {}) {
+  const { userId, scope } = ctx;
+  const st = String(stage || "mtd").trim() || "mtd";
+  const sym = String(benchmarkSymbol || "").trim();
+  const trades = await getTrades(userId);
+  const asOf = ctx.live.frozenThrough || liveDateKeyShanghai();
+  const firstTrade = firstTradeDateFromTrades(trades, asOf);
+  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const rowsAsc = await loadSnapshotRowsAsc(userId, scope, start, end);
+  const seriesTasks = [
+    buildSeriesDailyTwrFromContext(ctx, st, trades),
+    buildSeriesDailyProfitFromContext(ctx, st, trades, rowsAsc),
+    buildSeriesDailyAssetFromContext(ctx, st, trades, rowsAsc, "total_assets"),
+    buildStockRankFromContext(ctx, st),
+    buildMetricsReturnsFromContext(ctx, st),
+  ];
+  const [dailyTwr, dailyProfit, dailyAsset, stockRank, returns] = await Promise.all(seriesTasks);
+  let benchmark = null;
+  if (sym && BENCHMARK_SYMBOLS.has(sym)) {
+    benchmark = await getBenchmarkSeries(userId, sym, st);
+  }
+  const value = { stage: st, dailyTwr, dailyProfit, dailyAsset, stockRank, returns, benchmark };
+  if (diag) {
+    value._diag = {
+      phases: diag,
+      scopeCleared: !!ctx.scopeCleared,
+      snapshotOnly: ctx.snapshotOnly === true,
+      ...extraDiag,
+    };
+  }
+  return value;
+}
+
+async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSymbol, opts = {}) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const st = String(stage || "mtd").trim() || "mtd";
+  const sym = String(benchmarkSymbol || "").trim();
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}`;
+  const now = Date.now();
+  if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
+    const hit = analysisBundleCache.get(cacheKey);
+    if (hit && now - hit.at < ANALYSIS_BUNDLE_CACHE_MS) {
+      return hit.value;
     }
-    const display =
-      m === "cash_ratio"
-        ? fmtPercentRatio(valueCny / 100)
-        : fmtMoney(cnyScalarToBookAmount(valueCny, book, fxU, fxH), book);
-    return { date: r.date, value: valueCny, valueDisplay: display };
-  });
-  return { meta: metaEnvelope(userId, scope, settings, live, um), stage, metric: m, points };
+  }
+  const diag = opts.diag ? {} : null;
+  const buildFull = async () => {
+    const ctx = await loadMetricsScopeContextForHome(userId, scope, diag);
+    return assembleAnalysisBundleFromContext(ctx, st, sym, diag);
+  };
+  let value;
+  try {
+    value = await raceWithTimeout(buildFull(), ANALYSIS_BUNDLE_DEADLINE_MS, null);
+    if (!value) {
+      throw new Error("ANALYSIS_BUNDLE_DEADLINE");
+    }
+  } catch (err) {
+    if (String(err?.message || err) !== "ANALYSIS_BUNDLE_DEADLINE") {
+      throw err;
+    }
+    const ctx = await loadMetricsScopeContextSnapshotOnly(userId, scope, diag);
+    value = await assembleAnalysisBundleFromContext(ctx, st, sym, diag, {
+      degraded: true,
+      reason: "ANALYSIS_BUNDLE_DEADLINE",
+      deadlineMs: ANALYSIS_BUNDLE_DEADLINE_MS,
+    });
+  }
+  if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
+    analysisBundleCache.set(cacheKey, { at: now, value });
+  }
+  return value;
+}
+
+async function getSeriesDailyProfit(userId, accountScope, stage) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildSeriesDailyProfitFromContext(ctx, stage);
+}
+
+async function getSeriesDailyTwr(userId, accountScope, stage) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildSeriesDailyTwrFromContext(ctx, stage);
+}
+
+async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildSeriesDailyAssetFromContext(ctx, stage, null, null, metric);
 }
 
 async function getHoldings(userId, accountScope) {
@@ -930,12 +1029,8 @@ async function getHoldings(userId, accountScope) {
 }
 
 async function getStockRank(userId, accountScope, stage) {
-  const scope = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
-  const um = await getUserMetricsMeta(userId);
-  const payload = await buildStockRankPayload({ userId, accountScope: scope, stage, live });
-  return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
+  const ctx = await loadMetricsScopeContext(userId, accountScope);
+  return buildStockRankFromContext(ctx, stage);
 }
 
 async function getBenchmarkSeries(userId, symbol, stage) {
@@ -990,6 +1085,7 @@ module.exports = {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  getMetricsAnalysisBundle,
   probeMetricsHomeBundleDb,
   getSeriesDailyProfit,
   getSeriesDailyTwr,

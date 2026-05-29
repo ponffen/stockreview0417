@@ -797,6 +797,42 @@ const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest"
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
 const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
+const {
+  getMetricsReturns,
+  getMetricsAssets,
+  getMetricsHomeBundle,
+  getMetricsAnalysisBundle,
+  getSeriesDailyProfit,
+  getSeriesDailyTwr,
+  getSeriesDailyAsset,
+  getHoldings,
+  getStockRank,
+  getBenchmarkSeries,
+} = require("./src/metrics-api-service");
+
+function sendMetricsJson(res, data) {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, data });
+}
+
+async function assertPublicMetricsTarget(viewerUserId, targetId) {
+  const tid = String(targetId || "").trim();
+  const vid = String(viewerUserId || "").trim();
+  if (!tid) {
+    return { ok: false, status: 400, error: "invalid target" };
+  }
+  if (vid === tid) {
+    return { ok: true, userId: tid };
+  }
+  const row = await getUserCommunityRow(tid);
+  if (!row) {
+    return { ok: false, status: 404, error: "用户不存在" };
+  }
+  if (!Number(row.community_public)) {
+    return { ok: false, status: 403, error: "未公开持仓" };
+  }
+  return { ok: true, userId: tid };
+}
 
 const app = express();
 const PORT = Number(process.env.PORT || 3030);
@@ -1463,6 +1499,29 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
 });
 
 
+app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsHomeBundle(req.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "home-bundle failed" });
+  }
+});
+
+app.get("/api/metrics/analysis-bundle", requireAuth, async (req, res) => {
+  try {
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const symbol = String(req.query.symbol || "").trim();
+    sendMetricsJson(
+      res,
+      await getMetricsAnalysisBundle(req.userId, accountScope, stage, symbol),
+    );
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "analysis-bundle failed" });
+  }
+});
+
 app.get("/api/metrics/returns", requireAuth, async (req, res) => {
   try {
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
@@ -1550,6 +1609,39 @@ app.get("/api/series/benchmark", requireAuth, async (req, res) => {
     sendMetricsJson(res, await getBenchmarkSeries(req.userId, symbol, stage));
   } catch (error) {
     res.status(400).json({ ok: false, error: error?.message || "benchmark series failed" });
+  }
+});
+
+app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ ok: false, error: gate.error });
+      return;
+    }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const stage = String(req.query.stage || "mtd").trim() || "mtd";
+    const symbol = String(req.query.symbol || "").trim();
+    sendMetricsJson(
+      res,
+      await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol),
+    );
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public analysis-bundle failed" });
+  }
+});
+
+app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ ok: false, error: gate.error });
+      return;
+    }
+    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    sendMetricsJson(res, await getMetricsHomeBundle(gate.userId, accountScope, req.query.stages));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public home-bundle failed" });
   }
 });
 

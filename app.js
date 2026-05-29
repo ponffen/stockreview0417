@@ -711,7 +711,9 @@ async function startAppAfterAuth(options = {}) {
   });
   renderAll();
   if (state.route === "earning") {
-    void refreshOverviewProfitRowFromSnapshots();
+    if (apiReady) {
+      void refreshOverviewProfitRowFromSnapshots();
+    }
   } else {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
@@ -2016,6 +2018,7 @@ async function hydrateState() {
     state.route = "trade";
   }
   normalizeModuleHomeOnColdLoad();
+  invalidateOverviewMetricsUi();
 }
 
 function pickSettingsPayload(payload = {}) {
@@ -4743,14 +4746,17 @@ async function renderPublicProfileAnalysis(d) {
   if (apiReady && targetId) {
     const stage = metricsStageFromAnalysis();
     const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
-    const [twrPack, profitPack, assetPack, benchPack, rankPack, retPack] = await Promise.all([
-      fetchMetricsApi("/series/daily-twr", { accountScope: "all", stage }, targetId),
-      fetchMetricsApi("/series/daily-profit", { accountScope: "all", stage }, targetId),
-      fetchMetricsApi("/series/daily-asset", { accountScope: "all", stage, metric: "total_assets" }, targetId),
-      benchSym ? fetchMetricsApi("/series/benchmark", { symbol: benchSym, stage }, targetId) : null,
-      fetchMetricsApi("/analysis/stock-rank", { accountScope: "all", stage }, targetId),
-      fetchMetricsApi("/metrics/returns", { accountScope: "all", stages: stage }, targetId),
-    ]);
+    const pubParams = { accountScope: "all", stage };
+    if (benchSym) {
+      pubParams.symbol = benchSym;
+    }
+    const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
+    const twrPack = pubBundle?.dailyTwr;
+    const profitPack = pubBundle?.dailyProfit;
+    const assetPack = pubBundle?.dailyAsset;
+    const benchPack = pubBundle?.benchmark;
+    const rankPack = pubBundle?.stockRank;
+    const retPack = pubBundle?.returns;
     if (twrPack?.points?.length || profitPack?.points?.length) {
       await withPublicProfileAnalysisUiAsync(async () => {
         const pubRate = document.getElementById("pubAnalysisRateChart");
@@ -7485,7 +7491,8 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   const prefix = publicTargetId ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}` : getApiBaseForFetch();
   const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
   const pathNorm = String(path || "");
-  const timeoutMs = pathNorm.includes("home-bundle") ? 55_000 : 28_000;
+  const timeoutMs =
+    pathNorm.includes("home-bundle") || pathNorm.includes("analysis-bundle") ? 55_000 : 28_000;
   try {
     const res = await apiFetch(url, { cache: "no-store", timeoutMs });
     const j = await res.json().catch(() => ({}));
@@ -7616,18 +7623,21 @@ function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = 
     return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(row.pxChangeDisplay || "–")}</td></tr>`;
   }).join("");
 }
-async function paintAnalysisFromMetricsApi(renderRequestId) {
+async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "") {
   const stage = metricsStageFromAnalysis();
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
-  const [twrPack, profitPack, assetPack, benchPack, rankPack, retPack] = await Promise.all([
-    fetchMetricsApi("/series/daily-twr", { accountScope: aid, stage }),
-    fetchMetricsApi("/series/daily-profit", { accountScope: aid, stage }),
-    fetchMetricsApi("/series/daily-asset", { accountScope: aid, stage, metric: "total_assets" }),
-    benchSym ? fetchMetricsApi("/series/benchmark", { symbol: benchSym, stage }) : null,
-    fetchMetricsApi("/analysis/stock-rank", { accountScope: aid, stage }),
-    fetchMetricsApi("/metrics/returns", { accountScope: aid, stages: stage }),
-  ]);
+  const bundleParams = { accountScope: aid, stage };
+  if (benchSym) {
+    bundleParams.symbol = benchSym;
+  }
+  const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
+  const twrPack = bundle?.dailyTwr;
+  const profitPack = bundle?.dailyProfit;
+  const assetPack = bundle?.dailyAsset;
+  const benchPack = bundle?.benchmark;
+  const rankPack = bundle?.stockRank;
+  const retPack = bundle?.returns;
   if (renderRequestId !== analysisRenderRequestSeq) return false;
   if (!twrPack?.points?.length && !profitPack?.points?.length) return false;
   const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
