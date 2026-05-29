@@ -12,7 +12,7 @@ const {
   addCalendarDays,
 } = require("./db");
 const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger-metrics");
-const { applyEodPlusLiveTotals, todayProfitCnyFromTotals } = require("./metrics/snapshot-plus-live");
+const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metrics/snapshot-plus-live");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
@@ -481,7 +481,6 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   }
 
   let liveMarketValue = 0;
-  let todayProfitCny = 0;
   const positions = [];
   for (const [symbol, qty] of holdings.entries()) {
     if (!(qty > 1e-6)) {
@@ -507,7 +506,6 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       trades: scoped,
       todayKey,
     });
-    todayProfitCny += todayP;
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
   }
 
@@ -556,12 +554,13 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     externalFlowTodayCny = hybrid.externalFlowTodayCny;
   }
 
-  const todayProfitFromTa = todayProfitCnyFromTotals({
+  const liveForToday = {
     tradingDay: true,
     eodTotalAssetsCny,
     totalAssetsCny,
     externalFlowTodayCny,
-  });
+  };
+  const todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap);
   const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
   const principalLive =
     eodPrincipal > 0
@@ -574,7 +573,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     frozenThrough: frozenThrough || null,
     delayed: !!quoteReq.delayed,
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
-    todayProfitCny: todayProfitFromTa,
+    todayProfitCny,
     liveMarketValueCny,
     lastMarketValueCny,
     cashCny,

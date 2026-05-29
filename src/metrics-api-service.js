@@ -151,7 +151,8 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
     : String(live.frozenThrough || asOf).slice(0, 10);
   const rangeAsOf = liveDate || String(asOf).slice(0, 10);
   const { start } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
-  const todayP = todayProfitCnyFromTotals(live);
+  const todayP = Number(live.todayProfitCny);
+  const todayPFinite = Number.isFinite(todayP) ? todayP : todayProfitCnyFromTotals(live);
   let frozenProfit = 0;
   let rateTwr = 0;
   let rateMwr = 0;
@@ -181,15 +182,17 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
   const frozenDate = String(live.frozenThrough || asOf).slice(0, 10);
 
   let profitCny = frozenProfit;
+  const todayProfit = todayPFinite;
+  const baseMvToday = Number(live.lastMarketValueCny) || frozenTa;
   if (stageKey === "today") {
-    profitCny = todayP;
-    rateTwr = live.tradingDay ? accountDailyTwrReturn(frozenTa, liveTa, flowToday) : 0;
-    rateMwr = live.tradingDay
-      ? xirrTodayOnly(frozenDate, frozenTa, liveDate, liveTa, flowToday)
-      : 0;
+    profitCny = todayProfit;
+    rateTwr =
+      live.tradingDay && baseMvToday > 0 && Math.abs(todayProfit) > 1e-9 ? todayProfit / baseMvToday : 0;
+    rateMwr = rateTwr;
   } else if (live.tradingDay) {
-    profitCny = frozenProfit + todayP;
-    const rToday = accountDailyTwrReturn(frozenTa, liveTa, flowToday);
+    profitCny = frozenProfit + todayProfit;
+    const rToday =
+      Math.abs(todayProfit) > 1e-9 ? accountDailyTwrReturn(frozenTa, liveTa, flowToday) : 0;
     rateTwr = chainTwrRate(rateTwr, rToday);
     const rowsForMwr = appendLiveSnapshotRow(rowsAsc, live, liveDate);
     rateMwr = xirrStageToLive(rowsForMwr, start, liveDate, liveTa);
@@ -227,7 +230,7 @@ function appendLiveSnapshotRow(rowsAsc, live, liveDate) {
     totalAssets: Number(live.totalAssetsCny) || 0,
     marketValue: Number(live.liveMarketValueCny) || 0,
     externalFlowCny: Number(live.externalFlowTodayCny) || 0,
-    profitCny: todayProfitCnyFromTotals(live),
+    profitCny: Number(live.todayProfitCny) || 0,
   });
   return out;
 }

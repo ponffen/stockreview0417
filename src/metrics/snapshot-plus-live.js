@@ -1,7 +1,9 @@
 /**
  * 冻结日 EOD（account_home_summary / analysis 快照）+ 盘中实时增量。
  */
+const { normalizeSymbol } = require("../db");
 const { computeLedgerCashCnyUpToDate, externalFlowCnyForDate } = require("../ledger-metrics");
+const { shouldCountTodayPositionPnlFromQuote } = require("../position-today-pnl");
 
 function chainTwrRate(frozenRate, todayRate) {
   const f = Number(frozenRate) || 0;
@@ -30,6 +32,37 @@ function todayProfitCnyFromTotals(live) {
   const flow = Number(live.externalFlowTodayCny) || 0;
   const ta = Number(live.totalAssetsCny) || 0;
   return ta - frozenTa - flow;
+}
+
+/**
+ * 账户「今日」是否与个股一致：至少一只持仓的行情日 = 当前交易日期（08:30 北京）。
+ * 无持仓或行情均未切到今日 → 不计账户今日收益。
+ */
+function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date() }) {
+  const quotes = quoteBySymbol && typeof quoteBySymbol === "object" ? quoteBySymbol : {};
+  for (const p of positions || []) {
+    const qty = Number(p.quantity) || 0;
+    if (!(qty > 1e-6)) {
+      continue;
+    }
+    const sym = normalizeSymbol(p.symbol);
+    const quote = quotes[sym] ?? quotes[p.symbol];
+    if (shouldCountTodayPositionPnlFromQuote(quote, now)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 账户今日收益：门控通过后为各持仓 todayProfitCny 之和；否则 0（不用总资产差，避免现金/汇率假增量）。 */
+function resolveAccountTodayProfitCny(live, positions, quoteBySymbol, now = new Date()) {
+  if (!live?.tradingDay) {
+    return 0;
+  }
+  if (!shouldCountAccountTodayPnl({ positions, quoteBySymbol, now })) {
+    return 0;
+  }
+  return (positions || []).reduce((s, p) => s + (Number(p.todayProfitCny) || 0), 0);
 }
 
 /** 个股日 TWR：市值=总资产，当日买卖=出入金 */
@@ -104,6 +137,8 @@ module.exports = {
   chainTwrRate,
   accountDailyTwrReturn,
   todayProfitCnyFromTotals,
+  shouldCountAccountTodayPnl,
+  resolveAccountTodayProfitCny,
   positionDailyTwrReturn,
   applyEodPlusLiveTotals,
 };
