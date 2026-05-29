@@ -944,6 +944,9 @@ async function buildAnalysisDailyAssetsPackFromContext(ctx, stage, trades, rowsA
   const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
   const { start, end } = resolveStageRange(st, asOf, firstTrade);
   const rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
+  const book = resolveBookCurrencyForAccountScope(settings, scope);
+  const fxU = Number(ctx.home?.account?.eod_fx_usd_cny) || live.fxUsdCny || 0;
+  const fxH = Number(ctx.home?.account?.eod_fx_hkd_cny) || live.fxHkdCny || 0;
   const series = {
     total_assets: { points: [] },
     market_value: { points: [] },
@@ -954,12 +957,31 @@ async function buildAnalysisDailyAssetsPackFromContext(ctx, stage, trades, rowsA
     if (r.date < start || r.date > end) {
       continue;
     }
-    series.total_assets.points.push({ date: r.date, value: r.totalAssets });
-    series.market_value.points.push({ date: r.date, value: r.marketValue });
-    series.cash.points.push({ date: r.date, value: r.cash });
+    const taCny = Number(r.totalAssets) || 0;
+    const mvCny = Number(r.marketValue) || 0;
+    const cashCny = Number(r.cash) || 0;
     const ratioRaw = Number(r.cashRatio) || 0;
     const ratioPct = ratioRaw <= 1 && ratioRaw >= 0 ? ratioRaw * 100 : ratioRaw;
-    series.cash_ratio.points.push({ date: r.date, value: ratioPct });
+    series.total_assets.points.push({
+      date: r.date,
+      value: taCny,
+      valueDisplay: fmtMoney(cnyScalarToBookAmount(taCny, book, fxU, fxH), book),
+    });
+    series.market_value.points.push({
+      date: r.date,
+      value: mvCny,
+      valueDisplay: fmtMoney(cnyScalarToBookAmount(mvCny, book, fxU, fxH), book),
+    });
+    series.cash.points.push({
+      date: r.date,
+      value: cashCny,
+      valueDisplay: fmtMoney(cnyScalarToBookAmount(cashCny, book, fxU, fxH), book),
+    });
+    series.cash_ratio.points.push({
+      date: r.date,
+      value: ratioPct,
+      valueDisplay: fmtPercentRatio(ratioPct / 100),
+    });
   }
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, series };
 }

@@ -6829,15 +6829,15 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   const stage = returns.stages[stageKey];
   if (todayProfitMain && monthProfitMain) {
     todayProfitMain.innerHTML = metricHeadlineHtml(
-      formatMetricsBundleMoneyCny(today.profitCny),
-      formatMetricsBundleRatio(today.rate),
+      today.profitDisplay,
+      today.rateDisplay,
       today.profitCny,
       today.rate,
     );
     todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
     monthProfitMain.innerHTML = metricHeadlineHtml(
-      formatMetricsBundleMoneyCny(stage.profitCny),
-      formatMetricsBundleRatio(stage.rate),
+      stage.profitDisplay,
+      stage.rateDisplay,
       stage.profitCny,
       stage.rate,
     );
@@ -6846,12 +6846,12 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   if (overviewGrid) {
     overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
       buildOverviewKpiEntries({
-        totalAssets: formatMetricsBundlePlainCny(assets.totalAssetsCny),
-        marketValue: formatMetricsBundlePlainCny(assets.marketValueCny),
-        cash: formatMetricsBundlePlainCny(assets.cashCny),
-        stockRatio: formatMetricsBundleRatio(assets.stockRatio),
-        cashRatio: formatMetricsBundleRatio(assets.cashRatio),
-        principal: formatMetricsBundlePlainCny(assets.principalCny),
+        totalAssets: String(assets.totalAssetsDisplay || "–"),
+        marketValue: String(assets.marketValueDisplay || "–"),
+        cash: String(assets.cashDisplay || "–"),
+        stockRatio: String(assets.stockRatioDisplay || "–"),
+        cashRatio: String(assets.cashRatioDisplay || "–"),
+        principal: String(assets.principalDisplay || "–"),
       }),
     );
   }
@@ -7770,14 +7770,17 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
     analysisRateSummary.textContent = useMwrUi ? `我的收益率 ${formatPercent(stageRet?.rateMwr ?? 0)}` : state.benchmark === "none" ? `我的收益率 ${formatPercent(lastMy / 100)}` : `我的 ${formatPercent(lastMy / 100)} / 基准 ${formatPercent(lastBench / 100)} / 对比 ${formatPercent((lastMy - lastBench) / 100)}`;
   }
   if (analysisProfitSummary && stageRet) {
-    analysisProfitSummary.textContent = `累计收益 ${formatMetricsBundleMoneyCny(stageRet.profitCny)}`;
+    analysisProfitSummary.textContent = `累计收益 ${stageRet.profitDisplay || "–"}`;
   }
   renderAnalysisStockRankFromMetrics(rankPack, analysisStockRankBody, {});
+  if (analysisEodAccountCaption) {
+    analysisEodAccountCaption.textContent = "";
+    analysisEodAccountCaption.hidden = true;
+  }
   const refreshAnalysisView = () => { renderControls(); void renderAnalysis({ showLoading: false }); };
   bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, { mode: "analysis", onRefresh: refreshAnalysisView });
   bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
-  void ensureAccountKpiSurfaceLoaded(aid);
   return true;
 }
 
@@ -7814,7 +7817,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     }
     const ok =
       overviewReturnsHasAllHomeStages(ret) &&
-      assets?.totalAssetsDisplay != null &&
+      (assets?.totalAssetsDisplay != null || Number.isFinite(Number(assets?.totalAssetsCny))) &&
       Array.isArray(hold?.rows);
     if (!ok) {
       state.overviewMetricsUi.ready = false;
@@ -8260,19 +8263,10 @@ async function renderAnalysis(options = {}) {
   if (!dbRows.length) {
     if (renderRequestId === analysisRenderRequestSeq) {
       renderAnalysisStockRank([], scope, portfolio);
-      const kpiAid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      void ensureAccountKpiSurfaceLoaded(kpiAid).then(() => {
-        if (analysisEodAccountCaption) {
-          const line = state.accountKpisByScope[kpiAid]?.summaryLine;
-          if (line) {
-            analysisEodAccountCaption.textContent = line;
-            analysisEodAccountCaption.hidden = false;
-          } else {
-            analysisEodAccountCaption.textContent = "";
-            analysisEodAccountCaption.hidden = true;
-          }
-        }
-      });
+      if (analysisEodAccountCaption) {
+        analysisEodAccountCaption.textContent = "";
+        analysisEodAccountCaption.hidden = true;
+      }
     }
     return;
   }
@@ -8495,17 +8489,9 @@ async function renderAnalysis(options = {}) {
   if (analysisProfitSummary) {
     analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
   }
-  const kpiAid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-  await ensureAccountKpiSurfaceLoaded(kpiAid);
   if (analysisEodAccountCaption) {
-    const line = state.accountKpisByScope[kpiAid]?.summaryLine;
-    if (line) {
-      analysisEodAccountCaption.textContent = line;
-      analysisEodAccountCaption.hidden = false;
-    } else {
-      analysisEodAccountCaption.textContent = "";
-      analysisEodAccountCaption.hidden = true;
-    }
+    analysisEodAccountCaption.textContent = "";
+    analysisEodAccountCaption.hidden = true;
   }
   renderAnalysisStockRank(pseudoHistory, scope, portfolio);
   void warmOverviewDailySnapshotsForEarning(scope, state.stageRange);
