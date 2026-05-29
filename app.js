@@ -4757,31 +4757,41 @@ async function renderPublicProfileAnalysis(d) {
       pubParams.symbol = benchSym;
     }
     const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
-    const twrPack = pubBundle?.dailyTwr;
-    const profitPack = pubBundle?.dailyProfit;
+    const pubSeries = pubBundle?.series || {};
+    const twrPts = pubSeries.dailyTwr || [];
+    const profitPts = pubSeries.dailyProfit || [];
     const benchPack = pubBundle?.benchmark;
     const rankPack = pubBundle?.stockRank;
     const retPack = pubBundle?.returns;
-    if (twrPack?.points?.length || profitPack?.points?.length) {
+    if (twrPts.length || profitPts.length) {
       await withPublicProfileAnalysisUiAsync(async () => {
         const pubRate = document.getElementById("pubAnalysisRateChart");
         const pubMkt = document.getElementById("pubAnalysisMarketChart");
         const pubRank = document.getElementById("pubAnalysisStockRankBody");
         const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
         const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-        const mySeries = trimMetricsSeriesPoints(twrPack.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
-        const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
-        const assetChartRows = analysisAssetChartRowsFromDailyAssets(pubBundle?.dailyAssets);
+        const mySeries = trimMetricsSeriesPoints(twrPts).map((p) => ({
+          date: p.date,
+          rate: parseBundlePercentChart(p.rate),
+        }));
+        const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({
+          date: p.date,
+          rate: parseBundlePercentChart(p.rate ?? p.rateDisplay),
+        }));
+        const assetChartRows = analysisAssetChartRowsFromSeries(pubSeries);
         const assetIdx = trimMetricsSeriesPoints(assetChartRows).map((r) => ({
           date: r.date,
           value: Number(r.totalAssets) || 0,
         }));
-        const stageRet = retPack?.stages?.[stage];
         const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
         if (pubRate) {
           const drawRate = () => useMwrUi ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries, pubRate);
           bindInteractiveChart(pubRate, document.getElementById("pubAnalysisRateTooltip"), () => drawRate(), { mode: "analysis", onRefresh: refresh });
-          if (pubRateSummary) pubRateSummary.textContent = useMwrUi ? `我的收益率 ${formatPercent(stageRet?.rateMwr ?? 0)}` : `我的 ${formatPercent((mySeries.at(-1)?.rate ?? 0) / 100)}`;
+          if (pubRateSummary) {
+            pubRateSummary.textContent = useMwrUi
+              ? `我的收益率 ${bundleFmtText(retPack?.rate)}`
+              : `我的 ${bundleFmtText(mySeries.at(-1)?.rate)}`;
+          }
         }
         if (pubMkt) paintPublicProfileMarketIndexChart(pubMkt, document.getElementById("pubAnalysisMarketTooltip"), assetIdx, refresh);
         renderAnalysisStockRankFromMetrics(rankPack, pubRank, { publicStockRankLayout: true });
@@ -6812,6 +6822,50 @@ function bundleFmtText(val, fallback = "–") {
   return s || fallback;
 }
 
+function parseBundleSignedAmount(text) {
+  let t = String(text ?? "").trim().replace(/,/g, "");
+  if (!t || t === "–" || t === "—") {
+    return NaN;
+  }
+  t = t.replace(/^¥\s*/, "");
+  const neg = t.startsWith("-") || t.startsWith("−");
+  const n = parseFloat(t.replace(/^[+−-]/, ""));
+  if (!Number.isFinite(n)) {
+    return NaN;
+  }
+  return neg ? -n : n;
+}
+
+function parseBundlePercent(text) {
+  let t = String(text ?? "").trim().replace(/%/g, "");
+  if (!t || t === "–" || t === "—") {
+    return NaN;
+  }
+  const neg = t.startsWith("-") || t.startsWith("−");
+  const n = parseFloat(t.replace(/^[+−-]/, ""));
+  if (!Number.isFinite(n)) {
+    return NaN;
+  }
+  const ratio = n / 100;
+  return neg ? -ratio : ratio;
+}
+
+function parseBundlePercentChart(text) {
+  const r = parseBundlePercent(text);
+  return Number.isFinite(r) ? r * 100 : 0;
+}
+
+function bundleSignedClass(text) {
+  const t = String(text ?? "").trim();
+  if (t.startsWith("+")) {
+    return "up";
+  }
+  if (t.startsWith("-") || t.startsWith("−")) {
+    return "down";
+  }
+  return "";
+}
+
 function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
     return false;
@@ -6819,20 +6873,10 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
   const today = returns.stages.today;
   const stage = returns.stages[stageKey];
   if (todayProfitMain && monthProfitMain) {
-    todayProfitMain.innerHTML = metricHeadlineHtml(
-      bundleFmtText(today.profit),
-      bundleFmtText(today.ratePct),
-      today.profitCny,
-      today.rate,
-    );
-    todayProfitMain.className = `profit-main ${Number(today.profitCny) >= 0 ? "up" : "down"}`;
-    monthProfitMain.innerHTML = metricHeadlineHtml(
-      bundleFmtText(stage.profit),
-      bundleFmtText(stage.ratePct),
-      stage.profitCny,
-      stage.rate,
-    );
-    monthProfitMain.className = `profit-main ${Number(stage.profitCny) >= 0 ? "up" : "down"}`;
+    todayProfitMain.innerHTML = metricHeadlineHtml(today.profit, today.rate);
+    todayProfitMain.className = `profit-main ${bundleSignedClass(today.profit)}`;
+    monthProfitMain.innerHTML = metricHeadlineHtml(stage.profit, stage.rate);
+    monthProfitMain.className = `profit-main ${bundleSignedClass(stage.profit)}`;
   }
   if (overviewGrid) {
     overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
@@ -6854,7 +6898,7 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
     }
   }
   paintOverviewStockTableFromMetricsRows(holdRows);
-  applyOverviewMetricsMeta(returns.meta || assets.meta || holdings.meta);
+  applyOverviewMetricsMeta(state.overviewMetricsUi?.meta);
   if (quoteTime) {
     const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
     quoteTime.textContent = timeText;
@@ -7500,7 +7544,15 @@ function trimMetricsSeriesPoints(points) {
 async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   if (!apiReady) return null;
   const qs = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) { if (v != null && String(v) !== "") qs.set(k, String(v)); }
+  const p = { ...params };
+  if (p.accountScope != null && p.account_id == null) {
+    p.account_id = p.accountScope;
+  }
+  for (const [k, v] of Object.entries(p)) {
+    if (v != null && String(v) !== "") {
+      qs.set(k, String(v));
+    }
+  }
   const q = qs.toString();
   const prefix = publicTargetId ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}` : getApiBaseForFetch();
   const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
@@ -7514,28 +7566,32 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
     return j.data;
   } catch { return null; }
 }
-function metricHeadlineHtml(profitDisplay, rateDisplay, profitCny, rate) {
-  const amtCls = Number(profitCny) >= 0 ? "up" : "down";
-  return `<span class="profit-amt ${amtCls}">${escapeHtml(String(profitDisplay ?? "–"))}</span><span class="profit-rate-inline ${twrColorClass(rate)}">${escapeHtml(String(rateDisplay ?? "–"))}</span>`;
+function metricHeadlineHtml(profitStr, rateStr) {
+  const amtCls = bundleSignedClass(profitStr);
+  const rate = parseBundlePercent(rateStr);
+  return `<span class="profit-amt ${amtCls}">${escapeHtml(bundleFmtText(profitStr))}</span><span class="profit-rate-inline ${twrColorClass(rate)}">${escapeHtml(bundleFmtText(rateStr))}</span>`;
 }
 
 const METRICS_TABLE_MARKET_SORT = { "A股": 1, "港股": 2, "美股": 3 };
 
 function resolveMetricsStockSortKeyValue(row, key) {
-  if (key === "currentPrice") return Number(row.dayChangeRate) || 0;
-  if (key === "marketValue") return Number(row.marketValueNum) || 0;
-  if (key === "weight") return Number(row.weightNum) || 0;
-  if (key === "cost") return Number(row.costNum) || 0;
+  if (key === "currentPrice") return parseBundlePercent(row.dayChange);
+  if (key === "marketValue") return parseBundleSignedAmount(row.marketValueCny ?? row.marketValue);
+  if (key === "weight") return parseBundlePercent(row.weight);
+  if (key === "cost") return parseBundleSignedAmount(row.cost);
   if (key === "monthProfit") return metricsRowProfitSortAmount(row, "monthProfit");
-  if (key === "monthWeight") return Number(row.monthWeightNum) || 0;
+  if (key === "monthWeight") return parseBundlePercent(row.monthWeight);
   if (key === "yearProfit") return metricsRowProfitSortAmount(row, "yearProfit");
-  if (key === "yearWeight") return Number(row.yearWeightNum) || 0;
+  if (key === "yearWeight") return parseBundlePercent(row.yearWeight);
   if (key === "totalProfit") return metricsRowProfitSortAmount(row, "totalProfit");
-  if (key === "totalWeight") return Number(row.totalWeightNum) || 0;
-  if (key === "totalRate") return Number(row.totalRateNum) || 0;
-  if (key === "todayProfit") return metricsRowSignedAmount(row, "todayProfit");
-  if (key === "regretRate") return Number(row.regretRateNum) || 0;
-  if (key === "lastTradeDate") return Number(row.lastTradeDateMs) || 0;
+  if (key === "totalWeight") return parseBundlePercent(row.totalWeight);
+  if (key === "totalRate") return parseBundlePercent(row.totalRate);
+  if (key === "todayProfit") return metricsRowProfitSortAmount(row, "todayProfit");
+  if (key === "regretRate") {
+    const raw = String(row.regret || "").replace(/\s+[BS]$/i, "").trim();
+    return parseBundlePercent(raw);
+  }
+  if (key === "lastTradeDate") return Date.parse(row.lastTradeDate || 0) || 0;
   return 0;
 }
 
@@ -7547,7 +7603,7 @@ function sortMetricsHoldingsRows(list) {
       const marketCmp =
         (METRICS_TABLE_MARKET_SORT[a.market] || 99) - (METRICS_TABLE_MARKET_SORT[b.market] || 99);
       if (marketCmp !== 0) return marketCmp;
-      return (Number(b.lastTradeDateMs) || 0) - (Number(a.lastTradeDateMs) || 0);
+      return (Date.parse(b.lastTradeDate || 0) || 0) - (Date.parse(a.lastTradeDate || 0) || 0);
     });
     return rows;
   }
@@ -7563,17 +7619,10 @@ function sortMetricsHoldingsRows(list) {
 
 /** home-bundle 个股金额：native 列无符号；cny 列用服务端预计算字段，港美股加 ¥。 */
 
-function metricsRowSignedAmount(row, fieldBase) {
-  const cnyOn = state.stockAmountDisplay === "cny";
-  const numKey = cnyOn ? `${fieldBase}CnyNum` : `${fieldBase}NativeNum`;
-  const n = Number(row[numKey]);
-  return Number.isFinite(n) ? n : 0;
-}
-
 /** 个股表月/年/总收益排序：单账户按账户默认币种，全部账户按人民币（不受 ¥ 列切换影响） */
 function metricsRowProfitSortAmount(row, fieldBase) {
   const book = getOverviewBookCurrency();
-  const cny = Number(row[`${fieldBase}CnyNum`]);
+  const cny = parseBundleSignedAmount(row[`${fieldBase}Cny`]);
   if (!Number.isFinite(cny)) {
     return 0;
   }
@@ -7581,7 +7630,7 @@ function metricsRowProfitSortAmount(row, fieldBase) {
     return cny;
   }
   const ccy = String(row.currency || "").toUpperCase();
-  const native = Number(row[`${fieldBase}NativeNum`]);
+  const native = parseBundleSignedAmount(row[fieldBase]);
   if (ccy === book && Number.isFinite(native)) {
     return native;
   }
@@ -7589,7 +7638,9 @@ function metricsRowProfitSortAmount(row, fieldBase) {
 }
 
 function metricsRowProfitClass(row, fieldBase) {
-  return metricsRowSignedAmount(row, fieldBase) >= 0 ? "up" : "down";
+  const cnyOn = state.stockAmountDisplay === "cny";
+  const text = cnyOn ? row[`${fieldBase}Cny`] : row[fieldBase];
+  return bundleSignedClass(text);
 }
 
 function metricsHoldingsMoneyCell(row, fieldBase) {
@@ -7614,21 +7665,18 @@ function paintOverviewStockTableFromMetricsRows(rows) {
   stockTableBody.innerHTML = sorted.map((row) => {
     const sym = normalizeSymbol(row.symbol);
     const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
-    const dayClass = Number(row.dayChangeRate) >= 0 ? "up" : "down";
+    const dayClass = bundleSignedClass(row.dayChange);
     const todayClass = metricsRowProfitClass(row, "todayProfit");
     const monthClass = metricsRowProfitClass(row, "monthProfit");
     const yearClass = metricsRowProfitClass(row, "yearProfit");
     const totalClass = metricsRowProfitClass(row, "totalProfit");
-    const totalRateNum = Number(row.totalRateNum);
-    const totalRateClass = Number.isFinite(totalRateNum) ? (totalRateNum >= 0 ? "up" : "down") : "";
-    const regretN = Number(row.regretRateNum) || 0;
-    const regretClass = regretN >= 0 ? "up" : "down";
-    const qtyFromMv =
-      Number(row.marketValueNum) > 0 && Number(row.currentPriceNum) > 0
-        ? Math.round(Number(row.marketValueNum) / Number(row.currentPriceNum))
-        : NaN;
-    const qty = Number.isFinite(qtyFromMv) ? String(qtyFromMv) : "–";
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret, formatRegretRateWithSide(row.regretRateNum, row.lastTradeSide)))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
+    const totalRateClass = bundleSignedClass(row.totalRate);
+    const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+    const mvSort = parseBundleSignedAmount(row.marketValueCny ?? row.marketValue);
+    const priceSort = parseBundleSignedAmount(row.price);
+    const qtyFromMv = mvSort > 0 && priceSort > 0 ? Math.round(mvSort / priceSort) : NaN;
+    const qty = Number.isFinite(qtyFromMv) ? String(qtyFromMv) : bundleFmtText(row.quantity);
+    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link" data-stock-record="${escapeHtml(sym)}">记录</a> <a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }
 function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {
@@ -7637,56 +7685,45 @@ function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = 
   const rows = Array.isArray(rankPayload?.rows) ? rankPayload.rows : [];
   if (!rows.length) { targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`; return; }
   targetBody.innerHTML = rows.map((row) => {
-    const profitText = bundleFmtText(row.profit);
-    const pxText = bundleFmtText(row.pxChangePct);
+    const profitText = bundleFmtText(row.profit ?? row.profitDisplay);
+    const pxText = bundleFmtText(row.pxChange ?? row.pxChangePct ?? row.pxChangeDisplay);
     const profitCell = hideProfitCol ? "" : `<td>${escapeHtml(profitText)}</td>`;
     const holdCell = rankOpts.publicStockRankLayout ? `<td>${escapeHtml(row.holdIntervalsLabel || "–")}</td>` : `<td>${Number(row.heldDays) || 0} 天</td>`;
     return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(pxText || "–")}</td></tr>`;
   }).join("");
 }
 
-function analysisAssetChartRowsFromDailyAssets(dailyAssets) {
-  if (!dailyAssets) {
-    return [];
-  }
-  if (Array.isArray(dailyAssets.points) && dailyAssets.points.length) {
-    return dailyAssets.points.map((p) => ({
-      date: String(p.date).slice(0, 10),
-      totalAssets: Number(p.value) || 0,
-      market: 0,
-      cash: 0,
-      cashRatio: 0,
-    }));
-  }
-  const series = dailyAssets?.series;
+function analysisAssetChartRowsFromSeries(series) {
   if (!series || typeof series !== "object") {
     return [];
   }
   const dateSet = new Set();
-  for (const key of ["total_assets", "market_value", "cash", "cash_ratio"]) {
-    const pts = series[key]?.points;
-    if (!Array.isArray(pts)) {
-      continue;
-    }
-    for (const p of pts) {
+  for (const key of ["totalAssets", "marketValue", "cash", "cashRatio"]) {
+    for (const p of series[key] || []) {
       if (p?.date) {
         dateSet.add(String(p.date).slice(0, 10));
       }
     }
   }
   const pick = (metric, date) => {
-    const pts = series[metric]?.points || [];
+    const pts = series[metric] || [];
     const hit = pts.find((p) => String(p.date).slice(0, 10) === date);
-    return hit ? Number(hit.value) || 0 : 0;
+    if (!hit) {
+      return 0;
+    }
+    if (metric === "cashRatio") {
+      return parseBundlePercentChart(hit.cashRatio);
+    }
+    return parseBundleSignedAmount(hit[metric]);
   };
   return [...dateSet]
     .sort((a, b) => a.localeCompare(b))
     .map((date) => ({
       date,
-      totalAssets: pick("total_assets", date),
-      market: pick("market_value", date),
+      totalAssets: pick("totalAssets", date),
+      market: pick("marketValue", date),
       cash: pick("cash", date),
-      cashRatio: pick("cash_ratio", date),
+      cashRatio: pick("cashRatio", date),
     }));
 }
 
@@ -7713,40 +7750,48 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
     bundleParams.symbol = benchSym;
   }
   const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
-  const twrPack = bundle?.dailyTwr;
-  const profitPack = bundle?.dailyProfit;
-  const dailyAssets = bundle?.dailyAssets;
+  const series = bundle?.series || {};
+  const twrPts = series.dailyTwr || [];
+  const profitPts = series.dailyProfit || [];
   const benchPack = bundle?.benchmark;
   const rankPack = bundle?.stockRank;
   const retPack = bundle?.returns;
   if (renderRequestId !== analysisRenderRequestSeq) return false;
-  if (!twrPack?.points?.length && !profitPack?.points?.length) return false;
+  if (!twrPts.length && !profitPts.length) return false;
   const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const mySeries = trimMetricsSeriesPoints(twrPack.points).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
-  const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({ date: p.date, rate: (Number(p.rate) || 0) * 100 }));
-  const profitSeries = trimMetricsSeriesPoints(profitPack.points).map((p) => ({ date: p.date, value: Number(p.profitCny) || 0 }));
-  cachedAnalysisAssetChartRows = analysisAssetChartRowsFromDailyAssets(dailyAssets);
+  const mySeries = trimMetricsSeriesPoints(twrPts).map((p) => ({
+    date: p.date,
+    rate: parseBundlePercentChart(p.rate),
+  }));
+  const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({
+    date: p.date,
+    rate: parseBundlePercentChart(p.rate ?? p.rateDisplay),
+  }));
+  const profitSeries = trimMetricsSeriesPoints(profitPts).map((p) => ({
+    date: p.date,
+    value: parseBundleSignedAmount(p.profit),
+  }));
+  cachedAnalysisAssetChartRows = analysisAssetChartRowsFromSeries(series);
   const assetSeries = trimMetricsSeriesPoints(cachedAnalysisAssetChartRows);
-  const stageRet = retPack?.stages?.[stage];
   const ratePayload = useMwrUi ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries);
   const profitPayload = drawDualLineChart(analysisProfitChart, profitSeries.map((i) => ({ date: i.date, value: i.value })), null, "#f45a68", null, { keyA: "profit", labelA: "收益", yAxisMode: "left", leftLabel: "", xLabel: "", valueFormatter: (v) => formatNumber(v, 2), axisFormatter: (v) => formatNumber(v, 2), yRangePadding: { minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR, maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR } });
   const assetPayload = drawAssetChart(assetSeries);
   if (analysisRateSummary) {
-    const lastMyPt = trimMetricsSeriesPoints(twrPack.points).at(-1);
+    const lastMyPt = trimMetricsSeriesPoints(twrPts).at(-1);
     const lastBenchPt = trimMetricsSeriesPoints(benchPack?.points || []).at(-1);
     if (useMwrUi) {
-      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(stageRet?.rateMwrPct || stageRet?.ratePct)}`;
+      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(retPack?.rate)}`;
     } else if (state.benchmark === "none") {
-      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(lastMyPt?.ratePct)}`;
+      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(lastMyPt?.rate)}`;
     } else {
-      const myPct = bundleFmtText(lastMyPt?.ratePct);
-      const benchPct = bundleFmtText(lastBenchPt?.ratePct);
-      const diff = (Number(lastMyPt?.rate) || 0) - (Number(lastBenchPt?.rate) || 0);
+      const myPct = bundleFmtText(lastMyPt?.rate);
+      const benchPct = bundleFmtText(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
+      const diff = parseBundlePercent(lastMyPt?.rate) - parseBundlePercent(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
       analysisRateSummary.textContent = `我的 ${myPct} / 基准 ${benchPct} / 对比 ${formatPercent(diff)}`;
     }
   }
-  if (analysisProfitSummary && stageRet) {
-    analysisProfitSummary.textContent = `累计收益 ${bundleFmtText(stageRet.profit)}`;
+  if (analysisProfitSummary && retPack) {
+    analysisProfitSummary.textContent = `累计收益 ${bundleFmtText(retPack.profit)}`;
   }
   renderAnalysisStockRankFromMetrics(rankPack, analysisStockRankBody, {});
   if (analysisEodAccountCaption) {
@@ -7793,7 +7838,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     }
     const ok =
       overviewReturnsHasAllHomeStages(ret) &&
-      (bundleFmtText(assets?.totalAssets, "") !== "" || Number.isFinite(Number(assets?.totalAssetsCny))) &&
+      bundleFmtText(assets?.totalAssets, "") !== "" &&
       Array.isArray(hold?.rows);
     if (!ok) {
       state.overviewMetricsUi.ready = false;
@@ -7806,6 +7851,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
       ready: true,
       loading: false,
       key: metricsKey,
+      meta: bundle.meta,
       returns: ret,
       assets,
       holdings: hold,

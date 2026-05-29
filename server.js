@@ -1499,9 +1499,13 @@ app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
 });
 
 
+function metricsAccountIdFromQuery(query) {
+  return String(query?.account_id || query?.accountScope || "all").trim() || "all";
+}
+
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
   try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const accountScope = metricsAccountIdFromQuery(req.query);
     sendMetricsJson(res, await getMetricsHomeBundle(req.userId, accountScope, req.query.stages));
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "home-bundle failed" });
@@ -1510,7 +1514,7 @@ app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
 
 app.get("/api/metrics/analysis-bundle", requireAuth, async (req, res) => {
   try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const accountScope = metricsAccountIdFromQuery(req.query);
     const stage = String(req.query.stage || "mtd").trim() || "mtd";
     const symbol = String(req.query.symbol || "").trim();
     sendMetricsJson(

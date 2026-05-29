@@ -254,7 +254,9 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: gate.error }));
         return;
       }
-      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const accountScope =
+        String(getSearchParam(req, "account_id") || getSearchParam(req, "accountScope") || "all").trim() ||
+        "all";
       const { probeMetricsHomeBundleDb, getMetricsHomeBundle } = require("../src/metrics-api-service");
       if (pathKey === "/api/metrics/home-bundle-diag") {
         const _diag = await probeMetricsHomeBundleDb(gate.userId, accountScope);
@@ -296,7 +298,9 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: gate.error }));
         return;
       }
-      const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const accountScope =
+        String(getSearchParam(req, "account_id") || getSearchParam(req, "accountScope") || "all").trim() ||
+        "all";
       const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
       const symbol = String(getSearchParam(req, "symbol") || "").trim();
       const { getMetricsAnalysisBundle } = require("../src/metrics-api-service");
