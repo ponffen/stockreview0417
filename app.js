@@ -239,6 +239,8 @@ let tradeSearchSuggestController = null;
 let analysisRenderRequestSeq = 0;
 /** 分析页 analysis-bundle 资产四曲线缓存，切换「总资产/市值/现金/占比」仅本地重绘 */
 let cachedAnalysisAssetChartRows = null;
+/** metrics 分析图：缓存序列与 payload，十字星 onRedraw 不重拉接口 */
+let cachedAnalysisMetricsCharts = null;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
 /** 与 account-daily 类似：合并并发、短缓存，避免连续 renderAll 打出两条相同 symbol-daily */
@@ -4770,23 +4772,42 @@ async function renderPublicProfileAnalysis(d) {
         const pubRank = document.getElementById("pubAnalysisStockRankBody");
         const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
         const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-        const mySeries = trimMetricsSeriesPoints(twrPts).map((p) => ({
-          date: p.date,
-          rate: parseBundlePercentChart(p.rate),
-        }));
-        const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({
-          date: p.date,
-          rate: parseBundlePercentChart(p.rate ?? p.rateDisplay),
-        }));
+        const mySeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(twrPts));
+        const benchSeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(benchPack?.points || []));
         const assetChartRows = analysisAssetChartRowsFromSeries(pubSeries);
         const assetIdx = trimMetricsSeriesPoints(assetChartRows).map((r) => ({
           date: r.date,
           value: Number(r.totalAssets) || 0,
         }));
+        const pubTwrPts = trimMetricsSeriesPoints(twrPts);
+        const pubBenchPts = trimMetricsSeriesPoints(benchPack?.points || []);
         const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        let pubRatePayload = null;
+        const redrawPubRate = () => {
+          if (!pubRate) {
+            return null;
+          }
+          pubRatePayload = useMwrUi
+            ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。")
+            : drawLineChart(mySeries, benchSeries, pubRate);
+          return pubRatePayload;
+        };
         if (pubRate) {
-          const drawRate = () => useMwrUi ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries, pubRate);
-          bindInteractiveChart(pubRate, document.getElementById("pubAnalysisRateTooltip"), () => drawRate(), { mode: "analysis", onRefresh: refresh });
+          redrawPubRate();
+          bindInteractiveChart(pubRate, document.getElementById("pubAnalysisRateTooltip"), () => pubRatePayload, {
+            mode: "analysis",
+            onRefresh: refresh,
+            onRedraw: redrawPubRate,
+            valueFormatter: (_value, key) => {
+              const date = state.chartCrosshairMap[pubRate.id]?.date;
+              if (key === "benchmark") {
+                const pt = pubBenchPts.find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
+                return bundleFmtText(pt?.rate ?? pt?.rateDisplay);
+              }
+              const pt = pubTwrPts.find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
+              return bundleFmtText(pt?.rate);
+            },
+          });
           if (pubRateSummary) {
             pubRateSummary.textContent = useMwrUi
               ? `我的收益率 ${bundleFmtText(retPack?.rate)}`
@@ -7727,20 +7748,75 @@ function analysisAssetChartRowsFromSeries(series) {
     }));
 }
 
+function analysisRateSeriesForChart(points) {
+  return (points || []).map((p) => ({
+    date: p.date,
+    rate:
+      typeof p.rate === "string"
+        ? parseBundlePercent(p.rate)
+        : Number(p.rate) || 0,
+  }));
+}
+
+function analysisRateCrosshairText(date, key) {
+  const ctx = cachedAnalysisMetricsCharts;
+  if (!date || !ctx) {
+    return "–";
+  }
+  if (key === "benchmark") {
+    const pt = (ctx.benchPts || []).find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
+    return bundleFmtText(pt?.rate ?? pt?.rateDisplay);
+  }
+  const pt = (ctx.twrPts || []).find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
+  return bundleFmtText(pt?.rate);
+}
+
 function repaintAnalysisAssetChartFromCache() {
-  if (!cachedAnalysisAssetChartRows?.length || !analysisAssetChart) {
+  if (!cachedAnalysisAssetChartRows?.length || !analysisAssetChart || !cachedAnalysisMetricsCharts) {
     return;
   }
-  const assetPayload = drawAssetChart(trimMetricsSeriesPoints(cachedAnalysisAssetChartRows));
-  const refreshAnalysisView = () => {
-    renderControls();
-    void renderAnalysis({ showLoading: false });
-  };
-  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, {
+  cachedAnalysisMetricsCharts.payloads.asset = drawAssetChart(
+    trimMetricsSeriesPoints(cachedAnalysisAssetChartRows),
+  );
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => cachedAnalysisMetricsCharts.payloads.asset, {
     mode: "analysis",
-    onRefresh: refreshAnalysisView,
+    onRefresh: cachedAnalysisMetricsCharts.refreshAnalysisView,
+    onRedraw: cachedAnalysisMetricsCharts.redrawChartsOnly,
+    valueFormatter: cachedAnalysisMetricsCharts.assetValueFormatter,
   });
 }
+
+function bindAnalysisMetricsChartsInteractive() {
+  const ctx = cachedAnalysisMetricsCharts;
+  if (!ctx) {
+    return;
+  }
+  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ctx.payloads.rate, {
+    mode: "analysis",
+    onRefresh: ctx.refreshAnalysisView,
+    onRedraw: ctx.redrawChartsOnly,
+    valueFormatter: (_value, key) => {
+      if (key === "benchmark" && state.benchmark === "none") {
+        return "–";
+      }
+      const date = state.chartCrosshairMap[analysisRateChart?.id]?.date;
+      return analysisRateCrosshairText(date, key);
+    },
+  });
+  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => ctx.payloads.profit, {
+    mode: "analysis",
+    onRefresh: ctx.refreshAnalysisView,
+    onRedraw: ctx.redrawChartsOnly,
+    valueFormatter: (value) => formatNumber(value, 2),
+  });
+  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => ctx.payloads.asset, {
+    mode: "analysis",
+    onRefresh: ctx.refreshAnalysisView,
+    onRedraw: ctx.redrawChartsOnly,
+    valueFormatter: ctx.assetValueFormatter,
+  });
+}
+
 async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "") {
   const stage = metricsStageFromAnalysis();
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
@@ -7759,23 +7835,74 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   if (renderRequestId !== analysisRenderRequestSeq) return false;
   if (!twrPts.length && !profitPts.length) return false;
   const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const mySeries = trimMetricsSeriesPoints(twrPts).map((p) => ({
-    date: p.date,
-    rate: parseBundlePercentChart(p.rate),
-  }));
-  const benchSeries = trimMetricsSeriesPoints(benchPack?.points || []).map((p) => ({
-    date: p.date,
-    rate: parseBundlePercentChart(p.rate ?? p.rateDisplay),
-  }));
+  const twrPtsTrim = trimMetricsSeriesPoints(twrPts);
+  const benchPtsTrim = trimMetricsSeriesPoints(benchPack?.points || []);
+  const mySeries = analysisRateSeriesForChart(twrPtsTrim);
+  const benchSeries = analysisRateSeriesForChart(benchPtsTrim);
   const profitSeries = trimMetricsSeriesPoints(profitPts).map((p) => ({
     date: p.date,
     value: parseBundleSignedAmount(p.profit),
   }));
   cachedAnalysisAssetChartRows = analysisAssetChartRowsFromSeries(series);
   const assetSeries = trimMetricsSeriesPoints(cachedAnalysisAssetChartRows);
-  const ratePayload = useMwrUi ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。") : drawLineChart(mySeries, benchSeries);
-  const profitPayload = drawDualLineChart(analysisProfitChart, profitSeries.map((i) => ({ date: i.date, value: i.value })), null, "#f45a68", null, { keyA: "profit", labelA: "收益", yAxisMode: "left", leftLabel: "", xLabel: "", valueFormatter: (v) => formatNumber(v, 2), axisFormatter: (v) => formatNumber(v, 2), yRangePadding: { minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR, maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR } });
-  const assetPayload = drawAssetChart(assetSeries);
+
+  const refreshAnalysisView = () => {
+    renderControls();
+    void renderAnalysis({ showLoading: false });
+  };
+  const assetValueFormatter = (value) =>
+    state.capitalTrendMode === "cash_ratio"
+      ? `${formatNumber(value, 2)}%`
+      : formatNumber(analysisSnapshotMoneyFromCny(value), 2);
+
+  const redrawChartsOnly = () => {
+    const c = cachedAnalysisMetricsCharts;
+    if (!c) {
+      return;
+    }
+    c.payloads.rate = c.useMwrUi
+      ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
+      : drawLineChart(c.mySeries, c.benchSeries);
+    c.payloads.profit = drawDualLineChart(
+      analysisProfitChart,
+      c.profitSeries.map((i) => ({ date: i.date, value: i.value })),
+      null,
+      "#f45a68",
+      null,
+      {
+        keyA: "profit",
+        labelA: "收益",
+        yAxisMode: "left",
+        leftLabel: "",
+        xLabel: "",
+        valueFormatter: (v) => formatNumber(v, 2),
+        axisFormatter: (v) => formatNumber(v, 2),
+        yRangePadding: {
+          minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
+          maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
+        },
+      },
+    );
+    c.payloads.asset = drawAssetChart(trimMetricsSeriesPoints(cachedAnalysisAssetChartRows));
+  };
+
+  cachedAnalysisMetricsCharts = {
+    twrPts: twrPtsTrim,
+    benchPts: benchPtsTrim,
+    mySeries,
+    benchSeries,
+    profitSeries,
+    useMwrUi,
+    refreshAnalysisView,
+    redrawChartsOnly,
+    assetValueFormatter,
+    payloads: {
+      rate: null,
+      profit: null,
+      asset: null,
+    },
+  };
+  redrawChartsOnly();
   if (analysisRateSummary) {
     const lastMyPt = trimMetricsSeriesPoints(twrPts).at(-1);
     const lastBenchPt = trimMetricsSeriesPoints(benchPack?.points || []).at(-1);
@@ -7798,10 +7925,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
     analysisEodAccountCaption.textContent = "";
     analysisEodAccountCaption.hidden = true;
   }
-  const refreshAnalysisView = () => { renderControls(); void renderAnalysis({ showLoading: false }); };
-  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ratePayload, { mode: "analysis", onRefresh: refreshAnalysisView });
-  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => profitPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
-  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => assetPayload, { mode: "analysis", onRefresh: refreshAnalysisView });
+  bindAnalysisMetricsChartsInteractive();
   return true;
 }
 
