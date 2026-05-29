@@ -315,7 +315,7 @@ async function upsertSymbolBatchV3(client, uid, rows) {
 async function freezeAccountHistory({
   uid,
   accountId,
-  allDates,
+  frozenDate,
   allTrades,
   allCash,
   accounts,
@@ -328,7 +328,21 @@ async function freezeAccountHistory({
   const accTrades = filterTradesForAccount(allTrades, accountId);
   if (!accTrades.length) return 0;
 
-  const dayPoints = buildPortfolioDayPoints(accTrades, allDates, klineBySym, fxUsdMap, fxHkdMap, allCash, accountId, accounts);
+  const accMinD = String(accTrades[0].date).slice(0, 10);
+  const fd = String(frozenDate).slice(0, 10);
+  if (accMinD > fd) return 0;
+  const accountDates = enumerateDays(accMinD, fd);
+
+  const dayPoints = buildPortfolioDayPoints(
+    accTrades,
+    accountDates,
+    klineBySym,
+    fxUsdMap,
+    fxHkdMap,
+    allCash,
+    accountId,
+    accounts,
+  );
   if (!dayPoints.length) return 0;
 
   const twrInputs = [];
@@ -710,7 +724,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
         const n = await freezeAccountHistory({
           uid,
           accountId,
-          allDates,
+          frozenDate,
           allTrades,
           allCash,
           accounts,

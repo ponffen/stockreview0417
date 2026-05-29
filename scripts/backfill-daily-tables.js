@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Metrics v3 历史回填：账户表首笔→冻结日全量；个股表仅在冻结日写 U_rank 一行。
+ * Metrics v3 历史回填：账户表按各 account_id 自己的首笔→冻结日；个股表仅在冻结日写 U_rank 一行。
  * Usage: STOCKREVIEW_PHONE=18310270720 node scripts/backfill-daily-tables.js
  */
 const path = require("node:path");
