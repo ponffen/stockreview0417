@@ -20,6 +20,7 @@ const {
   parseQuoteTimeToDateKey,
   todayProfitCnyForHolding,
 } = require("./position-today-pnl");
+const { normalizeQuoteTimeToBeijingBySymbol } = require("./tencent-quote-time");
 
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
@@ -84,7 +85,8 @@ function parseTencentQuoteRecord(symbol, rawText) {
   const current = parseTencentPriceField(parts[3]);
   const prevClose = parseTencentPriceField(parts[4]);
   const rawTime = String(parts[30] || parts[31] || "--").trim();
-  const marketDate = parseQuoteTimeToDateKey(rawTime);
+  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, symbol);
+  const marketDate = parseQuoteTimeToDateKey(rawTime) || parseQuoteTimeToDateKey(time);
   if (!Number.isFinite(current) || current <= 0) {
     return null;
   }
@@ -92,8 +94,8 @@ function parseTencentQuoteRecord(symbol, rawText) {
     name: String(parts[1] || "").trim() || symbol,
     current,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
-    time: rawTime || "--",
-    rawTime,
+    time: time || "--",
+    rawTime: rawTime || "--",
     marketDate,
     quoteDate: marketDate,
   };
