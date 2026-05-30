@@ -1440,11 +1440,14 @@ h2 {
 
 .trade-record-note {
   margin: 0;
-  padding: 4px 0 2px 0;
+  padding: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: #5c6675;
   text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .trade-record-note-label {
@@ -1452,17 +1455,41 @@ h2 {
   margin-right: 4px;
 }
 
+.trade-record-note-text {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .trade-note-subrow td {
   border-top: none;
   padding-top: 0;
-  padding-bottom: 10px;
+  padding-bottom: 5px;
   text-align: left !important;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  max-width: 1px;
+  width: 100%;
+}
+
+.trade-row:has(+ .trade-note-subrow) td,
+.stock-record-trade-row:has(+ .trade-note-subrow) td,
+.cash-transfer-row:has(+ .trade-note-subrow) td {
+  padding-bottom: 4px;
 }
 
 .trade-row + .trade-note-subrow td,
 .stock-record-trade-row + .trade-note-subrow td,
 .cash-transfer-row + .trade-note-subrow td {
   border-top: none;
+}
+
+.stock-record-table .trade-note-subrow td {
+  white-space: normal !important;
+  max-width: 1px;
+  width: 100%;
 }
 
 .trade-row--clickable,
