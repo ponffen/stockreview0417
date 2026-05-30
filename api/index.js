@@ -609,9 +609,26 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
-      const { getTrades, normalizeTrade, upsertTrade, deleteTradeById } = require("../src/db");
+      const {
+        getTrades,
+        getTradesPage,
+        normalizeTrade,
+        upsertTrade,
+        deleteTradeById,
+      } = require("../src/db");
 
       if (isTradesGetDirect) {
+        const limitRaw = getSearchParam(req, "limit");
+        if (limitRaw != null && String(limitRaw).trim() !== "") {
+          const limit = Math.min(100, Math.max(1, parseInt(String(limitRaw), 10) || 10));
+          const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
+          const accountIdRaw = String(getSearchParam(req, "accountId") || "all").trim();
+          const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+          const { data, pagination } = await getTradesPage(userId, { limit, offset, accountId });
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data, pagination }));
+          return;
+        }
         const data = await getTrades(userId);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
@@ -663,9 +680,25 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
-      const { getCashTransfers, upsertCashTransfer, deleteCashTransferById } = require("../src/db");
+      const {
+        getCashTransfers,
+        getCashTransfersPage,
+        upsertCashTransfer,
+        deleteCashTransferById,
+      } = require("../src/db");
 
       if (isCashTransfersGetDirect) {
+        const limitRaw = getSearchParam(req, "limit");
+        if (limitRaw != null && String(limitRaw).trim() !== "") {
+          const limit = Math.min(100, Math.max(1, parseInt(String(limitRaw), 10) || 10));
+          const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
+          const accountIdRaw = String(getSearchParam(req, "accountId") || "all").trim();
+          const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+          const { data, pagination } = await getCashTransfersPage(userId, { limit, offset, accountId });
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data, pagination }));
+          return;
+        }
         const data = await getCashTransfers(userId);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));

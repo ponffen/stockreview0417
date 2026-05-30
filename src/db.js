@@ -740,6 +740,50 @@ async function getTrades(userId) {
   return rows.map(rowToTrade);
 }
 
+function ledgerListAccountFilterClause(accountId, params) {
+  const aid = String(accountId || "").trim();
+  if (!aid || aid === "all") {
+    return "";
+  }
+  params.push(aid);
+  return ` AND account_id = $${params.length}`;
+}
+
+/**
+ * 交易列表分页（新→旧），供交易记录页按需加载。
+ */
+async function getTradesPage(userId, opts = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { data: [], pagination: { limit: 10, offset: 0, total: 0, hasMore: false } };
+  }
+  const limit = Math.min(100, Math.max(1, Number(opts.limit) || 10));
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const params = [uid];
+  const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
+  const where = `user_id = $1${accountClause}`;
+  const { rows: countRows } = await q(`SELECT COUNT(*)::int AS n FROM trades WHERE ${where}`, params);
+  const total = Number(countRows[0]?.n) || 0;
+  const dataParams = [...params, limit, offset];
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE ${where}
+     ORDER BY trade_date DESC, created_at DESC
+     LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+    dataParams
+  );
+  const data = rows.map(rowToTrade);
+  return {
+    data,
+    pagination: {
+      limit,
+      offset,
+      total,
+      hasMore: offset + data.length < total,
+    },
+  };
+}
+
 async function upsertTrade(trade, userId) {
   const row = tradeToRow(trade, userId);
   if (!row.user_id) {
@@ -870,6 +914,41 @@ async function getCashTransfers(userId) {
     [uid]
   );
   return rows.map(rowToCashTransfer);
+}
+
+/**
+ * 银证记录分页（新→旧），供资金记录页按需加载。
+ */
+async function getCashTransfersPage(userId, opts = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { data: [], pagination: { limit: 10, offset: 0, total: 0, hasMore: false } };
+  }
+  const limit = Math.min(100, Math.max(1, Number(opts.limit) || 10));
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const params = [uid];
+  const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
+  const where = `user_id = $1${accountClause}`;
+  const { rows: countRows } = await q(`SELECT COUNT(*)::int AS n FROM cash_transfers WHERE ${where}`, params);
+  const total = Number(countRows[0]?.n) || 0;
+  const dataParams = [...params, limit, offset];
+  const { rows } = await q(
+    `SELECT id, account_id, transfer_date, direction, amount, note, created_at
+     FROM cash_transfers WHERE ${where}
+     ORDER BY transfer_date DESC, created_at DESC
+     LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+    dataParams
+  );
+  const data = rows.map(rowToCashTransfer);
+  return {
+    data,
+    pagination: {
+      limit,
+      offset,
+      total,
+      hasMore: offset + data.length < total,
+    },
+  };
 }
 
 async function upsertCashTransfer(record, userId) {
@@ -2994,11 +3073,13 @@ module.exports = {
   normalizeAccountRecords,
   normalizeDailyReturn,
   getTrades,
+  getTradesPage,
   upsertTrade,
   importTrades,
   deleteTradeById,
   normalizeCashTransfer,
   getCashTransfers,
+  getCashTransfersPage,
   upsertCashTransfer,
   importCashTransfers,
   deleteCashTransferById,

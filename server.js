@@ -707,10 +707,12 @@ const {
   normalizeSymbol,
   normalizeTrade,
   getTrades,
+  getTradesPage,
   upsertTrade,
   importTrades,
   deleteTradeById,
   getCashTransfers,
+  getCashTransfersPage,
   upsertCashTransfer,
   importCashTransfers,
   deleteCashTransferById,
@@ -1743,7 +1745,25 @@ app.get("/api/state", requireAuth, async (req, res) => {
   res.json({ ok: true, data: await getState(req.userId, { lite }) });
 });
 
+function parseLedgerListQuery(req) {
+  const limitRaw = req.query?.limit;
+  if (limitRaw == null || String(limitRaw).trim() === "") {
+    return null;
+  }
+  const limit = Math.min(100, Math.max(1, parseInt(String(limitRaw), 10) || 10));
+  const offset = Math.max(0, parseInt(String(req.query?.offset ?? "0"), 10) || 0);
+  const accountIdRaw = req.query?.accountId != null ? String(req.query.accountId).trim() : "all";
+  const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+  return { limit, offset, accountId };
+}
+
 app.get("/api/trades", requireAuth, async (req, res) => {
+  const pageOpts = parseLedgerListQuery(req);
+  if (pageOpts) {
+    const { data, pagination } = await getTradesPage(req.userId, pageOpts);
+    res.json({ ok: true, data, pagination });
+    return;
+  }
   res.json({ ok: true, data: await getTrades(req.userId) });
 });
 
@@ -1771,6 +1791,12 @@ app.delete("/api/trades/:id", requireAuth, async (req, res) => {
 });
 
 app.get("/api/cash-transfers", requireAuth, async (req, res) => {
+  const pageOpts = parseLedgerListQuery(req);
+  if (pageOpts) {
+    const { data, pagination } = await getCashTransfersPage(req.userId, pageOpts);
+    res.json({ ok: true, data, pagination });
+    return;
+  }
   res.json({ ok: true, data: await getCashTransfers(req.userId) });
 });
 
