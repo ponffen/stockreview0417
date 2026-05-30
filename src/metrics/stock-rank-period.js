@@ -62,9 +62,35 @@ function formatPercentRatio(value) {
   return `${safe > 0 ? "+" : ""}${num}%`;
 }
 
-function buildCloseLookup(pnlRows, livePos, liveDate, tradingDay) {
+function lastTradePriceOnOrBefore(symbolTrades, dateKey, { strictBefore = false } = {}) {
+  const dk = String(dateKey).slice(0, 10);
+  let best = null;
+  let bestDate = "";
+  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const td = String(t.date).slice(0, 10);
+    if (strictBefore ? td >= dk : td > dk) {
+      continue;
+    }
+    const px = validNumber(t.price, 0);
+    if (px > 1e-9 && td >= bestDate) {
+      bestDate = td;
+      best = px;
+    }
+  }
+  return best;
+}
+
+/** pnl 日收盘优先；symbol_daily_close 补缺；live/成交价兜底（避免清仓标的期末价变 0）。 */
+function buildCloseLookup(pnlRows, livePos, liveDate, tradingDay, snapshotCloses = [], symbolTrades = []) {
   const sorted = [...(pnlRows || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const byDate = new Map();
+  for (const r of snapshotCloses || []) {
+    const px = Number(r.close ?? r.dayClosePrice ?? r.day_close_price);
+    const d = String(r.date || r.day || "").slice(0, 10);
+    if (d && Number.isFinite(px) && px > 0 && !byDate.has(d)) {
+      byDate.set(d, px);
+    }
+  }
   for (const r of sorted) {
     const px = Number(r.dayClosePrice ?? r.day_close_price);
     if (Number.isFinite(px) && px > 0) {
@@ -75,36 +101,56 @@ function buildCloseLookup(pnlRows, livePos, liveDate, tradingDay) {
   const fallbackPrev = validNumber(livePos?.prevClose, livePos?.current, 0);
   const fallbackCurrent = validNumber(livePos?.current, livePos?.prevClose, 0);
 
-  function closeOnOrBefore(dateKey) {
-    const dk = String(dateKey).slice(0, 10);
+  function pickFromMap(dk, strictBefore) {
     let best = null;
     let bestDate = "";
     for (const [d, px] of byDate.entries()) {
-      if (d <= dk && d >= bestDate) {
-        bestDate = d;
-        best = px;
+      if (strictBefore ? d < dk : d <= dk) {
+        if (d >= bestDate) {
+          bestDate = d;
+          best = px;
+        }
       }
     }
-    if (best != null) {
-      return best;
+    return best;
+  }
+
+  function closeOnOrBefore(dateKey) {
+    const dk = String(dateKey).slice(0, 10);
+    const fromMap = pickFromMap(dk, false);
+    if (fromMap != null) {
+      return fromMap;
     }
-    if (tradingDay && liveDateKey && dk >= liveDateKey) {
+    if (tradingDay && liveDateKey && dk >= liveDateKey && (fallbackCurrent > 0 || fallbackPrev > 0)) {
       return fallbackCurrent || fallbackPrev;
     }
-    return fallbackPrev;
+    const fromTrade = lastTradePriceOnOrBefore(symbolTrades, dk);
+    if (fromTrade != null) {
+      return fromTrade;
+    }
+    if (fallbackCurrent > 0) {
+      return fallbackCurrent;
+    }
+    if (fallbackPrev > 0) {
+      return fallbackPrev;
+    }
+    return 0;
   }
 
   function closeBefore(dateKey) {
     const dk = String(dateKey).slice(0, 10);
-    let best = null;
-    let bestDate = "";
-    for (const [d, px] of byDate.entries()) {
-      if (d < dk && d >= bestDate) {
-        bestDate = d;
-        best = px;
-      }
+    const fromMap = pickFromMap(dk, true);
+    if (fromMap != null) {
+      return fromMap;
     }
-    return best != null ? best : fallbackPrev;
+    const fromTrade = lastTradePriceOnOrBefore(symbolTrades, dk, { strictBefore: true });
+    if (fromTrade != null) {
+      return fromTrade;
+    }
+    if (fallbackPrev > 0) {
+      return fallbackPrev;
+    }
+    return 0;
   }
 
   return { closeOnOrBefore, closeBefore };
@@ -359,6 +405,7 @@ function inferSymbolCurrency(symbolTrades, pnlRows) {
 
 module.exports = {
   sortTradeAsc,
+  addDay,
   countHeldDaysInRange,
   collectHoldingSegmentsInPeriod,
   symbolEodQtyOnOrBefore,

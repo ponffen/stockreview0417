@@ -1,10 +1,17 @@
 /**
  * 个股排行：与分析 tab 同一 stage 窗口；服务端计算，前端只展示。
  */
-const { getTrades, getSymbolDailyPnl, getSymbolNameMap, normalizeSymbol } = require("../db");
+const {
+  getTrades,
+  getSymbolDailyPnl,
+  getSymbolNameMap,
+  getSymbolDailyCloseRange,
+  normalizeSymbol,
+} = require("../db");
 const { resolveStageRange } = require("./stages");
 const {
   sortTradeAsc,
+  addDay,
   countHeldDaysInRange,
   resolveEffInterval,
   buildCloseLookup,
@@ -39,6 +46,15 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
   const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
 
   const symSet = new Set(scopeTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean));
+  const closeFrom = addDay(a, -30);
+  const snapshotBySym = new Map();
+  await Promise.all(
+    [...symSet].map(async (sym) => {
+      const rows = await getSymbolDailyCloseRange(sym, closeFrom, periodEnd);
+      snapshotBySym.set(sym, rows);
+    }),
+  );
+
   const rows = [];
   for (const sym of symSet) {
     const symbolTrades = scopeTrades
@@ -56,7 +72,14 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
     }
     const pnlRows = pnlBySym.get(sym) || [];
     const livePos = liveBySym.get(sym) || null;
-    const closeLookup = buildCloseLookup(pnlRows, livePos, live.liveDate, live.tradingDay);
+    const closeLookup = buildCloseLookup(
+      pnlRows,
+      livePos,
+      live.liveDate,
+      live.tradingDay,
+      snapshotBySym.get(sym) || [],
+      symbolTrades,
+    );
     const currency = inferSymbolCurrency(symbolTrades, pnlRows);
     const market = inferMarket(sym);
     const m = computePeriodMetrics({
