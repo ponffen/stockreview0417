@@ -906,11 +906,6 @@ h2 {
   justify-content: flex-end;
 }
 
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-hold-interval,
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-hold-interval {
-  align-items: flex-start;
-}
-
 .analysis-stock-rank-table--public > .analysis-stock-rank-head > * {
   background: #f6f8fb;
   border-bottom: 1px solid var(--line);
@@ -936,12 +931,6 @@ h2 {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-hold-interval {
-  white-space: pre-line;
-  word-break: normal;
-  line-height: 1.45;
 }
 
 /* 去掉主持仓同款右侧阴影条（左滑时像裂缝）；只保留名称列右侧一根淡分割线 */
@@ -1031,13 +1020,6 @@ h2 {
   justify-content: flex-end;
   white-space: nowrap;
 }
-
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-hold-interval,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-hold-interval {
-  align-items: flex-start;
-  overflow: hidden;
-}
-
 
 .analysis-stock-rank-head,
 .analysis-stock-rank-row {
@@ -1205,20 +1187,30 @@ h2 {
   text-overflow: ellipsis;
 }
 
+.analysis-stock-rank-table .analysis-stock-rank-head .col-hold-interval,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-hold-interval {
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+}
+
 .analysis-stock-rank-head .col-hold-interval {
   color: #8f99a9;
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-row .col-hold-interval {
   font-size: 12px;
   color: #5d6a82;
   line-height: 1.45;
-  text-align: left;
   white-space: pre-line;
   word-break: normal;
   overflow: hidden;
+  /* iOS Chrome：避免多段长行被自动放大字号 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 .analysis-stock-rank-table .col-profit,

@@ -344,7 +344,7 @@ function formatHoldingSegmentsLabel({
       const profitStr = `${profitCny >= 0 ? "+" : "-"}¥${profitAbs}`;
       return `${s.start}～${s.end}（${m.heldDays}天，${pctStr}，${profitStr}）`;
     })
-    .join("，");
+    .join("\n");
 }
 
 function formatHoldingSegmentsLabelPublic({

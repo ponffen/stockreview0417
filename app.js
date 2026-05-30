@@ -6062,7 +6062,7 @@ function formatHoldingSegmentsLabel(position, symbolTrades, periodStart, periodE
       const profitStr = `${profitCny >= 0 ? "+" : ""}¥${formatNumber(profitCny, 2)}`;
       return `${s.start}～${s.end}（${m.heldDays}天，${pctStr}，${profitStr}）`;
     })
-    .join("，");
+    .join("\n");
 }
 
 /** 他人主页排行「持仓区间」多段时不展示区间收益金额 */
