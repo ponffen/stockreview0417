@@ -111,8 +111,6 @@ const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
 const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
-/** 图表平移：约每移动多少像素对应 1 个交易日（越小越灵敏） */
-const CHART_PAN_MIN_PX_PER_POINT = 6;
 const CHART_TOUCH_HOLD_MS = 80;
 const CHART_MOUSE_HOLD_MS = 180;
 const STOCK_RECORD_AXIS_MIN_FACTOR = 0.95;
@@ -10781,6 +10779,8 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   let lastMoveX = 0;
   let moved = false;
   let panStarted = false;
+  let panAnchorClientX = null;
+  let panAnchorOffset = 0;
   let refreshRafId = 0;
   const pointers = new Map();
   const runtime = {
@@ -10871,37 +10871,49 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     return 0;
   };
 
-  const panStepFromDeltaPx = (deltaPx) => {
-    if (!deltaPx) {
-      return 0;
-    }
+  const chartPxPerPoint = () => {
     const payload = runtime.payloadBuilder?.();
     const visibleLen = payload?.seriesList?.[0]?.values?.length || 0;
     const plotW = canvas.getBoundingClientRect().width || canvas.width || 1;
-    const pxPerPoint = Math.max(
-      CHART_PAN_MIN_PX_PER_POINT,
-      plotW / Math.max(visibleLen, 1),
-    );
-    let step = Math.round(deltaPx / pxPerPoint);
-    if (step === 0) {
-      step = deltaPx > 0 ? 1 : -1;
+    if (visibleLen <= 1) {
+      return plotW;
     }
-    return step;
+    return plotW / (visibleLen - 1);
   };
 
-  const applyChartPanOffset = (deltaPx) => {
-    const step = panStepFromDeltaPx(deltaPx);
-    if (step === 0) {
+  const beginPanAnchor = (clientX) => {
+    if (panAnchorClientX != null) {
       return;
     }
+    panAnchorClientX = clientX;
+    if (runtime.options.mode === "stock") {
+      panAnchorOffset = Number(state.stockRecordOffset) || 0;
+    } else if (runtime.options.mode === "analysis") {
+      panAnchorOffset = Number(state.analysisPanOffset) || 0;
+    }
+  };
+
+  const clearPanAnchor = () => {
+    panAnchorClientX = null;
+    panAnchorOffset = 0;
+  };
+
+  /** 锚点拖拽：按下时的屏幕点与数据窗口绑定，滑动多少像素平移多少 */
+  const applyChartPanFromAnchor = (clientX) => {
+    if (panAnchorClientX == null) {
+      return;
+    }
+    const pxPerPoint = chartPxPerPoint();
+    const step = Math.round((panAnchorClientX - clientX) / pxPerPoint);
     if (runtime.options.mode === "stock") {
       const total = chartNavTotalCount();
       const windowSize = Math.max(12, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW));
       const maxOffset = Math.max(0, total - windowSize);
-      state.stockRecordOffset = Math.max(
-        0,
-        Math.min(maxOffset, Number(state.stockRecordOffset || 0) + step),
-      );
+      const next = Math.max(0, Math.min(maxOffset, panAnchorOffset + step));
+      if (next === Number(state.stockRecordOffset || 0)) {
+        return;
+      }
+      state.stockRecordOffset = next;
       requestRefresh("redraw");
       return;
     }
@@ -10912,10 +10924,11 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         Math.min(total || ANALYSIS_CHART_MAX_WINDOW, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
       );
       const maxOffset = Math.max(0, total - windowSize);
-      state.analysisPanOffset = Math.max(
-        0,
-        Math.min(maxOffset, Number(state.analysisPanOffset || 0) + step),
-      );
+      const next = Math.max(0, Math.min(maxOffset, panAnchorOffset + step));
+      if (next === Number(state.analysisPanOffset || 0)) {
+        return;
+      }
+      state.analysisPanOffset = next;
       requestRefresh("redraw");
     }
   };
@@ -10930,6 +10943,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       pressing = true;
       moved = false;
       panStarted = false;
+      clearPanAnchor();
       startX = event.clientX;
       lastMoveX = event.clientX;
       clearPressTimer();
@@ -10986,9 +11000,9 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       if (moved) {
         clearPressTimer();
         panStarted = true;
-        const deltaX = event.clientX - lastMoveX;
+        beginPanAnchor(startX);
         lastMoveX = event.clientX;
-        applyChartPanOffset(deltaX);
+        applyChartPanFromAnchor(event.clientX);
       }
     }
     },
@@ -11008,6 +11022,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     moved = false;
     panStarted = false;
     lastMoveX = 0;
+    clearPanAnchor();
     clearPressTimer();
     if (event.pointerType !== "mouse" && pointers.size === 0) {
       runtime.hideCrosshair();
