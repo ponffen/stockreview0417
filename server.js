@@ -1628,7 +1628,9 @@ app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, async (req
     const symbol = String(req.query.symbol || "").trim();
     sendMetricsJson(
       res,
-      await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol),
+      await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol, {
+        publicRankLayout: true,
+      }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public analysis-bundle failed" });

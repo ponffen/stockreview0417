@@ -4819,7 +4819,7 @@ async function renderPublicProfileAnalysis(d) {
           }
         }
         if (pubMkt) paintPublicProfileMarketIndexChart(pubMkt, document.getElementById("pubAnalysisMarketTooltip"), assetIdx, refresh);
-        renderAnalysisStockRankFromMetrics(rankPack, pubRank, { publicStockRankLayout: true });
+        paintStockRankFromBundle(rankPack, pubRank, { publicStockRankLayout: true });
       });
       syncCommunityProfileAnalysisControls();
       return;
@@ -6198,6 +6198,122 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
   return qty;
 }
 
+function mapStockRankBundleRow(row) {
+  const profitCnyRaw = Number(row.profitCny);
+  const profitFromText = parseBundleSignedAmount(row.profit);
+  const profitCny = Number.isFinite(profitCnyRaw) ? profitCnyRaw : profitFromText;
+  let pxChange = Number(row.pxChange);
+  if (!Number.isFinite(pxChange)) {
+    pxChange = parseBundlePercent(row.pxChange ?? row.pxChangePct ?? row.pxChangeDisplay);
+  }
+  if (!Number.isFinite(pxChange)) {
+    pxChange = 0;
+  }
+  let profitShare = Number(row.profitShare);
+  if (!Number.isFinite(profitShare)) {
+    profitShare = parseBundlePercent(row.profitShare);
+  }
+  return {
+    symbol: row.symbol,
+    name: row.name,
+    holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
+    profitCny: Number.isFinite(profitCny) ? profitCny : 0,
+    pxChange,
+    heldDays: Number(row.heldDays) || 0,
+    profitShare: Number.isFinite(profitShare) ? profitShare : null,
+  };
+}
+
+function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
+  const publicRank = rankOpts.publicStockRankLayout === true;
+  const hideProfitCol = publicRank || rankOpts.hideProfitColumn === true;
+  if (!rows.length) {
+    return `<p class="empty">本分析周期内无持仓的标的。</p>`;
+  }
+  const totalProfitForShare = rows.reduce((s, r) => s + r.profitCny, 0);
+  const profitTh = hideProfitCol
+    ? ""
+    : `<span class="col-profit" role="columnheader">区间收益(¥)</span>`;
+  const profitShareTh = publicRank
+    ? `<span class="col-profit-share" role="columnheader">收益占比</span>`
+    : "";
+
+  return `
+    <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
+      <div class="analysis-stock-rank-head" role="row">
+        <span class="col-rank" role="columnheader">#</span>
+        <span class="col-name" role="columnheader">名称</span>
+        ${profitShareTh}
+        ${profitTh}
+        <span class="col-px col-with-help stock-rank-help-wrap" role="columnheader">
+          <span class="col-th-label">个股涨跌幅</span>
+          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="个股涨跌幅说明">?</button>
+          <div class="stock-rank-help-bubble" role="tooltip">
+            有效持仓区间内，起点取时间顺序第一笔买入成交价，终点取区间末日收盘（含今日则用现价），涨跌幅为终点÷起点−1；区间内无买入则起点为区间首日前一交易日收盘。多笔买入仅首笔价，非摊薄成本。
+          </div>
+        </span>
+        <span class="col-days col-with-help stock-rank-help-wrap" role="columnheader">
+          <span class="col-th-label">持仓天数</span>
+          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="持仓天数说明">?</button>
+          <div class="stock-rank-help-bubble" role="tooltip">
+            在有效区间内按自然日逐日统计：当日全部成交完成后，若日终持股大于零则计一天并累加。清仓后再买回会分段，总天数与「持仓区间」各段有仓日之和一致。
+          </div>
+        </span>
+        <span class="col-hold-interval" role="columnheader">持仓区间</span>
+      </div>
+      ${rows
+        .map((row, idx) => {
+          const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
+          const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
+          const code = formatSymbolForDisplay(row.symbol);
+          let profitShareCell = "";
+          if (publicRank) {
+            const shareRatio =
+              row.profitShare != null && Number.isFinite(row.profitShare)
+                ? row.profitShare
+                : Math.abs(totalProfitForShare) < 1e-6
+                  ? NaN
+                  : row.profitCny / totalProfitForShare;
+            const shareText = Number.isFinite(shareRatio) ? formatPercent(shareRatio) : "—";
+            profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${shareText}</span>`;
+          }
+          const profitCell = hideProfitCol
+            ? ""
+            : `<span class="col-profit ${cls}" role="cell">${row.profitCny >= 0 ? "+" : ""}¥${formatNumber(
+                row.profitCny,
+                2,
+              )}</span>`;
+          return `
+        <div class="analysis-stock-rank-row" role="row">
+          <span class="col-rank" role="cell">${idx + 1}</span>
+          <div class="col-name" role="cell">
+            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
+            <span class="rank-code">${escapeHtml(code)}</span>
+          </div>
+          ${profitShareCell}
+          ${profitCell}
+          <span class="col-px ${pCls}" role="cell">${formatPercent(row.pxChange)}</span>
+          <span class="col-days" role="cell">${row.heldDays} 天</span>
+          <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+}
+
+function paintStockRankFromBundle(rankPayload, targetBody, rankOpts = {}) {
+  if (!targetBody) {
+    return;
+  }
+  const rows = (Array.isArray(rankPayload?.rows) ? rankPayload.rows : []).map(mapStockRankBundleRow);
+  if (!rows.length) {
+    targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
+    return;
+  }
+  rows.sort((a, b) => b.profitCny - a.profitCny);
+  targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
+}
+
 /**
  * 个股排行：周期 a、b 来自顶部选择；仅展示 [a,b] 内至少有一天日终持仓大于 0 的标的。
  * 有效区间：effStart=A早于a则a否则A；effEnd 默认 B 早于 b 取 B 否则取 b；若周期末日 b 仍持仓则强制 effEnd=b，避免仅一笔买入时 B 停在买入日导致涨跌幅异常。
@@ -6212,9 +6328,7 @@ function renderAnalysisStockRank(
   if (!targetBody) {
     return;
   }
-  const publicRank = rankOpts.publicStockRankLayout === true;
-  const hideProfitCol = publicRank || rankOpts.hideProfitColumn === true;
-  const publicHoldIntervals = publicRank || rankOpts.publicHoldIntervals === true;
+  const publicHoldIntervals = rankOpts.publicStockRankLayout === true || rankOpts.publicHoldIntervals === true;
   if (!history.length) {
     targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
     return;
@@ -6254,78 +6368,7 @@ function renderAnalysisStockRank(
     });
   }
   rows.sort((a, b) => b.profitCny - a.profitCny);
-
-  if (!rows.length) {
-    targetBody.innerHTML = `<p class="empty">本分析周期内无持仓的标的。</p>`;
-    return;
-  }
-
-  const totalProfitForShare = rows.reduce((s, r) => s + r.profitCny, 0);
-  const profitTh = hideProfitCol
-    ? ""
-    : `<span class="col-profit" role="columnheader">区间收益(¥)</span>`;
-  const profitShareTh = publicRank
-    ? `<span class="col-profit-share" role="columnheader">收益占比</span>`
-    : "";
-
-  targetBody.innerHTML = `
-    <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
-      <div class="analysis-stock-rank-head" role="row">
-        <span class="col-rank" role="columnheader">#</span>
-        <span class="col-name" role="columnheader">名称</span>
-        ${profitShareTh}
-        ${profitTh}
-        <span class="col-px col-with-help stock-rank-help-wrap" role="columnheader">
-          <span class="col-th-label">个股涨跌幅</span>
-          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="个股涨跌幅说明">?</button>
-          <div class="stock-rank-help-bubble" role="tooltip">
-            有效持仓区间内，起点取时间顺序第一笔买入成交价，终点取区间末日收盘（含今日则用现价），涨跌幅为终点÷起点−1；区间内无买入则起点为区间首日前一交易日收盘。多笔买入仅首笔价，非摊薄成本。
-          </div>
-        </span>
-        <span class="col-days col-with-help stock-rank-help-wrap" role="columnheader">
-          <span class="col-th-label">持仓天数</span>
-          <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="持仓天数说明">?</button>
-          <div class="stock-rank-help-bubble" role="tooltip">
-            在有效区间内按自然日逐日统计：当日全部成交完成后，若日终持股大于零则计一天并累加。清仓后再买回会分段，总天数与「持仓区间」各段有仓日之和一致。
-          </div>
-        </span>
-        <span class="col-hold-interval" role="columnheader">持仓区间</span>
-      </div>
-      ${rows
-        .map((row, idx) => {
-          const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
-          const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
-          const code = formatSymbolForDisplay(row.symbol);
-          let profitShareCell = "";
-          if (publicRank) {
-            const shareText =
-              Math.abs(totalProfitForShare) < 1e-6
-                ? "—"
-                : formatPercent(row.profitCny / totalProfitForShare);
-            profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${shareText}</span>`;
-          }
-          const profitCell = hideProfitCol
-            ? ""
-            : `<span class="col-profit ${cls}" role="cell">${row.profitCny >= 0 ? "+" : ""}¥${formatNumber(
-                row.profitCny,
-                2,
-              )}</span>`;
-          return `
-        <div class="analysis-stock-rank-row" role="row">
-          <span class="col-rank" role="cell">${idx + 1}</span>
-          <div class="col-name" role="cell">
-            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
-            <span class="rank-code">${escapeHtml(code)}</span>
-          </div>
-          ${profitShareCell}
-          ${profitCell}
-          <span class="col-px ${pCls}" role="cell">${formatPercent(row.pxChange)}</span>
-          <span class="col-days" role="cell">${row.heldDays} 天</span>
-          <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
-        </div>`;
-        })
-        .join("")}
-    </div>`;
+  targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
 function syncTradePanelTabUi() {
@@ -7727,20 +7770,6 @@ function paintOverviewStockTableFromMetricsRows(rows) {
     return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(sym)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }
-function renderAnalysisStockRankFromMetrics(rankPayload, targetBody, rankOpts = {}) {
-  if (!targetBody) return;
-  const hideProfitCol = rankOpts.publicStockRankLayout || rankOpts.hideProfitColumn;
-  const rows = Array.isArray(rankPayload?.rows) ? rankPayload.rows : [];
-  if (!rows.length) { targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`; return; }
-  targetBody.innerHTML = rows.map((row) => {
-    const profitText = bundleFmtText(row.profit ?? row.profitDisplay);
-    const pxText = bundleFmtText(row.pxChange ?? row.pxChangePct ?? row.pxChangeDisplay);
-    const profitCell = hideProfitCol ? "" : `<td>${escapeHtml(profitText)}</td>`;
-    const holdCell = rankOpts.publicStockRankLayout ? `<td>${escapeHtml(row.holdIntervalsLabel || "–")}</td>` : `<td>${Number(row.heldDays) || 0} 天</td>`;
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || row.symbol)}</strong></td>${holdCell}${profitCell}<td>${escapeHtml(pxText || "–")}</td></tr>`;
-  }).join("");
-}
-
 function analysisAssetChartRowsFromSeries(series) {
   if (!series || typeof series !== "object") {
     return [];
@@ -7947,7 +7976,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   if (analysisProfitSummary && retPack) {
     analysisProfitSummary.textContent = `累计收益 ${bundleFmtText(retPack.profit)}`;
   }
-  renderAnalysisStockRankFromMetrics(rankPack, analysisStockRankBody, {});
+  paintStockRankFromBundle(rankPack, analysisStockRankBody, {});
   if (analysisEodAccountCaption) {
     analysisEodAccountCaption.textContent = "";
     analysisEodAccountCaption.hidden = true;

@@ -304,7 +304,9 @@ module.exports = async function handler(req, res) {
       const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
       const symbol = String(getSearchParam(req, "symbol") || "").trim();
       const { getMetricsAnalysisBundle } = require("../src/metrics-api-service");
-      const data = await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol);
+      const data = await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol, {
+        publicRankLayout: isPublicAnalysisBundle,
+      });
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-analysis-bundle" } }));
       return;

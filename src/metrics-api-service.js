@@ -1007,10 +1007,16 @@ async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, met
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, metric: m, points };
 }
 
-async function buildStockRankFromContext(ctx, stage) {
+async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
   const { userId, scope, settings, live, um } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
-  const payload = await buildStockRankPayload({ userId, accountScope: scope, stage: st, live });
+  const payload = await buildStockRankPayload({
+    userId,
+    accountScope: scope,
+    stage: st,
+    live,
+    publicLayout: rankOpts.publicLayout === true,
+  });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
 
@@ -1096,7 +1102,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload) {
   };
 }
 
-async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, diag, extraDiag = {}) {
+async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, diag, extraDiag = {}, bundleOpts = {}) {
   const { userId, scope } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
@@ -1110,10 +1116,11 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const rateVal = mwrMode ? stageRow.rateMwr : stageRow.rateTwr;
   const { fxU, fxH, book } = fxFromCtx(ctx);
+  const rankOpts = { publicLayout: bundleOpts.publicRankLayout === true };
 
   const [series, stockRank] = await Promise.all([
     buildAnalysisSeriesBundle(ctx, st, trades, rowsAsc),
-    buildStockRankFromContext(ctx, st),
+    buildStockRankFromContext(ctx, st, rankOpts),
   ]);
 
   let benchmark = null;
@@ -1147,7 +1154,8 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
   const scope = String(accountScope || "all").trim() || "all";
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
-  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}`;
+  const pubRank = opts.publicRankLayout === true ? "pub" : "priv";
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}|${pubRank}`;
   const now = Date.now();
   if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
     const hit = analysisBundleCache.get(cacheKey);
@@ -1156,9 +1164,10 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
     }
   }
   const diag = opts.diag ? {} : null;
+  const bundleOpts = { publicRankLayout: opts.publicRankLayout === true };
   const buildFull = async () => {
     const ctx = await loadMetricsScopeContextForHome(userId, scope, diag);
-    return assembleAnalysisBundleFromContext(ctx, st, sym, diag);
+    return assembleAnalysisBundleFromContext(ctx, st, sym, diag, {}, bundleOpts);
   };
   let value;
   try {
@@ -1171,11 +1180,18 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
       throw err;
     }
     const ctx = await loadMetricsScopeContextSnapshotOnly(userId, scope, diag);
-    value = await assembleAnalysisBundleFromContext(ctx, st, sym, diag, {
-      degraded: true,
-      reason: "ANALYSIS_BUNDLE_DEADLINE",
-      deadlineMs: ANALYSIS_BUNDLE_DEADLINE_MS,
-    });
+    value = await assembleAnalysisBundleFromContext(
+      ctx,
+      st,
+      sym,
+      diag,
+      {
+        degraded: true,
+        reason: "ANALYSIS_BUNDLE_DEADLINE",
+        deadlineMs: ANALYSIS_BUNDLE_DEADLINE_MS,
+      },
+      bundleOpts,
+    );
   }
   if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
     analysisBundleCache.set(cacheKey, { at: now, value });
