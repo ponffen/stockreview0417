@@ -1,7 +1,7 @@
 /**
  * 个股排行：与分析 tab 同一 stage 窗口；服务端计算，前端只展示。
  */
-const { getTrades, getSymbolDailyPnl, normalizeSymbol } = require("../db");
+const { getTrades, getSymbolDailyPnl, getSymbolNameMap, normalizeSymbol } = require("../db");
 const { resolveStageRange } = require("./stages");
 const {
   sortTradeAsc,
@@ -86,9 +86,10 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
           fxUsd,
           fxHkd,
         });
+    const tradeName = String(symbolTrades[0].name || sym).trim();
     rows.push({
       symbol: sym,
-      name: symbolTrades[0].name || sym,
+      tradeName,
       holdIntervalsLabel,
       profitCny,
       pxChange: m.pxChange,
@@ -96,21 +97,31 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
     });
   }
   rows.sort((x, y) => y.profitCny - x.profitCny);
+  const nameMap = await getSymbolNameMap(rows.map((r) => r.symbol));
   const total = rows.reduce((s, r) => s + r.profitCny, 0);
   return {
     stage,
     periodStart: a,
     periodEnd,
-    rows: rows.map((r, i) => ({
-      rank: i + 1,
-      symbol: r.symbol,
-      name: r.name,
-      holdIntervalsLabel: r.holdIntervalsLabel,
-      profitCny: r.profitCny,
-      pxChange: r.pxChange,
-      heldDays: r.heldDays,
-      profitShare: total !== 0 ? r.profitCny / total : 0,
-    })),
+    rows: rows.map((r, i) => {
+      const nameCn = String(nameMap[r.symbol] || "").trim();
+      const tradeName = String(r.tradeName || "").trim();
+      const displayName =
+        nameCn ||
+        (tradeName && tradeName.toLowerCase() !== r.symbol.toLowerCase() ? tradeName : "") ||
+        r.symbol;
+      return {
+        rank: i + 1,
+        symbol: r.symbol,
+        name: displayName,
+        nameCn,
+        holdIntervalsLabel: r.holdIntervalsLabel,
+        profitCny: r.profitCny,
+        pxChange: r.pxChange,
+        heldDays: r.heldDays,
+        profitShare: total !== 0 ? r.profitCny / total : 0,
+      };
+    }),
   };
 }
 

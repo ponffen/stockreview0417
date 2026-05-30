@@ -6213,9 +6213,11 @@ function mapStockRankBundleRow(row) {
   if (!Number.isFinite(profitShare)) {
     profitShare = parseBundlePercent(row.profitShare);
   }
+  const nameCn = String(row.nameCn || "").trim();
+  const fallbackName = String(row.name || "").trim();
   return {
     symbol: row.symbol,
-    name: row.name,
+    name: nameCn || fallbackName,
     holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
     profitCny: Number.isFinite(profitCny) ? profitCny : 0,
     pxChange,
