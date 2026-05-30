@@ -6860,14 +6860,13 @@ function renderCashTransferTable() {
       const acc = getAccountById(row.accountId);
       const dirLabel = row.direction === "out" ? "银证转出" : "银证转入";
       const sign = row.direction === "in" ? "+" : "-";
-      const ccy = getCurrencyLabel(acc.currency);
       const id = escapeHtml(String(row.id));
       return `
         <tr class="cash-transfer-row trade-row--clickable" data-cash-id="${id}">
           <td>${String(row.date).replace(/-/g, "/")}</td>
           <td>${escapeHtml(acc.name || row.accountId)}</td>
           <td>${dirLabel}</td>
-          <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)} ${ccy}</td>
+          <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)}</td>
         </tr>
         ${tradeRecordNoteSubrowHtml(row.note, 4, { "data-cash-id": row.id })}
       `;

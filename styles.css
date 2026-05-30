@@ -17,36 +17,36 @@
   --up: #f45a68;
   --down: #0ebc9f;
   /* 交易 / 资金 / 个股记录表列宽（ch，按内容定宽） */
-  --ledger-col-date: 10ch;
+  --ledger-col-date: 14ch;
   --ledger-col-type: 4.5ch;
   --ledger-col-price: 7ch;
   --ledger-col-qty: 6ch;
-  --ledger-col-amt: 9ch;
+  --ledger-col-amt: 15ch;
   --ledger-col-name: 11ch;
   --ledger-col-account: 9ch;
   /* 列宽比例（与 ch 权重一致，表宽 100% 时等比铺满） */
-  --ledger-trade-w-date: 17.699%;
-  --ledger-trade-w-name: 19.469%;
-  --ledger-trade-w-type: 7.965%;
-  --ledger-trade-w-price: 12.389%;
-  --ledger-trade-w-qty: 10.619%;
-  --ledger-trade-w-amt: 15.929%;
-  --ledger-trade-w-account: 15.929%;
-  --ledger-cash-w-date: 30.769%;
-  --ledger-cash-w-account: 27.692%;
-  --ledger-cash-w-type: 13.846%;
-  --ledger-cash-w-amt: 27.692%;
-  --ledger-stock-w-date: 21.978%;
-  --ledger-stock-w-type: 9.89%;
-  --ledger-stock-w-price: 15.385%;
-  --ledger-stock-w-qty: 13.187%;
-  --ledger-stock-w-amt: 19.78%;
-  --ledger-stock-w-account: 19.78%;
-  --ledger-stock-pub-w-date: 25.316%;
-  --ledger-stock-pub-w-type: 11.392%;
-  --ledger-stock-pub-w-price: 17.722%;
-  --ledger-stock-pub-w-amt: 22.785%;
-  --ledger-stock-pub-w-account: 22.785%;
+  --ledger-trade-w-date: 21.053%;
+  --ledger-trade-w-name: 16.541%;
+  --ledger-trade-w-type: 6.767%;
+  --ledger-trade-w-price: 10.526%;
+  --ledger-trade-w-qty: 9.023%;
+  --ledger-trade-w-amt: 22.556%;
+  --ledger-trade-w-account: 13.534%;
+  --ledger-cash-w-date: 32.941%;
+  --ledger-cash-w-account: 21.176%;
+  --ledger-cash-w-type: 10.588%;
+  --ledger-cash-w-amt: 35.294%;
+  --ledger-stock-w-date: 25.225%;
+  --ledger-stock-w-type: 8.108%;
+  --ledger-stock-w-price: 12.613%;
+  --ledger-stock-w-qty: 10.811%;
+  --ledger-stock-w-amt: 27.027%;
+  --ledger-stock-w-account: 16.216%;
+  --ledger-stock-pub-w-date: 28.283%;
+  --ledger-stock-pub-w-type: 9.091%;
+  --ledger-stock-pub-w-price: 14.141%;
+  --ledger-stock-pub-w-amt: 30.303%;
+  --ledger-stock-pub-w-account: 18.182%;
 }
 
 * {
