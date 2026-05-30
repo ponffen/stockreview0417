@@ -1327,6 +1327,8 @@ h2 {
 .trade-table-wrap {
   overflow-x: auto;
   border-top: 1px solid var(--line);
+  container-type: inline-size;
+  container-name: trade-record-scroll;
 }
 
 .trade-table {
@@ -1438,6 +1440,24 @@ h2 {
   text-align: right;
 }
 
+.trade-record-note-wrap {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+
+@supports (width: 1cqw) {
+  .trade-record-note-wrap {
+    max-width: 100cqw;
+  }
+}
+
+@supports not (width: 1cqw) {
+  .trade-record-note-wrap {
+    max-width: calc(100vw - 28px);
+  }
+}
+
 .trade-record-note {
   margin: 0;
   padding: 0;
@@ -1462,34 +1482,43 @@ h2 {
 }
 
 .trade-note-subrow td {
-  border-top: none;
+  border-top: none !important;
+  border-bottom: 1px solid var(--line);
   padding-top: 0;
-  padding-bottom: 5px;
+  padding-bottom: 10px;
   text-align: left !important;
   white-space: normal !important;
-  word-break: break-word;
-  overflow-wrap: anywhere;
   overflow: visible;
-  max-width: 1px;
-  width: 100%;
 }
 
 .trade-row:has(+ .trade-note-subrow) td,
 .stock-record-trade-row:has(+ .trade-note-subrow) td,
 .cash-transfer-row:has(+ .trade-note-subrow) td {
-  padding-bottom: 4px;
+  border-bottom: none;
+  padding-bottom: 2px;
 }
 
-.trade-row + .trade-note-subrow td,
-.stock-record-trade-row + .trade-note-subrow td,
-.cash-transfer-row + .trade-note-subrow td {
-  border-top: none;
+.trade-row:not(:has(+ .trade-note-subrow)) td,
+.cash-transfer-row:not(:has(+ .trade-note-subrow)) td,
+.stock-record-trade-row:not(:has(+ .trade-note-subrow)) td {
+  border-bottom: 1px solid var(--line);
 }
 
 .stock-record-table .trade-note-subrow td {
   white-space: normal !important;
-  max-width: 1px;
-  width: 100%;
+  border-top: none !important;
+  border-bottom: none;
+  padding-bottom: 10px;
+}
+
+.stock-record-table .trade-note-subrow + .stock-record-trade-row td,
+.stock-record-table .trade-note-subrow + tr td {
+  border-top: 1px solid var(--line);
+}
+
+.stock-record-table .stock-record-trade-row:has(+ .trade-note-subrow) td {
+  border-bottom: none;
+  padding-bottom: 2px;
 }
 
 .trade-row--clickable,
@@ -1705,6 +1734,8 @@ h2 {
 .stock-record-table-wrap {
   margin-top: 8px;
   overflow-x: auto;
+  container-type: inline-size;
+  container-name: trade-record-scroll;
 }
 
 .stock-record-table {

@@ -6407,7 +6407,9 @@ function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}) {
   return `
     <tr class="trade-note-subrow trade-row--clickable"${attrStr}>
       <td colspan="${colspan}">
-        <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${escapeHtml(text)}</span></p>
+        <div class="trade-record-note-wrap">
+          <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${escapeHtml(text)}</span></p>
+        </div>
       </td>
     </tr>`;
 }
