@@ -1508,7 +1508,7 @@ h2 {
   white-space: normal !important;
   border-top: none !important;
   border-bottom: none;
-  padding-bottom: 10px;
+  padding: 0 6px 10px;
 }
 
 .stock-record-table .trade-note-subrow + .stock-record-trade-row td,
@@ -1516,9 +1516,14 @@ h2 {
   border-top: 1px solid var(--line);
 }
 
+.stock-record-table tbody tr.trade-note-subrow:last-child td {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
 .stock-record-table .stock-record-trade-row:has(+ .trade-note-subrow) td {
   border-bottom: none;
-  padding-bottom: 2px;
+  padding: 8px 6px 2px;
 }
 
 .trade-row--clickable,
