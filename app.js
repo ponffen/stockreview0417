@@ -111,7 +111,8 @@ const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
 const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
 const DEFAULT_ACCOUNT = { id: "default", name: "默认账户", currency: "CNY", createdAt: 0 };
 const MARKET_SORT_WEIGHT = { A股: 1, 港股: 2, 美股: 3, 其他: 9 };
-const CHART_EDGE_SCROLL_PX = 22;
+/** 图表平移：约每移动多少像素对应 1 个交易日（越小越灵敏） */
+const CHART_PAN_MIN_PX_PER_POINT = 6;
 const CHART_TOUCH_HOLD_MS = 80;
 const CHART_MOUSE_HOLD_MS = 180;
 const STOCK_RECORD_AXIS_MIN_FACTOR = 0.95;
@@ -10870,8 +10871,26 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     return 0;
   };
 
-  const handlePan = (deltaPx) => {
-    const step = Math.round(deltaPx / CHART_EDGE_SCROLL_PX);
+  const panStepFromDeltaPx = (deltaPx) => {
+    if (!deltaPx) {
+      return 0;
+    }
+    const payload = runtime.payloadBuilder?.();
+    const visibleLen = payload?.seriesList?.[0]?.values?.length || 0;
+    const plotW = canvas.getBoundingClientRect().width || canvas.width || 1;
+    const pxPerPoint = Math.max(
+      CHART_PAN_MIN_PX_PER_POINT,
+      plotW / Math.max(visibleLen, 1),
+    );
+    let step = Math.round(deltaPx / pxPerPoint);
+    if (step === 0) {
+      step = deltaPx > 0 ? 1 : -1;
+    }
+    return step;
+  };
+
+  const applyChartPanOffset = (deltaPx) => {
+    const step = panStepFromDeltaPx(deltaPx);
     if (step === 0) {
       return;
     }
@@ -10879,7 +10898,10 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const total = chartNavTotalCount();
       const windowSize = Math.max(12, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW));
       const maxOffset = Math.max(0, total - windowSize);
-      state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0) - step));
+      state.stockRecordOffset = Math.max(
+        0,
+        Math.min(maxOffset, Number(state.stockRecordOffset || 0) + step),
+      );
       requestRefresh("redraw");
       return;
     }
@@ -10890,7 +10912,10 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         Math.min(total || ANALYSIS_CHART_MAX_WINDOW, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
       );
       const maxOffset = Math.max(0, total - windowSize);
-      state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
+      state.analysisPanOffset = Math.max(
+        0,
+        Math.min(maxOffset, Number(state.analysisPanOffset || 0) + step),
+      );
       requestRefresh("redraw");
     }
   };
@@ -10963,7 +10988,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         panStarted = true;
         const deltaX = event.clientX - lastMoveX;
         lastMoveX = event.clientX;
-        handlePan(deltaX);
+        applyChartPanOffset(deltaX);
       }
     }
     },
