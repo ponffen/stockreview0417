@@ -1438,26 +1438,31 @@ h2 {
   text-align: right;
 }
 
-.trade-note-head,
-.trade-note-cell {
+.trade-record-note {
+  margin: 0;
+  padding: 4px 0 2px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #5c6675;
+  text-align: left;
+}
+
+.trade-record-note-label {
+  color: #8b95a5;
+  margin-right: 4px;
+}
+
+.trade-note-subrow td {
+  border-top: none;
+  padding-top: 0;
+  padding-bottom: 10px;
   text-align: left !important;
 }
 
-.trade-table--cash thead th:last-child,
-.trade-table--cash tbody td:last-child {
-  text-align: left !important;
-}
-
-.trade-table--cash th:nth-child(5),
-.trade-table--cash td:nth-child(5) {
-  width: 10ch;
-  max-width: 10ch;
-}
-
-.trade-note-cell {
-  white-space: normal !important;
-  word-break: break-all;
-  line-height: 1.35;
+.trade-row + .trade-note-subrow td,
+.stock-record-trade-row + .trade-note-subrow td,
+.cash-transfer-row + .trade-note-subrow td {
+  border-top: none;
 }
 
 .trade-row--clickable,
@@ -1719,12 +1724,7 @@ h2 {
 .stock-record-table th:nth-child(6),
 .stock-record-table td:nth-child(6) {
   text-align: left;
-  min-width: 10ch;
-  max-width: 10ch;
-}
-
-.stock-record-table .trade-note-cell {
-  white-space: normal !important;
+  min-width: 72px;
 }
 
 .account-table {

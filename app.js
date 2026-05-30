@@ -6393,6 +6393,25 @@ function openEditCashTransferDialog(rawId) {
   cashTransferDialog?.showModal();
 }
 
+/** 交易/资金/个股记录：备注在数据行下方展示（无备注则不占行）。 */
+function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}) {
+  const text = String(note || "").trim();
+  if (!text) {
+    return "";
+  }
+  const attrs = Object.entries(rowAttrs)
+    .filter(([, v]) => v != null && String(v).trim() !== "")
+    .map(([k, v]) => `${k}="${escapeHtml(String(v))}"`)
+    .join(" ");
+  const attrStr = attrs ? ` ${attrs}` : "";
+  return `
+    <tr class="trade-note-subrow trade-row--clickable"${attrStr}>
+      <td colspan="${colspan}">
+        <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${escapeHtml(text)}</span></p>
+      </td>
+    </tr>`;
+}
+
 /** 离开「交易」页后不再重绘该表；若不清理 tbody，大列表会一直占内存，切页时易触发移动端渲染进程崩溃（Chrome 错误代码 5）。 */
 function clearHoldingsTradePaneDomIfHiddenRoute() {
   if (
@@ -6437,14 +6456,15 @@ function renderCashTransferTable() {
       const dirLabel = row.direction === "out" ? "银证转出" : "银证转入";
       const sign = row.direction === "in" ? "+" : "-";
       const ccy = getCurrencyLabel(acc.currency);
+      const id = escapeHtml(String(row.id));
       return `
-        <tr class="cash-transfer-row" data-cash-id="${escapeHtml(String(row.id))}">
+        <tr class="cash-transfer-row trade-row--clickable" data-cash-id="${id}">
           <td>${String(row.date).replace(/-/g, "/")}</td>
           <td>${escapeHtml(acc.name || row.accountId)}</td>
           <td>${dirLabel}</td>
           <td class="num ${row.direction === "in" ? "up" : "down"}">${sign}${formatNumber(row.amount, 2)} ${ccy}</td>
-          <td class="trade-note-cell">${row.note ? escapeHtml(row.note) : ""}</td>
         </tr>
+        ${tradeRecordNoteSubrowHtml(row.note, 4, { "data-cash-id": row.id })}
       `;
     })
     .join("");
@@ -6477,7 +6497,7 @@ function renderTradeTable() {
   if (!trades.length) {
     tradeTableBody.innerHTML = `
       <tr>
-        <td colspan="8"><p class="empty">暂无交易记录，请点击「新增交易记录」添加。</p></td>
+        <td colspan="7"><p class="empty">暂无交易记录，请点击「新增交易记录」添加。</p></td>
       </tr>
     `;
     return;
@@ -6487,8 +6507,9 @@ function renderTradeTable() {
     .map((trade) => {
       const acc = getAccountById(trade.accountId);
       const accLabel = escapeHtml(acc.name || trade.accountId || "default");
+      const id = escapeHtml(String(trade.id));
       return `
-        <tr class="trade-row trade-row--clickable" data-record-id="${escapeHtml(String(trade.id))}">
+        <tr class="trade-row trade-row--clickable" data-record-id="${id}">
           <td>${trade.date.replace(/-/g, "/")}</td>
           <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
           <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
@@ -6498,8 +6519,8 @@ function renderTradeTable() {
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>
           <td class="trade-account-cell">${accLabel}</td>
-          <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
         </tr>
+        ${tradeRecordNoteSubrowHtml(trade.note, 7, { "data-record-id": trade.id })}
       `;
     })
     .join("");
@@ -8849,14 +8870,16 @@ async function renderStockRecordPage(symbol) {
   }
   if (headRow) {
     headRow.innerHTML = usePub
-      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th>股票账户</th><th class="trade-note-head">备注</th>`
-      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th><th class=\"trade-note-head\">备注</th>";
+      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th>股票账户</th>`
+      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th>";
   }
 
   stockRecordListBody.innerHTML = symbolTrades
     .map((trade) => {
+      const id = escapeHtml(String(trade.id));
+      const noteColspan = usePub ? 5 : 6;
       const rowCore = `
-      <tr class="stock-record-trade-row" data-record-id="${escapeHtml(String(trade.id))}">
+      <tr class="stock-record-trade-row trade-row--clickable" data-record-id="${id}">
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
         <td>${formatNumber(trade.price, 2)}</td>`;
@@ -8868,8 +8891,8 @@ async function renderStockRecordPage(symbol) {
         return `${rowCore}
         <td class="num">${shareCell}</td>
         ${accCell}
-        <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
-      </tr>`;
+      </tr>
+      ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}`;
       }
       return `${rowCore}
         <td>${formatNumber(trade.quantity, 0)}</td>
@@ -8878,8 +8901,8 @@ async function renderStockRecordPage(symbol) {
           2,
         )}</td>
         ${accCell}
-        <td class="trade-note-cell">${trade.note ? escapeHtml(trade.note) : ""}</td>
-      </tr>`;
+      </tr>
+      ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}`;
     })
     .join("");
 
