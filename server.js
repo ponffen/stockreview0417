@@ -707,6 +707,7 @@ const {
   normalizeSymbol,
   normalizeTrade,
   getTrades,
+  getTradesForSymbol,
   getTradesPage,
   upsertTrade,
   importTrades,
@@ -1758,6 +1759,19 @@ function parseLedgerListQuery(req) {
 }
 
 app.get("/api/trades", requireAuth, async (req, res) => {
+  const symbolRaw = req.query?.symbol != null ? String(req.query.symbol).trim() : "";
+  if (symbolRaw) {
+    const symbol = normalizeSymbol(symbolRaw);
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "invalid symbol" });
+      return;
+    }
+    const accountIdRaw = req.query?.accountId != null ? String(req.query.accountId).trim() : "all";
+    const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+    const data = await getTradesForSymbol(req.userId, symbol, { accountId });
+    res.json({ ok: true, data });
+    return;
+  }
   const pageOpts = parseLedgerListQuery(req);
   if (pageOpts) {
     const { data, pagination } = await getTradesPage(req.userId, pageOpts);

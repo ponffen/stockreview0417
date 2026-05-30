@@ -750,6 +750,26 @@ function ledgerListAccountFilterClause(accountId, params) {
 }
 
 /**
+ * 单标的全部成交（新→旧），供个股记录页按需加载。
+ */
+async function getTradesForSymbol(userId, symbol, opts = {}) {
+  const uid = String(userId || "").trim();
+  const sym = normalizeSymbol(symbol);
+  if (!uid || !sym) {
+    return [];
+  }
+  const params = [uid, sym];
+  const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE user_id = $1 AND symbol = $2${accountClause}
+     ORDER BY trade_date DESC, created_at DESC`,
+    params
+  );
+  return rows.map(rowToTrade);
+}
+
+/**
  * 交易列表分页（新→旧），供交易记录页按需加载。
  */
 async function getTradesPage(userId, opts = {}) {
@@ -3073,6 +3093,7 @@ module.exports = {
   normalizeAccountRecords,
   normalizeDailyReturn,
   getTrades,
+  getTradesForSymbol,
   getTradesPage,
   upsertTrade,
   importTrades,

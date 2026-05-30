@@ -611,13 +611,30 @@ module.exports = async function handler(req, res) {
       }
       const {
         getTrades,
+        getTradesForSymbol,
         getTradesPage,
         normalizeTrade,
         upsertTrade,
         deleteTradeById,
+        normalizeSymbol: dbNormalizeSymbol,
       } = require("../src/db");
 
       if (isTradesGetDirect) {
+        const symbolRaw = getSearchParam(req, "symbol");
+        if (symbolRaw != null && String(symbolRaw).trim() !== "") {
+          const symbol = dbNormalizeSymbol(String(symbolRaw).trim());
+          if (!symbol) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ ok: false, error: "invalid symbol" }));
+            return;
+          }
+          const accountIdRaw = String(getSearchParam(req, "accountId") || "all").trim();
+          const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+          const data = await getTradesForSymbol(userId, symbol, { accountId });
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data }));
+          return;
+        }
         const limitRaw = getSearchParam(req, "limit");
         if (limitRaw != null && String(limitRaw).trim() !== "") {
           const limit = Math.min(100, Math.max(1, parseInt(String(limitRaw), 10) || 10));
