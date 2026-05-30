@@ -1107,7 +1107,6 @@ h2 {
   position: sticky;
   left: 0;
   z-index: 3;
-  box-shadow: 4px 0 8px -4px rgb(0 0 0 / 10%);
 }
 
 .analysis-stock-rank-head .col-rank {
@@ -1124,7 +1123,6 @@ h2 {
   position: sticky;
   left: var(--stock-rank-col-rank);
   z-index: 2;
-  box-shadow: 4px 0 8px -4px rgb(0 0 0 / 10%);
 }
 
 .analysis-stock-rank-head .col-name {
@@ -1133,6 +1131,58 @@ h2 {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
+}
+
+/* 私有分析排行：横向滚动时后续列 DOM 靠后易叠在 sticky #/名称 上，与 --public 同策略 */
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-rank {
+  z-index: 22;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-rank {
+  z-index: 21;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name {
+  z-index: 21;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+  z-index: 20;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
+  .analysis-stock-rank-head
+  > *:not(.col-rank):not(.col-name),
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
+  .analysis-stock-rank-row
+  > *:not(.col-rank):not(.col-name) {
+  position: relative;
+  z-index: 0;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
+  .analysis-stock-rank-head
+  > *:not(.col-rank):not(.col-name) {
+  background: #f6f8fb;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
+  .analysis-stock-rank-row
+  > *:not(.col-rank):not(.col-name) {
+  background: #fff;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-rank,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-rank,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+  box-shadow: none;
+  border-right: none;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+  border-right: 1px solid var(--line);
 }
 
 .analysis-stock-rank-table .col-name {
@@ -1182,8 +1232,9 @@ h2 {
   color: #5d6a82;
   line-height: 1.4;
   text-align: left;
-  white-space: normal;
-  word-break: break-word;
+  white-space: pre-line;
+  word-break: normal;
+  overflow: hidden;
 }
 
 .analysis-stock-rank-table .col-profit,
