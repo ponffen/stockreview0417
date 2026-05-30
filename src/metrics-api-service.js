@@ -9,7 +9,6 @@ const {
   getLatestAnalysisSnapshotDate,
   getAnalysisDailySnapshots,
   getHomeSummaryForUser,
-  getPerformancePresetSnapshot,
   getSymbolDailyCloseRange,
   resolveBookCurrencyForAccountScope,
   getUserMetricsMeta,
@@ -29,8 +28,6 @@ const {
 } = require("./account-kpi-surface");
 const {
   buildProfitSeries,
-  rebaseRateSeriesByFirstDay,
-  computeTimeWeightedSeries,
   metricsForWindow,
   lastAnalysisDailyRowOnOrBefore,
   xirrTodayOnly,
@@ -273,6 +270,59 @@ function stageProfitCnyFromSnapshotRow(row, stageKey) {
   return Number(row.dailyProfit ?? row.profitCny ?? 0);
 }
 
+/** 分析「收益率走势」：按所选 stage 取快照行 stage_*_rate_twr（累计），非 TWR 重算。 */
+function stageRateTwrFromSnapshotRow(row, stageKey) {
+  const st = String(stageKey || "mtd").trim() || "mtd";
+  if (st === "today") {
+    return Number(row.dailyRateTwr ?? row.twRDaily ?? 0);
+  }
+  if (st === "mtd") {
+    return Number(row.stageMtdRateTwr ?? 0);
+  }
+  if (st === "ytd") {
+    return Number(row.stageYtdRateTwr ?? 0);
+  }
+  if (st === "inception") {
+    return Number(row.stageInceptionRateTwr ?? 0);
+  }
+  if (st === "last_7d") {
+    return Number(row.stageLast7dRateTwr ?? 0);
+  }
+  if (st === "last_30d") {
+    return Number(row.stageLast30dRateTwr ?? 0);
+  }
+  if (st === "last_90d") {
+    return Number(row.stageLast90dRateTwr ?? 0);
+  }
+  return Number(row.dailyRateTwr ?? row.twRDaily ?? 0);
+}
+
+function stageRateMwrFromSnapshotRow(row, stageKey) {
+  const st = String(stageKey || "mtd").trim() || "mtd";
+  if (st === "today") {
+    return Number(row.dailyRateMwr ?? row.dailyRateTwr ?? row.twRDaily ?? 0);
+  }
+  if (st === "mtd") {
+    return Number(row.stageMtdRateMwr ?? 0);
+  }
+  if (st === "ytd") {
+    return Number(row.stageYtdRateMwr ?? 0);
+  }
+  if (st === "inception") {
+    return Number(row.stageInceptionRateMwr ?? 0);
+  }
+  if (st === "last_7d") {
+    return Number(row.stageLast7dRateMwr ?? 0);
+  }
+  if (st === "last_30d") {
+    return Number(row.stageLast30dRateMwr ?? 0);
+  }
+  if (st === "last_90d") {
+    return Number(row.stageLast90dRateMwr ?? 0);
+  }
+  return Number(row.dailyRateMwr ?? row.dailyRateTwr ?? row.twRDaily ?? 0);
+}
+
 async function loadSnapshotRowsAsc(userId, scope, from, to) {
   const rows = await getAnalysisDailySnapshots({ accountId: scope, from, to }, userId);
   return rows
@@ -280,12 +330,27 @@ async function loadSnapshotRowsAsc(userId, scope, from, to) {
       date: String(r.date || "").slice(0, 10),
       profitCny: Number(r.dailyProfit ?? r.profitCny ?? r.profit_cny ?? 0),
       dailyProfit: Number(r.dailyProfit ?? r.profitCny ?? 0),
+      dailyRateTwr: Number(r.dailyRateTwr ?? r.twRDaily ?? 0),
+      dailyRateMwr: Number(r.dailyRateMwr ?? r.dailyRateTwr ?? r.twRDaily ?? 0),
+      twRDaily: Number(r.twRDaily ?? r.dailyRateTwr ?? 0),
       stageMtdProfit: Number(r.stageMtdProfit ?? 0),
+      stageMtdRateTwr: Number(r.stageMtdRateTwr ?? 0),
+      stageMtdRateMwr: Number(r.stageMtdRateMwr ?? 0),
       stageYtdProfit: Number(r.stageYtdProfit ?? 0),
+      stageYtdRateTwr: Number(r.stageYtdRateTwr ?? 0),
+      stageYtdRateMwr: Number(r.stageYtdRateMwr ?? 0),
       stageInceptionProfit: Number(r.stageInceptionProfit ?? 0),
+      stageInceptionRateTwr: Number(r.stageInceptionRateTwr ?? 0),
+      stageInceptionRateMwr: Number(r.stageInceptionRateMwr ?? 0),
       stageLast7dProfit: Number(r.stageLast7dProfit ?? 0),
+      stageLast7dRateTwr: Number(r.stageLast7dRateTwr ?? 0),
+      stageLast7dRateMwr: Number(r.stageLast7dRateMwr ?? 0),
       stageLast30dProfit: Number(r.stageLast30dProfit ?? 0),
+      stageLast30dRateTwr: Number(r.stageLast30dRateTwr ?? 0),
+      stageLast30dRateMwr: Number(r.stageLast30dRateMwr ?? 0),
       stageLast90dProfit: Number(r.stageLast90dProfit ?? 0),
+      stageLast90dRateTwr: Number(r.stageLast90dRateTwr ?? 0),
+      stageLast90dRateMwr: Number(r.stageLast90dRateMwr ?? 0),
       totalAssets: Number(r.totalAssets ?? r.total_assets ?? 0) || Number(r.marketValue ?? r.market_value ?? 0),
       marketValue: Number(r.marketValue ?? r.market_value ?? 0),
       cash: Number(r.cash ?? 0),
@@ -923,46 +988,41 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
 }
 
 async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload) {
-  const { userId, scope, settings, live, um } = ctx;
+  const { userId, scope, settings, live, um, home } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
+  const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const snap = await getPerformancePresetSnapshot(userId, scope, st, asOf);
-  if (snap?.twr?.seriesJson) {
-    try {
-      const parsed = JSON.parse(snap.twr.seriesJson);
-      const dates = parsed.dates || [];
-      const rates = parsed.twrRebased || [];
-      const points = dates.map((date, i) => ({
-        date,
-        rate: fmtPercentRatio(Number(rates[i]) || 0),
-      }));
-      return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
-    } catch {
-      /* fall through */
-    }
-  }
   const tradeList = trades || (await getTrades(userId));
   const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
   const { start, end } = resolveStageRange(st, asOf, firstTrade);
-  let rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
-  if (live.tradingDay) {
-    const ld = String(live.liveDate || "").slice(0, 10);
-    if (ld >= start && ld <= end) {
-      rows = appendLiveSnapshotRow(rows, live, ld);
-    }
-  }
-  const pts = rows
+  const rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
+  const rateFromRow = (r) =>
+    mwrMode ? stageRateMwrFromSnapshotRow(r, st) : stageRateTwrFromSnapshotRow(r, st);
+  const points = rows
     .filter((r) => r.date >= start && r.date <= end)
     .map((r) => ({
       date: r.date,
-      value: r.totalAssets,
-      flow: r.externalFlowCny,
+      rate: fmtSignedPercentRatio(rateFromRow(r)),
     }));
-  const tw = rebaseRateSeriesByFirstDay(computeTimeWeightedSeries(pts));
-  const points = tw.map((p) => ({
-    date: p.date,
-    rate: fmtPercentRatio(p.rate),
-  }));
+  if (live.tradingDay) {
+    const liveDate = String(live.liveDate || "").slice(0, 10);
+    if (liveDate >= start && liveDate <= end) {
+      const frozen = frozenMetricsFromHomeAccount(home?.account);
+      const { rateTwr, rateMwr } = stageProfitFromFrozenAndLive(st, frozen, live, firstTrade, rows, asOf);
+      const rateVal = mwrMode ? rateMwr : rateTwr;
+      const row = {
+        date: liveDate,
+        rate: fmtSignedPercentRatio(rateVal),
+      };
+      const hit = points.findIndex((p) => p.date === liveDate);
+      if (hit >= 0) {
+        points[hit] = row;
+      } else {
+        points.push(row);
+        points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      }
+    }
+  }
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
 }
 

@@ -5074,7 +5074,7 @@ async function renderPublicProfileAnalysis(d) {
           if (pubRateSummary) {
             pubRateSummary.textContent = useMwrUi
               ? `我的收益率 ${bundleFmtText(retPack?.rate)}`
-              : `我的 ${bundleFmtText(mySeries.at(-1)?.rate)}`;
+              : `我的收益率 ${bundleFmtText(retPack?.rate)}`;
           }
         }
         if (pubMkt) paintPublicProfileMarketIndexChart(pubMkt, document.getElementById("pubAnalysisMarketTooltip"), assetIdx, refresh);
@@ -8262,16 +8262,17 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   };
   redrawChartsOnly();
   if (analysisRateSummary) {
-    const lastMyPt = trimMetricsSeriesPoints(twrPts).at(-1);
     const lastBenchPt = trimMetricsSeriesPoints(benchPack?.points || []).at(-1);
     if (useMwrUi) {
       analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(retPack?.rate)}`;
     } else if (state.benchmark === "none") {
-      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(lastMyPt?.rate)}`;
+      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(retPack?.rate)}`;
     } else {
-      const myPct = bundleFmtText(lastMyPt?.rate);
+      const myPct = bundleFmtText(retPack?.rate);
       const benchPct = bundleFmtText(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
-      const diff = parseBundlePercent(lastMyPt?.rate) - parseBundlePercent(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
+      const diff =
+        parseBundlePercent(retPack?.rate) -
+        parseBundlePercent(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
       analysisRateSummary.textContent = `我的 ${myPct} / 基准 ${benchPct} / 对比 ${formatPercent(diff)}`;
     }
   }
