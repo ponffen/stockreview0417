@@ -10904,7 +10904,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       return;
     }
     const pxPerPoint = chartPxPerPoint();
-    const step = Math.round((panAnchorClientX - clientX) / pxPerPoint);
+    const step = Math.round((clientX - panAnchorClientX) / pxPerPoint);
     if (runtime.options.mode === "stock") {
       const total = chartNavTotalCount();
       const windowSize = Math.max(12, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW));
