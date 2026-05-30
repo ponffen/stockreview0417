@@ -178,6 +178,8 @@ const state = {
   stockSortOrder: "default",
   stockAmountDisplay: "native",
   analysisPanOffset: 0,
+  /** 分析图可见窗口（交易日点数），捏合只改此项，不重新请求 */
+  analysisChartWindow: 30,
   dailyReturns: [],
   trades: [],
   /** 银证转账 / 出入金 */
@@ -244,6 +246,8 @@ let analysisRenderRequestSeq = 0;
 let cachedAnalysisAssetChartRows = null;
 /** metrics 分析图：缓存序列与 payload，十字星 onRedraw 不重拉接口 */
 let cachedAnalysisMetricsCharts = null;
+/** 分析页本地 fallback：捏合/平移重绘，不重新请求 */
+let legacyAnalysisPanContext = null;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
 /** 与 account-daily 类似：合并并发、短缓存，避免连续 renderAll 打出两条相同 symbol-daily */
@@ -2819,11 +2823,11 @@ function bindEvents() {
       } else if (value === "all") {
         state.analysisRangeMode = "all";
         state.analysisPreset = null;
-        state.analysisPanOffset = 0;
+        resetAnalysisChartViewport();
       } else if (value === "mtd") {
         state.analysisRangeMode = "preset";
         state.analysisPreset = "mtd";
-        state.analysisPanOffset = 0;
+        resetAnalysisChartViewport();
       } else {
         state.analysisRangeMode = "preset";
         const n = Number(value);
@@ -2834,7 +2838,7 @@ function bindEvents() {
           state.analysisPreset = null;
           state.rangeDays = n;
         }
-        state.analysisPanOffset = 0;
+        resetAnalysisChartViewport();
       }
       persistState();
       void renderAnalysis();
@@ -2877,7 +2881,7 @@ function bindEvents() {
     state.customRangeDraftEnd = end;
     state.analysisRangeMode = "custom";
     state.analysisPreset = null;
-    state.analysisPanOffset = 0;
+    resetAnalysisChartViewport();
     persistState();
     renderControls();
     void renderAnalysis();
@@ -4805,11 +4809,11 @@ function bindPublicProfileAnalysisInteractions(d) {
         } else if (value === "all") {
           ui.analysisRangeMode = "all";
           ui.analysisPreset = null;
-          ui.analysisPanOffset = 0;
+          resetAnalysisChartViewport();
         } else if (value === "mtd") {
           ui.analysisRangeMode = "preset";
           ui.analysisPreset = "mtd";
-          ui.analysisPanOffset = 0;
+          resetAnalysisChartViewport();
         } else {
           ui.analysisRangeMode = "preset";
           const n = Number(value);
@@ -4820,7 +4824,7 @@ function bindPublicProfileAnalysisInteractions(d) {
             ui.analysisPreset = null;
             ui.rangeDays = n;
           }
-          ui.analysisPanOffset = 0;
+          resetAnalysisChartViewport();
         }
         syncCommunityProfileAnalysisControls();
         void renderPublicProfileAnalysis(d);
@@ -4863,7 +4867,7 @@ function bindPublicProfileAnalysisInteractions(d) {
     ui.customRangeDraftEnd = end;
     ui.analysisRangeMode = "custom";
     ui.analysisPreset = null;
-    ui.analysisPanOffset = 0;
+    resetAnalysisChartViewport();
     syncCommunityProfileAnalysisControls();
     void renderPublicProfileAnalysis(d);
   });
@@ -5038,33 +5042,39 @@ async function renderPublicProfileAnalysis(d) {
     }
     const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
     const pubSeries = pubBundle?.series || {};
-    const twrPts = pubSeries.dailyTwr || [];
+    const fullPubTwrPts = pubSeries.dailyTwr || [];
     const profitPts = pubSeries.dailyProfit || [];
     const benchPack = pubBundle?.benchmark;
+    const fullPubBenchPts = benchPack?.points || [];
     const rankPack = pubBundle?.stockRank;
     const retPack = pubBundle?.returns;
-    if (twrPts.length || profitPts.length) {
+    if (fullPubTwrPts.length || profitPts.length) {
+      resetAnalysisChartViewport();
       await withPublicProfileAnalysisUiAsync(async () => {
         const pubRate = document.getElementById("pubAnalysisRateChart");
         const pubMkt = document.getElementById("pubAnalysisMarketChart");
         const pubRank = document.getElementById("pubAnalysisStockRankBody");
         const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
         const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-        const mySeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(twrPts));
-        const benchSeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(benchPack?.points || []));
+        let mySeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(fullPubTwrPts));
+        let benchSeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(fullPubBenchPts));
         const assetChartRows = analysisAssetChartRowsFromSeries(pubSeries);
         const assetIdx = trimMetricsSeriesPoints(assetChartRows).map((r) => ({
           date: r.date,
           value: Number(r.totalAssets) || 0,
         }));
-        const pubTwrPts = trimMetricsSeriesPoints(twrPts);
-        const pubBenchPts = trimMetricsSeriesPoints(benchPack?.points || []);
+        let pubTwrPts = trimMetricsSeriesPoints(fullPubTwrPts);
+        let pubBenchPts = trimMetricsSeriesPoints(fullPubBenchPts);
         const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
         let pubRatePayload = null;
         const redrawPubRate = () => {
           if (!pubRate) {
             return null;
           }
+          pubTwrPts = trimMetricsSeriesPoints(fullPubTwrPts);
+          pubBenchPts = trimMetricsSeriesPoints(fullPubBenchPts);
+          mySeries = analysisRateSeriesForChart(pubTwrPts);
+          benchSeries = analysisRateSeriesForChart(pubBenchPts);
           pubRatePayload = useMwrUi
             ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。")
             : drawLineChart(mySeries, benchSeries, pubRate);
@@ -5076,6 +5086,7 @@ async function renderPublicProfileAnalysis(d) {
             mode: "analysis",
             onRefresh: refresh,
             onRedraw: redrawPubRate,
+            chartNavTotal: () => Math.max(fullPubTwrPts.length, fullPubBenchPts.length),
             valueFormatter: (_value, key) => {
               const date = state.chartCrosshairMap[pubRate.id]?.date;
               if (key === "benchmark") {
@@ -7956,10 +7967,45 @@ function metricsStageFromAnalysis() {
   if (state.analysisRangeMode === "all") return "inception";
   return "mtd";
 }
+const ANALYSIS_CHART_DEFAULT_WINDOW = 30;
+const ANALYSIS_CHART_MIN_WINDOW = 7;
+const ANALYSIS_CHART_MAX_WINDOW = 365;
+
+function resetAnalysisChartViewport() {
+  state.analysisChartWindow = ANALYSIS_CHART_DEFAULT_WINDOW;
+  state.analysisPanOffset = 0;
+}
+
+/** 在已缓存的全量序列上裁切可见窗口（最新在右，offset 越大越早） */
 function trimMetricsSeriesPoints(points) {
-  const off = Math.max(0, Number(state.analysisPanOffset) || 0);
-  if (!off || !Array.isArray(points) || points.length < 3) return points || [];
-  return points.slice(Math.min(off, points.length - 2));
+  const list = Array.isArray(points) ? points : [];
+  if (list.length < 2) {
+    return list;
+  }
+  const windowSize = Math.max(
+    2,
+    Math.min(list.length, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
+  );
+  const maxOffset = Math.max(0, list.length - windowSize);
+  const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset) || 0));
+  state.analysisPanOffset = offset;
+  const end = list.length - offset;
+  const start = Math.max(0, end - windowSize);
+  return list.slice(start, end);
+}
+
+function analysisChartNavTotalFromCache() {
+  const c = cachedAnalysisMetricsCharts;
+  if (!c) {
+    return 0;
+  }
+  const lens = [
+    c.fullTwrPts?.length,
+    c.fullProfitPts?.length,
+    c.fullAssetRows?.length,
+    c.fullBenchPts?.length,
+  ].filter((n) => Number(n) > 0);
+  return lens.length ? Math.max(...lens) : 0;
 }
 async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   if (!apiReady) return null;
@@ -8176,10 +8222,12 @@ function bindAnalysisMetricsChartsInteractive() {
   if (!ctx) {
     return;
   }
+  const chartNav = { chartNavTotal: analysisChartNavTotalFromCache };
   bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => ctx.payloads.rate, {
     mode: "analysis",
     onRefresh: ctx.refreshAnalysisView,
     onRedraw: ctx.redrawChartsOnly,
+    ...chartNav,
     valueFormatter: (_value, key) => {
       if (key === "benchmark" && state.benchmark === "none") {
         return "–";
@@ -8192,17 +8240,19 @@ function bindAnalysisMetricsChartsInteractive() {
     mode: "analysis",
     onRefresh: ctx.refreshAnalysisView,
     onRedraw: ctx.redrawChartsOnly,
+    ...chartNav,
     valueFormatter: (value) => formatNumber(value, 2),
   });
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => ctx.payloads.asset, {
     mode: "analysis",
     onRefresh: ctx.refreshAnalysisView,
     onRedraw: ctx.redrawChartsOnly,
+    ...chartNav,
     valueFormatter: ctx.assetValueFormatter,
   });
 }
 
-async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "") {
+async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "", opts = {}) {
   const stage = metricsStageFromAnalysis();
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
@@ -8212,24 +8262,28 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
   }
   const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
   const series = bundle?.series || {};
-  const twrPts = series.dailyTwr || [];
-  const profitPts = series.dailyProfit || [];
+  const fullTwrPts = series.dailyTwr || [];
+  const fullProfitPts = series.dailyProfit || [];
   const benchPack = bundle?.benchmark;
+  const fullBenchPts = benchPack?.points || [];
   const rankPack = bundle?.stockRank;
   const retPack = bundle?.returns;
   if (renderRequestId !== analysisRenderRequestSeq) return false;
-  if (!twrPts.length && !profitPts.length) return false;
+  if (!fullTwrPts.length && !fullProfitPts.length) return false;
+  if (opts.resetViewport) {
+    resetAnalysisChartViewport();
+  }
   const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const twrPtsTrim = trimMetricsSeriesPoints(twrPts);
-  const benchPtsTrim = trimMetricsSeriesPoints(benchPack?.points || []);
+  const twrPtsTrim = trimMetricsSeriesPoints(fullTwrPts);
+  const benchPtsTrim = trimMetricsSeriesPoints(fullBenchPts);
   const mySeries = analysisRateSeriesForChart(twrPtsTrim);
   const benchSeries = analysisRateSeriesForChart(benchPtsTrim);
-  const profitSeries = trimMetricsSeriesPoints(profitPts).map((p) => ({
+  const profitSeries = trimMetricsSeriesPoints(fullProfitPts).map((p) => ({
     date: p.date,
     value: parseBundleSignedAmount(p.profit),
   }));
-  cachedAnalysisAssetChartRows = analysisAssetChartRowsFromSeries(series);
-  const assetSeries = trimMetricsSeriesPoints(cachedAnalysisAssetChartRows);
+  const fullAssetRows = analysisAssetChartRowsFromSeries(series);
+  cachedAnalysisAssetChartRows = trimMetricsSeriesPoints(fullAssetRows);
 
   const refreshAnalysisView = () => {
     renderControls();
@@ -8240,11 +8294,30 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
       ? `${formatNumber(value, 2)}%`
       : formatNumber(analysisSnapshotMoneyFromCny(value), 2);
 
+  const rebuildVisibleAnalysisSeries = () => {
+    const c = cachedAnalysisMetricsCharts;
+    if (!c) {
+      return;
+    }
+    const twrTrim = trimMetricsSeriesPoints(c.fullTwrPts);
+    const benchTrim = trimMetricsSeriesPoints(c.fullBenchPts);
+    c.twrPts = twrTrim;
+    c.benchPts = benchTrim;
+    c.mySeries = analysisRateSeriesForChart(twrTrim);
+    c.benchSeries = analysisRateSeriesForChart(benchTrim);
+    c.profitSeries = trimMetricsSeriesPoints(c.fullProfitPts).map((p) => ({
+      date: p.date,
+      value: parseBundleSignedAmount(p.profit),
+    }));
+    cachedAnalysisAssetChartRows = trimMetricsSeriesPoints(c.fullAssetRows);
+  };
+
   const redrawChartsOnly = () => {
     const c = cachedAnalysisMetricsCharts;
     if (!c) {
       return;
     }
+    rebuildVisibleAnalysisSeries();
     c.payloads.rate = c.useMwrUi
       ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
       : drawLineChart(c.mySeries, c.benchSeries);
@@ -8268,10 +8341,14 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
         },
       },
     );
-    c.payloads.asset = drawAssetChart(trimMetricsSeriesPoints(cachedAnalysisAssetChartRows));
+    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows);
   };
 
   cachedAnalysisMetricsCharts = {
+    fullTwrPts,
+    fullProfitPts,
+    fullBenchPts,
+    fullAssetRows,
     twrPts: twrPtsTrim,
     benchPts: benchPtsTrim,
     mySeries,
@@ -8280,6 +8357,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "")
     useMwrUi,
     refreshAnalysisView,
     redrawChartsOnly,
+    rebuildVisibleAnalysisSeries,
     assetValueFormatter,
     payloads: {
       rate: null,
@@ -8759,6 +8837,7 @@ async function renderAnalysis(options = {}) {
   if (showLoading) {
     cachedAnalysisAssetChartRows = null;
     cachedAnalysisMetricsCharts = null;
+    legacyAnalysisPanContext = null;
     showRouteLoading("数据正在加载中");
   }
   try {
@@ -8766,7 +8845,9 @@ async function renderAnalysis(options = {}) {
   setAnalysisSummariesDash();
   clearAnalysisChartsToEmpty();
   if (apiReady) {
-    const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId);
+    const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId, "", {
+      resetViewport: showLoading,
+    });
     if (metricsPainted && renderRequestId === analysisRenderRequestSeq) {
       return;
     }
@@ -8934,13 +9015,74 @@ async function renderAnalysis(options = {}) {
     profit: profitPayload,
     asset: assetPayload,
   };
+  legacyAnalysisPanContext = {
+    pseudoHistory,
+    mergedFull,
+    useMwrUi,
+    perfSnap,
+    perfPresetKey,
+    todayKey,
+    analysisChartPayloads,
+  };
   const redrawAnalysisChartsOnly = () => {
-    analysisChartPayloads.rate = useMwrUi
+    const ctx = legacyAnalysisPanContext;
+    if (!ctx) {
+      return;
+    }
+    let nextSelectedPh = resolveAnalysisRange(ctx.pseudoHistory);
+    if (
+      ctx.perfPresetKey &&
+      (ctx.perfPresetKey === "last_7d" || ctx.perfPresetKey === "last_30d" || ctx.perfPresetKey === "last_90d") &&
+      Number(state.analysisPanOffset || 0) === 0
+    ) {
+      const len = ctx.perfPresetKey === "last_7d" ? 7 : ctx.perfPresetKey === "last_30d" ? 30 : 90;
+      const end = String(ctx.mergedFull[ctx.mergedFull.length - 1]?.date || ctx.todayKey).slice(0, 10);
+      const start = addCalendarDaysToDateKey(end, -(len - 1));
+      const alt = ctx.pseudoHistory.filter((p) => p.date >= start && p.date <= end);
+      if (alt.length >= 2) {
+        nextSelectedPh = alt;
+      }
+    }
+    const dateSet = new Set(nextSelectedPh.map((p) => p.date));
+    const nextSliceRows = ctx.mergedFull.filter((row) => dateSet.has(row.date));
+    const nextModePts = nextSliceRows.map((r) => ({
+      date: r.date,
+      value: analysisTotalAssetsFromRow(r),
+      flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
+    }));
+    const nextBundle = buildAnalysisChartsSeriesBundle({
+      modePts: nextModePts,
+      selectedPh: nextSelectedPh,
+      useMwrUi: ctx.useMwrUi,
+      algoMode: state.algoMode,
+      perfSnap: ctx.perfSnap,
+    });
+    const nextBenchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(nextSelectedPh));
+    const nextAssetSeries = nextSliceRows.map((row) => {
+      const mv = Number(row.marketValue) || 0;
+      const cash = Number(row.cash) || 0;
+      const taDb = Number(row.totalAssets);
+      const totalAssets = Number.isFinite(taDb) && Math.abs(taDb) > 1e-9 ? taDb : mv + cash;
+      const ratioDb = Number(row.cashRatio);
+      const cashRatio = Number.isFinite(ratioDb)
+        ? ratioDb
+        : totalAssets > 0
+          ? (cash / totalAssets) * 100
+          : 0;
+      return {
+        date: row.date,
+        totalAssets,
+        market: mv,
+        cash,
+        cashRatio,
+      };
+    });
+    ctx.analysisChartPayloads.rate = ctx.useMwrUi
       ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
-      : drawLineChart(mySeries, benchSeries);
-    analysisChartPayloads.profit = drawDualLineChart(
+      : drawLineChart(nextBundle.mySeries, nextBenchSeries);
+    ctx.analysisChartPayloads.profit = drawDualLineChart(
       analysisProfitChart,
-      profitSeries.map((item) => ({ date: item.date, value: item.value })),
+      nextBundle.profitSeries.map((item) => ({ date: item.date, value: item.value })),
       null,
       "#f45a68",
       null,
@@ -8956,9 +9098,9 @@ async function renderAnalysis(options = {}) {
           minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
           maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
         },
-      }
+      },
     );
-    analysisChartPayloads.asset = drawAssetChart(assetSeries);
+    ctx.analysisChartPayloads.asset = drawAssetChart(nextAssetSeries);
   };
 
   const rateHasBenchmark = state.benchmark !== "none";
@@ -8966,6 +9108,7 @@ async function renderAnalysis(options = {}) {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
     onRedraw: redrawAnalysisChartsOnly,
+    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
     valueFormatter: (_value, key) => {
       if (key === "benchmark" && !rateHasBenchmark) {
         return "--";
@@ -8977,12 +9120,14 @@ async function renderAnalysis(options = {}) {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
     onRedraw: redrawAnalysisChartsOnly,
+    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
     valueFormatter: (value) => formatNumber(value, 2),
   });
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => analysisChartPayloads.asset, {
     mode: "analysis",
     onRefresh: refreshAnalysisView,
     onRedraw: redrawAnalysisChartsOnly,
+    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
     valueFormatter: (value) =>
       state.capitalTrendMode === "cash_ratio"
         ? `${formatNumber(value, 2)}%`
@@ -9035,12 +9180,26 @@ async function renderAnalysis(options = {}) {
   }
 }
 
+function sliceHistoryWithChartWindow(filtered) {
+  const list = Array.isArray(filtered) ? filtered : [];
+  if (!list.length) {
+    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
+  }
+  const windowSize = Math.max(
+    2,
+    Math.min(list.length, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
+  );
+  const maxOffset = Math.max(0, list.length - windowSize);
+  const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset) || 0));
+  state.analysisPanOffset = offset;
+  const end = list.length - offset;
+  const start = Math.max(0, end - windowSize);
+  return list.slice(start, end);
+}
+
 function resolveAnalysisRange(history) {
   if (!history.length) {
     return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-  }
-  if (state.analysisRangeMode === "all") {
-    return history.slice();
   }
   if (state.analysisRangeMode === "custom") {
     let start = state.customRangeStart || history[0].date;
@@ -9050,44 +9209,23 @@ function resolveAnalysisRange(history) {
     }
     const picked = history.filter((point) => point.date >= start && point.date <= end);
     if (picked.length) {
-      return picked;
+      return sliceHistoryWithChartWindow(picked);
     }
   }
   if (isAnalysisMtdPreset()) {
     const mtdKey = monthToDateStartKey();
     const filtered = history.filter((point) => point.date >= mtdKey);
-    if (!filtered.length) {
-      return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-    }
-    const windowSize = Math.min(Math.max(Math.min(filtered.length, 62), 2), filtered.length);
-    const maxOffset = Math.max(0, filtered.length - windowSize);
-    const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
-    state.analysisPanOffset = offset;
-    const end = filtered.length - offset;
-    const start = Math.max(0, end - windowSize);
-    return filtered.slice(start, end);
+    return sliceHistoryWithChartWindow(filtered);
   }
   if (isAnalysisYtdPreset()) {
     const ytdKey = ytdStartDateKey();
     const filtered = history.filter((point) => point.date >= ytdKey);
-    if (!filtered.length) {
-      return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-    }
-    const windowSize = Math.min(Math.max(Math.min(filtered.length, 365), 2), filtered.length);
-    const maxOffset = Math.max(0, filtered.length - windowSize);
-    const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
-    state.analysisPanOffset = offset;
-    const end = filtered.length - offset;
-    const start = Math.max(0, end - windowSize);
-    return filtered.slice(start, end);
+    return sliceHistoryWithChartWindow(filtered);
   }
-  const windowSize = Math.min(Math.max(state.rangeDays, 2), history.length);
-  const maxOffset = Math.max(0, history.length - windowSize);
-  const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
-  state.analysisPanOffset = offset;
-  const end = history.length - offset;
-  const start = Math.max(0, end - windowSize);
-  return history.slice(start, end);
+  if (state.analysisRangeMode === "all") {
+    return sliceHistoryWithChartWindow(history);
+  }
+  return sliceHistoryWithChartWindow(history);
 }
 
 function buildProfitSeries(points) {
@@ -9461,7 +9599,7 @@ function drawStockRecordChart(symbol, symbolTrades) {
     return;
   }
   const totalCount = source.length;
-  const windowSize = Math.max(12, Math.min(totalCount, Number(state.stockRecordWindow || 60)));
+  const windowSize = Math.max(12, Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)));
   const maxOffset = Math.max(0, totalCount - windowSize);
   const offset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
   state.stockRecordOffset = offset;
@@ -9569,6 +9707,8 @@ function drawStockRecordChart(symbol, symbolTrades) {
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
     onRefresh: () => drawStockRecordChart(symbol, symbolTrades),
+    onRedraw: () => drawStockRecordChart(symbol, symbolTrades),
+    chartNavTotal: () => totalCount,
     valueFormatter: (value, key, axis) => {
       if (key === "qty" || axis === "right") {
         return formatNumber(value, 0);
@@ -10624,7 +10764,11 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     refreshRafId = window.requestAnimationFrame(() => {
       refreshRafId = 0;
       const mode = runtime.options.mode;
-      if (mode === "analysis" && reason === "redraw" && typeof runtime.options.onRedraw === "function") {
+      if (
+        (mode === "analysis" || mode === "stock") &&
+        reason === "redraw" &&
+        typeof runtime.options.onRedraw === "function"
+      ) {
         runtime.options.onRedraw();
         return;
       }
@@ -10675,22 +10819,36 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     tooltip.classList.add("show");
   };
 
-  const handlePan = (deltaPx, payload) => {
+  const chartNavTotalCount = () => {
+    if (typeof runtime.options.chartNavTotal === "function") {
+      return Number(runtime.options.chartNavTotal()) || 0;
+    }
+    return 0;
+  };
+
+  const handlePan = (deltaPx) => {
     const step = Math.round(deltaPx / CHART_EDGE_SCROLL_PX);
     if (step === 0) {
       return;
     }
     if (runtime.options.mode === "stock") {
-      const total = payload?.seriesList?.[0]?.values?.length || 0;
-      const windowSize = Math.max(12, Number(state.stockRecordWindow || 30));
+      const total = chartNavTotalCount();
+      const windowSize = Math.max(12, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW));
       const maxOffset = Math.max(0, total - windowSize);
       state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0) - step));
-    } else if (state.analysisRangeMode === "preset") {
-      const total = payload?.seriesList?.[0]?.values?.length || 0;
-      const maxOffset = Math.max(0, total - Math.max(2, Number(state.rangeDays || 30)));
-      state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
+      requestRefresh("redraw");
+      return;
     }
-    requestRefresh(runtime.options.mode === "analysis" ? "data" : "redraw");
+    if (runtime.options.mode === "analysis") {
+      const total = chartNavTotalCount();
+      const windowSize = Math.max(
+        2,
+        Math.min(total || ANALYSIS_CHART_MAX_WINDOW, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
+      );
+      const maxOffset = Math.max(0, total - windowSize);
+      state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0) - step));
+      requestRefresh("redraw");
+    }
   };
 
   canvas.addEventListener(
@@ -10705,9 +10863,6 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       panStarted = false;
       startX = event.clientX;
       lastMoveX = event.clientX;
-      if (event.pointerType !== "mouse") {
-        updateCrosshair(event.clientX, event.clientY);
-      }
       clearPressTimer();
       pressTimer = window.setTimeout(() => {
         if (!pressing || moved || crossVisible) {
@@ -10734,18 +10889,18 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const prevDistance = state.lastPinchDistanceMap[canvas.id];
       if (Number.isFinite(prevDistance) && Math.abs(distance - prevDistance) > 4) {
         const scale = distance / Math.max(prevDistance, 1);
+        const total = chartNavTotalCount();
         if (runtime.options.mode === "stock") {
-          const total = payload?.seriesList?.[0]?.values?.length || 0;
           updateStockRecordWindowByScale(scale, total);
-        } else {
-          updateAnalysisWindowByScale(scale);
-          renderControls();
+        } else if (runtime.options.mode === "analysis") {
+          updateAnalysisWindowByScale(scale, total);
         }
-        requestRefresh(runtime.options.mode === "analysis" ? "data" : "redraw");
+        requestRefresh("redraw");
       }
       state.lastPinchDistanceMap[canvas.id] = distance;
       return;
     }
+    crossVisible = !!state.chartCrosshairMap[canvas.id];
     if (event.pointerType === "mouse" && !pressing) {
       updateCrosshair(event.clientX, event.clientY);
       return;
@@ -10764,7 +10919,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         panStarted = true;
         const deltaX = event.clientX - lastMoveX;
         lastMoveX = event.clientX;
-        handlePan(deltaX, payload);
+        handlePan(deltaX);
       }
     }
     },
@@ -10779,9 +10934,6 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     pointers.delete(event.pointerId);
     if (pointers.size < 2) {
       delete state.lastPinchDistanceMap[canvas.id];
-    }
-    if (panStarted && runtime.options.mode === "analysis") {
-      renderControls();
     }
     pressing = false;
     moved = false;
@@ -10824,18 +10976,19 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
   return runtime;
 }
 
-function updateAnalysisWindowByScale(scale) {
+function updateAnalysisWindowByScale(scale, totalPoints) {
   if (!Number.isFinite(scale) || scale === 1) {
     return;
   }
-  if (state.analysisRangeMode !== "preset") {
-    return;
-  }
-  if (state.analysisPreset === "mtd" || state.analysisPreset === "ytd") {
-    return;
-  }
   const delta = scale > 1 ? -6 : 6;
-  state.rangeDays = Math.max(7, Math.min(365, state.rangeDays + delta));
+  const total = Math.max(0, Number(totalPoints) || 0);
+  const maxWindow = Math.max(ANALYSIS_CHART_MIN_WINDOW, total || ANALYSIS_CHART_MAX_WINDOW);
+  state.analysisChartWindow = Math.max(
+    ANALYSIS_CHART_MIN_WINDOW,
+    Math.min(maxWindow, Number(state.analysisChartWindow || ANALYSIS_CHART_DEFAULT_WINDOW) + delta),
+  );
+  const maxOffset = Math.max(0, total - state.analysisChartWindow);
+  state.analysisPanOffset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset || 0)));
 }
 
 function updateStockRecordWindowByScale(scale, totalPoints) {
