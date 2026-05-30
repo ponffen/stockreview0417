@@ -16,6 +16,14 @@
   --blue: #4f83f1;
   --up: #f45a68;
   --down: #0ebc9f;
+  /* 交易 / 资金 / 个股记录表列宽（ch，按内容定宽） */
+  --ledger-col-date: 10ch;
+  --ledger-col-type: 4.5ch;
+  --ledger-col-price: 7ch;
+  --ledger-col-qty: 6ch;
+  --ledger-col-amt: 9ch;
+  --ledger-col-name: 11ch;
+  --ledger-col-account: 9ch;
 }
 
 * {
@@ -1379,16 +1387,26 @@ h2 {
   border-width: 2px;
 }
 
-.trade-table {
-  width: 100%;
+/* 交易 / 资金 / 个股记录表：按内容定宽，过长截断（无省略号） */
+.trade-table,
+.trade-table--cash,
+.stock-record-table {
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
   border-collapse: collapse;
-  min-width: 620px;
   table-layout: fixed;
 }
 
-.trade-table--cash {
-  min-width: 480px;
-  table-layout: auto;
+.trade-table th,
+.trade-table td,
+.trade-table--cash th,
+.trade-table--cash td,
+.stock-record-table th,
+.stock-record-table td {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .trade-table--cash tbody tr {
@@ -1401,7 +1419,7 @@ h2 {
   font-size: 13px;
   font-weight: 500;
   border-bottom: 1px solid var(--line);
-  padding: 7px 6px;
+  padding: 7px 4px;
   white-space: nowrap;
   text-align: left;
 }
@@ -1412,7 +1430,7 @@ h2 {
 
 .trade-table td {
   border-bottom: 1px solid var(--line);
-  padding: 8px 6px;
+  padding: 8px 4px;
   font-size: 13px;
   white-space: nowrap;
   text-align: left;
@@ -1434,46 +1452,61 @@ h2 {
   font-weight: 500;
 }
 
-/* 持仓收益交易表：按内容收窄列宽，保证信息够用同时减少横向空白。 */
+/* 交易记录：日期 | 名称 | 方向 | 价格 | 数量 | 金额 | 账户 */
 .trade-table:not(.trade-table--cash) th:nth-child(1),
 .trade-table:not(.trade-table--cash) td:nth-child(1) {
-  width: 92px;
+  width: var(--ledger-col-date);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(2),
 .trade-table:not(.trade-table--cash) td:nth-child(2) {
-  width: 20%;
-  overflow: hidden;
-  text-overflow: clip;
+  width: var(--ledger-col-name);
 }
 
-.trade-table thead th:nth-child(3),
-.trade-table tbody td:nth-child(3) {
-  width: 56px;
-  white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
+.trade-table:not(.trade-table--cash) th:nth-child(3),
+.trade-table:not(.trade-table--cash) td:nth-child(3) {
+  width: var(--ledger-col-type);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(4),
 .trade-table:not(.trade-table--cash) td:nth-child(4) {
-  width: 11ch;
+  width: var(--ledger-col-price);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(5),
 .trade-table:not(.trade-table--cash) td:nth-child(5) {
-  width: 10ch;
+  width: var(--ledger-col-qty);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(6),
 .trade-table:not(.trade-table--cash) td:nth-child(6) {
-  width: 13ch;
+  width: var(--ledger-col-amt);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(7),
 .trade-table:not(.trade-table--cash) td:nth-child(7) {
-  width: 10ch;
-  max-width: 10ch;
+  width: var(--ledger-col-account);
+}
+
+/* 资金记录：日期 | 账户 | 类型 | 金额 */
+.trade-table--cash th:nth-child(1),
+.trade-table--cash td:nth-child(1) {
+  width: var(--ledger-col-date);
+}
+
+.trade-table--cash th:nth-child(2),
+.trade-table--cash td:nth-child(2) {
+  width: var(--ledger-col-account);
+}
+
+.trade-table--cash th:nth-child(3),
+.trade-table--cash td:nth-child(3) {
+  width: var(--ledger-col-type);
+}
+
+.trade-table--cash th:nth-child(4),
+.trade-table--cash td:nth-child(4) {
+  width: var(--ledger-col-amt);
 }
 
 .trade-table thead th:nth-child(4),
@@ -1571,7 +1604,7 @@ h2 {
 
 .stock-record-table .stock-record-trade-row:has(+ .trade-note-subrow) td {
   border-bottom: none;
-  padding: 8px 6px 2px;
+  padding: 8px 4px 2px;
 }
 
 .trade-row--clickable,
@@ -1811,10 +1844,7 @@ h2 {
 }
 
 .stock-record-table {
-  width: 100%;
-  border-collapse: collapse;
   margin-top: 0;
-  min-width: 660px;
 }
 
 .stock-record-table thead th {
@@ -1826,35 +1856,74 @@ h2 {
 .stock-record-table th,
 .stock-record-table td {
   border-top: 1px solid var(--line);
-  padding: 8px 6px;
+  padding: 8px 4px;
   text-align: left;
   font-size: 13px;
   white-space: nowrap;
 }
 
-.stock-record-table th:nth-child(3),
-.stock-record-table th:nth-child(4),
-.stock-record-table th:nth-child(5),
-.stock-record-table td:nth-child(3),
-.stock-record-table td:nth-child(4),
-.stock-record-table td:nth-child(5) {
+/* 个股记录（本人）：日期 | 类型 | 价格 | 数量 | 金额 | 账户 */
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(1),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(1) {
+  width: var(--ledger-col-date);
+}
+
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(2),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(2) {
+  width: var(--ledger-col-type);
+}
+
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(3),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(3) {
+  width: var(--ledger-col-price);
   text-align: right;
 }
 
-.stock-record-table th:nth-child(2),
-.stock-record-table td:nth-child(2) {
-  min-width: 64px;
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(4),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(4) {
+  width: var(--ledger-col-qty);
+  text-align: right;
 }
 
-.stock-record-table th:nth-child(4),
-.stock-record-table td:nth-child(4) {
-  min-width: 72px;
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(5),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(5) {
+  width: var(--ledger-col-amt);
+  text-align: right;
 }
 
-.stock-record-table th:nth-child(6),
-.stock-record-table td:nth-child(6) {
+.stock-record-table:not(.stock-record-table--pub) th:nth-child(6),
+.stock-record-table:not(.stock-record-table--pub) td:nth-child(6) {
+  width: var(--ledger-col-account);
   text-align: left;
-  min-width: 72px;
+}
+
+/* 个股记录（公开）：日期 | 类型 | 价格 | 金额占比 | 账户 */
+.stock-record-table--pub th:nth-child(1),
+.stock-record-table--pub td:nth-child(1) {
+  width: var(--ledger-col-date);
+}
+
+.stock-record-table--pub th:nth-child(2),
+.stock-record-table--pub td:nth-child(2) {
+  width: var(--ledger-col-type);
+}
+
+.stock-record-table--pub th:nth-child(3),
+.stock-record-table--pub td:nth-child(3) {
+  width: var(--ledger-col-price);
+  text-align: right;
+}
+
+.stock-record-table--pub th:nth-child(4),
+.stock-record-table--pub td:nth-child(4) {
+  width: var(--ledger-col-amt);
+  text-align: right;
+}
+
+.stock-record-table--pub th:nth-child(5),
+.stock-record-table--pub td:nth-child(5) {
+  width: var(--ledger-col-account);
+  text-align: left;
 }
 
 .account-table {
@@ -2644,11 +2713,9 @@ body.auth-mode {
   white-space: normal;
 }
 
-.trade-table .trade-col-name {
+.trade-table .trade-col-name,
+.trade-table .trade-account-cell {
   box-sizing: border-box;
-  overflow: hidden;
-  text-overflow: clip;
-  white-space: nowrap;
 }
 
 .public-profile-trade-table .pub-trade-amt-th-inner {
@@ -2678,18 +2745,6 @@ body.auth-mode {
   position: relative;
   display: inline-flex;
   align-items: center;
-}
-
-.stock-record-table--pub th:nth-child(3),
-.stock-record-table--pub td:nth-child(3),
-.stock-record-table--pub th:nth-child(4),
-.stock-record-table--pub td:nth-child(4) {
-  text-align: right;
-}
-
-.stock-record-table--pub th:nth-child(5),
-.stock-record-table--pub td:nth-child(5) {
-  text-align: left;
 }
 
 .community-profile-toolbar {
