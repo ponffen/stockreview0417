@@ -992,31 +992,91 @@ h2 {
   overflow: visible;
 }
 
-.analysis-stock-rank-head,
-.analysis-stock-rank-row {
+/* 私有分析排行：与 --public 相同「整表 grid + 行 display:contents」，避免每行独立 grid 导致 sticky 被穿透 */
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) {
   display: grid;
-  grid-template-columns: var(--stock-rank-col-rank) minmax(40px, 0.55fr) 112px 102px 82px minmax(200px, 1.45fr);
-  align-items: center;
-  /* column-gap is transparent — scrolling cells show through; use cell padding for spacing */
-  gap: 0;
-  padding: 8px 14px;
+  grid-template-columns:
+    var(--stock-rank-col-rank)
+    max-content
+    minmax(5.5rem, max-content)
+    minmax(5.5rem, max-content)
+    minmax(4.5rem, max-content)
+    minmax(12rem, 1fr);
+  min-width: max-content;
+  padding-left: 10px;
+  padding-right: 10px;
+  box-sizing: border-box;
   font-size: 13px;
+  align-items: stretch;
 }
 
-.analysis-stock-rank-head > *,
-.analysis-stock-rank-row > * {
-  padding-left: calc(var(--stock-rank-col-gap) / 2);
-  padding-right: calc(var(--stock-rank-col-gap) / 2);
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row {
+  display: contents;
 }
 
-.analysis-stock-rank-head > *:first-child,
-.analysis-stock-rank-row > *:first-child {
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > * {
+  padding: 8px calc(var(--stock-rank-col-gap) / 2);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *:first-child,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > *:first-child {
   padding-left: 0;
 }
 
-.analysis-stock-rank-head > *:last-child,
-.analysis-stock-rank-row > *:last-child {
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *:last-child,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > *:last-child {
   padding-right: 0;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > * {
+  background: #f6f8fb;
+  border-bottom: 1px solid var(--line);
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > * {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row:last-child > * {
+  border-bottom: none;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-rank {
+  justify-content: center;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-px,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days {
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-hold-interval,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-hold-interval {
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  min-width: max-content;
+  max-width: 9.5rem;
+}
+
+.analysis-stock-rank-head,
+.analysis-stock-rank-row {
+  font-size: 13px;
 }
 
 .analysis-stock-rank-head .stock-rank-help-wrap {
@@ -1088,100 +1148,55 @@ h2 {
 }
 
 .analysis-stock-rank-head {
-  background: #f6f8fb;
   color: #8f99a9;
   font-weight: 500;
-  border-bottom: 1px solid var(--line);
 }
 
-.analysis-stock-rank-row {
-  border-bottom: 1px solid var(--line);
-}
-
-.analysis-stock-rank-row:last-child {
-  border-bottom: none;
-}
-
-.analysis-stock-rank-head .col-rank,
-.analysis-stock-rank-row .col-rank {
+/* sticky：整表 grid 下 # / 名称 固定；滚动列 z-index 压低 */
+.analysis-stock-rank-table .analysis-stock-rank-head .col-rank,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-rank {
   position: sticky;
   left: 0;
-  z-index: 3;
 }
 
-.analysis-stock-rank-head .col-rank {
-  z-index: 4;
-  background: #f6f8fb;
-}
-
-.analysis-stock-rank-row .col-rank {
-  background: #fff;
-}
-
-.analysis-stock-rank-head .col-name,
-.analysis-stock-rank-row .col-name {
+.analysis-stock-rank-table .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
   position: sticky;
   left: var(--stock-rank-col-rank);
-  z-index: 2;
 }
 
-.analysis-stock-rank-head .col-name {
-  z-index: 3;
-  background: #f6f8fb;
-  overflow: hidden;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-
-/* 私有分析排行：横向滚动时后续列 DOM 靠后易叠在 sticky #/名称 上，与 --public 同策略 */
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-rank {
+.analysis-stock-rank-table .analysis-stock-rank-head .col-rank {
   z-index: 22;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-rank {
+.analysis-stock-rank-table .analysis-stock-rank-row .col-rank {
   z-index: 21;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name {
+.analysis-stock-rank-table .analysis-stock-rank-head .col-name {
   z-index: 21;
+  white-space: nowrap;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
   z-index: 20;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
-  .analysis-stock-rank-head
-  > *:not(.col-rank):not(.col-name),
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
-  .analysis-stock-rank-row
-  > *:not(.col-rank):not(.col-name) {
+.analysis-stock-rank-table > .analysis-stock-rank-row > *:not(.col-rank):not(.col-name),
+.analysis-stock-rank-table > .analysis-stock-rank-head > *:not(.col-rank):not(.col-name) {
   position: relative;
   z-index: 0;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
-  .analysis-stock-rank-head
-  > *:not(.col-rank):not(.col-name) {
-  background: #f6f8fb;
-}
-
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public)
-  .analysis-stock-rank-row
-  > *:not(.col-rank):not(.col-name) {
-  background: #fff;
-}
-
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-rank,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-rank,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+.analysis-stock-rank-table .analysis-stock-rank-head .col-rank,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-rank,
+.analysis-stock-rank-table .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
   box-shadow: none;
-  border-right: none;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
+.analysis-stock-rank-table .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
   border-right: 1px solid var(--line);
 }
 
@@ -1189,17 +1204,11 @@ h2 {
   min-width: 0;
 }
 
-.analysis-stock-rank-row .col-name {
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  gap: 2px;
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
   overflow: hidden;
 }
 
-.analysis-stock-rank-row .col-name strong {
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name strong {
   display: block;
   min-width: 0;
   width: 100%;
@@ -1207,18 +1216,18 @@ h2 {
   color: var(--text);
   line-height: 1.25;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.analysis-stock-rank-row .col-name .rank-code {
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name .rank-code {
   display: block;
   font-size: 11px;
   color: var(--muted);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
 }
 
 .analysis-stock-rank-head .col-hold-interval {
@@ -1227,10 +1236,10 @@ h2 {
   font-weight: 500;
 }
 
-.analysis-stock-rank-row .col-hold-interval {
+.analysis-stock-rank-table .analysis-stock-rank-row .col-hold-interval {
   font-size: 12px;
   color: #5d6a82;
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
   white-space: pre-line;
   word-break: normal;
