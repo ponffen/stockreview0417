@@ -314,8 +314,9 @@ function liveMetricsCacheKey(userId, scope) {
 async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
-  const tradingDay = shouldEmitTodayLivePoint();
-  const liveDate = liveDateKeyShanghai();
+  const now = new Date();
+  const tradingDay = shouldEmitTodayLivePoint(now);
+  const liveDate = liveDateKeyShanghai(now);
   const homeAcc = opts?.preloaded?.homeAccount || null;
   let frozenThrough = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
   if (!frozenThrough) {
@@ -473,7 +474,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     const rate = fxRate(getSymbolCurrency(symbol));
     const mv = qty * current * rate;
     liveMarketValue += mv;
-    const todayKey = tradingDay ? liveDateKeyShanghai() : priceAsOf;
+    const todayKey = tradingDay ? liveDate : priceAsOf;
     const todayP = tradingDay
       ? todayProfitCnyForHolding({
           quote,
