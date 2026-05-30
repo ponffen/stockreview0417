@@ -203,6 +203,7 @@ const state = {
   /** 个股记录页：仅该标的成交（非全量 state.trades） */
   stockRecordTrades: [],
   stockRecordTradesLoading: false,
+  stockRecordPageLoading: false,
   stockRecordWindow: 30,
   stockRecordOffset: 0,
   chartCrosshairMap: {},
@@ -288,6 +289,7 @@ const cashListPager = {
 };
 let tradeListScrollListenerBound = false;
 let stockRecordTradesLoadGen = 0;
+let stockRecordPageLoadGen = 0;
 let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
@@ -412,6 +414,8 @@ const stockRecordMarket = document.getElementById("stockRecordMarket");
 const stockRecordRegret = document.getElementById("stockRecordRegret");
 const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
+const stockRecordLoading = document.getElementById("stockRecordLoading");
+const stockRecordBody = document.getElementById("stockRecordBody");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
 const accountManageDialog = document.getElementById("accountManageDialog");
@@ -2197,6 +2201,72 @@ async function loadStockRecordTrades(symbol, accountId = "all") {
   }
 }
 
+function setStockRecordPageLoading(loading) {
+  state.stockRecordPageLoading = loading === true;
+  stockRecordLoading?.classList.toggle("hidden", !state.stockRecordPageLoading);
+  stockRecordBody?.classList.toggle("hidden", state.stockRecordPageLoading);
+  if (stockRecordLoading) {
+    stockRecordLoading.setAttribute("aria-busy", state.stockRecordPageLoading ? "true" : "false");
+  }
+  if (state.stockRecordPageLoading) {
+    clearStockRecordChart();
+  }
+}
+
+function clearStockRecordChart() {
+  if (!stockRecordChart) {
+    return;
+  }
+  const ctx = stockRecordChart.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.clearRect(0, 0, stockRecordChart.width, stockRecordChart.height);
+}
+
+async function refreshStockRecordPageData(symKey, accountId = "all") {
+  const key = normalizeSymbol(symKey);
+  if (!key || state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
+    return;
+  }
+  const pageGen = ++stockRecordPageLoadGen;
+  setStockRecordPageLoading(true);
+  try {
+    if (!state.stockRecordFromPublicProfile) {
+      await loadStockRecordTrades(key, accountId);
+      if (pageGen !== stockRecordPageLoadGen) {
+        return;
+      }
+    }
+    await ensureSymbolData(key);
+    if (pageGen !== stockRecordPageLoadGen) {
+      return;
+    }
+    if (state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
+      return;
+    }
+    setStockRecordPageLoading(false);
+    await renderStockRecordPage(key);
+    window.setTimeout(() => {
+      if (
+        pageGen === stockRecordPageLoadGen &&
+        state.route === "stock-record" &&
+        normalizeSymbol(state.activeRecordSymbol) === key
+      ) {
+        void renderStockRecordPage(key);
+      }
+    }, 40);
+  } catch (error) {
+    console.warn("refreshStockRecordPageData failed", error);
+    if (pageGen === stockRecordPageLoadGen) {
+      setStockRecordPageLoading(false);
+      if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === key) {
+        await renderStockRecordPage(key);
+      }
+    }
+  }
+}
+
 function stockRecordTradesForScope(activeAccountId, usePub, detail) {
   if (usePub && detail?.publicTrades) {
     const list = Array.isArray(detail.publicTrades) ? detail.publicTrades : [];
@@ -2784,14 +2854,8 @@ function bindEvents() {
   stockRecordAccountSelect?.addEventListener("change", () => {
     state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
     persistState();
-    if (state.route === "stock-record" && state.activeRecordSymbol && !state.stockRecordFromPublicProfile) {
-      void loadStockRecordTrades(state.activeRecordSymbol, state.stockRecordAccountId).then(() => {
-        if (state.route === "stock-record" && state.activeRecordSymbol) {
-          void renderStockRecordPage(state.activeRecordSymbol);
-        }
-      });
-    } else if (state.route === "stock-record" && state.activeRecordSymbol) {
-      void renderStockRecordPage(state.activeRecordSymbol);
+    if (state.route === "stock-record" && state.activeRecordSymbol) {
+      void refreshStockRecordPageData(state.activeRecordSymbol, state.stockRecordAccountId);
     }
   });
   stockSortButtons.forEach((button) => {
@@ -3522,7 +3586,9 @@ function renderAll() {
   } else if (state.route === "trade" || state.route === "trade-search") {
     /* 交易首页 / 搜索页不预拉 trades、cash-transfers */
   } else if (state.route === "stock-record" && state.activeRecordSymbol) {
-    void renderStockRecordPage(state.activeRecordSymbol);
+    if (!state.stockRecordPageLoading) {
+      void renderStockRecordPage(state.activeRecordSymbol);
+    }
   } else if (state.route === "community-profile") {
     refreshPublicProfileEarningPanel();
     if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
@@ -6990,11 +7056,7 @@ function invalidateStockRecordTradesAfterMutation() {
   if (state.route !== "stock-record" || !state.activeRecordSymbol || state.stockRecordFromPublicProfile) {
     return;
   }
-  void loadStockRecordTrades(state.activeRecordSymbol, state.stockRecordAccountId).then(() => {
-    if (state.route === "stock-record" && state.activeRecordSymbol) {
-      void renderStockRecordPage(state.activeRecordSymbol);
-    }
-  });
+  void refreshStockRecordPageData(state.activeRecordSymbol, state.stockRecordAccountId);
 }
 
 function invalidateCashListAfterMutation() {
@@ -9300,47 +9362,29 @@ async function openStockRecordDialog(symbol, opts = {}) {
 
   state.route = "stock-record";
   renderRoute();
-  if (stockRecordListBody) {
-    stockRecordListBody.innerHTML = state.stockRecordFromPublicProfile
-      ? ""
-      : tradeListLoadingRowHtml(6);
-  }
+  setStockRecordPageLoading(true);
   window.scrollTo(0, 0);
   persistState();
 
-  if (state.stockRecordFromPublicProfile) {
-    await ensureSymbolData(symKey);
-    await renderStockRecordPage(symKey);
-    window.setTimeout(() => void renderStockRecordPage(symKey), 40);
-    return;
-  }
-
-  void ensureSymbolData(symKey);
-  void loadStockRecordTrades(symKey, state.stockRecordAccountId).then(async () => {
-    if (state.route !== "stock-record" || state.activeRecordSymbol !== symKey) {
-      return;
-    }
-    await renderStockRecordPage(symKey);
-    window.setTimeout(() => {
-      if (state.route === "stock-record" && state.activeRecordSymbol === symKey) {
-        void renderStockRecordPage(symKey);
-      }
-    }, 40);
-  });
+  void refreshStockRecordPageData(symKey, state.stockRecordAccountId);
 }
 
 async function renderStockRecordPage(symbol) {
+  const symKey = normalizeSymbol(symbol);
+  if (
+    state.stockRecordPageLoading ||
+    state.route !== "stock-record" ||
+    normalizeSymbol(state.activeRecordSymbol) !== symKey
+  ) {
+    return;
+  }
   const detail = state.lastPublicProfileDetail;
   const usePub = state.stockRecordFromPublicProfile && detail?.publicTrades;
   const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   if (!usePub && activeAccountId !== state.stockRecordAccountId) {
     state.stockRecordAccountId = activeAccountId;
   }
-  const symKey = normalizeSymbol(symbol);
   if (!usePub && state.stockRecordTradesLoading) {
-    if (stockRecordListBody) {
-      stockRecordListBody.innerHTML = tradeListLoadingRowHtml(6);
-    }
     return;
   }
   const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(

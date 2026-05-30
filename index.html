@@ -798,6 +798,12 @@
               新增交易记录
             </button>
           </div>
+        </div>
+        <div id="stockRecordLoading" class="stock-record-page-loading hidden" role="status" aria-live="polite" aria-busy="false">
+          <span class="app-boot-spinner" aria-hidden="true"></span>
+          <span>加载中…</span>
+        </div>
+        <div id="stockRecordBody" class="stock-record-body">
           <div class="stock-record-head-main">
             <div class="stock-record-head-left">
               <h3 id="stockRecordTitle" class="stock-record-title">--</h3>
@@ -808,7 +814,6 @@
               <div id="stockRecordChange" class="stock-record-change">--</div>
             </div>
           </div>
-        </div>
         <div class="stock-record-legend">
           <span><i class="legend-dot legend-blue"></i>收盘价</span>
           <span><i class="legend-dot legend-red"></i>持仓股数</span>
@@ -846,6 +851,7 @@
             </thead>
             <tbody id="stockRecordListBody"></tbody>
           </table>
+        </div>
         </div>
       </div>
     </section>
