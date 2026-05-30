@@ -854,7 +854,14 @@ h2 {
 .analysis-stock-rank-table {
   min-width: 740px;
   --stock-rank-col-rank: 28px;
+  /* 名称列固定宽：超长截断，且不撑开 grid 侵入右侧列 */
+  --stock-rank-col-name: 6.75rem;
   --stock-rank-col-gap: 8px;
+  /* 低于 .app-top-bar (18)，避免整页上滑时 sticky 列盖住顶栏 */
+  --stock-rank-sticky-z-head-rank: 5;
+  --stock-rank-sticky-z-head-name: 4;
+  --stock-rank-sticky-z-row-rank: 4;
+  --stock-rank-sticky-z-row-name: 3;
 }
 
 /* 他人个人页「个股收益排行」：名称后「收益占比」；列宽跟内容走，余量给持仓区间 */
@@ -862,7 +869,7 @@ h2 {
   display: grid;
   grid-template-columns:
     var(--stock-rank-col-rank)
-    max-content
+    var(--stock-rank-col-name)
     minmax(4.5rem, max-content)
     minmax(5rem, max-content)
     minmax(6rem, max-content)
@@ -937,40 +944,6 @@ h2 {
   line-height: 1.45;
 }
 
-/* 名称列：纵向堆叠 + 在等高格内垂直居中 */
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
-  flex-direction: column;
-  justify-content: center;
-  align-items: stretch;
-  min-width: max-content;
-}
-
-/*
- * 横向滚动时：后续列在 DOM 中靠后，默认会叠在 sticky 的 # / 名称之上导致「穿出去」。
- * 抬高 sticky 层级，其余格用 z-index:0 明确垫在下面。
- */
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-rank {
-  z-index: 22;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-rank {
-  z-index: 21;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name {
-  z-index: 21;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
-  z-index: 20;
-}
-
-.analysis-stock-rank-table--public > .analysis-stock-rank-row > *:not(.col-rank):not(.col-name) {
-  position: relative;
-  z-index: 0;
-}
-
 /* 去掉主持仓同款右侧阴影条（左滑时像裂缝）；只保留名称列右侧一根淡分割线 */
 .analysis-stock-rank-table--public .analysis-stock-rank-head .col-rank,
 .analysis-stock-rank-table--public .analysis-stock-rank-row .col-rank,
@@ -997,7 +970,7 @@ h2 {
   display: grid;
   grid-template-columns:
     var(--stock-rank-col-rank)
-    max-content
+    var(--stock-rank-col-name)
     minmax(5.5rem, max-content)
     minmax(5.5rem, max-content)
     minmax(4.5rem, max-content)
@@ -1065,14 +1038,6 @@ h2 {
   overflow: hidden;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .analysis-stock-rank-row .col-name {
-  flex-direction: column;
-  justify-content: center;
-  align-items: stretch;
-  min-width: max-content;
-  max-width: 9.5rem;
-}
 
 .analysis-stock-rank-head,
 .analysis-stock-rank-row {
@@ -1166,20 +1131,22 @@ h2 {
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-head .col-rank {
-  z-index: 22;
+  z-index: var(--stock-rank-sticky-z-head-rank);
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-row .col-rank {
-  z-index: 21;
+  z-index: var(--stock-rank-sticky-z-row-rank);
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-head .col-name {
-  z-index: 21;
+  z-index: var(--stock-rank-sticky-z-head-name);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-row .col-name {
-  z-index: 20;
+  z-index: var(--stock-rank-sticky-z-row-name);
 }
 
 .analysis-stock-rank-table > .analysis-stock-rank-row > *:not(.col-rank):not(.col-name),
@@ -1200,12 +1167,20 @@ h2 {
   border-right: 1px solid var(--line);
 }
 
-.analysis-stock-rank-table .col-name {
+/* 名称列：固定轨宽内纵向堆叠，超出直接裁切 */
+.analysis-stock-rank-table .analysis-stock-rank-head .col-name,
+.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
   min-width: 0;
+  max-width: var(--stock-rank-col-name);
+  width: 100%;
+  overflow: hidden;
 }
 
-.analysis-stock-rank-table .analysis-stock-rank-row .col-name {
-  overflow: hidden;
+.analysis-stock-rank-table .col-name {
+  min-width: 0;
 }
 
 .analysis-stock-rank-table .analysis-stock-rank-row .col-name strong {
