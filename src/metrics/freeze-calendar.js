@@ -67,6 +67,19 @@ function shouldSkipScheduledFreezeCron(now = new Date()) {
   return wd === "Sun" || wd === "Mon";
 }
 
+/** meta 冻结日不得晚于库里最后一条快照（周六日不写行时 meta 可能是「日历昨日」）。 */
+function capFrozenThroughToSnapshot(metaFrozen, snapshotDate) {
+  const m = normDateKey(metaFrozen);
+  const s = normDateKey(snapshotDate);
+  if (!s) {
+    return m;
+  }
+  if (!m) {
+    return s;
+  }
+  return m > s ? s : m;
+}
+
 function forwardFillFxMap(fxMap, dateKeys, fallback) {
   const sorted = [...(dateKeys || [])].sort();
   let last = Number(fallback) || 0;
@@ -89,4 +102,5 @@ module.exports = {
   hintDatesForRebuild,
   shouldSkipScheduledFreezeCron,
   forwardFillFxMap,
+  capFrozenThroughToSnapshot,
 };

@@ -85,10 +85,14 @@ async function runMetricsRebuildForUser(userId, opts = {}) {
       const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
       await runFreezeV3ForUser(uid, freezeOpts);
       const meta = await getUserMetricsMeta(uid);
+      const { getLatestAnalysisSnapshotDate } = require("./db");
+      const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
+      const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
+      const frozenThrough = capFrozenThroughToSnapshot(frozenEnd, latestSnap) || latestSnap || meta.frozenThrough || frozenEnd;
       await upsertUserMetricsMeta(uid, {
         rebuilding: false,
         dataVersion: (meta.dataVersion || 0) + 1,
-        frozenThrough: frozenEnd,
+        frozenThrough,
         rebuildFrom: null,
       });
       return { ok: true, rebuildFromDate, frozenEnd, attempt };

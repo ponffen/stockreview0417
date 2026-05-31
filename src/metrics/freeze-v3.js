@@ -41,6 +41,7 @@ const {
   enumerateFreezeSessionDates,
   ledgerSessionDateKey,
   forwardFillFxMap,
+  capFrozenThroughToSnapshot,
 } = require("./freeze-calendar");
 const { resolveFrozenDate } = require("../eod-freeze-service");
 
@@ -811,16 +812,25 @@ async function runFreezeV3ForUser(userId, options = {}) {
     client.release();
   }
 
-  await setSnapshotWatermark(uid, frozenDateKey);
-  await upsertUserMetricsMeta(uid, { frozenThrough: frozenDateKey, isCleared: false, clearedAt: null });
+  const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
+  const frozenThroughEffective = capFrozenThroughToSnapshot(frozenDateKey, latestSnap) || latestSnap || frozenDateKey;
+
+  await setSnapshotWatermark(uid, frozenThroughEffective);
+  await upsertUserMetricsMeta(uid, {
+    frozenThrough: frozenThroughEffective,
+    isCleared: false,
+    clearedAt: null,
+  });
   for (const accId of accountIds.filter((a) => a !== "all")) {
-    await upsertAccountMetricsMeta(uid, accId, { frozenThrough: frozenDateKey });
+    const accLatest = await getLatestAnalysisSnapshotDate(uid, accId);
+    const accFt = capFrozenThroughToSnapshot(frozenDateKey, accLatest) || accLatest || frozenThroughEffective;
+    await upsertAccountMetricsMeta(uid, accId, { frozenThrough: accFt });
   }
 
   return {
     ok: true,
     userId: uid,
-    frozenDate: frozenDateKey,
+    frozenDate: frozenThroughEffective,
     timing,
   };
 }

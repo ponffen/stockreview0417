@@ -1508,7 +1508,8 @@ async function getSymbolDailyEodRowsAtDate(userId, accountScope, dateKey) {
     return [];
   }
   const scope = String(accountScope || "all").trim() || "all";
-  const d = String(dateKey || "").slice(0, 10);
+  const d =
+    (await resolveMetricsSnapshotDate(uid, scope, dateKey)) || String(dateKey || "").slice(0, 10);
   if (!d) {
     return [];
   }
@@ -2071,19 +2072,20 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
     [uid, sc],
   );
   const frozenThrough = resolveFrozenThrough({ frozen_through: ftMeta }, ar[0]);
+  const snapshotDate = await resolveMetricsSnapshotDate(uid, sc, frozenThrough);
   const { rows: tr } = await q(
     `SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`,
     [uid],
   );
-  const firstTrade = tr[0]?.d ? String(tr[0].d).slice(0, 10) : frozenThrough;
-  const homeAccount = mapAnalysisRowToHomeAccount(ar[0], frozenThrough, firstTrade);
+  const firstTrade = tr[0]?.d ? String(tr[0].d).slice(0, 10) : snapshotDate || frozenThrough;
+  const homeAccount = mapAnalysisRowToHomeAccount(ar[0], snapshotDate || frozenThrough, firstTrade);
   let symRows = [];
-  if (frozenThrough) {
+  if (snapshotDate) {
     const { rows: sr } = await q(
       `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
-      [uid, sc, frozenThrough],
+      [uid, sc, snapshotDate],
     );
-    symRows = sr.map((r) => mapSymbolRowToHomeSummary(r, frozenThrough));
+    symRows = sr.map((r) => mapSymbolRowToHomeSummary(r, snapshotDate));
   }
   return { account: homeAccount, symbols: symRows };
 }
@@ -2182,29 +2184,32 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
     const umRow = umRes.rows[0] || null;
     const analysisRow = homeAccRes.rows[0] || null;
     const frozenThrough = resolveFrozenThrough(umRow, analysisRow);
+    const snapshotDate = await resolveMetricsSnapshotDate(uid, scope, frozenThrough);
     const firstTradeRes = await cq(`SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`, [uid]);
-    const firstTrade = firstTradeRes.rows[0]?.d ? String(firstTradeRes.rows[0].d).slice(0, 10) : frozenThrough;
-    const homeAccount = mapAnalysisRowToHomeAccount(analysisRow, frozenThrough, firstTrade);
+    const firstTrade = firstTradeRes.rows[0]?.d
+      ? String(firstTradeRes.rows[0].d).slice(0, 10)
+      : snapshotDate || frozenThrough;
+    const homeAccount = mapAnalysisRowToHomeAccount(analysisRow, snapshotDate || frozenThrough, firstTrade);
     const symRes =
-      frozenThrough && analysisRow
+      snapshotDate && analysisRow
         ? await cq(
             scope === "all"
               ? `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND date = $2 ORDER BY account_id ASC, symbol ASC`
               : `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
-            scope === "all" ? [uid, frozenThrough] : [uid, scope, frozenThrough],
+            scope === "all" ? [uid, snapshotDate] : [uid, scope, snapshotDate],
           )
         : { rows: [] };
-    const symbolRows = (symRes.rows || []).map((r) => mapSymbolRowToHomeSummary(r, frozenThrough));
+    const symbolRows = (symRes.rows || []).map((r) => mapSymbolRowToHomeSummary(r, snapshotDate));
     const frozenSymbolEodRows = (symRes.rows || []).map((r) => ({
       accountId: String(r.account_id),
       symbol: String(r.symbol),
-      date: frozenThrough,
+      date: snapshotDate,
       eodShares: Number(r.eod_shares) || 0,
       eodPrice: Number(r.eod_price) || Number(r.day_close_price) || 0,
     }));
     let lastEodRows = [];
-    if (frozenThrough && String(process.env.HOME_BUNDLE_SKIP_EOD || "").trim() !== "1") {
-      const from = addCalendarDays(frozenThrough, -14);
+    if (snapshotDate && String(process.env.HOME_BUNDLE_SKIP_EOD || "").trim() !== "1") {
+      const from = addCalendarDays(snapshotDate, -14);
       const eodSql =
         scope === "all"
           ? `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
@@ -2213,7 +2218,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
           : `SELECT DISTINCT ON (account_id, symbol) account_id, symbol, eod_shares, date
              FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date >= $3 AND date <= $4
              ORDER BY account_id, symbol, date DESC`;
-      const eodParams = scope === "all" ? [uid, from, frozenThrough] : [uid, scope, from, frozenThrough];
+      const eodParams = scope === "all" ? [uid, from, snapshotDate] : [uid, scope, from, snapshotDate];
       try {
         const eodRes = await cq(eodSql, eodParams);
         lastEodRows = (eodRes.rows || []).map((r) => ({
@@ -3034,6 +3039,36 @@ async function selectLatestSymbolDailyDate(userId, accountId) {
   return rows[0]?.d ? String(rows[0].d) : null;
 }
 
+/** 不晚于 hint 的最近 symbol_daily_pnl 日期（scope=all 时跨账户取 MAX）。 */
+async function selectLatestSymbolDailyDateOnOrBefore(userId, accountScope, hint) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const scope = String(accountScope || "all").trim() || "all";
+  const h = String(hint || "").slice(0, 10);
+  const sql =
+    scope === "all"
+      ? `SELECT MAX(date) AS d FROM symbol_daily_pnl WHERE user_id = $1 AND ($2 = '' OR date <= $2)`
+      : `SELECT MAX(date) AS d FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND ($3 = '' OR date <= $3)`;
+  const params = scope === "all" ? [uid, h] : [uid, scope, h];
+  const { rows } = await q(sql, params);
+  return rows[0]?.d ? String(rows[0].d).slice(0, 10) : null;
+}
+
+/** 读路径：frozen_through 与 analysis / symbol 最后快照日对齐。 */
+async function resolveMetricsSnapshotDate(userId, accountScope, hint) {
+  const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
+  const scope = String(accountScope || "all").trim() || "all";
+  const acc = scope === "all" ? "all" : scope;
+  const h = String(hint || "").slice(0, 10);
+  const analysisDate = await getLatestAnalysisSnapshotDate(userId, acc);
+  let d = capFrozenThroughToSnapshot(h, analysisDate);
+  const symDate = await selectLatestSymbolDailyDateOnOrBefore(userId, scope, d || h);
+  d = capFrozenThroughToSnapshot(d, symDate);
+  return d || symDate || analysisDate || h || null;
+}
+
 async function getLatestAnalysisSnapshotDate(userId, accountId = "all") {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -3259,6 +3294,8 @@ module.exports = {
   selectAnalysisSnapshotsForPublicMetrics,
   getLatestAnalysisSnapshotDate,
   selectLatestSymbolDailyDate,
+  selectLatestSymbolDailyDateOnOrBefore,
+  resolveMetricsSnapshotDate,
   selectTopSymbolDailyByDate,
   getCommunityFeedTradesRecent,
   listPublicCommunityUserIds,

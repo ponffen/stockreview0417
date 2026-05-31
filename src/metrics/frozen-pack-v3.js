@@ -2,6 +2,7 @@
  * 将 analysis_daily_snapshot / symbol_daily_pnl（v3）映射为原 home_summary 读路径形状。
  */
 const { addCalendarDays } = require("./stages");
+const { capFrozenThroughToSnapshot, normDateKey } = require("./freeze-calendar");
 
 function mapAnalysisRowToHomeAccount(row, frozenThrough, firstTradeDate) {
   if (!row) {
@@ -54,9 +55,9 @@ function mapSymbolRowToHomeSummary(row, frozenThrough) {
 }
 
 function resolveFrozenThrough(umRow, analysisRow) {
-  return (
-    String(umRow?.frozen_through || umRow?.frozenThrough || analysisRow?.date || "").slice(0, 10) || ""
-  );
+  const meta = normDateKey(umRow?.frozen_through || umRow?.frozenThrough);
+  const snap = normDateKey(analysisRow?.date);
+  return capFrozenThroughToSnapshot(meta, snap) || meta || snap || "";
 }
 
 module.exports = {

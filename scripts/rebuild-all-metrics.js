@@ -4,7 +4,13 @@
  * 用法: DATABASE_URL=... node scripts/rebuild-all-metrics.js
  */
 require("dotenv").config();
-const { listAllUserIds, upsertUserMetricsMeta, initPool } = require("../src/db");
+const {
+  listAllUserIds,
+  upsertUserMetricsMeta,
+  initPool,
+  getLatestAnalysisSnapshotDate,
+} = require("../src/db");
+const { capFrozenThroughToSnapshot } = require("../src/metrics/freeze-calendar");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 
 async function purgeWeekendMetricRows() {
@@ -31,12 +37,15 @@ async function rebuildUser(uid) {
   if (result.skipped) {
     console.log("[skip]", uid, result.reason);
   }
+  const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
+  const frozenThrough =
+    result.frozenDate || capFrozenThroughToSnapshot(end, latestSnap) || latestSnap || end;
   await upsertUserMetricsMeta(uid, {
     rebuilding: false,
-    frozenThrough: end,
+    frozenThrough,
     dataVersion: 2,
   });
-  console.log("[done]", uid, end);
+  console.log("[done]", uid, frozenThrough);
 }
 
 async function main() {
