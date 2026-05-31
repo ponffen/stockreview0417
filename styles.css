@@ -54,17 +54,6 @@
     var(--ledger-stock-col-date) + var(--ledger-stock-col-type) + var(--ledger-stock-col-price) +
       var(--ledger-stock-col-amt) + var(--ledger-stock-col-account)
   );
-  --ledger-trade-w-date: 19.581%;
-  --ledger-trade-w-name: 15.385%;
-  --ledger-trade-w-type: 6.294%;
-  --ledger-trade-w-price: 16.783%;
-  --ledger-trade-w-qty: 8.392%;
-  --ledger-trade-w-amt: 20.979%;
-  --ledger-trade-w-account: 12.587%;
-  --ledger-cash-w-date: 32.941%;
-  --ledger-cash-w-account: 21.176%;
-  --ledger-cash-w-type: 10.588%;
-  --ledger-cash-w-amt: 35.294%;
   --ledger-stock-w-date: 22.222%;
   --ledger-stock-w-type: 11.111%;
   --ledger-stock-w-price: 18.519%;
@@ -1526,69 +1515,58 @@ h2 {
 /* 交易记录：日期 | 名称 | 方向 | 价格 | 数量 | 金额 | 账户 */
 .trade-table:not(.trade-table--cash) th:nth-child(1),
 .trade-table:not(.trade-table--cash) td:nth-child(1) {
-  width: var(--ledger-trade-w-date);
-  min-width: var(--ledger-col-date);
+  width: var(--ledger-trade-col-date);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(2),
 .trade-table:not(.trade-table--cash) td:nth-child(2) {
-  width: var(--ledger-trade-w-name);
-  min-width: var(--ledger-col-name);
+  width: var(--ledger-trade-col-name);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(3),
 .trade-table:not(.trade-table--cash) td:nth-child(3) {
-  width: var(--ledger-trade-w-type);
-  min-width: var(--ledger-col-type);
+  width: var(--ledger-trade-col-type);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(4),
 .trade-table:not(.trade-table--cash) td:nth-child(4) {
-  width: var(--ledger-trade-w-price);
-  min-width: var(--ledger-col-price);
+  width: var(--ledger-trade-col-price);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(5),
 .trade-table:not(.trade-table--cash) td:nth-child(5) {
-  width: var(--ledger-trade-w-qty);
-  min-width: var(--ledger-col-qty);
+  width: var(--ledger-trade-col-qty);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(6),
 .trade-table:not(.trade-table--cash) td:nth-child(6) {
-  width: var(--ledger-trade-w-amt);
-  min-width: var(--ledger-col-amt);
+  width: var(--ledger-trade-col-amt);
 }
 
 .trade-table:not(.trade-table--cash) th:nth-child(7),
 .trade-table:not(.trade-table--cash) td:nth-child(7) {
-  width: var(--ledger-trade-w-account);
-  min-width: var(--ledger-col-account);
+  width: var(--ledger-trade-col-account);
 }
 
-/* 资金记录：日期 | 账户 | 类型 | 金额 */
+/* 资金记录：日期 | 账户 | 操作类型 | 金额 */
 .trade-table--cash th:nth-child(1),
 .trade-table--cash td:nth-child(1) {
-  width: var(--ledger-cash-w-date);
-  min-width: var(--ledger-col-date);
+  width: var(--ledger-cash-col-date);
 }
 
 .trade-table--cash th:nth-child(2),
 .trade-table--cash td:nth-child(2) {
-  width: var(--ledger-cash-w-account);
-  min-width: var(--ledger-col-account);
+  width: var(--ledger-cash-col-account);
 }
 
 .trade-table--cash th:nth-child(3),
 .trade-table--cash td:nth-child(3) {
-  width: var(--ledger-cash-w-type);
-  min-width: var(--ledger-col-type);
+  width: var(--ledger-cash-col-type);
 }
 
 .trade-table--cash th:nth-child(4),
 .trade-table--cash td:nth-child(4) {
-  width: var(--ledger-cash-w-amt);
-  min-width: var(--ledger-col-amt);
+  width: var(--ledger-cash-col-amt);
 }
 
 .trade-table thead th:nth-child(4),
