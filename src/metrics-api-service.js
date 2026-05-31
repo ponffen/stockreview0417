@@ -48,7 +48,7 @@ const {
   accountDailyTwrReturn,
   todayProfitCnyFromTotals,
 } = require("./metrics/snapshot-plus-live");
-const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
+const { holdingsSymbolsFromTrades, hasOpenPositionQuantity } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
 const { finalizeMetricsBundlePayload } = require("./metrics/bundle-payload");
@@ -530,7 +530,7 @@ function filterSymbolHomeRowsByEod(symbolRows, scope, lastEodRows) {
       continue;
     }
     const sym = normalizeSymbol(row.symbol);
-    if (sym && (Number(row.eodShares ?? row.eod_shares) || 0) > 1e-6) {
+    if (sym && hasOpenPositionQuantity(Number(row.eodShares ?? row.eod_shares) || 0)) {
       active.add(sym);
     }
   }
@@ -550,7 +550,7 @@ function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
       continue;
     }
     const qty = Number(row.eodShares ?? row.eod_shares) || 0;
-    if (qty <= 1e-6) {
+    if (!hasOpenPositionQuantity(qty)) {
       continue;
     }
     positions.push({

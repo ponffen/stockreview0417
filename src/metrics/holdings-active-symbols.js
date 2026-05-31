@@ -4,6 +4,13 @@
  */
 const { normalizeSymbol } = require("../db");
 
+const POSITION_EPS = 1e-6;
+
+/** 非清仓：仅股数≈0 视为无持仓；空头（负股数）仍展示。 */
+function hasOpenPositionQuantity(qty) {
+  return Math.abs(Number(qty) || 0) > POSITION_EPS;
+}
+
 function netHoldingsBySymbol(trades, accountScope) {
   const wanted = String(accountScope || "all").trim() || "all";
   const list =
@@ -35,16 +42,20 @@ function eodSharesBySymbol(lastEodRows, accountScope) {
   return eodSharesBySym;
 }
 
-function applyEodFilterToHoldingsSymbols(symbols, eodSharesBySym) {
+function applyEodFilterToHoldingsSymbols(symbols, eodSharesBySym, netHoldingsBySym = null) {
   if (!eodSharesBySym?.size) {
     return symbols;
   }
   return symbols.filter((s) => {
+    const net = netHoldingsBySym?.get(s);
+    if (net !== undefined && hasOpenPositionQuantity(net)) {
+      return true;
+    }
     const eod = eodSharesBySym.get(s);
     if (eod === undefined) {
       return true;
     }
-    return eod > 1e-6;
+    return hasOpenPositionQuantity(eod);
   });
 }
 
@@ -103,7 +114,7 @@ function currentQuantityFromFrozenEod(frozenBySym, trades, symbol, todayKey, acc
   const frozen = frozenBySym?.get(sym);
   const eodSh = frozen ? Number(frozen.eodShares) || 0 : 0;
   if (!tradingDay || !todayKey) {
-    if (frozen && eodSh > 1e-6) {
+    if (frozen && hasOpenPositionQuantity(eodSh)) {
       return eodSh;
     }
     return Number(netHoldingsBySymbol(trades, accountScope).get(sym)) || 0;
@@ -122,14 +133,20 @@ function frozenMvNatForSymbol(frozenBySym, symbol) {
 
 function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
   const holdings = netHoldingsBySymbol(trades, accountScope);
-  let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+  let symbols = [...holdings.entries()].filter(([, q]) => hasOpenPositionQuantity(q)).map(([s]) => s);
   if (!lastEodRows?.length) {
     return symbols;
   }
-  return applyEodFilterToHoldingsSymbols(symbols, eodSharesBySymbol(lastEodRows, accountScope));
+  return applyEodFilterToHoldingsSymbols(
+    symbols,
+    eodSharesBySymbol(lastEodRows, accountScope),
+    holdings,
+  );
 }
 
 module.exports = {
+  POSITION_EPS,
+  hasOpenPositionQuantity,
   netHoldingsBySymbol,
   eodSharesBySymbol,
   aggregateFrozenEodBySymbol,

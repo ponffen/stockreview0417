@@ -38,7 +38,7 @@ async function collectSymbols(trades, scope) {
     if (!sym) continue;
     holdings.set(sym, (holdings.get(sym) || 0) + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)));
   }
-  return [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
+  return [...holdings.entries()].filter(([, q]) => Math.abs(Number(q) || 0) > 1e-6).map(([s]) => s);
 }
 
 async function main() {

@@ -20,6 +20,7 @@ const {
   aggregateFrozenEodBySymbol,
   currentQuantityFromFrozenEod,
   frozenMvNatForSymbol,
+  hasOpenPositionQuantity,
 } = require("./metrics/holdings-active-symbols");
 const {
   parseQuoteTimeToDateKey,
@@ -446,7 +447,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       scope,
       tradingDay,
     );
-    if (!(qty > 1e-6)) {
+    if (!hasOpenPositionQuantity(qty)) {
       continue;
     }
     let quote = quoteMap[symbol];

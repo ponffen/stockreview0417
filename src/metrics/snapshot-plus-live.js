@@ -2,6 +2,7 @@
  * 冻结日 EOD（analysis_daily_snapshot v3）+ 盘中实时增量。
  */
 const { normalizeSymbol } = require("../db");
+const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
 const { computeLedgerCashCnyUpToDate, externalFlowCnyForDate } = require("../ledger-metrics");
 const { shouldCountTodayPositionPnlFromQuote } = require("../position-today-pnl");
 
@@ -42,7 +43,7 @@ function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date()
   const quotes = quoteBySymbol && typeof quoteBySymbol === "object" ? quoteBySymbol : {};
   for (const p of positions || []) {
     const qty = Number(p.quantity) || 0;
-    if (!(qty > 1e-6)) {
+    if (!hasOpenPositionQuantity(qty)) {
       continue;
     }
     const sym = normalizeSymbol(p.symbol);

@@ -9937,7 +9937,7 @@ function computePortfolio(trades = state.trades, cashTransfersForScope = null) {
     item.monthProfit = item.monthProfitNative;
     item.yearProfit = item.yearProfitNative;
   });
-  const visiblePositions = positions.filter((item) => item.quantity > 0);
+  const visiblePositions = positions.filter((item) => Math.abs(Number(item.quantity) || 0) > 1e-6);
   const monthDen = visiblePositions.reduce(
     (sum, item) => sum + Math.abs(applyFxForOverview(item, item.monthProfitNative)),
     0

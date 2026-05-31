@@ -974,7 +974,7 @@ async function collectLiveSymbolsForUser(userId, accountId = "all") {
     holdings.set(symbol, current + (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)));
   }
   return [...holdings.entries()]
-    .filter(([, qty]) => qty > 1e-6)
+    .filter(([, qty]) => Math.abs(Number(qty) || 0) > 1e-6)
     .map(([symbol]) => symbol);
 }
 
@@ -2402,7 +2402,7 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
     let todayProfitCny = 0;
     const todayKey = liveDateKeyShanghai();
     for (const [symbol, item] of holdings.entries()) {
-      if (!(item.quantity > 1e-6)) {
+      if (!(Math.abs(Number(item.quantity) || 0) > 1e-6)) {
         continue;
       }
       const quote = quoteMap[symbol];

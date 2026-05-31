@@ -21,7 +21,7 @@ const {
   getPositionDayTradeContext,
   getTradingDateKeyBy0830,
 } = require("../position-today-pnl");
-const { netHoldingsBySymbol } = require("./holdings-active-symbols");
+const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
 
 function profitShareRatio(stockProfitCny, overviewProfitCny, book, fxUsdCny, fxHkdCny) {
   const stockBook = cnyScalarToBookAmount(stockProfitCny, book, fxUsdCny, fxHkdCny);
@@ -169,7 +169,7 @@ async function buildHoldingsPayload({
 
   const keys = new Set([...liveBySym.keys(), ...snapBySym.keys()]);
   for (const [sym, q] of netBySym.entries()) {
-    if (q > 1e-6) {
+    if (hasOpenPositionQuantity(q)) {
       keys.add(sym);
     }
   }
@@ -207,7 +207,7 @@ async function buildHoldingsPayload({
     const liveP = liveBySym.get(sym);
     const snap = snapBySym.get(sym);
     const qty = Number(liveP?.quantity) || 0;
-    if (!(qty > 1e-6)) {
+    if (!hasOpenPositionQuantity(qty)) {
       continue;
     }
     const ccy = String(snap?.currency || liveP?.currency || "CNY").toUpperCase();
