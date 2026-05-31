@@ -537,6 +537,13 @@ body {
   border-collapse: collapse;
 }
 
+/* 首页持仓表：列宽由 JS 按 max(表头, 人民币/原币内容) 锁定，切换 ¥ 不再抖动 */
+.stock-table.stock-table--layout-locked {
+  table-layout: fixed;
+  width: max(100%, var(--stock-table-layout-width-px, 1050px));
+  min-width: max(1050px, var(--stock-table-layout-width-px, 1050px));
+}
+
 .stock-table thead th {
   background: #f6f8fb;
   color: #8f99a9;

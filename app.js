@@ -325,6 +325,32 @@ const analysisAccountSelect = document.getElementById("analysisAccountSelect");
 const tradeAccountFilterSelect = document.getElementById("tradeAccountFilterSelect");
 const tradeCashAccountFilterSelect = document.getElementById("tradeCashAccountFilterSelect");
 const stockTableBody = document.getElementById("stockTableBody");
+/** 首页持仓表列宽缓存（不含 stockAmountDisplay，切换人民币不重算） */
+let overviewStockColWidthCache = { key: "", widths: null };
+const OVERVIEW_STOCK_TABLE_COL_COUNT = 15;
+const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
+  "名称",
+  "今日收益",
+  "现价/涨跌",
+  "市值/数量",
+  "仓位",
+  "成本",
+  "月收益",
+  "月收益占比",
+  "年收益",
+  "年收益占比",
+  "总收益",
+  "总收益占比",
+  "总收益率",
+  "交易间隔",
+  "操作",
+];
+const STOCK_TABLE_MEASURE_FONT_TH =
+  '500 13px -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
+const STOCK_TABLE_MEASURE_FONT_TD =
+  '12px -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
+const STOCK_TABLE_MEASURE_PAD_X = 20;
+let _stockTableMeasureCanvas;
 const stockCurrencyToggle = document.getElementById("stockCurrencyToggle");
 const stockSortButtons = [...document.querySelectorAll(".th-sort-btn")];
 const accountForm = document.getElementById("accountForm");
@@ -7854,6 +7880,7 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
   }
   const rows = sortPositions(portfolio.visiblePositions);
   if (!rows.length) {
+    clearOverviewStockTableColLayout();
     stockTableBody.innerHTML = `
       <tr>
         <td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td>
@@ -7878,6 +7905,10 @@ function paintOverviewStockTableFromSnapshots(portfolio, snapMap) {
       yearDen += Math.abs(applyFxForOverview(row, yN));
     }
   }
+  ensureOverviewStockTableColWidths(rows, {
+    fn: snapshotHoldingsRowCellTexts,
+    ctx: { snapMap, monthDen, yearDen },
+  });
   stockTableBody.innerHTML = rows
     .map((row) => {
       const stockCode = formatSymbolForDisplay(row.symbol);
@@ -8250,14 +8281,274 @@ function metricsRowProfitSortAmount(row, fieldBase) {
   return amountBookFromCny(cny, book);
 }
 
+function stockAmountDisplayIsCny(displayMode) {
+  if (displayMode === "cny" || displayMode === "native") {
+    return displayMode === "cny";
+  }
+  return state.stockAmountDisplay === "cny";
+}
+
+function measureStockTableTextPx(text, font) {
+  const s = String(text ?? "");
+  if (!s) {
+    return 0;
+  }
+  if (!_stockTableMeasureCanvas) {
+    _stockTableMeasureCanvas = document.createElement("canvas");
+  }
+  const ctx = _stockTableMeasureCanvas.getContext("2d");
+  if (!ctx) {
+    return s.length * 8;
+  }
+  ctx.font = font;
+  return ctx.measureText(s).width;
+}
+
+function readOverviewStockTableHeaderLabels() {
+  const table = stockTableBody?.closest("table.stock-table");
+  if (table) {
+    const labels = [...table.querySelectorAll("thead th")].map((th) =>
+      String(th.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
+    if (labels.length === OVERVIEW_STOCK_TABLE_COL_COUNT) {
+      return labels;
+    }
+  }
+  return OVERVIEW_STOCK_TABLE_HEADER_FALLBACK.slice();
+}
+
+function overviewStockTableLayoutCacheKey(rows) {
+  const aid = state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId);
+  const sig = (rows || [])
+    .map((r) =>
+      [
+        normalizeSymbol(r.symbol),
+        r.todayProfit,
+        r.todayProfitCny,
+        r.marketValue,
+        r.marketValueCny,
+        r.monthProfit,
+        r.monthProfitCny,
+        r.yearProfit,
+        r.yearProfitCny,
+        r.totalProfit,
+        r.totalProfitCny,
+        r.price,
+        r.dayChange,
+        r.quantity,
+        r.weight,
+        r.cost,
+        r.totalRate,
+        r.regret,
+      ].join("^"),
+    )
+    .join(";");
+  return `${overviewMetricsBundleCacheKey(aid)}::${sig}`;
+}
+
+function measureOverviewStockColWidths(measureCellText) {
+  const headers = readOverviewStockTableHeaderLabels();
+  const widths = headers.map((label) =>
+    Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X),
+  );
+  const modes = ["cny", "native"];
+  for (const row of measureCellText.rows || []) {
+    for (const mode of modes) {
+      for (let col = 0; col < OVERVIEW_STOCK_TABLE_COL_COUNT; col += 1) {
+        const raw = measureCellText.fn(row, col, mode, measureCellText.ctx);
+        const parts = Array.isArray(raw) ? raw : [raw];
+        for (const part of parts) {
+          const t = String(part ?? "").trim();
+          if (!t) {
+            continue;
+          }
+          widths[col] = Math.max(
+            widths[col],
+            Math.ceil(measureStockTableTextPx(t, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
+          );
+        }
+      }
+    }
+  }
+  widths[0] = Math.max(widths[0], 62);
+  widths[14] = Math.max(
+    widths[14],
+    Math.ceil(measureStockTableTextPx("记录  交易", STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
+  );
+  return widths.map((w) => w + 2);
+}
+
+function applyOverviewStockTableColWidths(widths) {
+  const table = stockTableBody?.closest("table.stock-table");
+  if (!table || !widths?.length) {
+    return;
+  }
+  let colgroup = table.querySelector("colgroup");
+  if (!colgroup) {
+    colgroup = document.createElement("colgroup");
+    table.insertBefore(colgroup, table.firstChild);
+  }
+  colgroup.replaceChildren();
+  let sum = 0;
+  for (const w of widths) {
+    const col = document.createElement("col");
+    col.style.width = `${w}px`;
+    colgroup.appendChild(col);
+    sum += w;
+  }
+  table.classList.add("stock-table--layout-locked");
+  table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
+}
+
+function clearOverviewStockTableColLayout() {
+  overviewStockColWidthCache = { key: "", widths: null };
+  const table = stockTableBody?.closest("table.stock-table");
+  if (!table) {
+    return;
+  }
+  table.classList.remove("stock-table--layout-locked");
+  table.style.removeProperty("--stock-table-layout-width-px");
+  table.querySelector("colgroup")?.remove();
+}
+
+function ensureOverviewStockTableColWidths(rows, measureCell) {
+  if (!rows?.length) {
+    clearOverviewStockTableColLayout();
+    return;
+  }
+  const key = overviewStockTableLayoutCacheKey(rows);
+  if (overviewStockColWidthCache.key === key && overviewStockColWidthCache.widths) {
+    applyOverviewStockTableColWidths(overviewStockColWidthCache.widths);
+    return;
+  }
+  const widths = measureOverviewStockColWidths({
+    rows,
+    fn: measureCell.fn,
+    ctx: measureCell.ctx,
+  });
+  overviewStockColWidthCache = { key, widths };
+  applyOverviewStockTableColWidths(widths);
+}
+
+function metricsHoldingsRowCellTexts(row, col, displayMode) {
+  const sym = normalizeSymbol(row.symbol);
+  switch (col) {
+    case 0:
+      return [
+        String(row.name || sym).trim(),
+        `${row.marketTag || "OT"} ${row.stockCode || formatSymbolForDisplay(sym)}`,
+      ];
+    case 1:
+      return metricsHoldingsMoneyCell(row, "todayProfit", displayMode);
+    case 2:
+      return [bundleFmtText(row.price), bundleFmtText(row.dayChange)];
+    case 3:
+      return [metricsHoldingsMoneyCell(row, "marketValue", displayMode), bundleFmtText(row.quantity)];
+    case 4:
+      return bundleFmtText(row.weight);
+    case 5:
+      return bundleFmtText(row.cost);
+    case 6:
+      return metricsHoldingsMoneyCell(row, "monthProfit", displayMode);
+    case 7:
+      return bundleFmtText(row.monthWeight);
+    case 8:
+      return metricsHoldingsMoneyCell(row, "yearProfit", displayMode);
+    case 9:
+      return bundleFmtText(row.yearWeight);
+    case 10:
+      return metricsHoldingsMoneyCell(row, "totalProfit", displayMode);
+    case 11:
+      return bundleFmtText(row.totalWeight);
+    case 12:
+      return bundleFmtText(row.totalRate);
+    case 13:
+      return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+    case 14:
+      return "记录  交易";
+    default:
+      return "";
+  }
+}
+
+function snapshotHoldingsRowCellTexts(row, col, displayMode, ctx) {
+  const snap = ctx.snapMap;
+  const dash = snap == null;
+  const sym = normalizeSymbol(row.symbol);
+  const s = dash ? null : snap.get(sym);
+  const hasSnap = Boolean(s);
+  const liveToday = Number.isFinite(Number(row.todayProfitNative)) ? Number(row.todayProfitNative) : 0;
+  const todayN = liveToday;
+  const monthN = hasSnap ? Number(s.monthHistNative) + liveToday : null;
+  const yearN = hasSnap ? Number(s.yearHistNative) + liveToday : null;
+  const totalN = hasSnap ? Number(s.totalHistNative) + liveToday : null;
+  const monthW =
+    hasSnap && ctx.monthDen > 0 ? applyFxForOverview(row, monthN) / ctx.monthDen : hasSnap ? 0 : null;
+  const yearW = hasSnap && ctx.yearDen > 0 ? applyFxForOverview(row, yearN) / ctx.yearDen : hasSnap ? 0 : null;
+  const sigmaAbs = Math.abs(Number(row.sigmaAmountNative) || 0);
+  const useMwrRate = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const materializedRate = hasSnap
+    ? useMwrRate
+      ? Number(s.totalRateMwr)
+      : Number(s.totalRateTwr)
+    : NaN;
+  const totalRateSnap = hasSnap
+    ? Number.isFinite(materializedRate)
+      ? materializedRate
+      : sigmaAbs > 1e-9
+        ? totalN / sigmaAbs
+        : 0
+    : null;
+  const stockCode = formatSymbolForDisplay(row.symbol);
+  const tag = row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
+  switch (col) {
+    case 0:
+      return [String(getDisplayName(row.symbol, row.name)).trim(), `${tag} ${stockCode}`];
+    case 1:
+      return hasSnap ? formatStockTableMoney(row, todayN, 2, displayMode) : "–";
+    case 2:
+      return [formatNumber(row.currentPrice, 3), formatPercent(row.dayChangeRate)];
+    case 3:
+      return hasSnap
+        ? [formatStockTableMarketValue(row, displayMode), formatNumber(row.quantity, 0)]
+        : ["–", formatNumber(row.quantity, 0)];
+    case 4:
+      return formatPercent(row.weight);
+    case 5:
+      return formatNumber(row.cost, 3);
+    case 6:
+      return hasSnap ? formatStockTableMoney(row, monthN, 2, displayMode) : "–";
+    case 7:
+      return hasSnap ? formatPercent(monthW) : "–";
+    case 8:
+      return hasSnap ? formatStockTableMoney(row, yearN, 2, displayMode) : "–";
+    case 9:
+      return hasSnap ? formatPercent(yearW) : "–";
+    case 10:
+      return hasSnap ? formatStockTableMoney(row, totalN, 2, displayMode) : "–";
+    case 11:
+      return "–";
+    case 12:
+      return hasSnap ? formatPercent(totalRateSnap) : "–";
+    case 13:
+      return formatRegretRateWithSide(row.regretRate, row.lastTradeSide);
+    case 14:
+      return "记录  交易";
+    default:
+      return "";
+  }
+}
+
 function metricsRowProfitClass(row, fieldBase) {
   const cnyOn = state.stockAmountDisplay === "cny";
   const text = cnyOn ? row[`${fieldBase}Cny`] : row[fieldBase];
   return bundleSignedClass(text);
 }
 
-function metricsHoldingsMoneyCell(row, fieldBase) {
-  const cnyOn = state.stockAmountDisplay === "cny";
+function metricsHoldingsMoneyCell(row, fieldBase, displayMode = null) {
+  const cnyOn = stockAmountDisplayIsCny(displayMode);
   const isCn = row.isCnyStock === true || row.marketTag === "CN" || String(row.currency || "").toUpperCase() === "CNY";
   const nativeKey = fieldBase;
   const cnyKey = `${fieldBase}Cny`;
@@ -8274,7 +8565,15 @@ function metricsHoldingsMoneyCell(row, fieldBase) {
 function paintOverviewStockTableFromMetricsRows(rows) {
   if (!stockTableBody) return;
   const sorted = sortMetricsHoldingsRows(rows);
-  if (!sorted.length) { stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`; return; }
+  if (!sorted.length) {
+    clearOverviewStockTableColLayout();
+    stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+    return;
+  }
+  ensureOverviewStockTableColWidths(sorted, {
+    fn: metricsHoldingsRowCellTexts,
+    ctx: null,
+  });
   stockTableBody.innerHTML = sorted.map((row) => {
     const sym = normalizeSymbol(row.symbol);
     const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
@@ -11919,11 +12218,12 @@ function validNumber(...values) {
 /**
  * 个股金额列：valueNative 为标的原币种；人民币展示时再乘当前汇率；A 股不加 ¥ 前缀。
  */
-function formatStockTableMoney(row, valueNative, fraction = 2) {
+function formatStockTableMoney(row, valueNative, fraction = 2, displayMode = null) {
   const isCnyBook = row.market === "A股" || row.currency === "CNY";
   const display = applyFxForOverview(row, valueNative);
   const body = formatSignedMoney(display, fraction);
-  if (state.stockAmountDisplay === "cny") {
+  const cnyOn = stockAmountDisplayIsCny(displayMode);
+  if (cnyOn) {
     if (isCnyBook) {
       return body;
     }
@@ -11936,12 +12236,13 @@ function formatStockTableMoney(row, valueNative, fraction = 2) {
   return formatSignedMoney(native, fraction);
 }
 
-function formatStockTableMarketValue(row) {
+function formatStockTableMarketValue(row, displayMode = null) {
   const isCnyBook = row.market === "A股" || row.currency === "CNY";
   const mvNative = Number.isFinite(Number(row.marketValueNative)) ? Number(row.marketValueNative) : 0;
   const display = applyFxForOverview(row, mvNative);
   const text = display.toFixed(2);
-  if (state.stockAmountDisplay === "cny") {
+  const cnyOn = stockAmountDisplayIsCny(displayMode);
+  if (cnyOn) {
     if (isCnyBook) {
       return text;
     }
