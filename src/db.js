@@ -1363,7 +1363,7 @@ async function buildAccountKpiSurfaceForScope(userId, accountScope = "all") {
   const { buildAccountKpiSurfacePayload } = require("./account-kpi-surface");
   const book = resolveBookCurrencyForAccountScope(settings, sc);
   const algo = String(settings?.algoMode || "twr").toLowerCase() === "mwr" ? "mwr" : "twr";
-  return buildAccountKpiSurfacePayload(row, book, algo);
+  return buildAccountKpiSurfacePayload(row, book, algo, sc !== "all");
 }
 
 let metricsOpsSchemaPromise = null;

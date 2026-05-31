@@ -96,8 +96,9 @@ function cnyScalarToBookAmount(cny, bookCurrency, fxUsdCny, fxHkdCny) {
  * @param {object} row 冻结账户快照行（v3 映射为 home_summary 字段名）
  * @param {string} bookCurrency CNY | USD | HKD
  * @param {string} algoMode twr | mwr — 决定 stages 内展示用收益率口径
+ * @param {boolean} [scalarsInBookCurrency=false] 单账户 v3 日表金额已是记账币，勿再做 CNY→账本换汇
  */
-function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "twr") {
+function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "twr", scalarsInBookCurrency = false) {
   if (!row || typeof row !== "object") {
     return null;
   }
@@ -116,10 +117,12 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
   const cashCny = rowNum(row, "eodCashCny", "eod_cash_cny", 0);
   const ratioDb = rowNum(row, "eodCashRatio", "eod_cash_ratio", 0);
   const principalCny = rowNum(row, "eodPrincipalCny", "eod_principal_cny", 0);
-  const ta = cnyScalarToBookAmount(taCny, book, fxUsd, fxHkd);
-  const mv = cnyScalarToBookAmount(mvCny, book, fxUsd, fxHkd);
-  const cash = cnyScalarToBookAmount(cashCny, book, fxUsd, fxHkd);
-  const principal = cnyScalarToBookAmount(principalCny, book, fxUsd, fxHkd);
+  const toBook = (n) =>
+    scalarsInBookCurrency ? Number(n) || 0 : cnyScalarToBookAmount(n, book, fxUsd, fxHkd);
+  const ta = toBook(taCny);
+  const mv = toBook(mvCny);
+  const cash = toBook(cashCny);
+  const principal = toBook(principalCny);
   const ratioStr =
     Number.isFinite(taCny) && taCny > 0 && Number.isFinite(cashCny)
       ? fmtPercentRatio(cashCny / taCny)
@@ -128,10 +131,13 @@ function buildAccountKpiSurfacePayload(row, bookCurrency = "CNY", algoMode = "tw
   const stage = (profitCamel, profitSnake, rtCamel, rtSnake, rmCamel, rmSnake) => {
     const p = rowNum(row, profitCamel, profitSnake, 0);
     const r = mwr ? rowNum(row, rmCamel, rmSnake, 0) : rowNum(row, rtCamel, rtSnake, 0);
+    const profitDisplay = scalarsInBookCurrency
+      ? fmtPlainSignedAmount(p)
+      : fmtPlainSignedAmountInBook(p, book, fxUsd, fxHkd);
     return {
       profitCny: p,
       rate: r,
-      profitDisplay: fmtPlainSignedAmountInBook(p, book, fxUsd, fxHkd),
+      profitDisplay,
       rateDisplay: fmtSignedPercentRatio(r),
     };
   };

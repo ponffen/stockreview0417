@@ -15,6 +15,7 @@ const {
   fmtSignedPercentRatio,
   cnyScalarToBookAmount,
 } = require("../account-kpi-surface");
+const { isAggregateScope } = require("./account-book-metrics");
 const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live");
 const { xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
 const {
@@ -23,9 +24,13 @@ const {
 } = require("../position-today-pnl");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
 
-function profitShareRatio(stockProfitCny, overviewProfitCny, book, fxUsdCny, fxHkdCny) {
-  const stockBook = cnyScalarToBookAmount(stockProfitCny, book, fxUsdCny, fxHkdCny);
-  const overviewBook = cnyScalarToBookAmount(overviewProfitCny, book, fxUsdCny, fxHkdCny);
+function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
+  let stockBook = Number(stockProfitScalar) || 0;
+  let overviewBook = Number(overviewProfitScalar) || 0;
+  if (isAggregateScope(accountScope)) {
+    stockBook = cnyScalarToBookAmount(stockBook, book, fxUsdCny, fxHkdCny);
+    overviewBook = cnyScalarToBookAmount(overviewBook, book, fxUsdCny, fxHkdCny);
+  }
   if (!Number.isFinite(overviewBook) || Math.abs(overviewBook) < 1e-9) {
     return 0;
   }
@@ -312,9 +317,12 @@ async function buildHoldingsPayload({
     const totalCny = totalNative * (isCn ? 1 : fx) + todayProfitCny;
     const mv = Number(liveP?.marketValueCny) || 0;
     const weight = totalAssets > 0 ? mv / totalAssets : 0;
-    const monthW = profitShareRatio(monthCny, overviewMonthCny, book, fxU, fxH);
-    const yearW = profitShareRatio(yearCny, overviewYearCny, book, fxU, fxH);
-    const totalW = profitShareRatio(totalCny, overviewTotalCny, book, fxU, fxH);
+    const monthStock = isAggregateScope(accountScope) ? monthCny : monthNative + todayProfitNative;
+    const yearStock = isAggregateScope(accountScope) ? yearCny : yearNative + todayProfitNative;
+    const totalStock = isAggregateScope(accountScope) ? totalCny : totalNative + todayProfitNative;
+    const monthW = profitShareRatio(monthStock, overviewMonthCny, accountScope, book, fxU, fxH);
+    const yearW = profitShareRatio(yearStock, overviewYearCny, accountScope, book, fxU, fxH);
+    const totalW = profitShareRatio(totalStock, overviewTotalCny, accountScope, book, fxU, fxH);
     row.weight = totalAssets > 0 ? fmtPercentRatio(weight) : "0.00%";
     row.monthWeight = fmtPercentRatio(monthW);
     row.yearWeight = fmtPercentRatio(yearW);
