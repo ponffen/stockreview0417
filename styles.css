@@ -24,6 +24,7 @@
   --ledger-col-amt: 15ch;
   --ledger-col-name: 11ch;
   --ledger-col-account: 9ch;
+  --ledger-stock-col-type: 6ch;
   /* 列宽比例（与 ch 权重一致，表宽 100% 时等比铺满） */
   --ledger-trade-w-date: 19.581%;
   --ledger-trade-w-name: 15.385%;
@@ -1897,7 +1898,7 @@ h2 {
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(2),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(2) {
-  width: var(--ledger-stock-w-type);
+  width: var(--ledger-stock-col-type);
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(3),
@@ -1932,7 +1933,7 @@ h2 {
 
 .stock-record-table--pub th:nth-child(2),
 .stock-record-table--pub td:nth-child(2) {
-  width: var(--ledger-stock-pub-w-type);
+  width: var(--ledger-stock-col-type);
 }
 
 .stock-record-table--pub th:nth-child(3),
