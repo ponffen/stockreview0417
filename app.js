@@ -3189,9 +3189,20 @@ function bindEvents() {
     }
     if (state.editingTradeId) {
       state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
+      state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== state.editingTradeId);
     }
     state.trades.push(savedTrade);
     state.trades.sort(sortTradeAsc);
+    const symKey = normalizeSymbol(savedTrade.symbol);
+    if (symKey && normalizeSymbol(state.activeRecordSymbol) === symKey) {
+      const recIdx = state.stockRecordTrades.findIndex((item) => item.id === savedTrade.id);
+      if (recIdx >= 0) {
+        state.stockRecordTrades[recIdx] = savedTrade;
+      } else if (state.route === "stock-record") {
+        state.stockRecordTrades.push(savedTrade);
+        state.stockRecordTrades.sort(sortTradeAsc);
+      }
+    }
     persistState();
     clearEditState();
     tradeDialog.close();
@@ -6973,6 +6984,19 @@ function renderTradeTable() {
   tradeTableBody.innerHTML = html;
 }
 
+/** 交易记录页分页在 state.trades；个股记录在 state.stockRecordTrades */
+function findTradeById(tradeId) {
+  const id = String(tradeId || "");
+  if (!id) {
+    return null;
+  }
+  return (
+    state.trades.find((item) => String(item.id) === id) ||
+    state.stockRecordTrades.find((item) => String(item.id) === id) ||
+    null
+  );
+}
+
 function openTradeRecordActionsSheet(tradeId) {
   if (!recordTradeActionsDialog || !tradeId) {
     return;
@@ -7094,7 +7118,7 @@ function invalidateCashListAfterMutation() {
 
 function openEditTradeDialog(tradeId) {
   closeTradeRecordActionsSheet();
-  const trade = state.trades.find((item) => item.id === tradeId);
+  const trade = findTradeById(tradeId);
   if (!trade) {
     return;
   }
@@ -7140,6 +7164,7 @@ async function removeTradeById(tradeId) {
     console.error("删除数据库交易失败，继续执行本地删除", error);
   }
   state.trades = state.trades.filter((item) => item.id !== tradeId);
+  state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== tradeId);
   if (state.trades.length === 0) {
     if (sessionPhone) {
       state.useDemoData = false;
