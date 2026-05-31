@@ -10,9 +10,11 @@ const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-servi
 async function purgeWeekendMetricRows() {
   const pool = await initPool();
   const a = await pool.query(
-    "DELETE FROM analysis_daily_snapshot WHERE EXTRACT(DOW FROM date) IN (0, 6)",
+    "DELETE FROM analysis_daily_snapshot WHERE EXTRACT(DOW FROM date::date) IN (0, 6)",
   );
-  const s = await pool.query("DELETE FROM symbol_daily_pnl WHERE EXTRACT(DOW FROM date) IN (0, 6)");
+  const s = await pool.query(
+    "DELETE FROM symbol_daily_pnl WHERE EXTRACT(DOW FROM date::date) IN (0, 6)",
+  );
   console.log("[purge-weekend] analysis=", a.rowCount, "symbol=", s.rowCount);
 }
 
