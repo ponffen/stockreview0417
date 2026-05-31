@@ -10828,7 +10828,8 @@ function pickSeriesExtremaPoints(seriesValues) {
 const CHART_AXIS_FONT = "13px sans-serif";
 const CHART_EXTREMA_FONT = "13px sans-serif";
 const CHART_CROSSHAIR_FONT = "13px sans-serif";
-const CHART_LABEL_BOX_HEIGHT = 20;
+const CHART_EXTREMA_TEXT_COLOR = "#20262f";
+const CHART_EXTREMA_LINE_GAP = 8;
 
 function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   if (!ctx || !payload || !series?.values?.length) {
@@ -10845,24 +10846,33 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   ctx.save();
   ctx.font = CHART_EXTREMA_FONT;
   ctx.textBaseline = "middle";
-  uniquePoints.forEach((point, idx) => {
+  ctx.fillStyle = CHART_EXTREMA_TEXT_COLOR;
+  ctx.strokeStyle = CHART_EXTREMA_TEXT_COLOR;
+  ctx.lineWidth = 1;
+  const midX = (payload.xMin + payload.xMax) / 2;
+  uniquePoints.forEach((point) => {
     const rawText = formatter(point.value, point.key || series.key, point.axis || series.axis || "left");
     const text = String(rawText || "");
-    const textWidth = Math.max(44, ctx.measureText(text).width + 12);
-    const preferRight = point.x <= (payload.xMin + payload.xMax) / 2;
-    let x = preferRight ? point.x + textWidth / 2 + 8 : point.x - textWidth / 2 - 8;
-    x = Math.max(payload.xMin + textWidth / 2 + 2, Math.min(payload.xMax - textWidth / 2 - 2, x));
-    let y = point.y + (idx === 0 ? -16 : 16);
-    y = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, y));
-    ctx.fillStyle = series.color || "#2f80f6";
+    if (!text) {
+      return;
+    }
+    const textWidth = ctx.measureText(text).width;
+    let placeLeft = point.x <= midX;
+    let anchorX = placeLeft ? point.x - CHART_EXTREMA_LINE_GAP : point.x + CHART_EXTREMA_LINE_GAP;
+    if (placeLeft && anchorX - textWidth < payload.xMin + 4) {
+      placeLeft = false;
+      anchorX = point.x + CHART_EXTREMA_LINE_GAP;
+    } else if (!placeLeft && anchorX + textWidth > payload.xMax - 4) {
+      placeLeft = true;
+      anchorX = point.x - CHART_EXTREMA_LINE_GAP;
+    }
+    const labelY = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, point.y));
+    ctx.textAlign = placeLeft ? "right" : "left";
     ctx.beginPath();
-    ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgb(33 41 54 / 86%)";
-    ctx.fillRect(x - textWidth / 2, y - CHART_LABEL_BOX_HEIGHT / 2, textWidth, CHART_LABEL_BOX_HEIGHT);
-    ctx.fillStyle = "#fff";
-    ctx.textAlign = "center";
-    ctx.fillText(text, x, y);
+    ctx.moveTo(anchorX, labelY);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.fillText(text, anchorX, labelY);
   });
   ctx.restore();
 }
