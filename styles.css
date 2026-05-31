@@ -626,13 +626,29 @@ body {
   z-index: 2;
   background: #fff;
   border-right: none;
-  /* 分隔线画在 sticky 层上，横滑时与名称列一起固定 */
-  box-shadow: 1px 0 0 var(--line);
+  overflow: visible;
+}
+
+.stock-table th:first-child::after,
+.stock-table td:first-child::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: #b0bac8;
+  pointer-events: none;
+  z-index: 5;
 }
 
 .stock-table thead th:first-child {
   background: #f6f8fb;
   z-index: 3;
+}
+
+.stock-table thead th:first-child::after {
+  z-index: 6;
 }
 
 .stock-table.stock-table--layout-locked th.name-head,
@@ -684,7 +700,6 @@ body {
 .stock-name {
   min-width: 0;
   text-align: left !important;
-  overflow: hidden;
   box-sizing: border-box;
 }
 
