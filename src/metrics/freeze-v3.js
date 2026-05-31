@@ -36,7 +36,12 @@ const {
 } = require("../ledger-metrics");
 const { xirrFromSnapshotWindow, xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
-const { fetchSinaForexDayKSeries, enumerateDays, validNumber } = require("../../scripts/lib/market-fetch");
+const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
+const {
+  enumerateFreezeSessionDates,
+  ledgerSessionDateKey,
+  forwardFillFxMap,
+} = require("./freeze-calendar");
 const { resolveFrozenDate } = require("../eod-freeze-service");
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
@@ -80,15 +85,23 @@ async function buildFxMaps(allDates, logger = console) {
   } catch (e) {
     logger.warn?.("[freeze-v3] HKDCNY", e?.message || e);
   }
-  for (const dateKey of allDates) {
-    if (!Number.isFinite(Number(fxUsdMap[dateKey])) || Number(fxUsdMap[dateKey]) <= 0) {
-      fxUsdMap[dateKey] = FX_FALLBACK.USD;
-    }
-    if (!Number.isFinite(Number(fxHkdMap[dateKey])) || Number(fxHkdMap[dateKey]) <= 0) {
-      fxHkdMap[dateKey] = FX_FALLBACK.HKD;
-    }
-  }
+  forwardFillFxMap(fxUsdMap, allDates, FX_FALLBACK.USD);
+  forwardFillFxMap(fxHkdMap, allDates, FX_FALLBACK.HKD);
   return { fxUsdMap, fxHkdMap };
+}
+
+function tradesForFreezeSession(allTrades) {
+  return (allTrades || []).map((t) => ({
+    ...t,
+    date: ledgerSessionDateKey(t.date),
+  }));
+}
+
+function cashForFreezeSession(allCash) {
+  return (allCash || []).map((c) => ({
+    ...c,
+    date: ledgerSessionDateKey(c.date),
+  }));
 }
 
 function closeBefore(sortedKline, dateKey) {
@@ -326,13 +339,15 @@ async function freezeAccountHistory({
   writeFromDate = null,
 }) {
   const book = accountBookCurrency(accountId, accounts);
-  const accTrades = filterTradesForAccount(allTrades, accountId);
+  const sessionTrades = tradesForFreezeSession(allTrades);
+  const sessionCash = cashForFreezeSession(allCash);
+  const accTrades = filterTradesForAccount(sessionTrades, accountId);
   if (!accTrades.length) return 0;
 
   const accMinD = String(accTrades[0].date).slice(0, 10);
   const fd = String(frozenDate).slice(0, 10);
   if (accMinD > fd) return 0;
-  const accountDates = enumerateDays(accMinD, fd);
+  const accountDates = enumerateFreezeSessionDates(accMinD, fd);
 
   const dayPoints = buildPortfolioDayPoints(
     accTrades,
@@ -340,7 +355,7 @@ async function freezeAccountHistory({
     klineBySym,
     fxUsdMap,
     fxHkdMap,
-    allCash,
+    sessionCash,
     accountId,
     accounts,
   );
@@ -349,7 +364,7 @@ async function freezeAccountHistory({
   const twrInputs = [];
   for (const p of dayPoints) {
     const dk = p.date;
-    const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+    const cashCny = computeLedgerCashCnyUpToDate(sessionTrades, sessionCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
     const mvCny = Number(p.nav) || 0;
     twrInputs.push({ date: dk, nav: mvCny + cashCny, extFlow: p.extFlow });
   }
@@ -367,15 +382,21 @@ async function freezeAccountHistory({
     const p = dayPoints[i];
     const dk = p.date;
     const tw = twrArr[i] || { twRDaily: 0, twRCumulative: 0 };
-    const cashCny = computeLedgerCashCnyUpToDate(allTrades, allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+    const cashCny = computeLedgerCashCnyUpToDate(sessionTrades, sessionCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
     const mvCny = Number(p.nav) || 0;
     const taCny = mvCny + cashCny;
     const cash = cnyToBook(cashCny, book, dk, fxUsdMap, fxHkdMap);
     const mv = cnyToBook(mvCny, book, dk, fxUsdMap, fxHkdMap);
     const ta = cnyToBook(taCny, book, dk, fxUsdMap, fxHkdMap);
-    const extCny = externalFlowCnyForDate(allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
+    const extCny = externalFlowCnyForDate(sessionCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
     const ext = cnyToBook(extCny, book, dk, fxUsdMap, fxHkdMap);
-    const principal = cnyToBook(principalCnyUpToDate(allCash, accounts, accountId, fxUsdMap, fxHkdMap, dk), book, dk, fxUsdMap, fxHkdMap);
+    const principal = cnyToBook(
+      principalCnyUpToDate(sessionCash, accounts, accountId, fxUsdMap, fxHkdMap, dk),
+      book,
+      dk,
+      fxUsdMap,
+      fxHkdMap,
+    );
     const cashDelta = i === 0 ? cash : cash - prevCash;
     const dailyProfit = i === 0 ? 0 : ta - prevTa - ext;
     const denom = prevTa + Math.max(ext, 0);
@@ -668,7 +689,9 @@ async function runFreezeV3ForUser(userId, options = {}) {
 
   await ensureMetricsSchemaV3();
 
-  const allTrades = (await getTrades(uid)).map((t) => ({ ...t, symbol: normalizeSymbol(t.symbol) }));
+  const allTrades = tradesForFreezeSession(
+    (await getTrades(uid)).map((t) => ({ ...t, symbol: normalizeSymbol(t.symbol) })),
+  );
   if (!allTrades.length) {
     return { ok: false, reason: "no-trades" };
   }
@@ -683,9 +706,9 @@ async function runFreezeV3ForUser(userId, options = {}) {
     return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
   }
 
-  const allCash = await getCashTransfers(uid);
+  const allCash = cashForFreezeSession(await getCashTransfers(uid));
   const accounts = await getAccounts(uid);
-  const allDates = enumerateDays(minD, frozenDate);
+  const allDates = enumerateFreezeSessionDates(minD, frozenDate);
   const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
   const accountIds = listAccountIdsForFreeze(allTrades, accounts);
 

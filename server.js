@@ -1983,11 +1983,13 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     const force = parseBooleanInput(req.query?.force ?? req.body?.force, false);
     const syncDailyClose = parseBooleanInput(req.query?.syncDailyClose ?? req.body?.syncDailyClose, false);
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+    const fromCron = req.headers["x-vercel-cron"] != null;
     const result = await runDailyFreeze({
       frozenDate: forcedDate,
       force,
       syncDailyClose,
       userIds,
+      fromCron,
       logger: console,
     });
     analysisDailyMemoryCache.clear();

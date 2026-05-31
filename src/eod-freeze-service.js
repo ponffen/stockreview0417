@@ -1,5 +1,6 @@
 const { listAllUserIds, setSnapshotWatermark } = require("./db");
 const { toDateKey } = require("../scripts/lib/market-fetch");
+const { shouldSkipScheduledFreezeCron } = require("./metrics/freeze-calendar");
 
 function addCalendarDays(dateKey, days) {
   const d = new Date(`${String(dateKey || "").slice(0, 10)}T12:00:00+08:00`);
@@ -60,7 +61,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     force: options.force === true,
     syncDailyClose: options.syncDailyClose === true,
     fullRebuild: options.fullRebuild === true,
-    rebuildFromDate: options.rebuildFromDate,
+    rebuildFromDate: options.rebuildFromDate || null,
     logger,
   });
   if (!result.ok) {
@@ -83,6 +84,19 @@ async function runDailyFreeze(options = {}) {
   const logger = options.logger || console;
   const frozenDate = resolveFrozenDate(options.frozenDate);
   const force = options.force === true;
+  if (options.fromCron && !force && shouldSkipScheduledFreezeCron()) {
+    logger.info?.("[freeze-eod] skipped: Sun/Mon morning (Asia/Shanghai)");
+    return {
+      ok: true,
+      skipped: true,
+      reason: "cron-skipped-sun-mon-morning",
+      frozenDate,
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      elapsedMs: 0,
+      users: [],
+    };
+  }
   const syncDailyClose = options.syncDailyClose === true;
   const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
   const userIds = userIdsInput.length

@@ -40,6 +40,7 @@ const {
   homeUiStageToApi,
 } = require("./metrics/stages");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
+const { isWeekendDateKey } = require("./metrics/freeze-calendar");
 const { buildHoldingsPayload } = require("./metrics/holdings-display");
 const {
   chainTwrRate,
@@ -357,7 +358,7 @@ async function loadSnapshotRowsAsc(userId, scope, from, to) {
       externalFlowCny: Number(r.dailyExternalFlow ?? r.externalFlowCny ?? r.external_flow_cny ?? 0),
       twRCumulative: Number(r.twRCumulative ?? r.tw_r_cumulative ?? 0),
     }))
-    .filter((r) => r.date)
+    .filter((r) => r.date && !isWeekendDateKey(r.date))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 

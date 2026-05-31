@@ -908,7 +908,15 @@ module.exports = async function handler(req, res) {
         const userIds = Array.isArray(body?.userIds) && body.userIds.length
           ? body.userIds
           : userIdFromQuery ? [userIdFromQuery] : [];
-        const data = await runDailyFreeze({ frozenDate, force, syncDailyClose, userIds, logger: console });
+        const fromCron = cronHeader != null;
+        const data = await runDailyFreeze({
+          frozenDate,
+          force,
+          syncDailyClose,
+          userIds,
+          fromCron,
+          logger: console,
+        });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;
