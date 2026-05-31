@@ -10829,7 +10829,8 @@ const CHART_AXIS_FONT = "13px sans-serif";
 const CHART_EXTREMA_FONT = "13px sans-serif";
 const CHART_CROSSHAIR_FONT = "13px sans-serif";
 const CHART_EXTREMA_TEXT_COLOR = "#20262f";
-const CHART_EXTREMA_LINE_GAP = 8;
+const CHART_EXTREMA_H_GAP = 10;
+const CHART_EXTREMA_V_GAP = 14;
 const CHART_LABEL_BOX_HEIGHT = 20;
 
 function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
@@ -10838,12 +10839,19 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   }
   const formatter = valueFormatter || ((value) => formatNumber(value, 2));
   const { minPoint, maxPoint } = pickSeriesExtremaPoints(series.values);
-  const points = [maxPoint, minPoint].filter(Boolean);
-  const samePoint =
-    points.length === 2 &&
-    points[0].date === points[1].date &&
-    Number(points[0].value) === Number(points[1].value);
-  const uniquePoints = samePoint ? [points[0]] : points;
+  const entries = [];
+  if (maxPoint) {
+    entries.push({ point: maxPoint, isMax: true });
+  }
+  if (minPoint) {
+    const same =
+      maxPoint &&
+      minPoint.date === maxPoint.date &&
+      Number(minPoint.value) === Number(maxPoint.value);
+    if (!same) {
+      entries.push({ point: minPoint, isMax: false });
+    }
+  }
   ctx.save();
   ctx.font = CHART_EXTREMA_FONT;
   ctx.textBaseline = "middle";
@@ -10851,7 +10859,7 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   ctx.strokeStyle = CHART_EXTREMA_TEXT_COLOR;
   ctx.lineWidth = 1;
   const midX = (payload.xMin + payload.xMax) / 2;
-  uniquePoints.forEach((point) => {
+  entries.forEach(({ point, isMax }) => {
     const rawText = formatter(point.value, point.key || series.key, point.axis || series.axis || "left");
     const text = String(rawText || "");
     if (!text) {
@@ -10859,21 +10867,25 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
     }
     const textWidth = ctx.measureText(text).width;
     let placeLeft = point.x <= midX;
-    let anchorX = placeLeft ? point.x - CHART_EXTREMA_LINE_GAP : point.x + CHART_EXTREMA_LINE_GAP;
-    if (placeLeft && anchorX - textWidth < payload.xMin + 4) {
+    let textLeft = placeLeft ? point.x - CHART_EXTREMA_H_GAP - textWidth : point.x + CHART_EXTREMA_H_GAP;
+    if (textLeft < payload.xMin + 4) {
       placeLeft = false;
-      anchorX = point.x + CHART_EXTREMA_LINE_GAP;
-    } else if (!placeLeft && anchorX + textWidth > payload.xMax - 4) {
+      textLeft = point.x + CHART_EXTREMA_H_GAP;
+    } else if (textLeft + textWidth > payload.xMax - 4) {
       placeLeft = true;
-      anchorX = point.x - CHART_EXTREMA_LINE_GAP;
+      textLeft = point.x - CHART_EXTREMA_H_GAP - textWidth;
     }
-    const labelY = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, point.y));
-    ctx.textAlign = placeLeft ? "right" : "left";
+    const vSign = isMax ? -1 : 1;
+    let labelY = point.y + vSign * CHART_EXTREMA_V_GAP;
+    labelY = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, labelY));
+    const lineStartX = placeLeft ? textLeft + textWidth : textLeft;
+    const lineStartY = labelY;
     ctx.beginPath();
-    ctx.moveTo(anchorX, labelY);
+    ctx.moveTo(lineStartX, lineStartY);
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
-    ctx.fillText(text, anchorX, labelY);
+    ctx.textAlign = "left";
+    ctx.fillText(text, textLeft, labelY);
   });
   ctx.restore();
 }
