@@ -3052,6 +3052,7 @@ function bindEvents() {
     persistState();
     renderAll();
     invalidateCashListAfterMutation();
+    scheduleMetricsRebuildUiRefresh();
   });
   cashTransferDeleteBtn?.addEventListener("click", async () => {
     const id = state.editingCashTransferId;
@@ -3072,6 +3073,7 @@ function bindEvents() {
     persistState();
     renderAll();
     invalidateCashListAfterMutation();
+    scheduleMetricsRebuildUiRefresh();
   });
   tradeSearchBackBtn?.addEventListener("click", () => goBackFromTradeStockSearch());
   tradeStockSearchInput?.addEventListener("input", (e) => {
@@ -3170,6 +3172,7 @@ function bindEvents() {
     renderAll();
     invalidateTradeListAfterMutation();
     invalidateStockRecordTradesAfterMutation();
+    scheduleMetricsRebuildUiRefresh();
     void refreshMarketData();
   });
 
@@ -7297,6 +7300,78 @@ function paintOverviewStockTableLoading(message = "数据加载中…") {
   stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
 }
 
+let metricsRebuildPollTimer = null;
+
+function stopMetricsRebuildPoll() {
+  if (metricsRebuildPollTimer) {
+    clearInterval(metricsRebuildPollTimer);
+    metricsRebuildPollTimer = null;
+  }
+}
+
+function applyMetricsRebuildStatusUi(rebuilding) {
+  if (!quoteTime) {
+    return;
+  }
+  if (rebuilding) {
+    quoteTime.textContent = "历史指标重算中，请稍候…";
+    quoteTime.classList.add("is-rebuilding");
+    quoteTime.setAttribute("title", "成交或资金记录已变更，正在更新日终快照");
+    return;
+  }
+  quoteTime.classList.remove("is-rebuilding");
+  if (state.quoteTime) {
+    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
+    quoteTime.textContent = timeText;
+    quoteTime.setAttribute(
+      "title",
+      state.marketDataDelayed
+        ? "行情或指标延迟，数字为最近一次成功计算结果"
+        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
+    );
+  }
+}
+
+function scheduleMetricsRebuildUiRefresh() {
+  state.metricsRebuilding = true;
+  applyMetricsRebuildStatusUi(true);
+  stopMetricsRebuildPoll();
+  if (!apiReady) {
+    return;
+  }
+  const aid = resolveValidAccountFilter(state.selectedAccountId) || "all";
+  let polls = 0;
+  const maxPolls = 120;
+  metricsRebuildPollTimer = setInterval(() => {
+    polls += 1;
+    if (!apiReady || polls > maxPolls) {
+      stopMetricsRebuildPoll();
+      state.metricsRebuilding = false;
+      applyMetricsRebuildStatusUi(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const bundle = await fetchMetricsApi("/metrics/home-bundle", {
+          accountScope: aid,
+          stages: METRICS_HOME_BUNDLE_STAGES,
+        });
+        if (bundle?.meta?.rebuilding) {
+          state.metricsRebuilding = true;
+          applyMetricsRebuildStatusUi(true);
+          return;
+        }
+        stopMetricsRebuildPoll();
+        state.metricsRebuilding = false;
+        invalidateOverviewMetricsUi();
+        await refreshOverviewProfitRow(aid, metricsStageFromHome());
+      } catch {
+        /* keep polling */
+      }
+    })();
+  }, 5000);
+}
+
 function applyOverviewMetricsMeta(meta) {
   if (!meta || typeof meta !== "object") {
     return;
@@ -7306,6 +7381,18 @@ function applyOverviewMetricsMeta(meta) {
   }
   state.marketDataDelayed = !!meta.delayed;
   state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
+  if (meta.rebuilding) {
+    state.metricsRebuilding = true;
+    applyMetricsRebuildStatusUi(true);
+    if (!metricsRebuildPollTimer) {
+      scheduleMetricsRebuildUiRefresh();
+    }
+    return;
+  }
+  state.metricsRebuilding = false;
+  if (!metricsRebuildPollTimer) {
+    applyMetricsRebuildStatusUi(false);
+  }
 }
 
 function bundleFmtText(val, fallback = "–") {

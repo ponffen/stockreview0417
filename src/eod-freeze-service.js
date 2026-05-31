@@ -59,6 +59,8 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     frozenDate: fd,
     force: options.force === true,
     syncDailyClose: options.syncDailyClose === true,
+    fullRebuild: options.fullRebuild === true,
+    rebuildFromDate: options.rebuildFromDate,
     logger,
   });
   if (!result.ok) {

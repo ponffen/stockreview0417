@@ -897,15 +897,34 @@ async function importTrades(trades, mode = "append", userId = null) {
   return getTrades(uid);
 }
 
+async function getTradeByIdForUser(tradeId, userId) {
+  const uid = String(userId || "").trim();
+  const tid = String(tradeId || "");
+  if (!uid || !tid) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT id, account_id, symbol, trade_date::text AS date FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
+    [uid, tid],
+  );
+  if (!rows.length) {
+    return null;
+  }
+  const r = rows[0];
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    symbol: r.symbol,
+    date: String(r.date || "").slice(0, 10),
+  };
+}
+
 async function deleteTradeById(tradeId, userId) {
   const uid = String(userId || "").trim();
   const tid = String(tradeId || "");
+  const prior = await getTradeByIdForUser(tid, uid);
   // Get account_id before delete so we can reset that account's clearing flag
-  let deletedAccountId = null;
-  try {
-    const { rows: tr } = await q("SELECT account_id FROM trades WHERE user_id = $1 AND id = $2", [uid, tid]);
-    deletedAccountId = tr[0]?.account_id || null;
-  } catch { /* ignore */ }
+  let deletedAccountId = prior?.accountId || null;
   const { rowCount } = await q("DELETE FROM trades WHERE user_id = $1 AND id = $2", [uid, tid]);
   if (rowCount > 0) {
     const delNow = nowMs();
@@ -919,7 +938,7 @@ async function deleteTradeById(tradeId, userId) {
       ).catch(() => {});
     }
   }
-  return rowCount > 0;
+  return { deleted: rowCount > 0, date: prior?.date || null };
 }
 
 async function getCashTransfers(userId) {
@@ -1040,10 +1059,29 @@ async function importCashTransfers(rows, mode = "append", userId = null) {
   return getCashTransfers(uid);
 }
 
+async function getCashTransferByIdForUser(cashId, userId) {
+  const uid = String(userId || "").trim();
+  const cid = String(cashId || "");
+  if (!uid || !cid) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT id, account_id, transfer_date::text AS date FROM cash_transfers WHERE user_id = $1 AND id = $2 LIMIT 1`,
+    [uid, cid],
+  );
+  if (!rows.length) {
+    return null;
+  }
+  const r = rows[0];
+  return { id: r.id, accountId: r.account_id, date: String(r.date || "").slice(0, 10) };
+}
+
 async function deleteCashTransferById(cashId, userId) {
   const uid = String(userId || "").trim();
-  const { rowCount } = await q("DELETE FROM cash_transfers WHERE user_id = $1 AND id = $2", [uid, String(cashId || "")]);
-  return rowCount > 0;
+  const cid = String(cashId || "");
+  const prior = await getCashTransferByIdForUser(cid, uid);
+  const { rowCount } = await q("DELETE FROM cash_transfers WHERE user_id = $1 AND id = $2", [uid, cid]);
+  return { deleted: rowCount > 0, date: prior?.date || null };
 }
 
 async function getAccounts(userId) {
@@ -3140,12 +3178,14 @@ module.exports = {
   getTradesForSymbol,
   getTradesPage,
   upsertTrade,
+  getTradeByIdForUser,
   importTrades,
   deleteTradeById,
   normalizeCashTransfer,
   getCashTransfers,
   getCashTransfersPage,
   upsertCashTransfer,
+  getCashTransferByIdForUser,
   importCashTransfers,
   deleteCashTransferById,
   getAccounts,

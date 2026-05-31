@@ -56,14 +56,18 @@ function clearUserScopedCache(map, userId) {
   }
 }
 
-function invalidateDailyCloseAndAnalysisCache(userId) {
+const {
+  notifyLedgerMutation,
+  hintDatesFromTradeMutation,
+  hintDatesFromCashMutation,
+  hintDatesFromImportRows,
+} = require("./src/metrics-invalidate");
+
+function invalidateDailyCloseAndAnalysisCache(userId, opts = {}) {
   clearUserScopedCache(analysisDailyMemoryCache, userId);
   clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
   clearUserScopedCache(realtimePatchMemoryCache, userId);
-  const uid = String(userId || "").trim();
-  if (uid) {
-    setImmediate(() => scheduleMetricsRebuildForUser(uid));
-  }
+  notifyLedgerMutation(userId, opts);
 }
 
 function sanitizeSymbolList(input) {
@@ -711,11 +715,13 @@ const {
   getTradesPage,
   upsertTrade,
   importTrades,
+  getTradeByIdForUser,
   deleteTradeById,
   getCashTransfers,
   getCashTransfersPage,
   upsertCashTransfer,
   importCashTransfers,
+  getCashTransferByIdForUser,
   deleteCashTransferById,
   getAccounts,
   getDailyReturns,
@@ -1788,8 +1794,11 @@ app.post("/api/trades", requireAuth, async (req, res) => {
       res.status(400).json({ ok: false, error: "symbol is required" });
       return;
     }
+    const prior = trade.id ? await getTradeByIdForUser(trade.id, req.userId) : null;
     const saved = await upsertTrade(trade, req.userId);
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      hintDates: hintDatesFromTradeMutation(prior, saved),
+    });
     res.json({ ok: true, data: saved });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save trade failed" });
@@ -1797,11 +1806,13 @@ app.post("/api/trades", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/trades/:id", requireAuth, async (req, res) => {
-  const ok = await deleteTradeById(req.params.id, req.userId);
-  if (ok) {
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+  const del = await deleteTradeById(req.params.id, req.userId);
+  if (del.deleted) {
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      hintDates: del.date ? [del.date] : [],
+    });
   }
-  res.json({ ok: true, deleted: ok });
+  res.json({ ok: true, deleted: del.deleted });
 });
 
 app.get("/api/cash-transfers", requireAuth, async (req, res) => {
@@ -1816,8 +1827,12 @@ app.get("/api/cash-transfers", requireAuth, async (req, res) => {
 
 app.post("/api/cash-transfers", requireAuth, async (req, res) => {
   try {
-    const row = await upsertCashTransfer(req.body || {}, req.userId);
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+    const body = req.body || {};
+    const prior = body.id ? await getCashTransferByIdForUser(body.id, req.userId) : null;
+    const row = await upsertCashTransfer(body, req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      hintDates: hintDatesFromCashMutation(prior, row),
+    });
     res.json({ ok: true, data: row });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save cash transfer failed" });
@@ -1825,11 +1840,13 @@ app.post("/api/cash-transfers", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/cash-transfers/:id", requireAuth, async (req, res) => {
-  const ok = await deleteCashTransferById(req.params.id, req.userId);
-  if (ok) {
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+  const del = await deleteCashTransferById(req.params.id, req.userId);
+  if (del.deleted) {
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      hintDates: del.date ? [del.date] : [],
+    });
   }
-  res.json({ ok: true, deleted: ok });
+  res.json({ ok: true, deleted: del.deleted });
 });
 
 app.post("/api/cash-transfers/import", requireAuth, async (req, res) => {
@@ -1838,7 +1855,10 @@ app.post("/api/cash-transfers/import", requireAuth, async (req, res) => {
     const mode = payload.mode === "replace" ? "replace" : "append";
     const rows = Array.isArray(payload.cashTransfers) ? payload.cashTransfers : [];
     const data = await importCashTransfers(rows, mode, req.userId);
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      fullRebuild: mode === "replace",
+      hintDates: hintDatesFromImportRows(rows, "date"),
+    });
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });
@@ -1852,7 +1872,10 @@ app.post("/api/trades/import", requireAuth, async (req, res) => {
     const trades = Array.isArray(payload.trades) ? payload.trades : [];
     const normalized = trades.map((item) => normalizeTrade(item));
     const data = await importTrades(normalized, mode, req.userId);
-    invalidateDailyCloseAndAnalysisCache(req.userId);
+    invalidateDailyCloseAndAnalysisCache(req.userId, {
+      fullRebuild: mode === "replace",
+      hintDates: hintDatesFromImportRows(normalized, "date"),
+    });
     res.json({ ok: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "import failed" });

@@ -1,44 +1,48 @@
 /**
- * 写路径静默重算：从 rebuildFrom 日起逐日 freeze 到昨日，完成后 data_version++。
+ * 写路径静默重算：从本次受影响最早日（前推 1 天）逐日 freeze 到昨日。
  */
 const {
   getTrades,
-  getCashTransfers,
   upsertUserMetricsMeta,
   getUserMetricsMeta,
   deletePerformanceSeriesCacheForUser,
 } = require("./db");
-const { freezeUserToDate, resolveFrozenDate } = require("./eod-freeze-service");
+const { resolveFrozenDate } = require("./eod-freeze-service");
 const { addCalendarDays } = require("./metrics/stages");
+const { minDateKey, normDateKey } = require("./metrics-invalidate");
+
+const DEBOUNCE_MS = Math.max(
+  1000,
+  Math.min(120_000, Number(process.env.METRICS_REBUILD_DEBOUNCE_MS) || 10_000),
+);
+const MAX_RETRIES = Math.max(1, Math.min(5, Number(process.env.METRICS_REBUILD_RETRIES) || 3));
+const RETRY_BASE_MS = Math.max(500, Number(process.env.METRICS_REBUILD_RETRY_MS) || 2000);
 
 const queueByUser = new Map();
+const pendingByUser = new Map();
 
-function earliestAffectedDateFromTradesCash(trades, cash, hintDate) {
-  let minD = hintDate ? String(hintDate).slice(0, 10) : null;
-  for (const t of trades || []) {
-    const d = String(t.date || "").slice(0, 10);
-    if (d && (!minD || d < minD)) {
-      minD = d;
-    }
+function earliestFromHints(hintDates, fullRebuild) {
+  if (fullRebuild) {
+    return null;
   }
-  for (const c of cash || []) {
-    const d = String(c.date || "").slice(0, 10);
-    if (d && (!minD || d < minD)) {
-      minD = d;
-    }
+  const minHint = minDateKey(hintDates);
+  if (!minHint) {
+    return null;
   }
-  return minD;
+  return addCalendarDays(minHint, -1);
 }
 
-function enumerateDatesInclusive(start, end) {
-  const out = [];
-  let cur = String(start).slice(0, 10);
-  const e = String(end).slice(0, 10);
-  while (cur <= e) {
-    out.push(cur);
-    cur = addCalendarDays(cur, 1);
+function mergePending(uid, hintDates, fullRebuild) {
+  const cur = pendingByUser.get(uid) || { hintDates: [], fullRebuild: false, timer: null };
+  if (fullRebuild) {
+    cur.fullRebuild = true;
   }
-  return out;
+  for (const d of hintDates || []) {
+    const dk = normDateKey(d);
+    if (dk) cur.hintDates.push(dk);
+  }
+  pendingByUser.set(uid, cur);
+  return cur;
 }
 
 async function runMetricsRebuildForUser(userId, opts = {}) {
@@ -46,38 +50,97 @@ async function runMetricsRebuildForUser(userId, opts = {}) {
   if (!uid) {
     return { ok: false };
   }
-  const hint = opts.hintDate ? String(opts.hintDate).slice(0, 10) : null;
+  const fullRebuild = !!opts.fullRebuild;
   const trades = await getTrades(uid);
-  const cash = await getCashTransfers(uid);
-  const earliest = earliestAffectedDateFromTradesCash(trades, cash, hint);
-  if (!earliest) {
+  if (!trades?.length) {
     await upsertUserMetricsMeta(uid, { rebuilding: false });
-    return { ok: true, skip: true };
+    return { ok: true, skip: true, reason: "no-trades" };
   }
-  const rebuildFrom = addCalendarDays(earliest, -1);
+
+  const rebuildFromDate = fullRebuild ? null : earliestFromHints(opts.hintDates, false);
+  if (!fullRebuild && !rebuildFromDate) {
+    await upsertUserMetricsMeta(uid, { rebuilding: false });
+    return { ok: true, skip: true, reason: "no-hint" };
+  }
+
   const frozenEnd = resolveFrozenDate();
-  const dates = enumerateDatesInclusive(rebuildFrom, frozenEnd);
-  await upsertUserMetricsMeta(uid, { rebuilding: true, rebuildFrom });
+  await upsertUserMetricsMeta(uid, {
+    rebuilding: true,
+    rebuildFrom: rebuildFromDate || null,
+  });
   await deletePerformanceSeriesCacheForUser(uid);
-  try {
-    const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
-    await runFreezeV3ForUser(uid, {
-      frozenDate: frozenEnd,
-      force: true,
-      syncDailyClose: false,
-      logger: console,
-    });
-    const meta = await getUserMetricsMeta(uid);
-    await upsertUserMetricsMeta(uid, {
-      rebuilding: false,
-      dataVersion: (meta.dataVersion || 0) + 1,
-      frozenThrough: frozenEnd,
-    });
-    return { ok: true, dates: dates.length };
-  } catch (error) {
-    await upsertUserMetricsMeta(uid, { rebuilding: false });
-    throw error;
+
+  const freezeOpts = {
+    frozenDate: frozenEnd,
+    force: true,
+    syncDailyClose: false,
+    logger: console,
+    rebuildFromDate: rebuildFromDate || undefined,
+    fullRebuild,
+  };
+
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
+      await runFreezeV3ForUser(uid, freezeOpts);
+      const meta = await getUserMetricsMeta(uid);
+      await upsertUserMetricsMeta(uid, {
+        rebuilding: false,
+        dataVersion: (meta.dataVersion || 0) + 1,
+        frozenThrough: frozenEnd,
+        rebuildFrom: null,
+      });
+      return { ok: true, rebuildFromDate, frozenEnd, attempt };
+    } catch (error) {
+      lastErr = error;
+      console.warn("[metrics-rebuild]", uid, `attempt ${attempt}/${MAX_RETRIES}`, error?.message || error);
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
+      }
+    }
   }
+  await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
+  throw lastErr || new Error("metrics rebuild failed");
+}
+
+function flushPendingRebuild(uid) {
+  const pending = pendingByUser.get(uid);
+  if (!pending) {
+    return;
+  }
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
+  pendingByUser.delete(uid);
+  const hintDates = [...(pending.hintDates || [])];
+  const fullRebuild = !!pending.fullRebuild;
+  if (!hintDates.length && !fullRebuild) {
+    return;
+  }
+  if (queueByUser.has(uid)) {
+    mergePending(uid, hintDates, fullRebuild);
+    return;
+  }
+  const p = runMetricsRebuildForUser(uid, { hintDates, fullRebuild })
+    .catch((e) => {
+      console.warn("[metrics-rebuild] failed", uid, e?.message || e);
+    })
+    .finally(() => {
+      queueByUser.delete(uid);
+      const again = pendingByUser.get(uid);
+      if (again && (again.hintDates?.length || again.fullRebuild)) {
+        scheduleMetricsRebuildForUser(uid, {
+          hintDates: again.hintDates,
+          fullRebuild: again.fullRebuild,
+        });
+      }
+    });
+  queueByUser.set(uid, p);
+}
+
+function isVercelRuntime() {
+  return String(process.env.VERCEL || "").trim() === "1";
 }
 
 function scheduleMetricsRebuildForUser(userId, opts = {}) {
@@ -85,20 +148,35 @@ function scheduleMetricsRebuildForUser(userId, opts = {}) {
   if (!uid) {
     return;
   }
-  if (queueByUser.has(uid)) {
+  const pending = mergePending(uid, opts.hintDates || [], !!opts.fullRebuild);
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+    pending.timer = null;
+  }
+  const debounceMs = isVercelRuntime() ? 400 : DEBOUNCE_MS;
+  if (isVercelRuntime() && !queueByUser.has(uid)) {
+    pending.timer = setTimeout(() => flushPendingRebuild(uid), debounceMs);
     return;
   }
-  const p = runMetricsRebuildForUser(uid, opts)
-    .catch((e) => {
-      console.warn("[metrics-rebuild]", uid, e?.message || e);
-    })
-    .finally(() => {
-      queueByUser.delete(uid);
-    });
-  queueByUser.set(uid, p);
+  pending.timer = setTimeout(() => flushPendingRebuild(uid), debounceMs);
+}
+
+/** Vercel：在当次 Serverless 调用内尽快开跑（避免仅 setTimeout 后实例被回收）。 */
+function kickMetricsRebuildNow(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid || !isVercelRuntime()) {
+    return;
+  }
+  const pending = pendingByUser.get(uid);
+  if (pending?.timer) {
+    clearTimeout(pending.timer);
+    pending.timer = null;
+  }
+  setImmediate(() => flushPendingRebuild(uid));
 }
 
 module.exports = {
   scheduleMetricsRebuildForUser,
   runMetricsRebuildForUser,
+  kickMetricsRebuildNow,
 };

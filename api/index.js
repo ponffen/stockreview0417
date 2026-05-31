@@ -614,10 +614,12 @@ module.exports = async function handler(req, res) {
         getTradesForSymbol,
         getTradesPage,
         normalizeTrade,
+        getTradeByIdForUser,
         upsertTrade,
         deleteTradeById,
         normalizeSymbol: dbNormalizeSymbol,
       } = require("../src/db");
+      const { notifyLedgerMutation, hintDatesFromTradeMutation } = require("../src/metrics-invalidate");
 
       if (isTradesGetDirect) {
         const symbolRaw = getSearchParam(req, "symbol");
@@ -660,7 +662,9 @@ module.exports = async function handler(req, res) {
           res.end(JSON.stringify({ ok: false, error: "symbol is required" }));
           return;
         }
+        const prior = trade.id ? await getTradeByIdForUser(trade.id, userId) : null;
         const saved = await upsertTrade(trade, userId);
+        notifyLedgerMutation(userId, { hintDates: hintDatesFromTradeMutation(prior, saved) });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: saved }));
         return;
@@ -673,9 +677,12 @@ module.exports = async function handler(req, res) {
           res.end(JSON.stringify({ ok: false, error: "invalid trade id" }));
           return;
         }
-        const ok = await deleteTradeById(tradeId, userId);
+        const del = await deleteTradeById(tradeId, userId);
+        if (del.deleted) {
+          notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
+        }
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, deleted: ok }));
+        res.end(JSON.stringify({ ok: true, deleted: del.deleted }));
         return;
       }
     } catch (error) {
@@ -700,9 +707,11 @@ module.exports = async function handler(req, res) {
       const {
         getCashTransfers,
         getCashTransfersPage,
+        getCashTransferByIdForUser,
         upsertCashTransfer,
         deleteCashTransferById,
       } = require("../src/db");
+      const { notifyLedgerMutation, hintDatesFromCashMutation } = require("../src/metrics-invalidate");
 
       if (isCashTransfersGetDirect) {
         const limitRaw = getSearchParam(req, "limit");
@@ -724,7 +733,9 @@ module.exports = async function handler(req, res) {
 
       if (isCashTransfersPostDirect) {
         const body = await readJsonBody(req);
+        const prior = body?.id ? await getCashTransferByIdForUser(body.id, userId) : null;
         const saved = await upsertCashTransfer(body || {}, userId);
+        notifyLedgerMutation(userId, { hintDates: hintDatesFromCashMutation(prior, saved) });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: saved }));
         return;
@@ -737,9 +748,12 @@ module.exports = async function handler(req, res) {
           res.end(JSON.stringify({ ok: false, error: "invalid cash transfer id" }));
           return;
         }
-        const ok = await deleteCashTransferById(cashId, userId);
+        const del = await deleteCashTransferById(cashId, userId);
+        if (del.deleted) {
+          notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
+        }
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, deleted: ok }));
+        res.end(JSON.stringify({ ok: true, deleted: del.deleted }));
         return;
       }
     } catch (error) {
@@ -774,6 +788,10 @@ module.exports = async function handler(req, res) {
         importTrades,
         importCashTransfers,
       } = require("../src/db");
+      const {
+        notifyLedgerMutation,
+        hintDatesFromImportRows,
+      } = require("../src/metrics-invalidate");
 
       if (isSettingsGetDirect) {
         const data = await getSettings(userId);
@@ -803,6 +821,10 @@ module.exports = async function handler(req, res) {
         const trades = Array.isArray(body?.trades) ? body.trades : [];
         const normalized = trades.map((item) => normalizeTrade(item));
         const data = await importTrades(normalized, mode, userId);
+        notifyLedgerMutation(userId, {
+          fullRebuild: mode === "replace",
+          hintDates: hintDatesFromImportRows(normalized, "date"),
+        });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, count: data.length, data }));
         return;
@@ -813,6 +835,10 @@ module.exports = async function handler(req, res) {
         const mode = body?.mode === "replace" ? "replace" : "append";
         const rows = Array.isArray(body?.cashTransfers) ? body.cashTransfers : [];
         const data = await importCashTransfers(rows, mode, userId);
+        notifyLedgerMutation(userId, {
+          fullRebuild: mode === "replace",
+          hintDates: hintDatesFromImportRows(rows, "date"),
+        });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, count: data.length, data }));
         return;

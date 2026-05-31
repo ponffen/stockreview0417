@@ -323,6 +323,7 @@ async function freezeAccountHistory({
   fxUsdMap,
   fxHkdMap,
   client,
+  writeFromDate = null,
 }) {
   const book = accountBookCurrency(accountId, accounts);
   const accTrades = filterTradesForAccount(allTrades, accountId);
@@ -360,6 +361,7 @@ async function freezeAccountHistory({
   let prevCash = 0;
   const buffer = [];
   const firstTrade = accTrades[0].date;
+  const writeFrom = writeFromDate ? String(writeFromDate).slice(0, 10) : null;
 
   for (let i = 0; i < dayPoints.length; i += 1) {
     const p = dayPoints[i];
@@ -384,41 +386,43 @@ async function freezeAccountHistory({
     rowsAsc.push({ date: dk, totalAssets: ta, dailyExternalFlow: ext });
     const mwr = computeMwrPatch(rowsAsc, dk, firstTrade);
 
-    buffer.push({
-      accountId,
-      date: dk,
-      bookCurrency: book,
-      dailyProfit,
-      dailyRateTwr,
-      dailyExternalFlow: ext,
-      dailyCashDelta: cashDelta,
-      twRCumulative: Number(tw.twRCumulative) || snap.stageInceptionRateTwr,
-      marketValue: mv,
-      totalAssets: ta,
-      cash,
-      cashRatio: ta > 0 ? cash / ta : 0,
-      principal,
-      fxHkdCny: fxHkdMap[dk] ?? null,
-      fxUsdCny: fxUsdMap[dk] ?? null,
-      stageMtdProfit: snap.stageMtdProfit,
-      stageMtdRateTwr: snap.stageMtdRateTwr,
-      stageMtdRateMwr: mwr.stageMtdRateMwr,
-      stageYtdProfit: snap.stageYtdProfit,
-      stageYtdRateTwr: snap.stageYtdRateTwr,
-      stageYtdRateMwr: mwr.stageYtdRateMwr,
-      stageInceptionProfit: snap.stageInceptionProfit,
-      stageInceptionRateTwr: snap.stageInceptionRateTwr,
-      stageInceptionRateMwr: mwr.stageInceptionRateMwr,
-      stageLast7dProfit: snap.stageLast7dProfit,
-      stageLast7dRateTwr: snap.stageLast7dRateTwr,
-      stageLast7dRateMwr: mwr.stageLast7dRateMwr,
-      stageLast30dProfit: snap.stageLast30dProfit,
-      stageLast30dRateTwr: snap.stageLast30dRateTwr,
-      stageLast30dRateMwr: mwr.stageLast30dRateMwr,
-      stageLast90dProfit: snap.stageLast90dProfit,
-      stageLast90dRateTwr: snap.stageLast90dRateTwr,
-      stageLast90dRateMwr: mwr.stageLast90dRateMwr,
-    });
+    if (!writeFrom || dk >= writeFrom) {
+      buffer.push({
+        accountId,
+        date: dk,
+        bookCurrency: book,
+        dailyProfit,
+        dailyRateTwr,
+        dailyExternalFlow: ext,
+        dailyCashDelta: cashDelta,
+        twRCumulative: Number(tw.twRCumulative) || snap.stageInceptionRateTwr,
+        marketValue: mv,
+        totalAssets: ta,
+        cash,
+        cashRatio: ta > 0 ? cash / ta : 0,
+        principal,
+        fxHkdCny: fxHkdMap[dk] ?? null,
+        fxUsdCny: fxUsdMap[dk] ?? null,
+        stageMtdProfit: snap.stageMtdProfit,
+        stageMtdRateTwr: snap.stageMtdRateTwr,
+        stageMtdRateMwr: mwr.stageMtdRateMwr,
+        stageYtdProfit: snap.stageYtdProfit,
+        stageYtdRateTwr: snap.stageYtdRateTwr,
+        stageYtdRateMwr: mwr.stageYtdRateMwr,
+        stageInceptionProfit: snap.stageInceptionProfit,
+        stageInceptionRateTwr: snap.stageInceptionRateTwr,
+        stageInceptionRateMwr: mwr.stageInceptionRateMwr,
+        stageLast7dProfit: snap.stageLast7dProfit,
+        stageLast7dRateTwr: snap.stageLast7dRateTwr,
+        stageLast7dRateMwr: mwr.stageLast7dRateMwr,
+        stageLast30dProfit: snap.stageLast30dProfit,
+        stageLast30dRateTwr: snap.stageLast30dRateTwr,
+        stageLast30dRateMwr: mwr.stageLast30dRateMwr,
+        stageLast90dProfit: snap.stageLast90dProfit,
+        stageLast90dRateTwr: snap.stageLast90dRateTwr,
+        stageLast90dRateMwr: mwr.stageLast90dRateMwr,
+      });
+    }
 
     prevTa = ta;
     prevCash = cash;
@@ -551,7 +555,9 @@ async function freezeSymbolsForUser(ctx) {
     client,
     logger,
     syncMissingCloses,
+    writeFromDate = null,
   } = ctx;
+  const writeFrom = writeFromDate ? String(writeFromDate).slice(0, 10) : null;
   const accountIds = listAccountIdsForFreeze(allTrades, accounts);
   const unionSyms = new Set();
   for (const accountId of accountIds) {
@@ -601,10 +607,14 @@ async function freezeSymbolsForUser(ctx) {
       }
       const ccy = getSymbolCurrency(sym);
       for (const replay of dailyRows) {
+        const dk = String(replay.date).slice(0, 10);
+        if (writeFrom && dk < writeFrom) {
+          continue;
+        }
         symBuffer.push({
           accountId,
           symbol: sym,
-          date: replay.date,
+          date: dk,
           bookCurrency: ccy || book,
           currency: ccy,
           dailyProfit: replay.dailyProfit,
@@ -711,11 +721,23 @@ async function runFreezeV3ForUser(userId, options = {}) {
   const client = await pool.connect();
 
   const timing = { accountMs: 0, symbolMs: 0, accountRows: 0, symbolRows: 0 };
+  const frozenDateKey = String(frozenDate).slice(0, 10);
+  const partial =
+    !options.fullRebuild &&
+    options.rebuildFromDate &&
+    String(options.rebuildFromDate).slice(0, 10) <= frozenDateKey;
+  const writeFromDate = partial ? String(options.rebuildFromDate).slice(0, 10) : null;
 
   try {
     await client.query("BEGIN");
     if (options.symbolsOnly) {
-      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date = $2", [uid, frozenDateKey]);
+    } else if (partial && writeFromDate) {
+      await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date >= $2", [
+        uid,
+        writeFromDate,
+      ]);
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date >= $2", [uid, writeFromDate]);
     } else {
       await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
       await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
@@ -735,6 +757,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
           fxUsdMap,
           fxHkdMap,
           client,
+          writeFromDate,
         });
         timing.accountRows += n;
       }
@@ -751,7 +774,8 @@ async function runFreezeV3ForUser(userId, options = {}) {
       klineBySym,
       client,
       logger,
-      syncMissingCloses: true,
+      syncMissingCloses: !partial,
+      writeFromDate,
     });
     timing.symbolRows = symResult.symbolRowsWritten;
     timing.symbolMs = Date.now() - t1;
@@ -764,7 +788,6 @@ async function runFreezeV3ForUser(userId, options = {}) {
     client.release();
   }
 
-  const frozenDateKey = String(frozenDate).slice(0, 10);
   await setSnapshotWatermark(uid, frozenDateKey);
   await upsertUserMetricsMeta(uid, { frozenThrough: frozenDateKey, isCleared: false, clearedAt: null });
   for (const accId of accountIds.filter((a) => a !== "all")) {
