@@ -10830,6 +10830,7 @@ const CHART_EXTREMA_FONT = "13px sans-serif";
 const CHART_CROSSHAIR_FONT = "13px sans-serif";
 const CHART_EXTREMA_TEXT_COLOR = "#20262f";
 const CHART_EXTREMA_LINE_GAP = 8;
+const CHART_LABEL_BOX_HEIGHT = 20;
 
 function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   if (!ctx || !payload || !series?.values?.length) {
