@@ -28,9 +28,12 @@ for (const [srcRel, destName] of copies) {
   }
   if (srcRel === "index.html") {
     const cssPath = path.join(root, "styles.css");
-    const v = fs.existsSync(cssPath) ? String(fs.statSync(cssPath).mtimeMs | 0) : Date.now();
+    const jsPath = path.join(root, "app.js");
+    const cssV = fs.existsSync(cssPath) ? String(fs.statSync(cssPath).mtimeMs | 0) : Date.now();
+    const jsV = fs.existsSync(jsPath) ? String(fs.statSync(jsPath).mtimeMs | 0) : Date.now();
     let html = fs.readFileSync(src, "utf8");
-    html = html.replace(/href="\.\/styles\.css(?:\?[^"]*)?"/, `href="./styles.css?v=${v}"`);
+    html = html.replace(/href="\.\/styles\.css(?:\?[^"]*)?"/, `href="./styles.css?v=${cssV}"`);
+    html = html.replace(/src="\.\/app\.js(?:\?[^"]*)?"/, `src="./app.js?v=${jsV}"`);
     fs.writeFileSync(dest, html);
     continue;
   }

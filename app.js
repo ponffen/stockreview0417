@@ -10829,9 +10829,30 @@ const CHART_AXIS_FONT = "13px sans-serif";
 const CHART_EXTREMA_FONT = "13px sans-serif";
 const CHART_CROSSHAIR_FONT = "13px sans-serif";
 const CHART_EXTREMA_TEXT_COLOR = "#20262f";
-const CHART_EXTREMA_H_GAP = 10;
-const CHART_EXTREMA_V_GAP = 14;
+const CHART_EXTREMA_H_GAP = 12;
+const CHART_EXTREMA_V_GAP = 16;
+const CHART_EXTREMA_TEXT_HEIGHT = 14;
 const CHART_LABEL_BOX_HEIGHT = 20;
+
+/** 文字矩形上离数据点最近的角（单条直线连到该角） */
+function chartTextRectCornerTowardPoint(left, top, right, bottom, px, py) {
+  const corners = [
+    [left, top],
+    [right, top],
+    [left, bottom],
+    [right, bottom],
+  ];
+  let best = corners[0];
+  let bestLen = Infinity;
+  for (const [cx, cy] of corners) {
+    const len = Math.hypot(cx - px, cy - py);
+    if (len < bestLen) {
+      bestLen = len;
+      best = [cx, cy];
+    }
+  }
+  return best;
+}
 
 function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   if (!ctx || !payload || !series?.values?.length) {
@@ -10858,6 +10879,7 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
   ctx.fillStyle = CHART_EXTREMA_TEXT_COLOR;
   ctx.strokeStyle = CHART_EXTREMA_TEXT_COLOR;
   ctx.lineWidth = 1;
+  ctx.setLineDash([]);
   const midX = (payload.xMin + payload.xMax) / 2;
   entries.forEach(({ point, isMax }) => {
     const rawText = formatter(point.value, point.key || series.key, point.axis || series.axis || "left");
@@ -10866,23 +10888,29 @@ function drawSeriesExtrema(ctx, payload, series, valueFormatter) {
       return;
     }
     const textWidth = ctx.measureText(text).width;
-    let placeLeft = point.x <= midX;
+    const placeLeft = point.x > midX;
     let textLeft = placeLeft ? point.x - CHART_EXTREMA_H_GAP - textWidth : point.x + CHART_EXTREMA_H_GAP;
-    if (textLeft < payload.xMin + 4) {
-      placeLeft = false;
-      textLeft = point.x + CHART_EXTREMA_H_GAP;
-    } else if (textLeft + textWidth > payload.xMax - 4) {
-      placeLeft = true;
-      textLeft = point.x - CHART_EXTREMA_H_GAP - textWidth;
-    }
+    textLeft = Math.max(payload.xMin + 4, Math.min(payload.xMax - textWidth - 4, textLeft));
     const vSign = isMax ? -1 : 1;
     let labelY = point.y + vSign * CHART_EXTREMA_V_GAP;
-    labelY = Math.max(payload.yMin + 10, Math.min(payload.yMax - 10, labelY));
-    const lineStartX = placeLeft ? textLeft + textWidth : textLeft;
-    const lineStartY = labelY;
+    if (Math.abs(labelY - point.y) < CHART_EXTREMA_V_GAP * 0.5) {
+      labelY = point.y + vSign * CHART_EXTREMA_V_GAP;
+    }
+    labelY = Math.max(payload.yMin + CHART_EXTREMA_TEXT_HEIGHT, Math.min(payload.yMax - CHART_EXTREMA_TEXT_HEIGHT, labelY));
+    const textTop = labelY - CHART_EXTREMA_TEXT_HEIGHT / 2;
+    const textBottom = labelY + CHART_EXTREMA_TEXT_HEIGHT / 2;
+    const textRight = textLeft + textWidth;
+    const [attachX, attachY] = chartTextRectCornerTowardPoint(
+      textLeft,
+      textTop,
+      textRight,
+      textBottom,
+      point.x,
+      point.y,
+    );
     ctx.beginPath();
-    ctx.moveTo(lineStartX, lineStartY);
-    ctx.lineTo(point.x, point.y);
+    ctx.moveTo(point.x, point.y);
+    ctx.lineTo(attachX, attachY);
     ctx.stroke();
     ctx.textAlign = "left";
     ctx.fillText(text, textLeft, labelY);
