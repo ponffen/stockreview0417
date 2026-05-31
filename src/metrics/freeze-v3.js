@@ -1,5 +1,5 @@
 /**
- * Metrics v3 冻结/回填：账户表全历史；个股表仅在 frozenDate 写 U_rank 一行/symbol。
+ * Metrics v3 冻结/回填：账户表全历史；个股表按「日终仍有持仓」逐日一行（清仓日不写）。
  */
 const {
   getTrades,
@@ -432,20 +432,21 @@ async function freezeAccountHistory({
   return dayPoints.length;
 }
 
-function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDate) {
+/** 逐日回放：仅日终仍有持仓（qEod>0）的交易日写入；清仓日跳过。 */
+function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, frozenDate) {
   const kl = kline || [];
   const symTrades = accTrades.filter((t) => t.symbol === sym).sort(sortTradeAsc);
-  if (!symTrades.length || !kl.length) return null;
+  if (!symTrades.length || !kl.length) {
+    return null;
+  }
 
   const D = String(frozenDate).slice(0, 10);
   const dates = allDates.filter((d) => d <= D);
   const stageAcc = new StageAccumulator();
   const flowPts = [];
+  const dailyOut = [];
   let pi = 0;
   let qty = 0;
-  let hadActivity = false;
-  let dayDRow = null;
-  let lastClose = 0;
 
   for (const day of dates) {
     while (pi < symTrades.length && symTrades[pi].date < day) {
@@ -465,15 +466,19 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
     if (qBod <= 0 && qEod <= 0 && !dayTrades.length) {
       continue;
     }
+    if (qEod <= 1e-6) {
+      continue;
+    }
 
     const closeD = lastPositiveCloseOnOrBefore(
       kl.map((x) => ({ day: x.day, close: x.close })),
       day,
     );
     const closePrev = closeBefore(kl, day);
-    if (!(closeD > 0)) continue;
+    if (!(closeD > 0)) {
+      continue;
+    }
     const prevPx = closePrev != null && closePrev > 0 ? closePrev : closeD;
-    lastClose = closeD;
 
     let dayFlow = 0;
     let dayAmt = 0;
@@ -487,49 +492,42 @@ function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDa
     const denom = qBod * prevPx + Math.max(dayFlow, 0);
     const rDay = denom > 0 ? pnl / denom : 0;
     stageAcc.onDay(day, pnl, rDay);
-    hadActivity = true;
     if (qEod > 0 && closeD > 0) {
       flowPts.push({ date: day, value: qEod * closeD, flow: dayFlow });
     }
-    if (day === D) {
-      dayDRow = {
-        dailyProfit: pnl,
-        dailyTradeQty: dayTurn,
-        dailyTradeAmount: dayAmt,
-        dailyTradeFlow: dayFlow,
-        dailyRateTwr: rDay,
-        eodShares: qEod,
-        eodPrice: closeD,
-      };
-    }
+    const snap = stageAcc.snapshotTwr();
+    const endVal = qEod * closeD;
+    const mwrRate = xirrFromSymbolValueFlowPoints(flowPts, day, endVal);
+    dailyOut.push({
+      date: day,
+      dailyProfit: pnl,
+      dailyTradeQty: dayTurn,
+      dailyTradeAmount: dayAmt,
+      dailyTradeFlow: dayFlow,
+      dailyRateTwr: rDay,
+      eodShares: qEod,
+      eodPrice: closeD,
+      ...snap,
+      stageMtdRateMwr: mwrRate,
+      stageYtdRateMwr: mwrRate,
+      stageInceptionRateMwr: mwrRate,
+      stageLast7dRateMwr: mwrRate,
+      stageLast30dRateMwr: mwrRate,
+      stageLast90dRateMwr: mwrRate,
+    });
   }
 
-  if (!hadActivity) return null;
+  return dailyOut.length ? dailyOut : null;
+}
 
-  const snap = stageAcc.snapshotTwr();
-  const base =
-    dayDRow ||
-    {
-      dailyProfit: 0,
-      dailyTradeQty: 0,
-      dailyTradeAmount: 0,
-      dailyTradeFlow: 0,
-      dailyRateTwr: 0,
-      eodShares: 0,
-      eodPrice: lastClose,
-    };
-  const endVal = (Number(base.eodShares) || 0) * (Number(base.eodPrice) || 0);
-  const mwr = xirrFromSymbolValueFlowPoints(flowPts, D, endVal);
-  return {
-    ...base,
-    ...snap,
-    stageMtdRateMwr: mwr,
-    stageYtdRateMwr: mwr,
-    stageInceptionRateMwr: mwr,
-    stageLast7dRateMwr: mwr,
-    stageLast30dRateMwr: mwr,
-    stageLast90dRateMwr: mwr,
-  };
+function replaySymbolToDate(sym, accountId, accTrades, allDates, kline, frozenDate) {
+  const rows = replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, frozenDate);
+  if (!rows?.length) {
+    return null;
+  }
+  const D = String(frozenDate).slice(0, 10);
+  const last = rows.find((r) => r.date === D) || rows[rows.length - 1];
+  return { ...last };
 }
 
 function listAccountIdsForFreeze(allTrades, accounts) {
@@ -589,52 +587,58 @@ async function freezeSymbolsForUser(ctx) {
   for (const accountId of accountIds) {
     const book = accountBookCurrency(accountId, accounts);
     const accTrades = filterTradesForAccount(allTrades, accountId);
-    const uRank = buildURankSymbols(allTrades, accountId, frozenDate);
-    for (const sym of uRank) {
+    const symSet = new Set(
+      accTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean),
+    );
+    for (const sym of symSet) {
       const kl = klineBySym.get(sym);
       if (!kl) {
         logger.warn?.("[freeze-v3] missing kline", accountId, sym);
         continue;
       }
-      const replay = replaySymbolToDate(sym, accountId, accTrades, allDates, kl, frozenDate);
-      if (!replay) continue;
+      const dailyRows = replaySymbolDailyRows(sym, accountId, accTrades, allDates, kl, frozenDate);
+      if (!dailyRows?.length) {
+        continue;
+      }
       const ccy = getSymbolCurrency(sym);
-      symBuffer.push({
-        accountId,
-        symbol: sym,
-        date: frozenDate,
-        bookCurrency: ccy || book,
-        currency: ccy,
-        dailyProfit: replay.dailyProfit,
-        dailyTradeQty: replay.dailyTradeQty,
-        dailyTradeAmount: replay.dailyTradeAmount,
-        dailyTradeFlow: replay.dailyTradeFlow,
-        dailyRateTwr: replay.dailyRateTwr,
-        eodShares: replay.eodShares,
-        eodPrice: replay.eodPrice,
-        stageMtdProfit: replay.stageMtdProfit,
-        stageMtdRateTwr: replay.stageMtdRateTwr,
-        stageMtdRateMwr: replay.stageMtdRateMwr,
-        stageYtdProfit: replay.stageYtdProfit,
-        stageYtdRateTwr: replay.stageYtdRateTwr,
-        stageYtdRateMwr: replay.stageYtdRateMwr,
-        stageInceptionProfit: replay.stageInceptionProfit,
-        stageInceptionRateTwr: replay.stageInceptionRateTwr,
-        stageInceptionRateMwr: replay.stageInceptionRateMwr,
-        stageLast7dProfit: replay.stageLast7dProfit,
-        stageLast7dRateTwr: replay.stageLast7dRateTwr,
-        stageLast7dRateMwr: replay.stageLast7dRateMwr,
-        stageLast30dProfit: replay.stageLast30dProfit,
-        stageLast30dRateTwr: replay.stageLast30dRateTwr,
-        stageLast30dRateMwr: replay.stageLast30dRateMwr,
-        stageLast90dProfit: replay.stageLast90dProfit,
-        stageLast90dRateTwr: replay.stageLast90dRateTwr,
-        stageLast90dRateMwr: replay.stageLast90dRateMwr,
-      });
-      if (symBuffer.length >= 200) {
-        const chunk = symBuffer.splice(0, symBuffer.length);
-        await upsertSymbolBatchV3(client, uid, chunk);
-        symbolRowsWritten += chunk.length;
+      for (const replay of dailyRows) {
+        symBuffer.push({
+          accountId,
+          symbol: sym,
+          date: replay.date,
+          bookCurrency: ccy || book,
+          currency: ccy,
+          dailyProfit: replay.dailyProfit,
+          dailyTradeQty: replay.dailyTradeQty,
+          dailyTradeAmount: replay.dailyTradeAmount,
+          dailyTradeFlow: replay.dailyTradeFlow,
+          dailyRateTwr: replay.dailyRateTwr,
+          eodShares: replay.eodShares,
+          eodPrice: replay.eodPrice,
+          stageMtdProfit: replay.stageMtdProfit,
+          stageMtdRateTwr: replay.stageMtdRateTwr,
+          stageMtdRateMwr: replay.stageMtdRateMwr,
+          stageYtdProfit: replay.stageYtdProfit,
+          stageYtdRateTwr: replay.stageYtdRateTwr,
+          stageYtdRateMwr: replay.stageYtdRateMwr,
+          stageInceptionProfit: replay.stageInceptionProfit,
+          stageInceptionRateTwr: replay.stageInceptionRateTwr,
+          stageInceptionRateMwr: replay.stageInceptionRateMwr,
+          stageLast7dProfit: replay.stageLast7dProfit,
+          stageLast7dRateTwr: replay.stageLast7dRateTwr,
+          stageLast7dRateMwr: replay.stageLast7dRateMwr,
+          stageLast30dProfit: replay.stageLast30dProfit,
+          stageLast30dRateTwr: replay.stageLast30dRateTwr,
+          stageLast30dRateMwr: replay.stageLast30dRateMwr,
+          stageLast90dProfit: replay.stageLast90dProfit,
+          stageLast90dRateTwr: replay.stageLast90dRateTwr,
+          stageLast90dRateMwr: replay.stageLast90dRateMwr,
+        });
+        if (symBuffer.length >= 200) {
+          const chunk = symBuffer.splice(0, symBuffer.length);
+          await upsertSymbolBatchV3(client, uid, chunk);
+          symbolRowsWritten += chunk.length;
+        }
       }
     }
   }
@@ -785,4 +789,5 @@ module.exports = {
   runSymbolsOnlyV3ForUser,
   buildURankSymbols,
   freezeSymbolsForUser,
+  replaySymbolDailyRows,
 };

@@ -1,25 +1,26 @@
 /**
- * 个股排行：与分析 tab 同一 stage 窗口；服务端计算，前端只展示。
+ * 个股排行：算法 B — 区间指标来自 symbol_daily_pnl 日序列；划段仍用成交。
  */
 const {
   getTrades,
   getSymbolDailyPnl,
   getSymbolNameMap,
-  getSymbolDailyCloseRange,
   normalizeSymbol,
 } = require("../db");
 const { resolveStageRange } = require("./stages");
 const {
   sortTradeAsc,
   addDay,
-  countHeldDaysInRange,
+  countHeldDaysFromPnl,
   resolveEffInterval,
   buildCloseLookup,
   computePeriodMetrics,
+  computePeriodMetricsFromPnl,
   profitNativeToAnalysisCny,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
+  symbolPnlForRankScope,
   inferSymbolCurrency,
   inferMarket,
 } = require("./stock-rank-period");
@@ -43,19 +44,10 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
     userId,
   );
   const pnlBySym = groupPnlRowsBySymbol(allPnlRows);
-  const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
 
   const symSet = new Set(scopeTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean));
-  const closeFrom = addDay(a, -30);
-  const snapshotBySym = new Map();
-  await Promise.all(
-    [...symSet].map(async (sym) => {
-      const rows = await getSymbolDailyCloseRange(sym, closeFrom, periodEnd);
-      snapshotBySym.set(sym, rows);
-    }),
-  );
-
   const rows = [];
+
   for (const sym of symSet) {
     const symbolTrades = scopeTrades
       .filter((t) => normalizeSymbol(t.symbol) === sym)
@@ -63,52 +55,45 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
     if (!symbolTrades.length) {
       continue;
     }
-    if (countHeldDaysInRange(symbolTrades, a, periodEnd) < 1) {
+    const pnlRows = symbolPnlForRankScope(pnlBySym, sym, scope);
+    if (countHeldDaysFromPnl(pnlRows, a, periodEnd) < 1) {
       continue;
     }
     const { effStart, effEnd } = resolveEffInterval(symbolTrades, a, periodEnd);
     if (effStart > effEnd) {
       continue;
     }
-    const pnlRows = pnlBySym.get(sym) || [];
-    const livePos = liveBySym.get(sym) || null;
-    const closeLookup = buildCloseLookup(
-      pnlRows,
-      livePos,
-      live.liveDate,
-      live.tradingDay,
-      snapshotBySym.get(sym) || [],
-      symbolTrades,
-    );
     const currency = inferSymbolCurrency(symbolTrades, pnlRows);
     const market = inferMarket(sym);
-    const m = computePeriodMetrics({
-      symbol: sym,
+    const m = computePeriodMetricsFromPnl({
+      pnlRows,
       symbolTrades,
       startKey: effStart,
       endKey: effEnd,
-      closeLookup,
     });
     const profitCny = profitNativeToAnalysisCny(m.profitNative, currency, market, fxUsd, fxHkd);
-    const holdIntervalsLabel = publicLayout
-      ? formatHoldingSegmentsLabelPublic({
-          symbol: sym,
-          symbolTrades,
-          periodStart: a,
-          periodEnd,
-          closeLookup,
-        })
-      : formatHoldingSegmentsLabel({
-          symbol: sym,
-          symbolTrades,
-          periodStart: a,
-          periodEnd,
-          closeLookup,
-          currency,
-          market,
-          fxUsd,
-          fxHkd,
-        });
+    let holdIntervalsLabel = "";
+    if (publicLayout) {
+      const closeLookup = buildCloseLookup(pnlRows, null, live.liveDate, live.tradingDay, [], symbolTrades);
+      holdIntervalsLabel = formatHoldingSegmentsLabelPublic({
+        symbol: sym,
+        symbolTrades,
+        periodStart: a,
+        periodEnd,
+        closeLookup,
+      });
+    } else {
+      holdIntervalsLabel = formatHoldingSegmentsLabel({
+        symbolTrades,
+        periodStart: a,
+        periodEnd,
+        pnlRows,
+        currency,
+        market,
+        fxUsd,
+        fxHkd,
+      });
+    }
     const tradeName = String(symbolTrades[0].name || sym).trim();
     rows.push({
       symbol: sym,
@@ -119,6 +104,7 @@ async function buildStockRankPayload({ userId, accountScope, stage, live, public
       heldDays: m.heldDays,
     });
   }
+
   rows.sort((x, y) => y.profitCny - x.profitCny);
   const nameMap = await getSymbolNameMap(rows.map((r) => r.symbol));
   const total = rows.reduce((s, r) => s + r.profitCny, 0);

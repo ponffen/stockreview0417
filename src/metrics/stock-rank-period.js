@@ -248,6 +248,116 @@ function resolveEffInterval(symbolTrades, periodStart, periodEnd) {
   return { effStart, effEnd };
 }
 
+function sumPnlInRange(pnlRows, startKey, endKey) {
+  let sum = 0;
+  for (const r of pnlRows || []) {
+    const d = String(r.date).slice(0, 10);
+    if (d >= startKey && d <= endKey) {
+      sum += Number(r.dayPnlNative) || 0;
+    }
+  }
+  return sum;
+}
+
+function countHeldDaysFromPnl(pnlRows, startKey, endKey) {
+  let n = 0;
+  for (const r of pnlRows || []) {
+    const d = String(r.date).slice(0, 10);
+    if (d >= startKey && d <= endKey && (Number(r.eodShares) || 0) > 1e-6) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function pxChangeFromPnl(pnlRows, startKey, endKey, symbolTrades) {
+  const inRange = (pnlRows || [])
+    .filter((r) => {
+      const d = String(r.date).slice(0, 10);
+      return d >= startKey && d <= endKey;
+    })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (!inRange.length) {
+    return 0;
+  }
+  const endClose = Number(inRange[inRange.length - 1].dayClosePrice) || 0;
+  if (!(endClose > 0)) {
+    return 0;
+  }
+  let entryPx = 0;
+  for (const trade of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const dk = String(trade.date).slice(0, 10);
+    if (dk < startKey) {
+      continue;
+    }
+    if (dk > endKey) {
+      break;
+    }
+    if (trade.side === "buy" && validNumber(trade.price, 0) > 0) {
+      entryPx = Number(trade.price);
+      break;
+    }
+  }
+  const startPx =
+    entryPx > 1e-9 ? entryPx : Number(inRange[0].dayClosePrice) || 0;
+  return startPx > 1e-9 ? endClose / startPx - 1 : 0;
+}
+
+function aggregatePnlRowsByDate(rows) {
+  const byDate = new Map();
+  for (const r of rows || []) {
+    const d = String(r.date).slice(0, 10);
+    if (!d) {
+      continue;
+    }
+    const cur = byDate.get(d) || {
+      date: d,
+      symbol: r.symbol,
+      accountId: "all",
+      eodShares: 0,
+      dayPnlNative: 0,
+      dayClosePrice: null,
+      currency: r.currency,
+    };
+    cur.eodShares += Number(r.eodShares) || 0;
+    cur.dayPnlNative += Number(r.dayPnlNative) || 0;
+    const px = Number(r.dayClosePrice);
+    if (Number.isFinite(px) && px > 0) {
+      cur.dayClosePrice = px;
+    }
+    if (r.currency) {
+      cur.currency = r.currency;
+    }
+    byDate.set(d, cur);
+  }
+  return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function symbolPnlForRankScope(pnlBySym, sym, accountScope) {
+  const list = pnlBySym.get(sym) || [];
+  const scope = String(accountScope || "all").trim() || "all";
+  if (scope === "all") {
+    const onlyAll = list.filter((r) => String(r.accountId || "") === "all");
+    if (onlyAll.length) {
+      return onlyAll;
+    }
+    return aggregatePnlRowsByDate(list);
+  }
+  return list.filter((r) => String(r.accountId || "default") === scope);
+}
+
+/** 排行 B：区间指标仅来自 symbol_daily_pnl 日序列。 */
+function computePeriodMetricsFromPnl({ pnlRows, symbolTrades, startKey, endKey }) {
+  if (!pnlRows?.length) {
+    return { profitNative: 0, pxChange: 0, heldDays: 0 };
+  }
+  return {
+    profitNative: sumPnlInRange(pnlRows, startKey, endKey),
+    pxChange: pxChangeFromPnl(pnlRows, startKey, endKey, symbolTrades),
+    heldDays: countHeldDaysFromPnl(pnlRows, startKey, endKey),
+  };
+}
+
 function computePositionProfitInDateRange(symbol, symbolTrades, startKey, endKey, closeLookup) {
   if (!symbolTrades.length) {
     return 0;
@@ -308,11 +418,10 @@ function computePeriodMetrics({
 }
 
 function formatHoldingSegmentsLabel({
-  symbol,
   symbolTrades,
   periodStart,
   periodEnd,
-  closeLookup,
+  pnlRows,
   currency,
   market,
   fxUsd,
@@ -328,12 +437,11 @@ function formatHoldingSegmentsLabel({
   }
   return segments
     .map((s) => {
-      const m = computePeriodMetrics({
-        symbol,
+      const m = computePeriodMetricsFromPnl({
+        pnlRows,
         symbolTrades,
         startKey: s.start,
         endKey: s.end,
-        closeLookup,
       });
       const profitCny = profitNativeToAnalysisCny(m.profitNative, currency, market, fxUsd, fxHkd);
       const pctStr = formatPercentRatio(m.pxChange);
@@ -407,15 +515,18 @@ module.exports = {
   sortTradeAsc,
   addDay,
   countHeldDaysInRange,
+  countHeldDaysFromPnl,
   collectHoldingSegmentsInPeriod,
   symbolEodQtyOnOrBefore,
   resolveEffInterval,
   buildCloseLookup,
   computePeriodMetrics,
+  computePeriodMetricsFromPnl,
   profitNativeToAnalysisCny,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
+  symbolPnlForRankScope,
   inferSymbolCurrency,
   inferMarket,
 };
