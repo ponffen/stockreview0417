@@ -54,13 +54,24 @@ function formatMoneyAssetForScope(amount, scope, bookCurrency, fxUsdCny, fxHkdCn
 
 function frozenHomeScalars(homeAcc) {
   const acc = homeAcc || {};
+  const eodMv = acc.eod_market_value_cny ?? acc.eodMarketValueCny;
+  const marketValue =
+    eodMv != null && Number.isFinite(Number(eodMv)) ? Number(eodMv) : 0;
   return {
     totalAssets: Number(acc.eod_total_assets_cny) || 0,
-    marketValue: Number(acc.eod_market_value_cny) || 0,
+    marketValue,
     cash: Number(acc.eod_cash_cny) || 0,
     principal: Number(acc.eod_principal_cny) || 0,
     cashRatioPct: Number(acc.eod_cash_ratio) || 0,
   };
+}
+
+function liveScalarOrFrozen(liveValue, frozenValue, toBook) {
+  const raw = Number(liveValue);
+  if (!Number.isFinite(raw)) {
+    return frozenValue;
+  }
+  return toBook ? toBook(raw) : raw;
 }
 
 /**
@@ -78,11 +89,12 @@ function resolveAccountAssetScalars(ctx) {
     return frozen;
   }
 
+  const toBook = isAggregateScope(scope) ? null : (cny) => liveCnyToBookAmount(cny, book, fxU, fxH);
+  const ta = liveScalarOrFrozen(live.totalAssetsCny, frozen.totalAssets, toBook) || frozen.totalAssets;
+  const mv = liveScalarOrFrozen(live.liveMarketValueCny, frozen.marketValue, toBook);
+  const cash = liveScalarOrFrozen(live.cashCny, frozen.cash, toBook) || frozen.cash;
+  const principal = liveScalarOrFrozen(live.principalCny, frozen.principal, toBook) || frozen.principal;
   if (isAggregateScope(scope)) {
-    const ta = Number(live.totalAssetsCny) || frozen.totalAssets;
-    const mv = Number(live.liveMarketValueCny) || frozen.marketValue;
-    const cash = Number(live.cashCny) || frozen.cash;
-    const principal = Number(live.principalCny) || frozen.principal;
     return {
       totalAssets: ta,
       marketValue: mv,
@@ -92,11 +104,6 @@ function resolveAccountAssetScalars(ctx) {
     };
   }
 
-  const toBook = (cny) => liveCnyToBookAmount(cny, book, fxU, fxH);
-  const ta = toBook(live.totalAssetsCny) || frozen.totalAssets;
-  const mv = toBook(live.liveMarketValueCny) || frozen.marketValue;
-  const cash = toBook(live.cashCny) || frozen.cash;
-  const principal = toBook(live.principalCny) || frozen.principal;
   return {
     totalAssets: ta,
     marketValue: mv,

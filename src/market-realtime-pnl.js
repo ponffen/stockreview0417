@@ -269,6 +269,16 @@ function getSymbolCurrency(symbol) {
   return "USD";
 }
 
+/** 冻结日市值：0 为有效值，勿用 total_assets 或 lastMarketValue 顶替。 */
+function frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny = 0) {
+  const eod = homeAcc?.eod_market_value_cny ?? homeAcc?.eodMarketValueCny;
+  if (eod != null && Number.isFinite(Number(eod))) {
+    return Number(eod);
+  }
+  const last = Number(lastMarketValueCny);
+  return Number.isFinite(last) && last > 0 ? last : 0;
+}
+
 function buildLiveFromHomeFrozen({
   tradingDay,
   liveDate,
@@ -287,14 +297,13 @@ function buildLiveFromHomeFrozen({
   const asOf = tradingDay ? liveDate : frozenThrough || liveDate;
   const cashCny = computeLedgerCashCnyUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
   const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const mv = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
+  const cashUse = Number(homeAcc?.eod_cash_cny) || cashCny;
   const ta =
     Number(homeAcc?.eod_total_assets_cny) ||
-    (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
-    lastMarketValueCny ||
+    (Number.isFinite(mv) ? mv : 0) + (Number.isFinite(cashUse) ? cashUse : 0) ||
     0;
-  const mv = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
-  const cashUse = Number(homeAcc?.eod_cash_cny) || cashCny;
-  const totalAssetsCny = ta || mv + cashUse;
+  const totalAssetsCny = ta > 0 ? ta : mv + cashUse;
   return {
     tradingDay: !!tradingDay,
     liveDate: tradingDay ? liveDate : null,
@@ -303,7 +312,7 @@ function buildLiveFromHomeFrozen({
     quoteTime: null,
     todayProfitCny: 0,
     liveMarketValueCny: mv,
-    lastMarketValueCny,
+    lastMarketValueCny: mv,
     cashCny: cashUse,
     totalAssetsCny,
     cashRatio: totalAssetsCny > 0 ? cashUse / totalAssetsCny : 0,
@@ -345,10 +354,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       fxHkdFrozen = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || FX_FALLBACK.HKD;
     }
     if (!(lastMarketValueCny > 0)) {
-      lastMarketValueCny =
-        Number(lastSnap?.marketValue ?? lastSnap?.market_value) ||
-        Number(lastSnap?.totalAssets ?? lastSnap?.total_assets) ||
-        0;
+      lastMarketValueCny = Number(lastSnap?.marketValue ?? lastSnap?.market_value) || 0;
     }
   }
   const fxUsdMap = fxUsdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxUsdFrozen } : {};
@@ -574,12 +580,11 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     };
   }
 
-  const mvFrozen = Number(homeAcc?.eod_market_value_cny) || lastMarketValueCny || 0;
+  const mvFrozen = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
   liveMarketValueCny = liveMarketValue > 0 ? liveMarketValue : mvFrozen;
   const taFrozen =
     Number(homeAcc?.eod_total_assets_cny) ||
-    (Number(homeAcc?.eod_market_value_cny) || 0) + (Number(homeAcc?.eod_cash_cny) || 0) ||
-    lastMarketValueCny ||
+    mvFrozen + (Number(homeAcc?.eod_cash_cny) || 0) ||
     0;
   cashCny = Number(homeAcc?.eod_cash_cny) > 0 ? Number(homeAcc.eod_cash_cny) : cashCny;
   totalAssetsCny = taFrozen > 0 ? taFrozen : liveMarketValueCny + cashCny;
@@ -594,7 +599,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
     todayProfitCny: 0,
     liveMarketValueCny,
-    lastMarketValueCny,
+    lastMarketValueCny: mvFrozen,
     cashCny,
     totalAssetsCny,
     cashRatio,
