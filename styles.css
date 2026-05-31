@@ -25,7 +25,7 @@
   --ledger-col-name: 11ch;
   --ledger-col-account: 9ch;
   /* 个股交易记录列宽（ch） */
-  --ledger-stock-col-date: 12ch;
+  --ledger-stock-col-date: 120ch; /* TODO: revert to 12ch after layout verify */
   --ledger-stock-col-type: 6ch;
   --ledger-stock-col-price: 10ch;
   --ledger-stock-col-qty: 10ch;
