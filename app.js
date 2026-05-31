@@ -73,6 +73,8 @@ const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
 const ANALYSIS_PERFORMANCE_RULE_VERSION = 2;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
+/** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
+const INITIAL_SETTINGS_SYNC_DEFER_MS = 4000;
 const STATE_SYNC_KEYS = [
   "route",
   "useDemoData",
@@ -757,9 +759,12 @@ async function startAppAfterAuth(options = {}) {
   if (!options.sessionAlreadyFresh) {
     await refreshSessionFromServer();
   }
-  await hydrateState();
+  const { preloadedHomeBundle } = await hydrateState({
+    parallelHomeBundle: !!sessionPhone,
+  });
   normalizeModuleHomeOnColdLoad();
-  persistState();
+  persistState({ skipSettingsSync: true });
+  scheduleDeferredInitialSettingsSync();
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   void hydrateSymbolNameMap(
     state.route === "earning" || state.route === "analysis"
@@ -771,7 +776,12 @@ async function startAppAfterAuth(options = {}) {
   renderAll();
   if (state.route === "earning") {
     if (apiReady) {
-      void refreshOverviewProfitRowFromSnapshots();
+      const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+      if (preloadedHomeBundle && aid === "all") {
+        void applyPreloadedHomeBundleOnEarning(preloadedHomeBundle, aid);
+      } else {
+        void refreshOverviewProfitRowFromSnapshots();
+      }
     }
   } else {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
@@ -1926,11 +1936,23 @@ async function fetchStaticSiteState() {
   }
 }
 
-async function hydrateState() {
+async function hydrateState(options = {}) {
   let parsed = null;
   let remoteParsed = null;
   let staticParsed = null;
-  const boot = await fetchApiStateBootstrap();
+  let preloadedHomeBundle = null;
+  const parallelHomeBundle = options.parallelHomeBundle === true && !!sessionPhone;
+  let boot;
+  if (parallelHomeBundle) {
+    const [bootResult, bundle] = await Promise.all([
+      fetchApiStateBootstrap(),
+      fetchHomeBundleDirect("all"),
+    ]);
+    boot = bootResult;
+    preloadedHomeBundle = bundle;
+  } else {
+    boot = await fetchApiStateBootstrap();
+  }
   apiReady = boot.apiReady;
   const bootstrapKind = boot.bootstrapKind || "none";
   if (apiReady) {
@@ -2078,6 +2100,7 @@ async function hydrateState() {
   }
   normalizeModuleHomeOnColdLoad();
   invalidateOverviewMetricsUi();
+  return { preloadedHomeBundle };
 }
 
 function pickSettingsPayload(payload = {}) {
@@ -2111,12 +2134,14 @@ function queueSettingsSyncToApi(payload) {
   }, SETTINGS_SYNC_DEBOUNCE_MS);
 }
 
-function persistState() {
+let initialSettingsSyncTimer = null;
+
+function buildPersistStateSyncPayload() {
   let routeForSync = state.route;
   if (routeForSync === "trade-search" || routeForSync === "trade-records" || routeForSync === "trade-cash") {
     routeForSync = "trade";
   }
-  const payload = {
+  return {
     route: routeForSync,
     appModule: state.appModule,
     useDemoData: state.useDemoData,
@@ -2137,7 +2162,28 @@ function persistState() {
     stockSortOrder: state.stockSortOrder,
     stockAmountDisplay: state.stockAmountDisplay,
   };
-  if (apiReady) {
+}
+
+function scheduleDeferredInitialSettingsSync() {
+  if (!apiReady || !sessionPhone) {
+    return;
+  }
+  if (initialSettingsSyncTimer) {
+    window.clearTimeout(initialSettingsSyncTimer);
+  }
+  initialSettingsSyncTimer = window.setTimeout(() => {
+    initialSettingsSyncTimer = null;
+    queueSettingsSyncToApi(buildPersistStateSyncPayload());
+  }, INITIAL_SETTINGS_SYNC_DEFER_MS);
+}
+
+function persistState(options = {}) {
+  const payload = buildPersistStateSyncPayload();
+  if (apiReady && !options.skipSettingsSync) {
+    if (initialSettingsSyncTimer) {
+      window.clearTimeout(initialSettingsSyncTimer);
+      initialSettingsSyncTimer = null;
+    }
     queueSettingsSyncToApi(payload);
   }
 }
@@ -2161,6 +2207,27 @@ async function fetchApiStateBootstrap() {
     return { apiReady: true, data: null, bootstrapKind: "none" };
   } catch {
     return { apiReady: false, data: null, bootstrapKind: "none" };
+  }
+}
+
+/** 与 fetchMetricsApi 相同路径；不依赖 apiReady，供首屏与 settings 并行 */
+async function fetchHomeBundleDirect(accountScope) {
+  const aid = accountScope === "all" ? "all" : String(accountScope || "").trim() || "all";
+  const qs = new URLSearchParams({
+    account_id: aid,
+    accountScope: aid,
+    stages: "today,mtd,ytd,inception",
+  });
+  const url = `${getApiBaseForFetch()}/metrics/home-bundle?${qs.toString()}`;
+  try {
+    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 55_000 });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j?.ok || !j.data) {
+      return null;
+    }
+    return j.data;
+  } catch {
+    return null;
   }
 }
 
@@ -8875,8 +8942,72 @@ async function refreshOverviewProfitRowFromSnapshots() {
   return promise;
 }
 
-async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
+function applyHomeBundleToOverviewUi(bundle, aid, seq) {
   const metricsKey = overviewMetricsBundleCacheKey(aid);
+  const ret = bundle?.returns;
+  const assets = bundle?.assets;
+  const hold = bundle?.holdings;
+  if (seq !== overviewProfitRefreshSeq) {
+    return false;
+  }
+  const ok =
+    overviewReturnsHasAllHomeStages(ret) &&
+    bundleFmtText(assets?.totalAssets, "") !== "" &&
+    Array.isArray(hold?.rows);
+  if (!ok) {
+    state.overviewMetricsUi.ready = false;
+    setOverviewProfitKpisDash();
+    setOverviewAssetsGridDash();
+    paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
+    return false;
+  }
+  state.overviewMetricsUi = {
+    ready: true,
+    loading: false,
+    key: metricsKey,
+    meta: bundle.meta,
+    returns: ret,
+    assets,
+    holdings: hold,
+  };
+  if (state.route === "earning") {
+    paintOverviewFromMetricsBundle(ret, assets, hold, metricsStageFromHome());
+  }
+  return true;
+}
+
+async function applyPreloadedHomeBundleOnEarning(bundle, aid) {
+  const reqKey = overviewMetricsBundleCacheKey(aid);
+  if (_overviewProfitInflight?.key === reqKey) {
+    return _overviewProfitInflight.promise;
+  }
+  const seq = ++overviewProfitRefreshSeq;
+  state.overviewMetricsUi.loading = true;
+  const promise = (async () => {
+    try {
+      if (!apiReady) {
+        return;
+      }
+      applyHomeBundleToOverviewUi(bundle, aid, seq);
+    } catch {
+      if (seq === overviewProfitRefreshSeq) {
+        state.overviewMetricsUi.ready = false;
+        setOverviewProfitKpisDash();
+        setOverviewAssetsGridDash();
+        paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
+      }
+    } finally {
+      state.overviewMetricsUi.loading = false;
+      if (_overviewProfitInflight?.key === reqKey) {
+        _overviewProfitInflight = null;
+      }
+    }
+  })();
+  _overviewProfitInflight = { key: reqKey, promise };
+  return promise;
+}
+
+async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
   state.overviewMetricsUi.loading = true;
   try {
     if (!apiReady) {
@@ -8886,35 +9017,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
       accountScope: aid,
       stages: METRICS_HOME_BUNDLE_STAGES,
     });
-    const ret = bundle?.returns;
-    const assets = bundle?.assets;
-    const hold = bundle?.holdings;
-    if (seq !== overviewProfitRefreshSeq) {
-      return;
-    }
-    const ok =
-      overviewReturnsHasAllHomeStages(ret) &&
-      bundleFmtText(assets?.totalAssets, "") !== "" &&
-      Array.isArray(hold?.rows);
-    if (!ok) {
-      state.overviewMetricsUi.ready = false;
-      setOverviewProfitKpisDash();
-      setOverviewAssetsGridDash();
-      paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
-      return;
-    }
-    state.overviewMetricsUi = {
-      ready: true,
-      loading: false,
-      key: metricsKey,
-      meta: bundle.meta,
-      returns: ret,
-      assets,
-      holdings: hold,
-    };
-    if (state.route === "earning") {
-      paintOverviewFromMetricsBundle(ret, assets, hold, metricsStageFromHome());
-    }
+    applyHomeBundleToOverviewUi(bundle, aid, seq);
   } catch {
     if (seq === overviewProfitRefreshSeq) {
       state.overviewMetricsUi.ready = false;
