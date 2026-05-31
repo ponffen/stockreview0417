@@ -26,6 +26,14 @@ for (const [srcRel, destName] of copies) {
     console.warn(`[vercel-build] skip missing source: ${srcRel}`);
     continue;
   }
+  if (srcRel === "index.html") {
+    const cssPath = path.join(root, "styles.css");
+    const v = fs.existsSync(cssPath) ? String(fs.statSync(cssPath).mtimeMs | 0) : Date.now();
+    let html = fs.readFileSync(src, "utf8");
+    html = html.replace(/href="\.\/styles\.css(?:\?[^"]*)?"/, `href="./styles.css?v=${v}"`);
+    fs.writeFileSync(dest, html);
+    continue;
+  }
   fs.copyFileSync(src, dest);
 }
 

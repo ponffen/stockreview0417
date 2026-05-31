@@ -1436,29 +1436,30 @@ h2 {
 .trade-table-wrap,
 .stock-record-table-wrap {
   width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .trade-table,
 .trade-table--cash {
-  width: 100%;
-  min-width: var(--ledger-trade-min-width);
+  width: max(100%, var(--ledger-trade-min-width));
   border-collapse: collapse;
   table-layout: fixed;
 }
 
 .trade-table--cash {
-  min-width: var(--ledger-cash-min-width);
+  width: max(100%, var(--ledger-cash-min-width));
 }
 
 .stock-record-table {
-  width: 100%;
-  min-width: var(--ledger-stock-min-width);
+  width: max(100%, var(--ledger-stock-min-width));
   border-collapse: collapse;
   table-layout: fixed;
 }
 
-.stock-record-table--pub {
-  min-width: var(--ledger-stock-pub-min-width);
+.stock-record-table.stock-record-table--pub {
+  width: max(100%, var(--ledger-stock-pub-min-width));
 }
 
 .trade-table th,
@@ -1936,78 +1937,67 @@ h2 {
   white-space: nowrap;
 }
 
-/* 个股记录（本人）：日期 | 类型 | 价格 | 数量 | 金额 | 账户 */
+/* 个股记录（本人）：日期 | 类型 | 价格 | 数量 | 金额 | 账户（列宽 ch；表宽 max(100%, 列宽之和)） */
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(1),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(1) {
-  width: var(--ledger-stock-w-date);
-  min-width: var(--ledger-stock-col-date);
+  width: var(--ledger-stock-col-date);
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(2),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(2) {
-  width: var(--ledger-stock-w-type);
-  min-width: var(--ledger-stock-col-type);
+  width: var(--ledger-stock-col-type);
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(3),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(3) {
-  width: var(--ledger-stock-w-price);
-  min-width: var(--ledger-stock-col-price);
+  width: var(--ledger-stock-col-price);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(4),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(4) {
-  width: var(--ledger-stock-w-qty);
-  min-width: var(--ledger-stock-col-qty);
+  width: var(--ledger-stock-col-qty);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(5),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(5) {
-  width: var(--ledger-stock-w-amt);
-  min-width: var(--ledger-stock-col-amt);
+  width: var(--ledger-stock-col-amt);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(6),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(6) {
-  width: var(--ledger-stock-w-account);
-  min-width: var(--ledger-stock-col-account);
+  width: var(--ledger-stock-col-account);
   text-align: left;
 }
 
 /* 个股记录（公开）：日期 | 类型 | 价格 | 金额占比 | 账户 */
 .stock-record-table--pub th:nth-child(1),
 .stock-record-table--pub td:nth-child(1) {
-  width: var(--ledger-stock-pub-w-date);
-  min-width: var(--ledger-stock-col-date);
+  width: var(--ledger-stock-col-date);
 }
 
 .stock-record-table--pub th:nth-child(2),
 .stock-record-table--pub td:nth-child(2) {
-  width: var(--ledger-stock-pub-w-type);
-  min-width: var(--ledger-stock-col-type);
+  width: var(--ledger-stock-col-type);
 }
 
 .stock-record-table--pub th:nth-child(3),
 .stock-record-table--pub td:nth-child(3) {
-  width: var(--ledger-stock-pub-w-price);
-  min-width: var(--ledger-stock-col-price);
+  width: var(--ledger-stock-col-price);
   text-align: right;
 }
 
 .stock-record-table--pub th:nth-child(4),
 .stock-record-table--pub td:nth-child(4) {
-  width: var(--ledger-stock-pub-w-amt);
-  min-width: var(--ledger-stock-col-amt);
+  width: var(--ledger-stock-col-amt);
   text-align: right;
 }
 
 .stock-record-table--pub th:nth-child(5),
 .stock-record-table--pub td:nth-child(5) {
-  width: var(--ledger-stock-pub-w-account);
-  min-width: var(--ledger-stock-col-account);
+  width: var(--ledger-stock-col-account);
   text-align: left;
 }
 
@@ -2030,7 +2020,7 @@ h2 {
   z-index: 60;
   background: var(--bg);
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   display: none;
 }
 
