@@ -4,15 +4,15 @@
  * 用法: DATABASE_URL=... node scripts/rebuild-all-metrics.js
  */
 require("dotenv").config();
-const { listAllUserIds, upsertUserMetricsMeta, initPool, q } = require("../src/db");
+const { listAllUserIds, upsertUserMetricsMeta, initPool } = require("../src/db");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 
 async function purgeWeekendMetricRows() {
-  await initPool();
-  const a = await q(
+  const pool = await initPool();
+  const a = await pool.query(
     "DELETE FROM analysis_daily_snapshot WHERE EXTRACT(DOW FROM date) IN (0, 6)",
   );
-  const s = await q("DELETE FROM symbol_daily_pnl WHERE EXTRACT(DOW FROM date) IN (0, 6)");
+  const s = await pool.query("DELETE FROM symbol_daily_pnl WHERE EXTRACT(DOW FROM date) IN (0, 6)");
   console.log("[purge-weekend] analysis=", a.rowCount, "symbol=", s.rowCount);
 }
 
