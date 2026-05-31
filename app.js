@@ -355,6 +355,9 @@ const STOCK_TABLE_MEASURE_FONT_TH =
 const STOCK_TABLE_MEASURE_FONT_TD =
   '12px -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
 const STOCK_TABLE_MEASURE_PAD_X = 20;
+/** 首页持仓表名称列固定展示宽度（汉字个数，超出 clip） */
+const OVERVIEW_STOCK_NAME_COL_CHARS = 7;
+const OVERVIEW_STOCK_NAME_COL_PROBE = "测".repeat(OVERVIEW_STOCK_NAME_COL_CHARS);
 let _stockTableMeasureCanvas;
 const stockCurrencyToggle = document.getElementById("stockCurrencyToggle");
 const stockSortButtons = [...document.querySelectorAll(".th-sort-btn")];
@@ -8482,6 +8485,17 @@ function overviewStockTableLayoutCacheKey(rows) {
   return `${overviewMetricsBundleCacheKey(aid)}::${sig}`;
 }
 
+function overviewStockNameColWidthPx() {
+  const nameW = Math.ceil(
+    measureStockTableTextPx(OVERVIEW_STOCK_NAME_COL_PROBE, STOCK_TABLE_MEASURE_FONT_TH) +
+      STOCK_TABLE_MEASURE_PAD_X,
+  );
+  const headW = Math.ceil(
+    measureStockTableTextPx("名称", STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X,
+  );
+  return Math.max(nameW, headW);
+}
+
 function measureOverviewStockColWidths(measureCellText) {
   const headers = readOverviewStockTableHeaderLabels();
   const widths = headers.map((label) =>
@@ -8491,6 +8505,9 @@ function measureOverviewStockColWidths(measureCellText) {
   for (const row of measureCellText.rows || []) {
     for (const mode of modes) {
       for (let col = 0; col < OVERVIEW_STOCK_TABLE_COL_COUNT; col += 1) {
+        if (col === 0) {
+          continue;
+        }
         const raw = measureCellText.fn(row, col, mode, measureCellText.ctx);
         const parts = Array.isArray(raw) ? raw : [raw];
         for (const part of parts) {
@@ -8506,7 +8523,7 @@ function measureOverviewStockColWidths(measureCellText) {
       }
     }
   }
-  widths[0] = Math.max(widths[0], 62);
+  widths[0] = overviewStockNameColWidthPx();
   widths[14] = Math.max(
     widths[14],
     Math.ceil(measureStockTableTextPx("记录  交易", STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
@@ -8534,6 +8551,7 @@ function applyOverviewStockTableColWidths(widths) {
   }
   table.classList.add("stock-table--layout-locked");
   table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
+  table.style.setProperty("--stock-table-name-col-px", `${widths[0]}px`);
 }
 
 function clearOverviewStockTableColLayout() {
@@ -8544,6 +8562,7 @@ function clearOverviewStockTableColLayout() {
   }
   table.classList.remove("stock-table--layout-locked");
   table.style.removeProperty("--stock-table-layout-width-px");
+  table.style.removeProperty("--stock-table-name-col-px");
   table.querySelector("colgroup")?.remove();
 }
 

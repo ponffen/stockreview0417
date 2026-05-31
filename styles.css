@@ -625,11 +625,21 @@ body {
   left: 0;
   z-index: 2;
   background: #fff;
+  border-right: none;
+  /* 分隔线画在 sticky 层上，横滑时与名称列一起固定 */
+  box-shadow: 1px 0 0 var(--line);
 }
 
 .stock-table thead th:first-child {
   background: #f6f8fb;
   z-index: 3;
+}
+
+.stock-table.stock-table--layout-locked th.name-head,
+.stock-table.stock-table--layout-locked td.stock-name {
+  width: var(--stock-table-name-col-px, 6.5rem);
+  min-width: var(--stock-table-name-col-px, 6.5rem);
+  max-width: var(--stock-table-name-col-px, 6.5rem);
 }
 
 .stock-table thead th:last-child,
@@ -672,15 +682,10 @@ body {
 }
 
 .stock-name {
-  min-width: 62px;
+  min-width: 0;
   text-align: left !important;
   overflow: hidden;
   box-sizing: border-box;
-}
-
-.stock-table.stock-table--layout-locked .stock-name {
-  width: auto;
-  max-width: none;
 }
 
 .stock-name strong {
