@@ -26,9 +26,9 @@
   --ledger-col-account: 9ch;
   /* 个股交易记录列宽（ch） */
   --ledger-stock-col-date: 10ch;
-  --ledger-stock-col-type: 6ch;
-  --ledger-stock-col-price: 10ch;
-  --ledger-stock-col-qty: 10ch;
+  --ledger-stock-col-type: 4ch;
+  --ledger-stock-col-price: 8ch;
+  --ledger-stock-col-qty: 5ch;
   --ledger-stock-col-amt: 10ch;
   --ledger-stock-col-account: 6ch;
   /* 列宽比例（与 ch 权重一致；表宽 = max(100%, 内容最小宽) 时等比铺满） */
