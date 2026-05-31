@@ -1,5 +1,5 @@
 /**
- * Metrics v3 冻结/回填：账户表全历史；个股表按「日终仍有持仓」逐日一行（清仓日不写）。
+ * Metrics v3 冻结/回填：账户表全历史；个股表按有持仓（含空头）或当日有成交逐日一行（含 eod=0 清仓日）。
  */
 const {
   getTrades,
@@ -432,7 +432,7 @@ async function freezeAccountHistory({
   return dayPoints.length;
 }
 
-/** 逐日回放：仅日终仍有持仓（qEod>0）的交易日写入；清仓日跳过。 */
+/** 逐日回放：有持仓（含空头负股数）或当日有成交则写入；含日终 eod=0 的清仓日。 */
 function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, frozenDate) {
   const kl = kline || [];
   const symTrades = accTrades.filter((t) => t.symbol === sym).sort(sortTradeAsc);
@@ -463,10 +463,9 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       pi += 1;
     }
     const qEod = qty;
-    if (qBod <= 0 && qEod <= 0 && !dayTrades.length) {
-      continue;
-    }
-    if (qEod <= 1e-6) {
+    const hasActivity =
+      dayTrades.length > 0 || Math.abs(qBod) > 1e-6 || Math.abs(qEod) > 1e-6;
+    if (!hasActivity) {
       continue;
     }
 
@@ -492,7 +491,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
     const denom = qBod * prevPx + Math.max(dayFlow, 0);
     const rDay = denom > 0 ? pnl / denom : 0;
     stageAcc.onDay(day, pnl, rDay);
-    if (qEod > 0 && closeD > 0) {
+    if (Math.abs(qEod) > 1e-6 && closeD > 0) {
       flowPts.push({ date: day, value: qEod * closeD, flow: dayFlow });
     }
     const snap = stageAcc.snapshotTwr();

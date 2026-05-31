@@ -3112,7 +3112,7 @@ async function selectSymbolDailyPositionsOnDate(userId, accountId, date) {
   const { rows } = await q(
     `SELECT symbol, eod_shares, day_close_price, currency, day_pnl_native
      FROM symbol_daily_pnl
-     WHERE user_id = $1 AND account_id = $2 AND date = $3 AND eod_shares > 0.0001
+     WHERE user_id = $1 AND account_id = $2 AND date = $3 AND abs(eod_shares) > 0.0001
      ORDER BY abs(eod_shares * COALESCE(day_close_price, 0)) DESC`,
     [uid, acc, dk]
   );

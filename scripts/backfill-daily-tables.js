@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Metrics v3 历史回填：analysis_daily_snapshot 全历史；symbol_daily_pnl 按日终仍有持仓逐日一行。
+ * Metrics v3 历史回填：analysis_daily_snapshot 全历史；symbol_daily_pnl 含持仓/空头/清仓日逐日一行。
  * Usage: STOCKREVIEW_PHONE=18310270720 node scripts/backfill-daily-tables.js
  */
 const path = require("node:path");

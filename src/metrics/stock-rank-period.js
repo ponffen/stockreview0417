@@ -242,7 +242,7 @@ function resolveEffInterval(symbolTrades, periodStart, periodEnd) {
   const B = sorted[sorted.length - 1].date;
   let effStart = A < periodStart ? periodStart : A;
   let effEnd = B < periodEnd ? B : periodEnd;
-  if (symbolEodQtyOnOrBefore(symbolTrades, periodEnd) > 1e-6) {
+  if (Math.abs(symbolEodQtyOnOrBefore(symbolTrades, periodEnd)) > 1e-6) {
     effEnd = periodEnd;
   }
   return { effStart, effEnd };
@@ -263,7 +263,7 @@ function countHeldDaysFromPnl(pnlRows, startKey, endKey) {
   let n = 0;
   for (const r of pnlRows || []) {
     const d = String(r.date).slice(0, 10);
-    if (d >= startKey && d <= endKey && (Number(r.eodShares) || 0) > 1e-6) {
+    if (d >= startKey && d <= endKey) {
       n += 1;
     }
   }
