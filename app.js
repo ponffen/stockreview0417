@@ -75,6 +75,9 @@ const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 /** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
 const INITIAL_SETTINGS_SYNC_DEFER_MS = 4000;
+/** 首屏 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
+const METRICS_HOME_BUNDLE_STAGES = "today,mtd,ytd,inception";
+const homeBundleInflightByKey = new Map();
 const STATE_SYNC_KEYS = [
   "route",
   "useDemoData",
@@ -765,6 +768,14 @@ async function startAppAfterAuth(options = {}) {
   normalizeModuleHomeOnColdLoad();
   persistState({ skipSettingsSync: true });
   scheduleDeferredInitialSettingsSync();
+  if (state.route === "earning" && apiReady) {
+    const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+    if (preloadedHomeBundle && aid === "all") {
+      await applyPreloadedHomeBundleOnEarning(preloadedHomeBundle, aid);
+    } else {
+      await refreshOverviewProfitRowFromSnapshots();
+    }
+  }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   void hydrateSymbolNameMap(
     state.route === "earning" || state.route === "analysis"
@@ -774,16 +785,7 @@ async function startAppAfterAuth(options = {}) {
     renderAll();
   });
   renderAll();
-  if (state.route === "earning") {
-    if (apiReady) {
-      const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      if (preloadedHomeBundle && aid === "all") {
-        void applyPreloadedHomeBundleOnEarning(preloadedHomeBundle, aid);
-      } else {
-        void refreshOverviewProfitRowFromSnapshots();
-      }
-    }
-  } else {
+  if (state.route !== "earning") {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
       if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
@@ -1946,7 +1948,7 @@ async function hydrateState(options = {}) {
   if (parallelHomeBundle) {
     const [bootResult, bundle] = await Promise.all([
       fetchApiStateBootstrap(),
-      fetchHomeBundleDirect("all"),
+      fetchHomeBundleMetrics("all", { allowBeforeApiReady: true }),
     ]);
     boot = bootResult;
     preloadedHomeBundle = bundle;
@@ -2210,23 +2212,59 @@ async function fetchApiStateBootstrap() {
   }
 }
 
-/** 与 fetchMetricsApi 相同路径；不依赖 apiReady，供首屏与 settings 并行 */
-async function fetchHomeBundleDirect(accountScope) {
-  const aid = accountScope === "all" ? "all" : String(accountScope || "").trim() || "all";
-  const qs = new URLSearchParams({
-    account_id: aid,
-    accountScope: aid,
-    stages: "today,mtd,ytd,inception",
-  });
-  const url = `${getApiBaseForFetch()}/metrics/home-bundle?${qs.toString()}`;
-  try {
+function normalizeMetricsAccountId(aid) {
+  return aid === "all" ? "all" : String(aid || "").trim() || "all";
+}
+
+function homeBundleInflightKey(aid, stages) {
+  return `${normalizeMetricsAccountId(aid)}|${String(stages || METRICS_HOME_BUNDLE_STAGES).trim() || METRICS_HOME_BUNDLE_STAGES}`;
+}
+
+function invalidateHomeBundleInflight(accountId) {
+  if (accountId == null || accountId === "") {
+    homeBundleInflightByKey.clear();
+    return;
+  }
+  const prefix = `${normalizeMetricsAccountId(accountId)}|`;
+  for (const key of [...homeBundleInflightByKey.keys()]) {
+    if (key.startsWith(prefix)) {
+      homeBundleInflightByKey.delete(key);
+    }
+  }
+}
+
+/** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages */
+async function fetchHomeBundleMetrics(aid, opts = {}) {
+  const id = normalizeMetricsAccountId(aid);
+  const stages = String(opts.stages || METRICS_HOME_BUNDLE_STAGES).trim() || METRICS_HOME_BUNDLE_STAGES;
+  const key = homeBundleInflightKey(id, stages);
+  const slot = homeBundleInflightByKey.get(key);
+  if (slot?.resolved !== undefined) {
+    return slot.resolved;
+  }
+  if (slot?.promise) {
+    return slot.promise;
+  }
+  if (!opts.allowBeforeApiReady && !apiReady) {
+    return null;
+  }
+  const promise = (async () => {
+    const qs = new URLSearchParams({ account_id: id, stages });
+    const url = `${getApiBaseForFetch()}/metrics/home-bundle?${qs.toString()}`;
     const res = await apiFetch(url, { cache: "no-store", timeoutMs: 55_000 });
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !j?.ok || !j.data) {
       return null;
     }
     return j.data;
+  })();
+  homeBundleInflightByKey.set(key, { promise });
+  try {
+    const data = await promise;
+    homeBundleInflightByKey.set(key, { promise: Promise.resolve(data), resolved: data });
+    return data;
   } catch {
+    homeBundleInflightByKey.delete(key);
     return null;
   }
 }
@@ -5726,6 +5764,7 @@ function invalidateOverviewMetricsUi() {
   state.overviewMetricsUi.assets = null;
   state.overviewMetricsUi.holdings = null;
   _overviewProfitInflight = null;
+  invalidateHomeBundleInflight();
 }
 
 function invalidateOverviewSnapshotUi() {
@@ -6002,6 +6041,13 @@ function renderOverviewAndStockTable() {
       state.overviewMetricsUi.holdings,
       stageKey,
     );
+    return;
+  }
+
+  if (state.overviewMetricsUi.loading || _overviewProfitInflight?.promise) {
+    setOverviewProfitKpisDash();
+    setOverviewAssetsGridDash();
+    paintOverviewStockTableLoading("数据加载中…");
     return;
   }
 
@@ -7470,10 +7516,7 @@ function scheduleMetricsRebuildUiRefresh() {
     }
     void (async () => {
       try {
-        const bundle = await fetchMetricsApi("/metrics/home-bundle", {
-          accountScope: aid,
-          stages: METRICS_HOME_BUNDLE_STAGES,
-        });
+        const bundle = await fetchHomeBundleMetrics(aid, { stages: METRICS_HOME_BUNDLE_STAGES });
         if (bundle?.meta?.rebuilding) {
           state.metricsRebuilding = true;
           applyMetricsRebuildStatusUi(true);
@@ -7482,7 +7525,7 @@ function scheduleMetricsRebuildUiRefresh() {
         stopMetricsRebuildPoll();
         state.metricsRebuilding = false;
         invalidateOverviewMetricsUi();
-        await refreshOverviewProfitRow(aid, metricsStageFromHome());
+        await refreshOverviewProfitRowFromSnapshots();
       } catch {
         /* keep polling */
       }
@@ -8220,8 +8263,6 @@ async function fetchHomeSummaryRemote() {
 }
 
 const METRICS_HOME_STAGE = { month: "mtd", ytd: "ytd", total: "inception" };
-/** 首屏 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
-const METRICS_HOME_BUNDLE_STAGES = "today,mtd,ytd,inception";
 const METRICS_HOME_BUNDLE_STAGE_KEYS = ["today", "mtd", "ytd", "inception"];
 function metricsStageFromHome() { return METRICS_HOME_STAGE[state.stageRange] || "mtd"; }
 function overviewMetricsBundleCacheKey(aid) {
@@ -8281,9 +8322,10 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   if (!apiReady) return null;
   const qs = new URLSearchParams();
   const p = { ...params };
-  if (p.accountScope != null && p.account_id == null) {
+  if (p.account_id == null && p.accountScope != null) {
     p.account_id = p.accountScope;
   }
+  delete p.accountScope;
   for (const [k, v] of Object.entries(p)) {
     if (v != null && String(v) !== "") {
       qs.set(k, String(v));
@@ -8981,6 +9023,11 @@ async function applyPreloadedHomeBundleOnEarning(bundle, aid) {
   if (_overviewProfitInflight?.key === reqKey) {
     return _overviewProfitInflight.promise;
   }
+  const flightKey = homeBundleInflightKey(aid, METRICS_HOME_BUNDLE_STAGES);
+  homeBundleInflightByKey.set(flightKey, {
+    promise: Promise.resolve(bundle),
+    resolved: bundle,
+  });
   const seq = ++overviewProfitRefreshSeq;
   state.overviewMetricsUi.loading = true;
   const promise = (async () => {
@@ -9013,10 +9060,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     if (!apiReady) {
       return;
     }
-    const bundle = await fetchMetricsApi("/metrics/home-bundle", {
-      accountScope: aid,
-      stages: METRICS_HOME_BUNDLE_STAGES,
-    });
+    const bundle = await fetchHomeBundleMetrics(aid, { stages: METRICS_HOME_BUNDLE_STAGES });
     applyHomeBundleToOverviewUi(bundle, aid, seq);
   } catch {
     if (seq === overviewProfitRefreshSeq) {
