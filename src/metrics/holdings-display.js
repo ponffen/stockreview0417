@@ -206,8 +206,7 @@ async function buildHoldingsPayload({
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
     const snap = snapBySym.get(sym);
-    const qtyLive = Number(liveP?.quantity) || 0;
-    const qty = qtyLive > 1e-6 ? qtyLive : Number(netBySym.get(sym)) || 0;
+    const qty = Number(liveP?.quantity) || 0;
     if (!(qty > 1e-6)) {
       continue;
     }

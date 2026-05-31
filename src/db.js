@@ -1463,6 +1463,40 @@ async function getLastEodSharesForUser(userId) {
   }));
 }
 
+/** 指定冻结日 symbol_daily_pnl 的 EOD 股数/价（用于持仓股数、冻结市值）。 */
+async function getSymbolDailyEodRowsAtDate(userId, accountScope, dateKey) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const scope = String(accountScope || "all").trim() || "all";
+  const d = String(dateKey || "").slice(0, 10);
+  if (!d) {
+    return [];
+  }
+  const params = scope === "all" ? [uid, d] : [uid, d, scope];
+  const sql =
+    scope === "all"
+      ? `SELECT account_id, symbol, date, eod_shares,
+           COALESCE(NULLIF(eod_price, 0), day_close_price, 0) AS eod_price
+         FROM symbol_daily_pnl
+         WHERE user_id = $1 AND date = $2
+         ORDER BY account_id ASC, symbol ASC`
+      : `SELECT account_id, symbol, date, eod_shares,
+           COALESCE(NULLIF(eod_price, 0), day_close_price, 0) AS eod_price
+         FROM symbol_daily_pnl
+         WHERE user_id = $1 AND date = $2 AND account_id = $3
+         ORDER BY symbol ASC`;
+  const { rows } = await q(sql, params);
+  return rows.map((r) => ({
+    accountId: String(r.account_id),
+    symbol: String(r.symbol),
+    date: r.date == null ? d : shanghaiCalendarDateKey(r.date),
+    eodShares: Number(r.eod_shares) || 0,
+    eodPrice: Number(r.eod_price) || 0,
+  }));
+}
+
 async function insertCronJobRun(row) {
   await ensureMetricsOpsTables();
   const r = row || {};
@@ -2116,11 +2150,20 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
     const symRes =
       frozenThrough && analysisRow
         ? await cq(
-            `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
-            [uid, scope, frozenThrough],
+            scope === "all"
+              ? `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND date = $2 ORDER BY account_id ASC, symbol ASC`
+              : `SELECT * FROM symbol_daily_pnl WHERE user_id = $1 AND account_id = $2 AND date = $3 ORDER BY symbol ASC`,
+            scope === "all" ? [uid, frozenThrough] : [uid, scope, frozenThrough],
           )
         : { rows: [] };
     const symbolRows = (symRes.rows || []).map((r) => mapSymbolRowToHomeSummary(r, frozenThrough));
+    const frozenSymbolEodRows = (symRes.rows || []).map((r) => ({
+      accountId: String(r.account_id),
+      symbol: String(r.symbol),
+      date: frozenThrough,
+      eodShares: Number(r.eod_shares) || 0,
+      eodPrice: Number(r.eod_price) || Number(r.day_close_price) || 0,
+    }));
     let lastEodRows = [];
     if (frozenThrough && String(process.env.HOME_BUNDLE_SKIP_EOD || "").trim() !== "1") {
       const from = addCalendarDays(frozenThrough, -14);
@@ -2153,6 +2196,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       um: mapUserMetricsMetaRow(umRes.rows[0]),
       accountMetaList,
       lastEodRows,
+      frozenSymbolEodRows,
       trades: (tradesRes.rows || []).map(rowToTrade),
       cashTransfers: (cashRes.rows || []).map(rowToCashTransfer),
       singleConnection: true,
@@ -3118,6 +3162,7 @@ module.exports = {
   upsertAccountMetricsMeta,
   getAccountMetricsMetaForUser,
   getLastEodSharesForUser,
+  getSymbolDailyEodRowsAtDate,
   insertCronJobRun,
   listCronJobRuns,
   buildAccountKpiSurfaceForScope,

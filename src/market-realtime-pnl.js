@@ -15,7 +15,12 @@ const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger
 const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metrics/snapshot-plus-live");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
-const { holdingsSymbolsFromTrades } = require("./metrics/holdings-active-symbols");
+const {
+  holdingsSymbolsFromTrades,
+  aggregateFrozenEodBySymbol,
+  currentQuantityFromFrozenEod,
+  frozenMvNatForSymbol,
+} = require("./metrics/holdings-active-symbols");
 const {
   parseQuoteTimeToDateKey,
   todayProfitCnyForHolding,
@@ -426,29 +431,21 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
 
   const scoped =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
-  const holdings = new Map();
-  for (const trade of scoped.sort((a, b) => {
-    const ad = new Date(a.date).getTime();
-    const bd = new Date(b.date).getTime();
-    if (ad !== bd) {
-      return ad - bd;
-    }
-    return Number(a.createdAt || 0) - Number(b.createdAt || 0);
-  })) {
-    const symbol = normalizeSymbol(trade.symbol);
-    if (!symbol) {
-      continue;
-    }
-    holdings.set(
-      symbol,
-      (holdings.get(symbol) || 0) +
-        (trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0)),
-    );
-  }
+  const frozenDate = String(frozenThrough || "").slice(0, 10);
+  const frozenEodRows = Array.isArray(pre.frozenSymbolEodRows) ? pre.frozenSymbolEodRows : [];
+  const frozenBySym = aggregateFrozenEodBySymbol(frozenEodRows, scope, frozenDate);
 
   let liveMarketValue = 0;
   const positions = [];
-  for (const [symbol, qty] of holdings.entries()) {
+  for (const symbol of symbols) {
+    const qty = currentQuantityFromFrozenEod(
+      frozenBySym,
+      trades,
+      symbol,
+      tradingDay ? liveDate : frozenDate,
+      scope,
+      tradingDay,
+    );
     if (!(qty > 1e-6)) {
       continue;
     }
@@ -481,12 +478,13 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       ? todayProfitCnyForHolding({
           quote,
           symbol,
-          qty,
           prevClose,
           current,
           rate,
           trades: scoped,
           todayKey,
+          frozenMvNat: frozenMvNatForSymbol(frozenBySym, symbol),
+          endQuantity: qty,
         })
       : 0;
     positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });

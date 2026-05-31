@@ -8198,10 +8198,7 @@ function paintOverviewStockTableFromMetricsRows(rows) {
     const totalClass = metricsRowProfitClass(row, "totalProfit");
     const totalRateClass = bundleSignedClass(row.totalRate);
     const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
-    const mvSort = parseBundleSignedAmount(row.marketValueCny ?? row.marketValue);
-    const priceSort = parseBundleSignedAmount(row.price);
-    const qtyFromMv = mvSort > 0 && priceSort > 0 ? Math.round(mvSort / priceSort) : NaN;
-    const qty = Number.isFinite(qtyFromMv) ? String(qtyFromMv) : bundleFmtText(row.quantity);
+    const qty = bundleFmtText(row.quantity);
     return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(sym)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
   }).join("");
 }

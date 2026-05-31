@@ -96,16 +96,43 @@ function getPositionDayTradeContext(symbol, dateKey, trades) {
   return { startQuantity, endQuantity, dayFlowNative };
 }
 
-function computeTodayProfitNative({ quote, symbol, prevClose, current, trades, todayKey, now }) {
+function computeTodayProfitNative({
+  quote,
+  symbol,
+  prevClose,
+  current,
+  trades,
+  todayKey,
+  now,
+  frozenMvNat,
+  endQuantity,
+}) {
   if (!shouldCountTodayPositionPnlFromQuote(quote, now)) {
     return 0;
   }
   const dayCtx = getPositionDayTradeContext(symbol, todayKey, trades);
-  const todayStartMvNat = dayCtx.startQuantity * prevClose;
-  return dayCtx.endQuantity * current - todayStartMvNat - dayCtx.dayFlowNative;
+  const frozenStart = Number(frozenMvNat);
+  const todayStartMvNat =
+    Number.isFinite(frozenStart) && frozenStart > 0 ? frozenStart : dayCtx.startQuantity * prevClose;
+  const endQty =
+    endQuantity != null && Number.isFinite(Number(endQuantity))
+      ? Number(endQuantity)
+      : dayCtx.endQuantity;
+  return endQty * current - todayStartMvNat - dayCtx.dayFlowNative;
 }
 
-function todayProfitCnyForHolding({ quote, symbol, prevClose, current, rate, trades, todayKey, now }) {
+function todayProfitCnyForHolding({
+  quote,
+  symbol,
+  prevClose,
+  current,
+  rate,
+  trades,
+  todayKey,
+  now,
+  frozenMvNat,
+  endQuantity,
+}) {
   const nat = computeTodayProfitNative({
     quote,
     symbol,
@@ -114,6 +141,8 @@ function todayProfitCnyForHolding({ quote, symbol, prevClose, current, rate, tra
     trades,
     todayKey,
     now,
+    frozenMvNat,
+    endQuantity,
   });
   return nat * (Number(rate) || 1);
 }

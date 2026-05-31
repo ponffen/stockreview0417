@@ -14,6 +14,7 @@ const {
   getUserMetricsMeta,
   getAccountMetricsMetaForUser,
   getLastEodSharesForUser,
+  getSymbolDailyEodRowsAtDate,
   fetchHomeBundleFrozenPack,
   normalizeSymbol,
 } = require("./db");
@@ -627,8 +628,15 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
   const accountMetaList = await mark("db.accountMeta", () => getAccountMetricsMetaForUser(userId));
   const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
   let lastEodRows = [];
+  let frozenSymbolEodRows = [];
+  const frozenThroughKey = String(home.account?.frozen_through || um?.frozenThrough || "").slice(0, 10);
   if (!scopeCleared) {
     lastEodRows = await mark("db.lastEodShares", () => getLastEodSharesForUser(userId));
+    if (frozenThroughKey) {
+      frozenSymbolEodRows = await mark("db.frozenSymbolEod", () =>
+        getSymbolDailyEodRowsAtDate(userId, scope, frozenThroughKey),
+      );
+    }
   }
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
   let liveFallback = false;
@@ -646,6 +654,7 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
           homeAccount: home.account,
           scopeCleared,
           lastEodRows,
+          frozenSymbolEodRows,
         },
       }),
       LIVE_METRICS_MAX_MS,
@@ -753,16 +762,18 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
     return loadMetricsScopeContext(userId, accountScope, diag);
   }
 
-  const { settings, home, um, accountMetaList, lastEodRows, trades, cashTransfers, accounts } = {
-    settings: pack.settings,
-    home: pack.home,
-    um: pack.um,
-    accountMetaList: pack.accountMetaList,
-    lastEodRows: pack.lastEodRows,
-    trades: pack.trades || [],
-    cashTransfers: pack.cashTransfers || [],
-    accounts: accountsFromHomeBundlePack(pack),
-  };
+  const { settings, home, um, accountMetaList, lastEodRows, frozenSymbolEodRows, trades, cashTransfers, accounts } =
+    {
+      settings: pack.settings,
+      home: pack.home,
+      um: pack.um,
+      accountMetaList: pack.accountMetaList,
+      lastEodRows: pack.lastEodRows,
+      frozenSymbolEodRows: pack.frozenSymbolEodRows || [],
+      trades: pack.trades || [],
+      cashTransfers: pack.cashTransfers || [],
+      accounts: accountsFromHomeBundlePack(pack),
+    };
   const scopeCleared = isScopeMetricsCleared(scope, um, accountMetaList);
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
 
@@ -781,6 +792,7 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
           homeAccount: home.account,
           scopeCleared,
           lastEodRows,
+          frozenSymbolEodRows,
         },
       }),
       LIVE_METRICS_MAX_MS,

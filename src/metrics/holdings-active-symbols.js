@@ -1,6 +1,6 @@
 /**
- * 从成交 + 可选 EOD 快照推导「当前应展示的持仓代码」。
- * EOD 仅剔除快照中明确为 0 仓的标的；快照未出现的标的（如子账户 frozen 落后时当日新开仓）保留成交净仓。
+ * 从成交 + symbol_daily_pnl 冻结 EOD 推导持仓代码与股数。
+ * 股数 = 冻结日 eod_shares + 仅当日成交净变动。
  */
 const { normalizeSymbol } = require("../db");
 
@@ -48,6 +48,78 @@ function applyEodFilterToHoldingsSymbols(symbols, eodSharesBySym) {
   });
 }
 
+/** 冻结日 symbol_daily_pnl：按标的汇总 eod 股数与冻结市值（eod_shares * eod_price）。 */
+function aggregateFrozenEodBySymbol(frozenEodRows, accountScope, frozenDate) {
+  const wanted = String(accountScope || "all").trim() || "all";
+  const fd = String(frozenDate || "").slice(0, 10);
+  const rows = (frozenEodRows || []).filter((row) => {
+    const d = String(row.date || "").slice(0, 10);
+    return !fd || d === fd;
+  });
+  let useRows = rows;
+  if (wanted === "all") {
+    const hasAllAcc = rows.some((row) => String(row.accountId || row.account_id || "") === "all");
+    useRows = hasAllAcc
+      ? rows.filter((row) => String(row.accountId || row.account_id || "") === "all")
+      : rows.filter((row) => {
+          const acc = String(row.accountId || row.account_id || "default");
+          return acc !== "all";
+        });
+  } else {
+    useRows = rows.filter((row) => String(row.accountId || row.account_id || "default") === wanted);
+  }
+  const map = new Map();
+  for (const row of useRows) {
+    const sym = normalizeSymbol(row.symbol);
+    if (!sym) continue;
+    const sh = Number(row.eodShares ?? row.eod_shares) || 0;
+    const px = Number(row.eodPrice ?? row.eod_price) || 0;
+    const cur = map.get(sym) || { eodShares: 0, frozenMvNat: 0 };
+    cur.eodShares += sh;
+    cur.frozenMvNat += sh * px;
+    map.set(sym, cur);
+  }
+  return map;
+}
+
+function todayTradeQtyDelta(trades, symbol, todayKey, accountScope) {
+  const sym = normalizeSymbol(symbol);
+  const dk = String(todayKey || "").slice(0, 10);
+  if (!sym || !dk) return 0;
+  const wanted = String(accountScope || "all").trim() || "all";
+  const list =
+    wanted === "all" ? trades || [] : (trades || []).filter((t) => String(t.accountId || "default") === wanted);
+  let delta = 0;
+  for (const trade of list) {
+    if (normalizeSymbol(trade.symbol) !== sym) continue;
+    if (String(trade.date || "").slice(0, 10) !== dk) continue;
+    delta += trade.side === "buy" ? Number(trade.quantity || 0) : -Number(trade.quantity || 0);
+  }
+  return delta;
+}
+
+function currentQuantityFromFrozenEod(frozenBySym, trades, symbol, todayKey, accountScope, tradingDay) {
+  const sym = normalizeSymbol(symbol);
+  const frozen = frozenBySym?.get(sym);
+  const eodSh = frozen ? Number(frozen.eodShares) || 0 : 0;
+  if (!tradingDay || !todayKey) {
+    if (frozen && eodSh > 1e-6) {
+      return eodSh;
+    }
+    return Number(netHoldingsBySymbol(trades, accountScope).get(sym)) || 0;
+  }
+  const delta = todayTradeQtyDelta(trades, sym, todayKey, accountScope);
+  if (frozen) {
+    return eodSh + delta;
+  }
+  return Number(netHoldingsBySymbol(trades, accountScope).get(sym)) || 0;
+}
+
+function frozenMvNatForSymbol(frozenBySym, symbol) {
+  const frozen = frozenBySym?.get(normalizeSymbol(symbol));
+  return frozen ? Number(frozen.frozenMvNat) || 0 : 0;
+}
+
 function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
   const holdings = netHoldingsBySymbol(trades, accountScope);
   let symbols = [...holdings.entries()].filter(([, q]) => q > 1e-6).map(([s]) => s);
@@ -60,6 +132,10 @@ function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
 module.exports = {
   netHoldingsBySymbol,
   eodSharesBySymbol,
+  aggregateFrozenEodBySymbol,
+  todayTradeQtyDelta,
+  currentQuantityFromFrozenEod,
+  frozenMvNatForSymbol,
   applyEodFilterToHoldingsSymbols,
   holdingsSymbolsFromTrades,
 };
