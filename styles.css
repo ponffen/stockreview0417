@@ -16,14 +16,19 @@
   --blue: #4f83f1;
   --up: #f45a68;
   --down: #0ebc9f;
-  /* 交易 / 资金 / 个股记录表列宽（ch，按内容定宽） */
-  --ledger-col-date: 14ch;
-  --ledger-col-type: 4.5ch;
-  --ledger-col-price: 12ch;
-  --ledger-col-qty: 6ch;
-  --ledger-col-amt: 15ch;
-  --ledger-col-name: 11ch;
-  --ledger-col-account: 9ch;
+  /* 交易记录列宽（ch） */
+  --ledger-trade-col-date: 10ch;
+  --ledger-trade-col-name: 11ch;
+  --ledger-trade-col-type: 5ch;
+  --ledger-trade-col-price: 8ch;
+  --ledger-trade-col-qty: 5ch;
+  --ledger-trade-col-amt: 10ch;
+  --ledger-trade-col-account: 6ch;
+  /* 资金记录列宽（ch） */
+  --ledger-cash-col-date: 10ch;
+  --ledger-cash-col-account: 6ch;
+  --ledger-cash-col-type: 5ch;
+  --ledger-cash-col-amt: 10ch;
   /* 个股交易记录列宽（ch） */
   --ledger-stock-col-date: 10ch;
   --ledger-stock-col-type: 4ch;
@@ -33,11 +38,13 @@
   --ledger-stock-col-account: 6ch;
   /* 列宽比例（与 ch 权重一致；表宽 = max(100%, 内容最小宽) 时等比铺满） */
   --ledger-trade-min-width: calc(
-    var(--ledger-col-date) + var(--ledger-col-name) + var(--ledger-col-type) +
-      var(--ledger-col-price) + var(--ledger-col-qty) + var(--ledger-col-amt) + var(--ledger-col-account)
+    var(--ledger-trade-col-date) + var(--ledger-trade-col-name) + var(--ledger-trade-col-type) +
+      var(--ledger-trade-col-price) + var(--ledger-trade-col-qty) + var(--ledger-trade-col-amt) +
+      var(--ledger-trade-col-account)
   );
   --ledger-cash-min-width: calc(
-    var(--ledger-col-date) + var(--ledger-col-account) + var(--ledger-col-type) + var(--ledger-col-amt)
+    var(--ledger-cash-col-date) + var(--ledger-cash-col-account) + var(--ledger-cash-col-type) +
+      var(--ledger-cash-col-amt)
   );
   --ledger-stock-min-width: calc(
     var(--ledger-stock-col-date) + var(--ledger-stock-col-type) + var(--ledger-stock-col-price) +
