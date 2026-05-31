@@ -24,7 +24,13 @@
   --ledger-col-amt: 15ch;
   --ledger-col-name: 11ch;
   --ledger-col-account: 9ch;
+  /* 个股交易记录列宽（ch） */
+  --ledger-stock-col-date: 12ch;
   --ledger-stock-col-type: 6ch;
+  --ledger-stock-col-price: 10ch;
+  --ledger-stock-col-qty: 10ch;
+  --ledger-stock-col-amt: 10ch;
+  --ledger-stock-col-account: 6ch;
   /* 列宽比例（与 ch 权重一致；表宽 = max(100%, 内容最小宽) 时等比铺满） */
   --ledger-trade-min-width: calc(
     var(--ledger-col-date) + var(--ledger-col-name) + var(--ledger-col-type) +
@@ -34,12 +40,12 @@
     var(--ledger-col-date) + var(--ledger-col-account) + var(--ledger-col-type) + var(--ledger-col-amt)
   );
   --ledger-stock-min-width: calc(
-    var(--ledger-col-date) + var(--ledger-stock-col-type) + var(--ledger-col-price) +
-      var(--ledger-col-qty) + var(--ledger-col-amt) + var(--ledger-col-account)
+    var(--ledger-stock-col-date) + var(--ledger-stock-col-type) + var(--ledger-stock-col-price) +
+      var(--ledger-stock-col-qty) + var(--ledger-stock-col-amt) + var(--ledger-stock-col-account)
   );
   --ledger-stock-pub-min-width: calc(
-    var(--ledger-col-date) + var(--ledger-stock-col-type) + var(--ledger-col-price) +
-      var(--ledger-col-amt) + var(--ledger-col-account)
+    var(--ledger-stock-col-date) + var(--ledger-stock-col-type) + var(--ledger-stock-col-price) +
+      var(--ledger-stock-col-amt) + var(--ledger-stock-col-account)
   );
   --ledger-trade-w-date: 19.581%;
   --ledger-trade-w-name: 15.385%;
@@ -52,17 +58,17 @@
   --ledger-cash-w-account: 21.176%;
   --ledger-cash-w-type: 10.588%;
   --ledger-cash-w-amt: 35.294%;
-  --ledger-stock-w-date: 22.581%;
-  --ledger-stock-w-type: 9.677%;
-  --ledger-stock-w-price: 19.355%;
-  --ledger-stock-w-qty: 9.677%;
-  --ledger-stock-w-amt: 24.194%;
-  --ledger-stock-w-account: 14.516%;
-  --ledger-stock-pub-w-date: 25%;
-  --ledger-stock-pub-w-type: 10.714%;
-  --ledger-stock-pub-w-price: 21.429%;
-  --ledger-stock-pub-w-amt: 26.786%;
-  --ledger-stock-pub-w-account: 16.071%;
+  --ledger-stock-w-date: 22.222%;
+  --ledger-stock-w-type: 11.111%;
+  --ledger-stock-w-price: 18.519%;
+  --ledger-stock-w-qty: 18.519%;
+  --ledger-stock-w-amt: 18.519%;
+  --ledger-stock-w-account: 11.111%;
+  --ledger-stock-pub-w-date: 27.273%;
+  --ledger-stock-pub-w-type: 13.636%;
+  --ledger-stock-pub-w-price: 22.727%;
+  --ledger-stock-pub-w-amt: 22.727%;
+  --ledger-stock-pub-w-account: 13.636%;
 }
 
 * {
@@ -1934,7 +1940,7 @@ h2 {
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(1),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(1) {
   width: var(--ledger-stock-w-date);
-  min-width: var(--ledger-col-date);
+  min-width: var(--ledger-stock-col-date);
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(2),
@@ -1946,28 +1952,28 @@ h2 {
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(3),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(3) {
   width: var(--ledger-stock-w-price);
-  min-width: var(--ledger-col-price);
+  min-width: var(--ledger-stock-col-price);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(4),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(4) {
   width: var(--ledger-stock-w-qty);
-  min-width: var(--ledger-col-qty);
+  min-width: var(--ledger-stock-col-qty);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(5),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(5) {
   width: var(--ledger-stock-w-amt);
-  min-width: var(--ledger-col-amt);
+  min-width: var(--ledger-stock-col-amt);
   text-align: right;
 }
 
 .stock-record-table:not(.stock-record-table--pub) th:nth-child(6),
 .stock-record-table:not(.stock-record-table--pub) td:nth-child(6) {
   width: var(--ledger-stock-w-account);
-  min-width: var(--ledger-col-account);
+  min-width: var(--ledger-stock-col-account);
   text-align: left;
 }
 
@@ -1975,7 +1981,7 @@ h2 {
 .stock-record-table--pub th:nth-child(1),
 .stock-record-table--pub td:nth-child(1) {
   width: var(--ledger-stock-pub-w-date);
-  min-width: var(--ledger-col-date);
+  min-width: var(--ledger-stock-col-date);
 }
 
 .stock-record-table--pub th:nth-child(2),
@@ -1987,21 +1993,21 @@ h2 {
 .stock-record-table--pub th:nth-child(3),
 .stock-record-table--pub td:nth-child(3) {
   width: var(--ledger-stock-pub-w-price);
-  min-width: var(--ledger-col-price);
+  min-width: var(--ledger-stock-col-price);
   text-align: right;
 }
 
 .stock-record-table--pub th:nth-child(4),
 .stock-record-table--pub td:nth-child(4) {
   width: var(--ledger-stock-pub-w-amt);
-  min-width: var(--ledger-col-amt);
+  min-width: var(--ledger-stock-col-amt);
   text-align: right;
 }
 
 .stock-record-table--pub th:nth-child(5),
 .stock-record-table--pub td:nth-child(5) {
   width: var(--ledger-stock-pub-w-account);
-  min-width: var(--ledger-col-account);
+  min-width: var(--ledger-stock-col-account);
   text-align: left;
 }
 
