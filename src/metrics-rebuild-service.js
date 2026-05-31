@@ -9,7 +9,7 @@ const {
 } = require("./db");
 const { resolveFrozenDate } = require("./eod-freeze-service");
 const { addCalendarDays } = require("./metrics/stages");
-const { minDateKey, normDateKey } = require("./metrics-invalidate");
+const { minDateKey, normDateKey } = require("./metrics/date-keys");
 
 const DEBOUNCE_MS = Math.max(
   1000,

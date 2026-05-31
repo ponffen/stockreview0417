@@ -1,22 +1,6 @@
 /**
  * 成交 / 银证写路径：收集受影响日期并触发 metrics 区间重算。
  */
-const { scheduleMetricsRebuildForUser, kickMetricsRebuildNow } = require("./metrics-rebuild-service");
-
-function normDateKey(d) {
-  const s = String(d || "").slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
-}
-
-function minDateKey(dates) {
-  let minD = null;
-  for (const raw of dates || []) {
-    const d = normDateKey(raw);
-    if (!d) continue;
-    if (!minD || d < minD) minD = d;
-  }
-  return minD;
-}
 
 /** 新增/修改成交：合并改前、改后日期 */
 function hintDatesFromTradeMutation(priorTrade, nextTrade) {
@@ -41,7 +25,6 @@ function hintDatesFromImportRows(rows, dateField = "date") {
 }
 
 function clearUserMetricsCaches(userId) {
-  // 预留：与 server 内存缓存联动时在此扩展
   void userId;
 }
 
@@ -53,6 +36,7 @@ function notifyLedgerMutation(userId, opts = {}) {
   const uid = String(userId || "").trim();
   if (!uid) return;
   clearUserMetricsCaches(uid);
+  const { scheduleMetricsRebuildForUser, kickMetricsRebuildNow } = require("./metrics-rebuild-service");
   scheduleMetricsRebuildForUser(uid, {
     hintDates: opts.hintDates || [],
     fullRebuild: !!opts.fullRebuild,
@@ -61,8 +45,6 @@ function notifyLedgerMutation(userId, opts = {}) {
 }
 
 module.exports = {
-  normDateKey,
-  minDateKey,
   hintDatesFromTradeMutation,
   hintDatesFromCashMutation,
   hintDatesFromImportRows,
