@@ -673,8 +673,14 @@ body {
 
 .stock-name {
   min-width: 62px;
-  width: 62px;
   text-align: left !important;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.stock-table.stock-table--layout-locked .stock-name {
+  width: auto;
+  max-width: none;
 }
 
 .stock-name strong {
@@ -685,10 +691,15 @@ body {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
-  max-width: 60px;
+  max-width: 100%;
 }
 
 .stock-name span {
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  max-width: 100%;
   color: #8f97a7;
   font-size: 11px;
 }
