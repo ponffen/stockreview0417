@@ -637,7 +637,7 @@ body {
   right: 0;
   bottom: 0;
   width: 1px;
-  background: #b0bac8;
+  background: var(--line);
   pointer-events: none;
   z-index: 5;
 }
