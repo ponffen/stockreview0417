@@ -23,6 +23,12 @@ const {
   getTradingDateKeyBy0830,
 } = require("../position-today-pnl");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
+const {
+  isFreshStagePeriod,
+  monthStartKeyShanghai,
+  yearStartKeyShanghai,
+} = require("./stages");
+const { liveDateKeyShanghai } = require("./trading-calendar");
 
 function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
   let stockBook = Number(stockProfitScalar) || 0;
@@ -184,6 +190,9 @@ async function buildHoldingsPayload({
   const frozenThrough = String(
     accountRow?.frozen_through || symbolRows?.[0]?.frozen_through || live.frozenThrough || "",
   ).slice(0, 10);
+  const sessionAsOf = liveDateKeyShanghai();
+  const freshMonth = isFreshStagePeriod(monthStartKeyShanghai(sessionAsOf), frozenThrough);
+  const freshYear = isFreshStagePeriod(yearStartKeyShanghai(sessionAsOf), frozenThrough);
   const firstTrade = String(accountRow?.first_trade_date || accountRow?.firstTradeDate || frozenThrough || "1970-01-01").slice(
     0,
     10,
@@ -220,8 +229,8 @@ async function buildHoldingsPayload({
     const isCnyStock = ccy === "CNY" || market === "A股";
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
-    const monthFrozenNative = Number(snap?.month_profit_native) || 0;
-    const yearFrozenNative = Number(snap?.ytd_profit_native) || 0;
+    const monthFrozenNative = freshMonth ? 0 : Number(snap?.month_profit_native) || 0;
+    const yearFrozenNative = freshYear ? 0 : Number(snap?.ytd_profit_native) || 0;
     const totalFrozenNative = Number(snap?.total_profit_native) || 0;
     const current = Number(liveP?.current) || 0;
     const prev = Number(liveP?.prevClose) || current;
@@ -308,8 +317,8 @@ async function buildHoldingsPayload({
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
     const todayProfitCny = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
-    const monthNative = Number(snap?.month_profit_native) || 0;
-    const yearNative = Number(snap?.ytd_profit_native) || 0;
+    const monthNative = freshMonth ? 0 : Number(snap?.month_profit_native) || 0;
+    const yearNative = freshYear ? 0 : Number(snap?.ytd_profit_native) || 0;
     const totalNative = Number(snap?.total_profit_native) || 0;
     const todayProfitNative = isCn ? todayProfitCny : fx > 0 ? todayProfitCny / fx : 0;
     const monthCny = monthNative * (isCn ? 1 : fx) + todayProfitCny;

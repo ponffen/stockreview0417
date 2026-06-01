@@ -86,6 +86,21 @@ function homeUiStageToApi(stageRange) {
   return HOME_STAGE_TO_API[k] || "mtd";
 }
 
+/** 阶段起点是否晚于冻结日：新自然月/新年等，不得沿用冻结快照里的阶段累计字段。 */
+function isFreshStagePeriod(stageStart, frozenThrough) {
+  const s = String(stageStart || "").slice(0, 10);
+  const ft = String(frozenThrough || "").slice(0, 10);
+  if (!s || !ft) {
+    return false;
+  }
+  return s > ft;
+}
+
+function stageUsesFrozenCumulativeFields(stageKey) {
+  const k = String(stageKey || "").trim();
+  return k === "mtd" || k === "ytd" || k === "inception";
+}
+
 module.exports = {
   ALL_STAGES,
   HOME_STAGE_TO_API,
@@ -95,4 +110,6 @@ module.exports = {
   yearStartKeyShanghai,
   resolveStageRange,
   parseStagesParam,
+  isFreshStagePeriod,
+  stageUsesFrozenCumulativeFields,
 };

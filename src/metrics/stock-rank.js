@@ -8,6 +8,7 @@ const {
   normalizeSymbol,
 } = require("../db");
 const { resolveStageRange } = require("./stages");
+const { liveDateKeyShanghai } = require("./trading-calendar");
 const {
   sortTradeAsc,
   addDay,
@@ -27,7 +28,7 @@ const {
 
 async function buildStockRankPayload({ userId, accountScope, stage, live, publicLayout = false }) {
   const scope = String(accountScope || "all").trim() || "all";
-  const asOf = live.frozenThrough || live.liveDate || "";
+  const asOf = liveDateKeyShanghai();
   const fxUsd = Number(live.fxUsdCny) || 7.2;
   const fxHkd = Number(live.fxHkdCny) || 0.92;
   const trades = await getTrades(userId);
