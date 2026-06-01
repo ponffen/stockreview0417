@@ -31,13 +31,13 @@ function fmtPercentRatio(n) {
   return `${(v * 100).toFixed(2)}%`;
 }
 
-/** 收益率展示（总览 headline）：正值带 + 号，如 +0.65% */
+/** 收益率展示（比率 r → 百分数字符串）：正值带 + 号；累计 TWR>1 时亦统一 ×100（如 2.30 → +230.00%）。 */
 function fmtSignedPercentRatio(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) {
     return "—";
   }
-  const pct = Math.abs(v) <= 1.00001 ? v * 100 : v;
+  const pct = v * 100;
   const sign = pct > 0 ? "+" : "";
   return `${sign}${pct.toFixed(2)}%`;
 }
