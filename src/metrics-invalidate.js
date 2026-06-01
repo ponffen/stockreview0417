@@ -1,5 +1,5 @@
 /**
- * 成交 / 银证写路径：收集受影响日期并触发 metrics 区间重算。
+ * 成交 / 银证写路径：收集受影响日期；晚于 frozen_through 仅清缓存走实时，否则区间重算。
  */
 const { hintDatesForRebuild } = require("./metrics/freeze-calendar");
 
@@ -21,7 +21,12 @@ function hintDatesFromImportRows(rows, dateField = "date") {
 }
 
 function clearUserMetricsCaches(userId) {
-  void userId;
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return;
+  }
+  const { deletePerformanceSeriesCacheForUser } = require("./db");
+  void deletePerformanceSeriesCacheForUser(uid);
 }
 
 /**

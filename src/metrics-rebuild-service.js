@@ -5,11 +5,13 @@ const {
   getTrades,
   upsertUserMetricsMeta,
   getUserMetricsMeta,
+  getLatestAnalysisSnapshotDate,
   deletePerformanceSeriesCacheForUser,
 } = require("./db");
 const { resolveFrozenDate } = require("./eod-freeze-service");
 const { addCalendarDays } = require("./metrics/stages");
 const { minDateKey, normDateKey } = require("./metrics/date-keys");
+const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
 
 const DEBOUNCE_MS = Math.max(
   1000,
@@ -30,6 +32,48 @@ function earliestFromHints(hintDates, fullRebuild) {
     return null;
   }
   return addCalendarDays(minHint, -1);
+}
+
+async function resolveFrozenThroughForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return "";
+  }
+  const meta = await getUserMetricsMeta(uid, { light: true });
+  const latest = await getLatestAnalysisSnapshotDate(uid, "all");
+  return capFrozenThroughToSnapshot(meta.frozenThrough, latest) || latest || "";
+}
+
+/** 晚于 frozen_through 的流水只走实时；其余才冻历史快照。 */
+function partitionHintDates(hintDates, frozenThrough) {
+  const ft = normDateKey(frozenThrough);
+  const freezeHints = [];
+  const liveOnlyHints = [];
+  for (const raw of hintDates || []) {
+    const dk = normDateKey(raw);
+    if (!dk) {
+      continue;
+    }
+    if (ft && dk > ft) {
+      liveOnlyHints.push(dk);
+    } else {
+      freezeHints.push(dk);
+    }
+  }
+  return { freezeHints, liveOnlyHints };
+}
+
+async function refreshLiveMetricsOnly(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { ok: false };
+  }
+  await deletePerformanceSeriesCacheForUser(uid);
+  const meta = await getUserMetricsMeta(uid, { light: true });
+  if (meta.rebuilding) {
+    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
+  }
+  return { ok: true, mode: "live-only" };
 }
 
 function mergePending(uid, hintDates, fullRebuild) {
@@ -126,7 +170,7 @@ function flushPendingRebuild(uid) {
     mergePending(uid, hintDates, fullRebuild);
     return;
   }
-  const p = runMetricsRebuildForUser(uid, { hintDates, fullRebuild })
+  const p = flushPendingRebuildWork(uid, hintDates, fullRebuild)
     .catch((e) => {
       console.warn("[metrics-rebuild] failed", uid, e?.message || e);
     })
@@ -141,6 +185,21 @@ function flushPendingRebuild(uid) {
       }
     });
   queueByUser.set(uid, p);
+}
+
+async function flushPendingRebuildWork(uid, hintDates, fullRebuild) {
+  if (!fullRebuild) {
+    const frozenThrough = await resolveFrozenThroughForUser(uid);
+    const { freezeHints, liveOnlyHints } = partitionHintDates(hintDates, frozenThrough);
+    if (!freezeHints.length) {
+      if (liveOnlyHints.length) {
+        await refreshLiveMetricsOnly(uid);
+      }
+      return { ok: true, skip: true, reason: "live-only-after-frozen-through" };
+    }
+    return runMetricsRebuildForUser(uid, { hintDates: freezeHints, fullRebuild: false });
+  }
+  return runMetricsRebuildForUser(uid, { hintDates, fullRebuild: true });
 }
 
 function isVercelRuntime() {
@@ -183,4 +242,7 @@ module.exports = {
   scheduleMetricsRebuildForUser,
   runMetricsRebuildForUser,
   kickMetricsRebuildNow,
+  partitionHintDates,
+  resolveFrozenThroughForUser,
+  refreshLiveMetricsOnly,
 };
