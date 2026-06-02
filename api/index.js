@@ -612,6 +612,7 @@ module.exports = async function handler(req, res) {
       const {
         getTrades,
         getTradesForSymbol,
+        getTradesPageForSymbol,
         getTradesPage,
         normalizeTrade,
         getTradeByIdForUser,
@@ -630,11 +631,17 @@ module.exports = async function handler(req, res) {
             res.end(JSON.stringify({ ok: false, error: "invalid symbol" }));
             return;
           }
+          const limit = Math.min(100, Math.max(1, parseInt(String(getSearchParam(req, "limit") || "10"), 10) || 10));
+          const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
           const accountIdRaw = String(getSearchParam(req, "accountId") || "all").trim();
           const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
-          const data = await getTradesForSymbol(userId, symbol, { accountId });
+          const { data, pagination } = await getTradesPageForSymbol(userId, symbol, {
+            limit,
+            offset,
+            accountId,
+          });
           res.statusCode = 200;
-          res.end(JSON.stringify({ ok: true, data }));
+          res.end(JSON.stringify({ ok: true, data, pagination }));
           return;
         }
         const limitRaw = getSearchParam(req, "limit");

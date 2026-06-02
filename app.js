@@ -294,6 +294,15 @@ const cashListPager = {
 let tradeListScrollListenerBound = false;
 let stockRecordTradesLoadGen = 0;
 let stockRecordPageLoadGen = 0;
+const stockRecordTradesPager = {
+  gen: 0,
+  offset: 0,
+  hasMore: true,
+  loading: false,
+  loaded: false,
+  symbol: "",
+  accountId: "all",
+};
 let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
@@ -2294,42 +2303,99 @@ function resetCashListPager() {
   ledgerBootstrapCompleteForUid = "";
 }
 
-async function loadStockRecordTrades(symbol, accountId = "all") {
-  const symKey = normalizeSymbol(symbol);
-  if (!symKey || !apiReady || !sessionPhone) {
+function resetStockRecordTradesPager() {
+  stockRecordTradesPager.gen += 1;
+  stockRecordTradesPager.offset = 0;
+  stockRecordTradesPager.hasMore = true;
+  stockRecordTradesPager.loading = false;
+  stockRecordTradesPager.loaded = false;
+  stockRecordTradesPager.symbol = "";
+  stockRecordTradesPager.accountId = "all";
+}
+
+function stockRecordTradesListQuery(symbol, accountId, offset) {
+  const params = new URLSearchParams({
+    symbol: normalizeSymbol(symbol),
+    limit: String(TRADE_LIST_PAGE_SIZE),
+    offset: String(offset),
+  });
+  const aid = resolveValidAccountFilter(accountId);
+  if (aid && aid !== "all") {
+    params.set("accountId", aid);
+  }
+  return params.toString();
+}
+
+async function loadStockRecordTradesPage({ reset = false } = {}) {
+  const symKey = normalizeSymbol(state.activeRecordSymbol);
+  if (!symKey || !apiReady || !sessionPhone || state.stockRecordFromPublicProfile) {
     state.stockRecordTrades = [];
     state.stockRecordTradesLoading = false;
     return;
   }
-  const gen = ++stockRecordTradesLoadGen;
-  state.stockRecordTradesLoading = true;
-  const aid = resolveValidAccountFilter(accountId);
-  try {
-    const params = new URLSearchParams({ symbol: symKey });
-    if (aid && aid !== "all") {
-      params.set("accountId", aid);
+  if (state.route !== "stock-record") {
+    return;
+  }
+  ensureStockRecordScrollListener();
+  const aid = resolveValidAccountFilter(state.stockRecordAccountId);
+  if (reset || stockRecordTradesPager.symbol !== symKey || stockRecordTradesPager.accountId !== aid) {
+    resetStockRecordTradesPager();
+    stockRecordTradesPager.symbol = symKey;
+    stockRecordTradesPager.accountId = aid;
+    state.stockRecordTrades = [];
+  }
+  if (stockRecordTradesPager.loading || (!stockRecordTradesPager.hasMore && stockRecordTradesPager.loaded)) {
+    state.stockRecordTradesLoading = stockRecordTradesPager.loading;
+    if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === symKey) {
+      await renderStockRecordPage(symKey);
     }
-    const res = await apiFetch(`${API_BASE}/trades?${params.toString()}`, {
-      cache: "no-store",
-      timeoutMs: 25_000,
-    });
+    return;
+  }
+  const gen = stockRecordTradesPager.gen;
+  stockRecordTradesPager.loading = true;
+  state.stockRecordTradesLoading = true;
+  if (stockRecordTradesPager.loaded) {
+    await renderStockRecordPage(symKey);
+  }
+  try {
+    const qs = stockRecordTradesListQuery(symKey, aid, stockRecordTradesPager.offset);
+    const res = await apiFetch(`${API_BASE}/trades?${qs}`, { cache: "no-store", timeoutMs: 25_000 });
     const body = await res.json().catch(() => ({}));
-    if (gen !== stockRecordTradesLoadGen) {
+    if (gen !== stockRecordTradesPager.gen || state.route !== "stock-record") {
       return;
     }
-    if (res.ok && body?.ok === true && Array.isArray(body.data)) {
-      state.stockRecordTrades = body.data.map(normalizeTrade);
-    } else {
-      state.stockRecordTrades = [];
+    if (!res.ok || body?.ok !== true || !Array.isArray(body.data)) {
+      stockRecordTradesPager.hasMore = false;
+      return;
     }
+    const rows = body.data.map(normalizeTrade);
+    const seen = new Set(state.stockRecordTrades.map((t) => String(t.id)));
+    for (const row of rows) {
+      const id = String(row.id);
+      if (!seen.has(id)) {
+        state.stockRecordTrades.push(row);
+        seen.add(id);
+      }
+    }
+    const pagination = body.pagination || {};
+    stockRecordTradesPager.offset = Number(pagination.offset ?? stockRecordTradesPager.offset) + rows.length;
+    stockRecordTradesPager.hasMore = pagination.hasMore === true;
+    stockRecordTradesPager.loaded = true;
   } catch (error) {
-    console.warn("loadStockRecordTrades failed", error);
-    if (gen === stockRecordTradesLoadGen) {
-      state.stockRecordTrades = [];
+    console.warn("loadStockRecordTradesPage failed", error);
+    if (gen === stockRecordTradesPager.gen) {
+      stockRecordTradesPager.hasMore = false;
     }
   } finally {
-    if (gen === stockRecordTradesLoadGen) {
+    if (gen === stockRecordTradesPager.gen) {
+      stockRecordTradesPager.loading = false;
       state.stockRecordTradesLoading = false;
+      if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === symKey) {
+        await renderStockRecordPage(symKey);
+        if (stockRecordTradesPager.hasMore && isNearDocumentBottom()) {
+          void loadStockRecordTradesPage();
+        }
+      }
     }
   }
 }
@@ -2366,7 +2432,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   setStockRecordPageLoading(true);
   try {
     if (!state.stockRecordFromPublicProfile) {
-      await loadStockRecordTrades(key, accountId);
+      await loadStockRecordTradesPage({ reset: true });
       if (pageGen !== stockRecordPageLoadGen) {
         return;
       }
@@ -2456,10 +2522,32 @@ function ensureTradeListScrollListener() {
         void maybeLoadMoreTradeListPage();
       } else if (state.route === "trade-cash") {
         void maybeLoadMoreCashListPage();
+      } else if (state.route === "stock-record") {
+        void maybeLoadMoreStockRecordTradesPage();
       }
     },
     { passive: true },
   );
+}
+
+function ensureStockRecordScrollListener() {
+  ensureTradeListScrollListener();
+}
+
+async function maybeLoadMoreStockRecordTradesPage() {
+  if (
+    state.route !== "stock-record" ||
+    state.stockRecordFromPublicProfile ||
+    state.stockRecordPageLoading ||
+    !stockRecordTradesPager.hasMore ||
+    stockRecordTradesPager.loading
+  ) {
+    return;
+  }
+  if (!isNearDocumentBottom()) {
+    return;
+  }
+  await loadStockRecordTradesPage();
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -3307,8 +3395,7 @@ function bindEvents() {
       if (recIdx >= 0) {
         state.stockRecordTrades[recIdx] = savedTrade;
       } else if (state.route === "stock-record") {
-        state.stockRecordTrades.push(savedTrade);
-        state.stockRecordTrades.sort(sortTradeAsc);
+        void loadStockRecordTradesPage({ reset: true });
       }
     }
     persistState();
@@ -9930,6 +10017,7 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.stockRecordWindow = 30;
   state.stockRecordOffset = 0;
   state.stockRecordTrades = [];
+  resetStockRecordTradesPager();
   state.stockRecordTradesLoading = !state.stockRecordFromPublicProfile;
 
   state.route = "stock-record";
@@ -9956,7 +10044,7 @@ async function renderStockRecordPage(symbol) {
   if (!usePub && activeAccountId !== state.stockRecordAccountId) {
     state.stockRecordAccountId = activeAccountId;
   }
-  if (!usePub && state.stockRecordTradesLoading) {
+  if (!usePub && state.stockRecordTradesLoading && !stockRecordTradesPager.loaded) {
     return;
   }
   const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
@@ -10014,10 +10102,10 @@ async function renderStockRecordPage(symbol) {
       : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th>";
   }
 
-  stockRecordListBody.innerHTML = symbolTrades
+  const noteColspan = usePub ? 5 : 6;
+  const tradeRowsHtml = symbolTrades
     .map((trade) => {
       const id = escapeHtml(String(trade.id));
-      const noteColspan = usePub ? 5 : 6;
       const rowCore = `
       <tr class="stock-record-trade-row trade-row--clickable" data-record-id="${id}">
         <td>${trade.date.replace(/-/g, "/")}</td>
@@ -10045,6 +10133,11 @@ async function renderStockRecordPage(symbol) {
       ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}`;
     })
     .join("");
+  const loadingFooter =
+    !usePub && stockRecordTradesPager.loading
+      ? tradeListLoadingRowHtml(noteColspan)
+      : "";
+  stockRecordListBody.innerHTML = tradeRowsHtml + loadingFooter;
 
   drawStockRecordChart(symbol, symbolTrades);
 }

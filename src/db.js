@@ -750,7 +750,7 @@ function ledgerListAccountFilterClause(accountId, params) {
 }
 
 /**
- * 单标的全部成交（新→旧），供个股记录页按需加载。
+ * 单标的全部成交（新→旧）。无 limit 时返回全量（兼容旧调用）。
  */
 async function getTradesForSymbol(userId, symbol, opts = {}) {
   const uid = String(userId || "").trim();
@@ -767,6 +767,42 @@ async function getTradesForSymbol(userId, symbol, opts = {}) {
     params
   );
   return rows.map(rowToTrade);
+}
+
+/**
+ * 单标的成交分页（新→旧），供个股记录页懒加载。
+ */
+async function getTradesPageForSymbol(userId, symbol, opts = {}) {
+  const uid = String(userId || "").trim();
+  const sym = normalizeSymbol(symbol);
+  if (!uid || !sym) {
+    return { data: [], pagination: { limit: 10, offset: 0, total: 0, hasMore: false } };
+  }
+  const limit = Math.min(100, Math.max(1, Number(opts.limit) || 10));
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const params = [uid, sym];
+  const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
+  const where = `user_id = $1 AND symbol = $2${accountClause}`;
+  const { rows: countRows } = await q(`SELECT COUNT(*)::int AS n FROM trades WHERE ${where}`, params);
+  const total = Number(countRows[0]?.n) || 0;
+  const dataParams = [...params, limit, offset];
+  const { rows } = await q(
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
+     FROM trades WHERE ${where}
+     ORDER BY trade_date DESC, created_at DESC
+     LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+    dataParams
+  );
+  const data = rows.map(rowToTrade);
+  return {
+    data,
+    pagination: {
+      limit,
+      offset,
+      total,
+      hasMore: offset + data.length < total,
+    },
+  };
 }
 
 /**
@@ -3211,6 +3247,7 @@ module.exports = {
   normalizeDailyReturn,
   getTrades,
   getTradesForSymbol,
+  getTradesPageForSymbol,
   getTradesPage,
   upsertTrade,
   getTradeByIdForUser,

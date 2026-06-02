@@ -712,6 +712,7 @@ const {
   normalizeTrade,
   getTrades,
   getTradesForSymbol,
+  getTradesPageForSymbol,
   getTradesPage,
   upsertTrade,
   importTrades,
@@ -1764,6 +1765,15 @@ function parseLedgerListQuery(req) {
   return { limit, offset, accountId };
 }
 
+/** 个股记录：默认每页 10 条（新→旧）。 */
+function parseSymbolTradesListQuery(req) {
+  const limit = Math.min(100, Math.max(1, parseInt(String(req.query?.limit ?? "10"), 10) || 10));
+  const offset = Math.max(0, parseInt(String(req.query?.offset ?? "0"), 10) || 0);
+  const accountIdRaw = req.query?.accountId != null ? String(req.query.accountId).trim() : "all";
+  const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
+  return { limit, offset, accountId };
+}
+
 app.get("/api/trades", requireAuth, async (req, res) => {
   const symbolRaw = req.query?.symbol != null ? String(req.query.symbol).trim() : "";
   if (symbolRaw) {
@@ -1772,10 +1782,9 @@ app.get("/api/trades", requireAuth, async (req, res) => {
       res.status(400).json({ ok: false, error: "invalid symbol" });
       return;
     }
-    const accountIdRaw = req.query?.accountId != null ? String(req.query.accountId).trim() : "all";
-    const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
-    const data = await getTradesForSymbol(req.userId, symbol, { accountId });
-    res.json({ ok: true, data });
+    const pageOpts = parseSymbolTradesListQuery(req);
+    const { data, pagination } = await getTradesPageForSymbol(req.userId, symbol, pageOpts);
+    res.json({ ok: true, data, pagination });
     return;
   }
   const pageOpts = parseLedgerListQuery(req);
