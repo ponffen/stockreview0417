@@ -10,7 +10,6 @@ const {
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
   upsertSymbolDailyCloseBatch,
-  setSnapshotWatermark,
   upsertUserMetricsMeta,
   upsertAccountMetricsMeta,
   getLatestAnalysisSnapshotDate,
@@ -39,6 +38,7 @@ const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
 const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
 const {
   enumerateFreezeSessionDates,
+  sessionDatesAfterLatest,
   ledgerSessionDateKey,
   forwardFillFxMap,
   capFrozenThroughToSnapshot,
@@ -702,10 +702,32 @@ async function runFreezeV3ForUser(userId, options = {}) {
     return { ok: false, reason: "trade-after-frozen" };
   }
 
+  const frozenDateKey = String(frozenDate).slice(0, 10);
   const latest = await getLatestAnalysisSnapshotDate(uid, "all");
-  if (!options.force && !options.symbolsOnly && latest && latest >= String(frozenDate).slice(0, 10)) {
+  if (!options.force && !options.symbolsOnly && latest && latest >= frozenDateKey) {
     return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
   }
+
+  const rebuildPartial =
+    !options.fullRebuild &&
+    options.rebuildFromDate &&
+    String(options.rebuildFromDate).slice(0, 10) <= frozenDateKey;
+  const incrementalDates =
+    !options.force &&
+    !options.fullRebuild &&
+    !options.symbolsOnly &&
+    latest &&
+    latest < frozenDateKey &&
+    !rebuildPartial
+      ? sessionDatesAfterLatest(latest, frozenDateKey)
+      : [];
+  const incrementalDaily = incrementalDates.length > 0;
+  const writeFromDate = incrementalDaily
+    ? incrementalDates[0]
+    : rebuildPartial
+      ? String(options.rebuildFromDate).slice(0, 10)
+      : null;
+  const closeSyncFrom = incrementalDaily || rebuildPartial ? writeFromDate : minD;
 
   const allCash = cashForFreezeSession(await getCashTransfers(uid));
   const accounts = await getAccounts(uid);
@@ -716,7 +738,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
   if (options.syncDailyClose && !options.symbolsOnly) {
     for (const sym of symbols) {
       try {
-        const rows = await fetchRemoteDailyClosesForSymbol(sym, minD, frozenDate);
+        const rows = await fetchRemoteDailyClosesForSymbol(sym, closeSyncFrom, frozenDate);
         if (rows.length) {
           await upsertSymbolDailyCloseBatch(
             rows.map((r) => ({ symbol: sym, date: r.date, close: r.close, source: r.source || "sina" })),
@@ -744,19 +766,30 @@ async function runFreezeV3ForUser(userId, options = {}) {
   const pool = await dbMod.initPool();
   const client = await pool.connect();
 
-  const timing = { accountMs: 0, symbolMs: 0, accountRows: 0, symbolRows: 0 };
-  const frozenDateKey = String(frozenDate).slice(0, 10);
-  const partial =
-    !options.fullRebuild &&
-    options.rebuildFromDate &&
-    String(options.rebuildFromDate).slice(0, 10) <= frozenDateKey;
-  const writeFromDate = partial ? String(options.rebuildFromDate).slice(0, 10) : null;
+  const timing = {
+    accountMs: 0,
+    symbolMs: 0,
+    accountRows: 0,
+    symbolRows: 0,
+    incrementalDaily,
+    incrementalDates,
+  };
+  const partial = incrementalDaily || rebuildPartial;
 
   try {
     await client.query("BEGIN");
     if (options.symbolsOnly) {
       await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date = $2", [uid, frozenDateKey]);
-    } else if (partial && writeFromDate) {
+    } else if (incrementalDaily) {
+      await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date = ANY($2::text[])", [
+        uid,
+        incrementalDates,
+      ]);
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date = ANY($2::text[])", [
+        uid,
+        incrementalDates,
+      ]);
+    } else if (rebuildPartial && writeFromDate) {
       await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date >= $2", [
         uid,
         writeFromDate,
@@ -815,7 +848,6 @@ async function runFreezeV3ForUser(userId, options = {}) {
   const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
   const frozenThroughEffective = capFrozenThroughToSnapshot(frozenDateKey, latestSnap) || latestSnap || frozenDateKey;
 
-  await setSnapshotWatermark(uid, frozenThroughEffective);
   await upsertUserMetricsMeta(uid, {
     frozenThrough: frozenThroughEffective,
     isCleared: false,
@@ -831,6 +863,8 @@ async function runFreezeV3ForUser(userId, options = {}) {
     ok: true,
     userId: uid,
     frozenDate: frozenThroughEffective,
+    incrementalDaily,
+    incrementalDates,
     timing,
   };
 }
