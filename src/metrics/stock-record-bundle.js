@@ -21,7 +21,7 @@ const {
 } = require("../account-kpi-surface");
 const { getComputeLiveMetrics } = require("../market-realtime-pnl");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
-const { liveDateKeyShanghai } = require("./trading-calendar");
+const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
 const {
   sortTradeAsc,
@@ -30,6 +30,58 @@ const {
   groupPnlRowsBySymbol,
 } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
+
+function formatQuoteTimeDisplay(timeStr) {
+  const raw = String(timeStr || "").trim();
+  if (!raw || raw === "—" || raw === "--") {
+    return "—";
+  }
+  const compact = raw.replace(/\D/g, "");
+  if (compact.length >= 14) {
+    return `${compact.slice(4, 6)}-${compact.slice(6, 8)} ${compact.slice(8, 10)}:${compact.slice(10, 12)}:${compact.slice(12, 14)}`;
+  }
+  const iso = /^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:\D+(\d{1,2})[:：](\d{1,2})(?:[:：](\d{1,2}))?)?/.exec(raw);
+  if (iso) {
+    const month = String(Number(iso[2])).padStart(2, "0");
+    const day = String(Number(iso[3])).padStart(2, "0");
+    const hour = String(Number(iso[4] || 0)).padStart(2, "0");
+    const minute = String(Number(iso[5] || 0)).padStart(2, "0");
+    const second = String(Number(iso[6] || 0)).padStart(2, "0");
+    return `${month}-${day} ${hour}:${minute}:${second}`;
+  }
+  return raw;
+}
+
+function formatTradingIntervalWithSide(rate, side) {
+  const normalizedSide = String(side || "").trim().toLowerCase();
+  const suffix = normalizedSide === "buy" ? "B" : normalizedSide === "sell" ? "S" : "";
+  const safe = Number.isFinite(Number(rate)) ? Number(rate) : 0;
+  const num = (safe * 100).toFixed(2);
+  const rateText = `${safe > 0 ? "+" : ""}${num}%`;
+  return suffix ? `${rateText} ${suffix}` : rateText;
+}
+
+/** 现价相对「当日之前」最近一笔成交价涨跌幅（与前端 tooltip 一致）。 */
+function computeTradingIntervalFormatted(symbolTrades, currentPrice, sessionDateKey) {
+  const price = Number(currentPrice);
+  if (!(price > 0) || !Array.isArray(symbolTrades) || !symbolTrades.length) {
+    return "—";
+  }
+  const todayKey = String(sessionDateKey || getTradingDateKeyBy0830()).slice(0, 10);
+  let refTrade = null;
+  for (let i = symbolTrades.length - 1; i >= 0; i -= 1) {
+    const dk = String(symbolTrades[i]?.date || "").slice(0, 10);
+    if (dk && dk < todayKey) {
+      refTrade = symbolTrades[i];
+      break;
+    }
+  }
+  const refPrice = Number(refTrade?.price);
+  if (!refTrade || !(refPrice > 0)) {
+    return "—";
+  }
+  return formatTradingIntervalWithSide((price - refPrice) / refPrice, refTrade.side);
+}
 
 function filterTradesForScope(trades, scope, symbol) {
   const sym = normalizeSymbol(symbol);
@@ -236,6 +288,9 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const changePct = prev > 0 ? changeAbs / prev : 0;
   const displayName = String(nameMap[sym] || symbolTrades[0]?.name || sym).trim() || sym;
   const { interval, hint } = buildHoldingIntervalLabel(symbolTrades, endDate);
+  const sessionDateKey = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : endDate;
+  const quoteTimeRaw = live.quoteTime || livePos?.quoteTime || null;
+  const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current, sessionDateKey);
 
   const payload = {
     meta: {
@@ -256,7 +311,8 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       price: formatClosePrice(current),
       change: fmtPlainSignedAmount(changeAbs),
       changePct: fmtSignedPercentRatio(changePct),
-      quoteTime: live.quoteTime || livePos?.quoteTime || "—",
+      quoteTime: formatQuoteTimeDisplay(quoteTimeRaw),
+      tradingInterval,
       holdingInterval: interval,
       holdingIntervalHint: publicLayout ? "持仓区间（公开页仅展示起止日期）" : hint,
     },

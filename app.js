@@ -296,6 +296,7 @@ const cashListPager = {
   accountId: "all",
 };
 let tradeListScrollListenerBound = false;
+let stockRecordScrollListenerBound = false;
 let stockRecordTradesLoadGen = 0;
 let stockRecordPageLoadGen = 0;
 const stockRecordTradesPager = {
@@ -2601,6 +2602,17 @@ function isNearDocumentBottom(thresholdPx = 140) {
   return window.innerHeight + window.scrollY >= doc.scrollHeight - thresholdPx;
 }
 
+function getStockRecordScrollRoot() {
+  return document.getElementById("route-stock-record");
+}
+
+function isNearScrollContainerBottom(el, thresholdPx = 140) {
+  if (!el) {
+    return false;
+  }
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - thresholdPx;
+}
+
 function ensureTradeListScrollListener() {
   if (tradeListScrollListenerBound) {
     return;
@@ -2622,7 +2634,23 @@ function ensureTradeListScrollListener() {
 }
 
 function ensureStockRecordScrollListener() {
-  ensureTradeListScrollListener();
+  if (stockRecordScrollListenerBound) {
+    return;
+  }
+  const root = getStockRecordScrollRoot();
+  if (!root) {
+    return;
+  }
+  stockRecordScrollListenerBound = true;
+  root.addEventListener(
+    "scroll",
+    () => {
+      if (state.route === "stock-record") {
+        void maybeLoadMoreStockRecordTradesPage();
+      }
+    },
+    { passive: true },
+  );
 }
 
 async function maybeLoadMoreStockRecordTradesPage() {
@@ -2635,7 +2663,8 @@ async function maybeLoadMoreStockRecordTradesPage() {
   ) {
     return;
   }
-  if (!isNearDocumentBottom()) {
+  const scrollRoot = getStockRecordScrollRoot();
+  if (!isNearScrollContainerBottom(scrollRoot)) {
     return;
   }
   await loadStockRecordTradesPage();
@@ -10200,7 +10229,9 @@ async function renderStockRecordPage(symbol) {
     headline?.name || position?.name || symbolTrades[0]?.name || quote?.name || symbol;
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
-  stockRecordTime.textContent = headline?.quoteTime || quote.time || state.quoteTime || "--";
+  stockRecordTime.textContent =
+    headline?.quoteTime ||
+    (quote.time || state.quoteTime ? formatQuoteTimeForStatus(quote.time || state.quoteTime) : "--");
   stockRecordPrice.textContent = headline?.price || formatNumber(current, 3);
   const priceUp = headline?.changePct
     ? !String(headline.changePct).startsWith("-")
@@ -10210,14 +10241,20 @@ async function renderStockRecordPage(symbol) {
     ? `${headline.change} ${headline.changePct}`
     : `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${priceUp ? "up" : "down"}`;
-  const intervalMeta = computeTradingIntervalBeforeToday(symbolTrades, current);
-  const intervalText = intervalMeta
-    ? formatRegretRateWithSide(intervalMeta.rate, intervalMeta.side)
-    : "--";
+  const intervalText =
+    headline?.tradingInterval ||
+    (() => {
+      const meta = computeTradingIntervalBeforeToday(symbolTrades, current);
+      return meta ? formatRegretRateWithSide(meta.rate, meta.side) : "—";
+    })();
   if (stockRecordInterval) {
     stockRecordInterval.textContent = intervalText;
     stockRecordInterval.className = `stock-record-interval-value ${
-      intervalText !== "--" && !String(intervalText).startsWith("-") ? "up" : intervalText !== "--" ? "down" : ""
+      intervalText !== "—" && intervalText !== "--" && !String(intervalText).startsWith("-")
+        ? "up"
+        : intervalText !== "—" && intervalText !== "--"
+          ? "down"
+          : ""
     }`;
   }
   if (stockRecordAccountSelect) {

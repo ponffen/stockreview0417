@@ -1973,9 +1973,10 @@ h2 {
 }
 
 .stock-record-section-gap {
-  height: 10px;
+  height: 8px;
   background: var(--bg);
-  margin: 0 -12px;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .stock-record-wrap {
@@ -1992,25 +1993,34 @@ h2 {
 .stock-record-chart-block,
 .stock-record-trades-section {
   background: var(--panel);
-  padding-left: 12px;
-  padding-right: 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stock-record-head-main {
-  padding-top: 0;
-}
-
-.stock-record-trades-section {
-  padding-bottom: 12px;
+  padding: 12px 14px 0;
+  border-bottom: none;
 }
 
 .stock-record-subhead {
-  margin-top: 12px;
+  padding: 12px 14px 12px;
+  margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   overflow: visible;
+  border-top: none;
+}
+
+.stock-record-chart-section,
+.stock-record-chart-block,
+.stock-record-trades-section {
+  padding: 12px 14px;
+}
+
+.stock-record-trades-section {
+  padding-bottom: 12px;
 }
 
 .stock-record-subhead-left {
@@ -2040,22 +2050,13 @@ h2 {
 }
 
 .stock-record-section-title {
-  margin: 16px 0 8px;
+  margin: 0 0 8px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
 }
 
-.stock-record-chart-section .stock-record-section-title {
-  margin-top: 14px;
-}
-
-.stock-record-chart-block .stock-record-section-title {
-  margin-top: 18px;
-}
-
 .stock-record-trades-section .stock-record-section-title {
-  margin-top: 18px;
   margin-bottom: 10px;
 }
 
