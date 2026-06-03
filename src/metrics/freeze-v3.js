@@ -33,7 +33,11 @@ const {
   principalCnyUpToDate,
   externalFlowCnyForDate,
 } = require("../ledger-metrics");
-const { accountMwrFromSnapshotWindow, symbolMwrFromValueFlowPoints } = require("../mwr");
+const {
+  accountMwrFromSnapshotWindow,
+  symbolMwrFromValueFlowPoints,
+  mwrForFreezeStorage,
+} = require("../mwr");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
 const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
 const {
@@ -165,18 +169,19 @@ function computeMwrPatch(rowsAsc, asOf, firstTrade) {
     date: r.date,
     totalAssets: r.totalAssets,
     externalFlowCny: r.dailyExternalFlow,
+    principal: r.principal,
   }));
+  const wrap = (stage) =>
+    mwrForFreezeStorage(
+      accountMwrFromSnapshotWindow(mapped, windowStartForStage(stage, asOf, firstTrade), asOf),
+    );
   return {
-    stageMtdRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("mtd", asOf, firstTrade), asOf),
-    stageYtdRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("ytd", asOf, firstTrade), asOf),
-    stageInceptionRateMwr: accountMwrFromSnapshotWindow(
-      mapped,
-      windowStartForStage("inception", asOf, firstTrade),
-      asOf,
-    ),
-    stageLast7dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_7d", asOf, firstTrade), asOf),
-    stageLast30dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_30d", asOf, firstTrade), asOf),
-    stageLast90dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_90d", asOf, firstTrade), asOf),
+    stageMtdRateMwr: wrap("mtd"),
+    stageYtdRateMwr: wrap("ytd"),
+    stageInceptionRateMwr: wrap("inception"),
+    stageLast7dRateMwr: wrap("last_7d"),
+    stageLast30dRateMwr: wrap("last_30d"),
+    stageLast90dRateMwr: wrap("last_90d"),
   };
 }
 
@@ -449,7 +454,7 @@ async function freezeAccountHistory({
 
     stageAcc.onDay(dk, dailyProfit, dailyRateTwr);
     const snap = stageAcc.snapshotTwr();
-    rowsAsc.push({ date: dk, totalAssets: ta, dailyExternalFlow: ext });
+    rowsAsc.push({ date: dk, totalAssets: ta, dailyExternalFlow: ext, principal });
     const mwr = computeMwrPatch(rowsAsc, dk, firstTrade);
 
     if (!writeFrom || dk >= writeFrom) {
@@ -566,7 +571,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
     }
     const snap = stageAcc.snapshotTwr();
     const endVal = qEod * closeD;
-    const mwrRate = symbolMwrFromValueFlowPoints(flowPts, day, endVal);
+    const mwrRate = mwrForFreezeStorage(symbolMwrFromValueFlowPoints(flowPts, day, endVal));
     dailyOut.push({
       date: day,
       dailyProfit: pnl,

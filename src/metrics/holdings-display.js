@@ -149,7 +149,7 @@ function symbolTotalRates({
   const pts = symbolPnlToValueFlowPoints(pnlRows);
   const frozenThrough = String(snap?.frozen_through || live.frozenThrough || "").slice(0, 10);
   const endDate = live.tradingDay ? todayKey : frozenThrough;
-  let rateMwr = 0;
+  let rateMwr = null;
   if (pts.length || mvNat > 0) {
     const histPts = live.tradingDay && todayKey ? pts.filter((p) => p.date < todayKey) : pts;
     rateMwr = symbolMwrFromValueFlowPoints(histPts, endDate, mvNat);

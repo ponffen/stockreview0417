@@ -159,12 +159,13 @@ function metricsForWindow(allRowsThroughF, windowStart, windowEnd) {
         Number(r.marketValue ?? r.market_value ?? 0) ||
         0,
       externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
+      principal: Number(r.principal ?? 0) || 0,
     }))
     .filter((r) => r.date && r.date <= windowEnd)
     .sort((a, b) => a.date.localeCompare(b.date));
   const w = rowsAsc.filter((r) => r.date >= windowStart && r.date <= windowEnd);
   if (!w.length) {
-    return { profitCny: 0, rateTwr: 0, rateMwr: 0 };
+    return { profitCny: 0, rateTwr: 0, rateMwr: null };
   }
   const pts = w.map((r) => ({
     date: r.date,
@@ -221,6 +222,7 @@ function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, first
         Number(r.marketValue ?? r.market_value ?? 0) ||
         0,
       externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
+      principal: Number(r.principal ?? 0) || 0,
     }))
     .filter((r) => r.date && r.date <= F)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -246,7 +248,7 @@ function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, first
 
 function symbolRatesFromPnlPoints(ptsSorted) {
   if (!ptsSorted || ptsSorted.length < 2) {
-    return { rateTwr: 0, rateMwr: 0 };
+    return { rateTwr: 0, rateMwr: null };
   }
   const last = ptsSorted[ptsSorted.length - 1];
   const endVal = Number(last.value) || 0;
