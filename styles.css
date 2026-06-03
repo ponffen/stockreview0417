@@ -1951,12 +1951,66 @@ h2 {
   margin: 8px 0 0;
 }
 
+.stock-record-body .stock-rank-help-wrap,
+.stock-record-interval-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  z-index: 2;
+}
+
+.stock-record-interval-help-wrap .stock-rank-help-bubble {
+  left: 0;
+  right: auto;
+  min-width: 220px;
+  max-width: min(300px, 86vw);
+  z-index: 30;
+}
+
+.stock-record-interval-help-wrap .stock-rank-help-bubble::before {
+  left: 10px;
+  right: auto;
+}
+
+.stock-record-section-gap {
+  height: 10px;
+  background: var(--bg);
+  margin: 0 -12px;
+}
+
+.stock-record-wrap {
+  background: var(--panel);
+}
+
+.stock-detail-page .stock-record-wrap {
+  background: var(--bg);
+}
+
+.stock-record-head-main,
+.stock-record-subhead,
+.stock-record-chart-section,
+.stock-record-chart-block,
+.stock-record-trades-section {
+  background: var(--panel);
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.stock-record-head-main {
+  padding-top: 0;
+}
+
+.stock-record-trades-section {
+  padding-bottom: 12px;
+}
+
 .stock-record-subhead {
   margin-top: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  overflow: visible;
 }
 
 .stock-record-subhead-left {
@@ -2138,8 +2192,8 @@ h2 {
   margin: 0;
   max-height: none;
   min-height: calc(100vh - 62px);
-  padding: 12px 12px 80px;
-  background: var(--panel);
+  padding: 12px 0 80px;
+  background: var(--bg);
 }
 
 .full {

@@ -2400,9 +2400,6 @@ async function loadStockRecordTradesPage({ reset = false } = {}) {
       state.stockRecordTradesLoading = false;
       if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === symKey) {
         await renderStockRecordPage(symKey);
-        if (stockRecordTradesPager.hasMore && isNearDocumentBottom()) {
-          void loadStockRecordTradesPage();
-        }
       }
     }
   }
@@ -10213,14 +10210,10 @@ async function renderStockRecordPage(symbol) {
     ? `${headline.change} ${headline.changePct}`
     : `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${priceUp ? "up" : "down"}`;
-  const lastTrade = symbolTrades.length ? symbolTrades[0] : null;
-  let intervalText = "--";
-  if (position && Number.isFinite(Number(position.regretRate))) {
-    intervalText = formatRegretRateWithSide(position.regretRate, position.lastTradeSide);
-  } else if (lastTrade && current > 0 && Number(lastTrade.price) > 0) {
-    const regretRate = (current - Number(lastTrade.price)) / Number(lastTrade.price);
-    intervalText = formatRegretRateWithSide(regretRate, lastTrade.side);
-  }
+  const intervalMeta = computeTradingIntervalBeforeToday(symbolTrades, current);
+  const intervalText = intervalMeta
+    ? formatRegretRateWithSide(intervalMeta.rate, intervalMeta.side)
+    : "--";
   if (stockRecordInterval) {
     stockRecordInterval.textContent = intervalText;
     stockRecordInterval.className = `stock-record-interval-value ${
@@ -10596,6 +10589,10 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
       xMax: weightCanvas.width - 2,
       yMin: 16,
       yMax: weightCanvas.height - 28,
+      yRangePadding: {
+        minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
+        maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
+      },
     },
   );
   const wctx = weightCanvas.getContext("2d");
@@ -12962,6 +12959,24 @@ function formatRegretRateWithSide(rate, side) {
   const suffix = normalizedSide === "buy" ? "B" : normalizedSide === "sell" ? "S" : "";
   const rateText = formatPercent(rate);
   return suffix ? `${rateText} ${suffix}` : rateText;
+}
+
+/** 交易间隔：现价相对「当日之前」最近一笔成交价涨跌幅（与 tooltip 文案一致）。 */
+function computeTradingIntervalBeforeToday(symbolTrades, currentPrice) {
+  const price = Number(currentPrice);
+  if (!(price > 0) || !Array.isArray(symbolTrades) || !symbolTrades.length) {
+    return null;
+  }
+  const todayKey = getTradingDateKey();
+  const refTrade = symbolTrades.find((trade) => String(trade?.date || "").slice(0, 10) < todayKey);
+  const refPrice = Number(refTrade?.price);
+  if (!refTrade || !(refPrice > 0)) {
+    return null;
+  }
+  return {
+    rate: (price - refPrice) / refPrice,
+    side: refTrade.side,
+  };
 }
 
 function metricValueWithRate(amount, rate) {
