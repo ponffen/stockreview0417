@@ -2584,7 +2584,10 @@ function filterStockRecordChartCacheForDisplay() {
   if (state.stockRecordChartViewExpanded) {
     return [...cache];
   }
-  const preset = String(state.stockRecordChartRange || "30").trim().toLowerCase();
+  const preset = String(state.stockRecordChartRange || "").trim().toLowerCase();
+  if (!preset) {
+    return [...cache];
+  }
   if (preset === "all" && state.stockRecordChartHistoryComplete) {
     return [...cache];
   }
@@ -2654,10 +2657,57 @@ function syncStockRecordRangeChipUi() {
   if (!stockRecordRangeRow) {
     return;
   }
-  const active = String(state.stockRecordChartRange || "30");
+  const active = String(state.stockRecordChartRange || "").trim();
   stockRecordRangeRow.querySelectorAll("[data-stock-record-range]").forEach((btn) => {
-    btn.classList.toggle("active", String(btn.getAttribute("data-stock-record-range")) === active);
+    btn.classList.toggle("active", !!active && String(btn.getAttribute("data-stock-record-range")) === active);
   });
+}
+
+function clearStockRecordRangeSelection() {
+  if (!state.stockRecordChartRange) {
+    return;
+  }
+  state.stockRecordChartRange = "";
+  syncStockRecordRangeChipUi();
+}
+
+function stockRecordViewMatchesRangePreset() {
+  const range = String(state.stockRecordChartRange || "").trim();
+  if (!range || state.stockRecordChartViewExpanded) {
+    return false;
+  }
+  const points = stockRecordChartPointsFromBundle(state.stockRecordBundle);
+  const totalCount = points.length;
+  if (!totalCount) {
+    return false;
+  }
+  const offset = Number(state.stockRecordOffset) || 0;
+  const fitAllWindow = Math.max(totalCount, STOCK_RECORD_CHART_MIN_WINDOW);
+  const windowSize = Math.max(
+    STOCK_RECORD_CHART_MIN_WINDOW,
+    Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
+  );
+  if (offset !== 0 || windowSize < fitAllWindow) {
+    return false;
+  }
+  if (range === "all") {
+    return !!state.stockRecordChartHistoryComplete;
+  }
+  const expectedFrom = stockRecordRangeFromDateKey(range, stockRecordChartEndDateKey());
+  if (!expectedFrom) {
+    return true;
+  }
+  const oldestVisible = String(points[0]?.date || "").slice(0, 10);
+  return oldestVisible >= expectedFrom;
+}
+
+function syncStockRecordRangeChipWithView() {
+  if (!state.stockRecordChartRange) {
+    return;
+  }
+  if (!stockRecordViewMatchesRangePreset()) {
+    clearStockRecordRangeSelection();
+  }
 }
 
 async function refreshStockRecordChartsOnly(symKey) {
@@ -2799,6 +2849,7 @@ async function loadStockRecordChartHistoryPage(symKey) {
       state.stockRecordChartHistoryComplete = true;
     }
     state.stockRecordChartViewExpanded = true;
+    clearStockRecordRangeSelection();
     const merged = filterStockRecordChartCacheForDisplay();
     state.stockRecordBundle.charts.points = merged;
     const limit = Number(chunkPag?.limit) || pag.limit;
@@ -11139,7 +11190,6 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     chartNavTotal: () => totalCount,
     valueFormatter: (value) => `${formatNumber(value, 2)}%`,
   });
-  maybeLoadStockRecordChartHistory(symbol);
 }
 
 function drawStockRecordChartLegacy(symbol, symbolTrades) {
@@ -12482,6 +12532,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         return;
       }
       state.stockRecordOffset = next;
+      syncStockRecordRangeChipWithView();
       requestRefresh("redraw");
       if (next >= maxOffset && state.stockRecordChartPagination?.hasMore) {
         scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
@@ -12661,6 +12712,7 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
     nextWindow = total;
     state.stockRecordWindow = nextWindow;
     state.stockRecordOffset = 0;
+    syncStockRecordRangeChipWithView();
     if (state.stockRecordChartPagination?.hasMore) {
       scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
     }
@@ -12669,6 +12721,7 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   state.stockRecordWindow = nextWindow;
   const maxOffset = Math.max(0, total - state.stockRecordWindow);
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
+  syncStockRecordRangeChipWithView();
 }
 
 async function refreshMarketData(opts = {}) {
