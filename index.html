@@ -814,50 +814,63 @@
               <div id="stockRecordChange" class="stock-record-change">--</div>
             </div>
           </div>
-        <div class="stock-record-legend stock-record-chart-toggles">
-          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleClose" checked /> 收盘价</label>
-          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleShares" checked /> 持仓股数</label>
-          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleMarketValue" /> 持仓市值</label>
-        </div>
-        <div class="chart-wrap">
-          <canvas id="stockRecordChart" width="700" height="320"></canvas>
-          <div id="stockRecordTooltip" class="chart-tooltip"></div>
-        </div>
-        <div class="stock-record-chart-block">
-          <div class="stock-record-chart-title">持仓占比</div>
-          <div class="chart-wrap">
-            <canvas id="stockRecordWeightChart" width="700" height="220"></canvas>
-            <div id="stockRecordWeightTooltip" class="chart-tooltip"></div>
-          </div>
-        </div>
-        <p class="stock-record-note">注：图表数据来自冻结快照；交易间隔指当前价相对上一笔成交价的涨跌幅。</p>
 
-        <div class="stock-record-subhead">
-          <strong id="stockRecordMarket">--</strong>
-          <div class="stock-record-subhead-right">
-            <span id="stockRecordRegret" class="hidden"></span>
-            <label class="head-select-wrap stock-record-account-wrap">
-              <select id="stockRecordAccountSelect" class="head-select stock-record-account-select"></select>
-              <span class="arrow">▼</span>
-            </label>
+          <div class="stock-record-subhead">
+            <div class="stock-record-subhead-left">
+              <span class="stock-record-interval-label">交易间隔</span>
+              <strong id="stockRecordInterval" class="stock-record-interval-value">--</strong>
+              <span class="stock-rank-help-wrap stock-record-interval-help-wrap">
+                <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="交易间隔说明">?</button>
+                <div class="stock-rank-help-bubble" role="tooltip">交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</div>
+              </span>
+            </div>
+            <div class="stock-record-subhead-right">
+              <label class="head-select-wrap stock-record-account-wrap">
+                <select id="stockRecordAccountSelect" class="head-select stock-record-account-select"></select>
+                <span class="arrow">▼</span>
+              </label>
+            </div>
           </div>
-        </div>
 
-        <div class="stock-record-table-wrap">
-          <table class="stock-record-table">
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>类型</th>
-                <th>价格</th>
-                <th>数量</th>
-                <th>发生金额</th>
-                <th>股票账户</th>
-              </tr>
-            </thead>
-            <tbody id="stockRecordListBody"></tbody>
-          </table>
-        </div>
+          <div class="stock-record-chart-section">
+            <h4 class="stock-record-section-title">持仓市值/股数</h4>
+            <div class="stock-record-legend stock-record-chart-toggles">
+              <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleClose" checked /> 收盘价</label>
+              <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleShares" checked /> 持仓股数</label>
+              <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleMarketValue" /> 持仓市值</label>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="stockRecordChart" width="700" height="320"></canvas>
+              <div id="stockRecordTooltip" class="chart-tooltip"></div>
+            </div>
+          </div>
+
+          <div class="stock-record-chart-block">
+            <h4 class="stock-record-section-title">持仓占比</h4>
+            <div class="chart-wrap">
+              <canvas id="stockRecordWeightChart" width="700" height="220"></canvas>
+              <div id="stockRecordWeightTooltip" class="chart-tooltip"></div>
+            </div>
+          </div>
+
+          <div class="stock-record-trades-section">
+            <h4 class="stock-record-section-title">交易记录</h4>
+            <div class="stock-record-table-wrap">
+              <table class="stock-record-table">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>类型</th>
+                    <th>价格</th>
+                    <th>数量</th>
+                    <th>发生金额</th>
+                    <th>股票账户</th>
+                  </tr>
+                </thead>
+                <tbody id="stockRecordListBody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </section>

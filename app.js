@@ -460,8 +460,7 @@ const stockRecordWeightChart = document.getElementById("stockRecordWeightChart")
 const stockRecordToggleClose = document.getElementById("stockRecordToggleClose");
 const stockRecordToggleShares = document.getElementById("stockRecordToggleShares");
 const stockRecordToggleMarketValue = document.getElementById("stockRecordToggleMarketValue");
-const stockRecordMarket = document.getElementById("stockRecordMarket");
-const stockRecordRegret = document.getElementById("stockRecordRegret");
+const stockRecordInterval = document.getElementById("stockRecordInterval");
 const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
 const stockRecordLoading = document.getElementById("stockRecordLoading");
@@ -3661,6 +3660,7 @@ function bindAnalysisStockRankHelpOnce() {
     }
     const host =
       btn.closest(".analysis-stock-rank-body") ||
+      btn.closest(".stock-record-body") ||
       btn.closest(".stock-record-table--pub") ||
       btn.closest(".community-feed-card") ||
       btn.closest(".public-profile-trade-table");
@@ -3691,6 +3691,12 @@ function bindAnalysisStockRankHelpOnce() {
       el.classList.remove("is-open");
     });
     document.querySelectorAll(".analysis-stock-rank-body .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
+    document.querySelectorAll(".stock-record-body .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    document.querySelectorAll(".stock-record-body .stock-rank-help-btn").forEach((b) => {
       b.setAttribute("aria-expanded", "false");
     });
     document.querySelectorAll(".stock-record-table--pub .stock-rank-help-bubble.is-open").forEach((el) => {
@@ -8540,7 +8546,11 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
   const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
   const pathNorm = String(path || "");
   const timeoutMs =
-    pathNorm.includes("home-bundle") || pathNorm.includes("analysis-bundle") ? 55_000 : 28_000;
+    pathNorm.includes("home-bundle") ||
+    pathNorm.includes("analysis-bundle") ||
+    pathNorm.includes("stock-record-bundle")
+      ? 55_000
+      : 28_000;
   try {
     const res = await apiFetch(url, { cache: "no-store", timeoutMs });
     const j = await res.json().catch(() => ({}));
@@ -10203,21 +10213,20 @@ async function renderStockRecordPage(symbol) {
     ? `${headline.change} ${headline.changePct}`
     : `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
   stockRecordChange.className = `stock-record-change ${priceUp ? "up" : "down"}`;
-  const intervalText = headline?.holdingInterval
-    ? headline.holdingInterval
-    : position
-      ? formatRegretRateWithSide(position.regretRate, position.lastTradeSide)
-      : "--";
-  stockRecordMarket.textContent = headline?.holdingInterval
-    ? `持仓区间 ${intervalText}`
-    : `交易间隔 ${intervalText}`;
-  if (headline?.holdingIntervalHint) {
-    stockRecordMarket.title = headline.holdingIntervalHint;
-  } else {
-    stockRecordMarket.removeAttribute("title");
+  const lastTrade = symbolTrades.length ? symbolTrades[0] : null;
+  let intervalText = "--";
+  if (position && Number.isFinite(Number(position.regretRate))) {
+    intervalText = formatRegretRateWithSide(position.regretRate, position.lastTradeSide);
+  } else if (lastTrade && current > 0 && Number(lastTrade.price) > 0) {
+    const regretRate = (current - Number(lastTrade.price)) / Number(lastTrade.price);
+    intervalText = formatRegretRateWithSide(regretRate, lastTrade.side);
   }
-  stockRecordRegret.textContent = "";
-  stockRecordRegret.className = "hidden";
+  if (stockRecordInterval) {
+    stockRecordInterval.textContent = intervalText;
+    stockRecordInterval.className = `stock-record-interval-value ${
+      intervalText !== "--" && !String(intervalText).startsWith("-") ? "up" : intervalText !== "--" ? "down" : ""
+    }`;
+  }
   if (stockRecordAccountSelect) {
     stockRecordAccountSelect.value = activeAccountId;
     stockRecordAccountSelect.disabled = usePub;

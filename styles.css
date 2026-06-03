@@ -1913,7 +1913,7 @@ h2 {
 }
 
 .stock-record-chart-block {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .stock-record-chart-title {
@@ -1952,16 +1952,64 @@ h2 {
 }
 
 .stock-record-subhead {
-  margin-top: 14px;
+  margin-top: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+}
+
+.stock-record-subhead-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.stock-record-interval-label {
+  color: #667085;
+  font-size: 13px;
+}
+
+.stock-record-interval-value {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stock-record-interval-value.up {
+  color: var(--up, #e34d59);
+}
+
+.stock-record-interval-value.down {
+  color: var(--down, #00a870);
+}
+
+.stock-record-section-title {
+  margin: 16px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stock-record-chart-section .stock-record-section-title {
+  margin-top: 14px;
+}
+
+.stock-record-chart-block .stock-record-section-title {
+  margin-top: 18px;
+}
+
+.stock-record-trades-section .stock-record-section-title {
+  margin-top: 18px;
+  margin-bottom: 10px;
 }
 
 .stock-record-subhead-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .stock-record-account-wrap {

@@ -324,6 +324,48 @@ module.exports = async function handler(req, res) {
     }
   }
 
+  // stock-record-bundle：与 home/analysis bundle 相同直连策略
+  const isPublicStockRecordBundle = /^\/api\/public\/[^/]+\/metrics\/stock-record-bundle$/.test(pathKey);
+  if (req.method === "GET" && (pathKey === "/api/metrics/stock-record-bundle" || isPublicStockRecordBundle)) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const gate = await resolveMetricsBundleUserId(isPublicStockRecordBundle);
+      if (!gate.ok) {
+        res.statusCode = gate.status;
+        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        return;
+      }
+      const accountScope =
+        String(getSearchParam(req, "account_id") || getSearchParam(req, "accountScope") || "all").trim() ||
+        "all";
+      const symbol = String(getSearchParam(req, "symbol") || "").trim();
+      if (!symbol) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: "missing symbol" }));
+        return;
+      }
+      const { getMetricsStockRecordBundle } = require("../src/metrics-api-service");
+      const data = await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
+        publicLayout: isPublicStockRecordBundle,
+      });
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-stock-record-bundle" } }));
+      return;
+    } catch (error) {
+      console.error("[api/index.js] direct stock-record-bundle error:", error);
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: error?.message || "stock-record-bundle direct failed",
+          build: "v8-stock-record-bundle",
+        }),
+      );
+      return;
+    }
+  }
+
   const isPublicHomeBundle = /^\/api\/public\/[^/]+\/metrics\/home-bundle$/.test(pathKey);
   if (req.method === "GET" && isPublicHomeBundle) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
