@@ -167,16 +167,16 @@ function computeMwrPatch(rowsAsc, asOf, firstTrade) {
     externalFlowCny: r.dailyExternalFlow,
   }));
   return {
-    stageMtdRateMwr: xirrFromSnapshotWindow(mapped, windowStartForStage("mtd", asOf, firstTrade), asOf),
-    stageYtdRateMwr: xirrFromSnapshotWindow(mapped, windowStartForStage("ytd", asOf, firstTrade), asOf),
-    stageInceptionRateMwr: xirrFromSnapshotWindow(
+    stageMtdRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("mtd", asOf, firstTrade), asOf),
+    stageYtdRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("ytd", asOf, firstTrade), asOf),
+    stageInceptionRateMwr: accountMwrFromSnapshotWindow(
       mapped,
       windowStartForStage("inception", asOf, firstTrade),
       asOf,
     ),
-    stageLast7dRateMwr: xirrFromSnapshotWindow(mapped, windowStartForStage("last_7d", asOf, firstTrade), asOf),
-    stageLast30dRateMwr: xirrFromSnapshotWindow(mapped, windowStartForStage("last_30d", asOf, firstTrade), asOf),
-    stageLast90dRateMwr: xirrFromSnapshotWindow(mapped, windowStartForStage("last_90d", asOf, firstTrade), asOf),
+    stageLast7dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_7d", asOf, firstTrade), asOf),
+    stageLast30dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_30d", asOf, firstTrade), asOf),
+    stageLast90dRateMwr: accountMwrFromSnapshotWindow(mapped, windowStartForStage("last_90d", asOf, firstTrade), asOf),
   };
 }
 
@@ -566,7 +566,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
     }
     const snap = stageAcc.snapshotTwr();
     const endVal = qEod * closeD;
-    const mwrRate = xirrFromSymbolValueFlowPoints(flowPts, day, endVal);
+    const mwrRate = symbolMwrFromValueFlowPoints(flowPts, day, endVal);
     dailyOut.push({
       date: day,
       dailyProfit: pnl,

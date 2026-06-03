@@ -149,10 +149,10 @@ function symbolTotalRates({
   const pts = symbolPnlToValueFlowPoints(pnlRows);
   const frozenThrough = String(snap?.frozen_through || live.frozenThrough || "").slice(0, 10);
   const endDate = live.tradingDay ? todayKey : frozenThrough;
-  let rateMwr = Number(snap?.total_rate_mwr) || 0;
+  let rateMwr = 0;
   if (pts.length || mvNat > 0) {
     const histPts = live.tradingDay && todayKey ? pts.filter((p) => p.date < todayKey) : pts;
-    rateMwr = xirrFromSymbolValueFlowPoints(histPts, endDate, mvNat);
+    rateMwr = symbolMwrFromValueFlowPoints(histPts, endDate, mvNat);
   }
   return { rateTwr, rateMwr: mwrMode ? rateMwr : rateTwr, totalRate: mwrMode ? rateMwr : rateTwr };
 }
