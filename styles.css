@@ -1949,6 +1949,27 @@ h2 {
   accent-color: #4091e0;
 }
 
+.stock-record-toggle-line {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+.stock-record-toggle-line--close {
+  background: #4091e0;
+}
+
+.stock-record-toggle-line--shares {
+  background: #ff4d4f;
+}
+
+.stock-record-toggle-line--market-value {
+  background: #f59e0b;
+}
+
 .stock-record-note {
   color: #8f9aad;
   font-size: 12px;
@@ -2002,19 +2023,21 @@ h2 {
 }
 
 .stock-record-head-main {
-  padding: 12px 14px 0;
-  border-bottom: none;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stock-record-subhead {
-  padding: 12px 14px 12px;
+  padding: 12px 14px;
   margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   overflow: visible;
-  border-top: none;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stock-record-chart-section,
@@ -2197,7 +2220,7 @@ h2 {
   margin: 0;
   max-height: none;
   min-height: calc(100vh - 62px);
-  padding: 12px 0 80px;
+  padding: 0 0 80px;
   background: var(--bg);
 }
 

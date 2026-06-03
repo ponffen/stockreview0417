@@ -10516,7 +10516,13 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     return;
   }
 
-  const yAxisMode = series.some((s) => s.axis === "left") && series.some((s) => s.axis === "right") ? "left-right" : "single";
+  if (!series.some((s) => s.axis === "left")) {
+    series[0].axis = "left";
+  }
+  const yAxisMode =
+    series.some((s) => s.axis === "left") && series.some((s) => s.axis === "right")
+      ? "left-right"
+      : "single";
   const payload = buildChartPayload(series, {
     labels: Object.fromEntries(series.map((s) => [s.key, s.label])),
     yAxisMode,
@@ -10603,8 +10609,8 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
       yAxisMode: "single",
       xMin: 2,
       xMax: weightCanvas.width - 2,
-      yMin: 16,
-      yMax: weightCanvas.height - 28,
+      yMin: 20,
+      yMax: weightCanvas.height - 36,
       yRangePadding: {
         minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
         maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
