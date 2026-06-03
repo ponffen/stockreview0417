@@ -10214,39 +10214,18 @@ async function renderStockRecordPage(symbol) {
     }
     return;
   }
-  const quote = getQuoteBySymbol(symbol);
   const bundle = state.stockRecordBundle;
   const headline = bundle?.headline || null;
-  const current = validNumber(
-    headline ? parseBundlePlainNumber(headline.price) : null,
-    quote.current,
-    position?.currentPrice,
-    0,
-  );
-  const prev = validNumber(quote.prevClose, position?.prevClose, current);
-  const change = prev > 0 ? (current - prev) / prev : 0;
-  const positionName =
-    headline?.name || position?.name || symbolTrades[0]?.name || quote?.name || symbol;
+  const positionName = headline?.name || position?.name || symbolTrades[0]?.name || symbol;
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
-  stockRecordTime.textContent =
-    headline?.quoteTime ||
-    (quote.time || state.quoteTime ? formatQuoteTimeForStatus(quote.time || state.quoteTime) : "--");
-  stockRecordPrice.textContent = headline?.price || formatNumber(current, 3);
-  const priceUp = headline?.changePct
-    ? !String(headline.changePct).startsWith("-")
-    : change >= 0;
-  stockRecordPrice.className = `stock-record-price ${priceUp ? "up" : "down"}`;
-  stockRecordChange.textContent = headline
-    ? `${headline.change} ${headline.changePct}`
-    : `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
-  stockRecordChange.className = `stock-record-change ${priceUp ? "up" : "down"}`;
-  const intervalText =
-    headline?.tradingInterval ||
-    (() => {
-      const meta = computeTradingIntervalBeforeToday(symbolTrades, current);
-      return meta ? formatRegretRateWithSide(meta.rate, meta.side) : "—";
-    })();
+  stockRecordTime.textContent = headline?.quoteTime ?? "—";
+  stockRecordPrice.textContent = headline?.price ?? "—";
+  const priceUp = headline?.changePct ? !String(headline.changePct).startsWith("-") : false;
+  stockRecordPrice.className = `stock-record-price ${headline ? (priceUp ? "up" : "down") : ""}`;
+  stockRecordChange.textContent = headline ? `${headline.change} ${headline.changePct}` : "—";
+  stockRecordChange.className = `stock-record-change ${headline ? (priceUp ? "up" : "down") : ""}`;
+  const intervalText = headline?.tradingInterval ?? "—";
   if (stockRecordInterval) {
     stockRecordInterval.textContent = intervalText;
     stockRecordInterval.className = `stock-record-interval-value ${
@@ -12996,24 +12975,6 @@ function formatRegretRateWithSide(rate, side) {
   const suffix = normalizedSide === "buy" ? "B" : normalizedSide === "sell" ? "S" : "";
   const rateText = formatPercent(rate);
   return suffix ? `${rateText} ${suffix}` : rateText;
-}
-
-/** 交易间隔：现价相对「当日之前」最近一笔成交价涨跌幅（与 tooltip 文案一致）。 */
-function computeTradingIntervalBeforeToday(symbolTrades, currentPrice) {
-  const price = Number(currentPrice);
-  if (!(price > 0) || !Array.isArray(symbolTrades) || !symbolTrades.length) {
-    return null;
-  }
-  const todayKey = getTradingDateKey();
-  const refTrade = symbolTrades.find((trade) => String(trade?.date || "").slice(0, 10) < todayKey);
-  const refPrice = Number(refTrade?.price);
-  if (!refTrade || !(refPrice > 0)) {
-    return null;
-  }
-  return {
-    rate: (price - refPrice) / refPrice,
-    side: refTrade.side,
-  };
 }
 
 function metricValueWithRate(amount, rate) {

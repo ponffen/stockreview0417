@@ -1823,6 +1823,10 @@ h2 {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
 }
 
 #closeStockRecordDialogBtn {

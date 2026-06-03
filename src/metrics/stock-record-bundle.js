@@ -19,13 +19,13 @@ const {
   fmtPercentRatio,
   fmtSignedPercentRatio,
 } = require("../account-kpi-surface");
-const { getComputeLiveMetrics } = require("../market-realtime-pnl");
+const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
+const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
 const {
   sortTradeAsc,
-  collectHoldingSegmentsInPeriod,
   symbolPnlForRankScope,
   groupPnlRowsBySymbol,
 } = require("./stock-rank-period");
@@ -121,28 +121,51 @@ function formatShares(n) {
   return String(Math.round(v));
 }
 
-function buildHoldingIntervalLabel(symbolTrades, endDate) {
-  if (!symbolTrades.length) {
-    return { interval: "—", hint: "" };
+function parseSymbolLiveQuote(sym, raw) {
+  if (!raw) {
+    return null;
   }
-  const start = String(symbolTrades[0].date || "").slice(0, 10);
-  const end = String(endDate || symbolTrades[symbolTrades.length - 1].date || "").slice(0, 10);
-  const segments = collectHoldingSegmentsInPeriod(symbolTrades, start, end);
-  if (!segments.length) {
-    return { interval: "—", hint: "" };
+  if (typeof raw === "object" && Number(raw.current) > 0) {
+    return {
+      current: Number(raw.current),
+      prevClose: Number(raw.prevClose) > 0 ? raw.prevClose : raw.current,
+      time: raw.time || null,
+    };
   }
-  const last = segments[segments.length - 1];
-  const openEnded = last.end === end && symbolTrades.some((t) => {
-    const dk = String(t.date).slice(0, 10);
-    return dk >= last.start && dk <= end;
-  });
-  const endLabel = openEnded && last.end === end ? "至今" : last.end.replace(/-/g, "/");
-  const interval = `${last.start.replace(/-/g, "/")} ~ ${endLabel}`;
-  const hint =
-    segments.length > 1
-      ? segments.map((s) => `${s.start}～${s.end}`).join("；")
-      : "当前持仓区间的起止交易日";
-  return { interval, hint };
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const parts = raw.split("~");
+  const current = Number(String(parts[3] || "").replace(/,/g, ""));
+  const prevClose = Number(String(parts[4] || "").replace(/,/g, ""));
+  const rawTime = String(parts[30] || parts[31] || "").trim();
+  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, sym);
+  if (!Number.isFinite(current) || current <= 0) {
+    return null;
+  }
+  return {
+    current,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
+    time: time || rawTime || null,
+  };
+}
+
+async function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
+  let directQuote = null;
+  const quoteKey = toTencentQuoteKey(sym);
+  if (live.tradingDay && quoteKey) {
+    const req = await fetchTencentQuotePayloadMap([quoteKey]);
+    directQuote = parseSymbolLiveQuote(sym, req.payloadMap?.get(String(quoteKey).toLowerCase()));
+  }
+  const frozenClose = closeLookup.closeOn(endDate) || 0;
+  const current =
+    Number(directQuote?.current) || Number(livePos?.current) || Number(frozenClose) || 0;
+  const prev =
+    Number(directQuote?.prevClose) ||
+    Number(livePos?.prevClose) ||
+    (Number(frozenClose) > 0 ? Number(frozenClose) : current);
+  const quoteTime = directQuote?.time || live.quoteTime || null;
+  return { current, prevClose: prev, quoteTime };
 }
 
 function buildChartPoints({
@@ -282,14 +305,13 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     ccy,
   });
 
-  const current = Number(livePos?.current) || closeLookup.closeOn(endDate) || 0;
-  const prev = Number(livePos?.prevClose) || current;
+  const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate);
+  const current = headlineQuote.current;
+  const prev = headlineQuote.prevClose;
   const changeAbs = current - prev;
   const changePct = prev > 0 ? changeAbs / prev : 0;
   const displayName = String(nameMap[sym] || symbolTrades[0]?.name || sym).trim() || sym;
-  const { interval, hint } = buildHoldingIntervalLabel(symbolTrades, endDate);
   const sessionDateKey = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : endDate;
-  const quoteTimeRaw = live.quoteTime || livePos?.quoteTime || null;
   const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current, sessionDateKey);
 
   const payload = {
@@ -303,7 +325,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       tradingDay: !!live.tradingDay,
       dataVersion: Number(um?.dataVersion) || 0,
       rebuilding: !!um?.rebuilding,
-      quoteTime: live.quoteTime ?? null,
+      quoteTime: headlineQuote.quoteTime ?? null,
     },
     headline: {
       name: displayName,
@@ -311,10 +333,8 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       price: formatClosePrice(current),
       change: fmtPlainSignedAmount(changeAbs),
       changePct: fmtSignedPercentRatio(changePct),
-      quoteTime: formatQuoteTimeDisplay(quoteTimeRaw),
+      quoteTime: formatQuoteTimeDisplay(headlineQuote.quoteTime),
       tradingInterval,
-      holdingInterval: interval,
-      holdingIntervalHint: publicLayout ? "持仓区间（公开页仅展示起止日期）" : hint,
     },
     charts: {
       points,
