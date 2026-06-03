@@ -1514,6 +1514,12 @@ function metricsAccountIdFromQuery(query) {
   return String(query?.account_id || query?.accountScope || "all").trim() || "all";
 }
 
+function stockRecordChartPaginationFromQuery(query) {
+  const limit = Math.max(1, Math.min(200, parseInt(String(query?.limit ?? "30"), 10) || 30));
+  const offset = Math.max(0, parseInt(String(query?.offset ?? "0"), 10) || 0);
+  return { pointsLimit: limit, pointsOffset: offset };
+}
+
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
   try {
     const accountScope = metricsAccountIdFromQuery(req.query);
@@ -1545,7 +1551,12 @@ app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
       res.status(400).json({ ok: false, error: "missing symbol" });
       return;
     }
-    sendMetricsJson(res, await getMetricsStockRecordBundle(req.userId, accountScope, symbol));
+    sendMetricsJson(
+      res,
+      await getMetricsStockRecordBundle(req.userId, accountScope, symbol, {
+        ...stockRecordChartPaginationFromQuery(req.query),
+      }),
+    );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "stock-record-bundle failed" });
   }
@@ -1677,7 +1688,10 @@ app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async 
     }
     sendMetricsJson(
       res,
-      await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, { publicLayout: true }),
+      await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
+        publicLayout: true,
+        ...stockRecordChartPaginationFromQuery(req.query),
+      }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public stock-record-bundle failed" });

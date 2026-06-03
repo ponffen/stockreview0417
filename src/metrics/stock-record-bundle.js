@@ -1,5 +1,5 @@
 /**
- * 个股交易记录页 bundle：headline + charts.points（格式化字符串）。
+ * 个股交易记录页 bundle：headline + charts.points（格式化字符串，limit/offset 分页）。
  */
 const {
   getTrades,
@@ -7,11 +7,13 @@ const {
   getAccounts,
   getUserMetricsMeta,
   getSymbolDailyCloseRange,
-  getSymbolDailyPnlChartSeries,
+  getSymbolDailyPnlChartSeriesPage,
+  getSymbolDailyPnlRowOnOrBefore,
   getSymbolNameMap,
   formatSymbolForDisplay,
   normalizeSymbol,
   resolveBookCurrencyForAccountScope,
+  addCalendarDays,
 } = require("../db");
 const {
   fmtPlainAmount,
@@ -23,10 +25,21 @@ const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } 
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
-const { sortTradeAsc, groupPnlRowsBySymbol } = require("./stock-rank-period");
+const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 
 const POSITION_EPS = 1e-6;
+const DEFAULT_CHART_PAGE_LIMIT = 30;
+const MAX_CHART_PAGE_LIMIT = 200;
+
+function parseChartPaginationOpts(opts = {}) {
+  const limit = Math.max(
+    1,
+    Math.min(MAX_CHART_PAGE_LIMIT, Math.floor(Number(opts.pointsLimit ?? opts.limit) || DEFAULT_CHART_PAGE_LIMIT)),
+  );
+  const offset = Math.max(0, Math.floor(Number(opts.pointsOffset ?? opts.offset) || 0));
+  return { limit, offset };
+}
 
 function formatQuoteTimeDisplay(timeStr) {
   const raw = String(timeStr || "").trim();
@@ -165,15 +178,6 @@ async function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
   return { current, prevClose: prev, quoteTime };
 }
 
-function pnlRowsForStockRecordScope(pnlBySym, sym, scope) {
-  const list = pnlBySym.get(sym) || [];
-  const sc = String(scope || "all").trim() || "all";
-  if (sc === "all") {
-    return list.filter((r) => String(r.accountId || "") === "all");
-  }
-  return list.filter((r) => String(r.accountId || "default") === sc);
-}
-
 function todayProfitNativeFromLive(livePosition, ccy, live) {
   const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
   if (ccy === "CNY") {
@@ -188,49 +192,27 @@ function todayProfitNativeFromLive(livePosition, ccy, live) {
   return fx > 0 ? todayProfitCny / fx : 0;
 }
 
-function frozenInceptionProfitOnOrBefore(pnlRows, asOfDate) {
-  const asOf = String(asOfDate || "").slice(0, 10);
-  if (!asOf) {
-    return 0;
-  }
-  let best = null;
-  for (const row of pnlRows || []) {
-    const dk = String(row.date || "").slice(0, 10);
-    if (!dk || dk > asOf) {
-      continue;
-    }
-    if (!best || dk > best.date) {
-      best = { date: dk, profit: Number(row.stageInceptionProfit) };
-    }
-  }
-  return Number.isFinite(best?.profit) ? best.profit : 0;
-}
-
-function buildChartPoints({
+function buildChartPointsForPage({
   pnlRows,
   closeLookup,
-  symbolTrades,
   live,
   livePosition,
   ccy,
+  endDate,
+  includeLive,
+  frozenInceptionProfit,
 }) {
-  if (!pnlRows.length) {
+  if (!pnlRows.length && !includeLive) {
     return [];
   }
-  const firstTrade = symbolTrades[0]?.date ? String(symbolTrades[0].date).slice(0, 10) : "";
-  const firstPnl = pnlRows[0]?.date ? String(pnlRows[0].date).slice(0, 10) : "";
-  const firstClose = closeLookup.sorted[0]?.day || "";
-  const startCandidates = [firstTrade, firstPnl, firstClose].filter(Boolean).sort();
-  const startDate = startCandidates[0] || firstTrade || firstClose;
-  const frozenThrough = String(live?.frozenThrough || "").slice(0, 10);
-  const endDate = live?.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : frozenThrough;
-  if (!startDate || !endDate || startDate > endDate) {
+  const end = String(endDate || "").slice(0, 10);
+  if (!end) {
     return [];
   }
 
   const sortedPnl = [...pnlRows]
     .map((row) => ({ ...row, dk: String(row.date || "").slice(0, 10) }))
-    .filter((row) => row.dk && row.dk >= startDate && row.dk <= endDate)
+    .filter((row) => row.dk && row.dk <= end)
     .sort((a, b) => a.dk.localeCompare(b.dk));
 
   const raw = [];
@@ -261,7 +243,7 @@ function buildChartPoints({
   }
 
   const liveQty = Number(livePosition?.quantity) || 0;
-  if (live?.tradingDay && livePosition && Math.abs(liveQty) > POSITION_EPS) {
+  if (includeLive && live?.tradingDay && livePosition && Math.abs(liveQty) > POSITION_EPS) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
     const current = Number(livePosition.current) || 0;
     const mvNat = liveQty * current;
@@ -274,7 +256,7 @@ function buildChartPoints({
           : 1;
     const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
     const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
-    const frozenProfit = frozenInceptionProfitOnOrBefore(pnlRows, frozenThrough);
+    const frozenProfit = Number.isFinite(Number(frozenInceptionProfit)) ? Number(frozenInceptionProfit) : 0;
     const totalProfitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
     const row = {
       date: liveDate,
@@ -287,7 +269,7 @@ function buildChartPoints({
     const hit = raw.findIndex((p) => p.date === liveDate);
     if (hit >= 0) {
       raw[hit] = row;
-    } else if (liveDate >= startDate && liveDate <= endDate) {
+    } else if (liveDate <= end) {
       raw.push(row);
       raw.sort((a, b) => a.date.localeCompare(b.date));
     }
@@ -303,10 +285,26 @@ function buildChartPoints({
   }));
 }
 
-async function buildStockRecordBundlePayload({ userId, accountScope, symbol, publicLayout = false }) {
+function pageCloseDateRange(pnlRowsAsc, endDate, bufferDays = 7) {
+  const dates = (pnlRowsAsc || [])
+    .map((row) => String(row.date || "").slice(0, 10))
+    .filter(Boolean)
+    .sort();
+  if (!dates.length) {
+    const end = String(endDate || "").slice(0, 10);
+    return end ? { from: addCalendarDays(end, -bufferDays), to: end } : null;
+  }
+  return {
+    from: addCalendarDays(dates[0], -bufferDays),
+    to: dates[dates.length - 1],
+  };
+}
+
+async function buildStockRecordBundlePayload({ userId, accountScope, symbol, publicLayout = false, ...paginationOpts }) {
   const uid = String(userId || "").trim();
   const sym = normalizeSymbol(symbol);
   const scope = String(accountScope || "all").trim() || "all";
+  const { limit, offset } = parseChartPaginationOpts(paginationOpts);
   if (!uid || !sym) {
     throw new Error("missing user or symbol");
   }
@@ -325,40 +323,52 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     throw new Error("no trades for symbol");
   }
 
-  const firstTrade = String(symbolTrades[0].date).slice(0, 10);
   const frozenThrough = String(live.frozenThrough || um?.frozenThrough || "").slice(0, 10);
   const endDate = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : frozenThrough;
-
   const accountIdForPnl = scope === "all" ? "all" : scope;
-  const [pnlAll, closeRows, nameMap] = await Promise.all([
-    getSymbolDailyPnlChartSeries(
-      { accountId: accountIdForPnl, symbol: sym, from: firstTrade, to: endDate || "9999-12-31" },
-      uid,
-    ),
-    getSymbolDailyCloseRange(sym, firstTrade, endDate || "9999-12-31"),
-    getSymbolNameMap([sym]),
-  ]);
-  const pnlBySym = groupPnlRowsBySymbol(
-    pnlAll.map((r) => ({
-      ...r,
-      dayClosePrice: r.eodPrice ?? r.dayClosePrice,
-      dayPnlNative: 0,
-    })),
+  const includeLive = offset === 0;
+
+  const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
+    { accountId: accountIdForPnl, symbol: sym, to: endDate || "9999-12-31", offset, limit },
+    uid,
   );
-  const pnlRows = pnlRowsForStockRecordScope(pnlBySym, sym, scope);
-  const closeLookup = closeLookupFromRows(closeRows);
+  const pnlRows = [...pnlPageDesc].reverse();
+  const pageRange = pageCloseDateRange(pnlRows, endDate);
+  const headlineCloseFrom = addCalendarDays(endDate || frozenThrough || "1970-01-01", -90);
 
   const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
-  const points = buildChartPoints({
+
+  const [pageCloseRows, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
+    pageRange
+      ? getSymbolDailyCloseRange(sym, pageRange.from, pageRange.to)
+      : Promise.resolve([]),
+    getSymbolDailyCloseRange(sym, headlineCloseFrom, endDate || "9999-12-31"),
+    includeLive && live.tradingDay && livePos && Math.abs(Number(livePos.quantity) || 0) > POSITION_EPS
+      ? getSymbolDailyPnlRowOnOrBefore(
+          { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough || endDate },
+          uid,
+        )
+      : Promise.resolve(null),
+    getSymbolNameMap([sym]),
+  ]);
+
+  const pageCloseLookup = closeLookupFromRows(pageCloseRows);
+  const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);
+  const frozenInceptionProfit =
+    frozenProfitRow?.stageInceptionProfit != null ? Number(frozenProfitRow.stageInceptionProfit) : 0;
+
+  const points = buildChartPointsForPage({
     pnlRows,
-    closeLookup,
-    symbolTrades,
+    closeLookup: pageCloseLookup,
     live,
     livePosition: livePos,
     ccy,
+    endDate,
+    includeLive,
+    frozenInceptionProfit,
   });
 
-  const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate);
+  const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
   const current = headlineQuote.current;
   const prev = headlineQuote.prevClose;
   const changeAbs = current - prev;
@@ -391,6 +401,12 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     },
     charts: {
       points,
+      pagination: {
+        limit,
+        offset,
+        returned: points.length,
+        hasMore: pnlPageDesc.length === limit,
+      },
       defaults: {
         showClose: true,
         showShares: true,
@@ -404,4 +420,6 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
 
 module.exports = {
   buildStockRecordBundlePayload,
+  parseChartPaginationOpts,
+  DEFAULT_CHART_PAGE_LIMIT,
 };

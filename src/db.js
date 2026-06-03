@@ -1673,6 +1673,84 @@ async function getSymbolDailyPnlChartSeries(query = {}, userId = null) {
   }));
 }
 
+function mapSymbolDailyPnlChartRow(row) {
+  return {
+    accountId: row.account_id,
+    symbol: row.symbol,
+    date: row.date,
+    eodShares: Number(row.eod_shares),
+    eodPrice: row.eod_price == null ? null : Number(row.eod_price),
+    eodMarketValueNative:
+      row.eod_market_value_native == null
+        ? null
+        : Number(row.eod_market_value_native),
+    positionWeight: row.position_weight == null ? null : Number(row.position_weight),
+    stageInceptionProfit:
+      row.stage_inception_profit == null ? null : Number(row.stage_inception_profit),
+    currency: row.currency,
+    bookCurrency: row.book_currency,
+    dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
+  };
+}
+
+/** 个股图分页：从 endDate 往历史 DESC，再于调用方 reverse 为 ASC。 */
+async function getSymbolDailyPnlChartSeriesPage(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  if (!symbol) {
+    return [];
+  }
+  const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
+  const limit = Math.max(1, Math.min(200, Math.floor(Number(query.limit) || 30)));
+  const { rows } = await q(
+    `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
+            stage_inception_profit, currency, book_currency, day_close_price
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = $3
+       AND date <= $4
+     ORDER BY date DESC
+     OFFSET $5 LIMIT $6`,
+    [uid, accountId, symbol, to, offset, limit],
+  );
+  return rows.map(mapSymbolDailyPnlChartRow);
+}
+
+/** Live 日 totalProfit：取 asOf 及之前最近一行 stage_inception_profit。 */
+async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  const asOf = query.asOf != null && String(query.asOf).trim() ? String(query.asOf).trim() : "";
+  if (!symbol || !asOf) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
+            stage_inception_profit, currency, book_currency, day_close_price
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = $3
+       AND date <= $4
+     ORDER BY date DESC
+     LIMIT 1`,
+    [uid, accountId, symbol, asOf],
+  );
+  return rows.length ? mapSymbolDailyPnlChartRow(rows[0]) : null;
+}
+
 async function upsertSymbolDailyPnlBatch(rows, userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   const list = Array.isArray(rows) ? rows : [];
@@ -3320,6 +3398,8 @@ module.exports = {
   buildAccountKpiSurfaceForScope,
   getSymbolDailyPnl,
   getSymbolDailyPnlChartSeries,
+  getSymbolDailyPnlChartSeriesPage,
+  getSymbolDailyPnlRowOnOrBefore,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
   upsertAnalysisDailySnapshot,

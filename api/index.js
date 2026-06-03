@@ -348,6 +348,11 @@ module.exports = async function handler(req, res) {
       const { getMetricsStockRecordBundle } = require("../src/metrics-api-service");
       const data = await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
         publicLayout: isPublicStockRecordBundle,
+        ...(() => {
+          const limit = Math.max(1, Math.min(200, parseInt(String(getSearchParam(req, "limit") || "30"), 10) || 30));
+          const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
+          return { pointsLimit: limit, pointsOffset: offset };
+        })(),
       });
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-stock-record-bundle" } }));

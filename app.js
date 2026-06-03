@@ -211,6 +211,8 @@ const state = {
   stockRecordWindow: 30,
   stockRecordOffset: 0,
   stockRecordBundle: null,
+  stockRecordChartPagination: { limit: 30, nextOffset: 0, hasMore: false },
+  stockRecordPointsLoading: false,
   stockRecordShowClose: true,
   stockRecordShowShares: true,
   stockRecordShowMarketValue: false,
@@ -299,6 +301,7 @@ let tradeListScrollListenerBound = false;
 let stockRecordScrollListenerBound = false;
 let stockRecordTradesLoadGen = 0;
 let stockRecordPageLoadGen = 0;
+let stockRecordChartLoadTimer = 0;
 const stockRecordTradesPager = {
   gen: 0,
   offset: 0,
@@ -2451,15 +2454,167 @@ function parseBundlePercent(value) {
   return m ? Number(m[1]) / 100 : 0;
 }
 
-async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTargetId = "") {
+async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTargetId = "", chartOpts = {}) {
   if (!apiReady) {
     return null;
   }
   const params = {
     symbol: normalizeSymbol(symKey),
     account_id: resolveValidAccountFilter(accountId),
+    limit: String(chartOpts.limit ?? STOCK_RECORD_CHART_PAGE_SIZE),
+    offset: String(chartOpts.offset ?? 0),
   };
   return fetchMetricsApi("/metrics/stock-record-bundle", params, publicTargetId);
+}
+
+function stockRecordPublicTargetId() {
+  if (!state.stockRecordFromPublicProfile) {
+    return "";
+  }
+  return String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim();
+}
+
+function resetStockRecordChartPagination() {
+  state.stockRecordChartPagination = {
+    limit: STOCK_RECORD_CHART_PAGE_SIZE,
+    nextOffset: 0,
+    hasMore: false,
+  };
+  state.stockRecordPointsLoading = false;
+}
+
+function applyStockRecordChartPaginationFromBundle(bundle) {
+  const pag = bundle?.charts?.pagination;
+  const limit = Number(pag?.limit) || STOCK_RECORD_CHART_PAGE_SIZE;
+  const offset = Number(pag?.offset) || 0;
+  state.stockRecordChartPagination = {
+    limit,
+    nextOffset: offset + limit,
+    hasMore: !!pag?.hasMore,
+  };
+}
+
+function mergeStockRecordChartPoints(existingRows, incomingRows) {
+  const byDate = new Map();
+  for (const row of existingRows || []) {
+    const dk = String(row.date || "").slice(0, 10);
+    if (dk) {
+      byDate.set(dk, row);
+    }
+  }
+  const beforeCount = byDate.size;
+  for (const row of incomingRows || []) {
+    const dk = String(row.date || "").slice(0, 10);
+    if (dk && !byDate.has(dk)) {
+      byDate.set(dk, row);
+    }
+  }
+  const merged = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return { merged, added: merged.length - beforeCount };
+}
+
+function stockRecordTradesForActiveSymbol(symKey) {
+  const key = normalizeSymbol(symKey);
+  const usePub = state.stockRecordFromPublicProfile && state.lastPublicProfileDetail?.publicTrades;
+  const detail = state.lastPublicProfileDetail;
+  const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
+  return stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
+    (t) => normalizeSymbol(t.symbol) === key,
+  );
+}
+
+function scheduleStockRecordChartHistoryLoad(symKey) {
+  if (stockRecordChartLoadTimer) {
+    window.clearTimeout(stockRecordChartLoadTimer);
+  }
+  stockRecordChartLoadTimer = window.setTimeout(() => {
+    stockRecordChartLoadTimer = 0;
+    void loadStockRecordChartHistoryPage(symKey);
+  }, 200);
+}
+
+async function loadStockRecordChartHistoryPage(symKey) {
+  const key = normalizeSymbol(symKey);
+  const pag = state.stockRecordChartPagination;
+  if (
+    !key ||
+    !pag?.hasMore ||
+    state.stockRecordPointsLoading ||
+    state.route !== "stock-record" ||
+    normalizeSymbol(state.activeRecordSymbol) !== key
+  ) {
+    return;
+  }
+  if (!state.stockRecordBundle?.charts) {
+    return;
+  }
+  const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
+  const publicTargetId = stockRecordPublicTargetId();
+  state.stockRecordPointsLoading = true;
+  const loadGen = stockRecordPageLoadGen;
+  try {
+    const chunk = await fetchStockRecordBundleMetrics(key, accountId, publicTargetId, {
+      limit: pag.limit,
+      offset: pag.nextOffset,
+    });
+    if (
+      loadGen !== stockRecordPageLoadGen ||
+      state.route !== "stock-record" ||
+      normalizeSymbol(state.activeRecordSymbol) !== key
+    ) {
+      return;
+    }
+    const chunkPag = chunk?.charts?.pagination;
+    if (!chunk?.charts?.points?.length) {
+      state.stockRecordChartPagination = { ...pag, hasMore: false };
+      return;
+    }
+    const existing = Array.isArray(state.stockRecordBundle.charts.points)
+      ? state.stockRecordBundle.charts.points
+      : [];
+    const { merged, added } = mergeStockRecordChartPoints(existing, chunk.charts.points);
+    state.stockRecordBundle.charts.points = merged;
+    const limit = Number(chunkPag?.limit) || pag.limit;
+    const offset = Number(chunkPag?.offset) || pag.nextOffset;
+    state.stockRecordChartPagination = {
+      limit,
+      nextOffset: offset + limit,
+      hasMore: !!chunkPag?.hasMore,
+    };
+    if (added > 0) {
+      state.stockRecordOffset = (Number(state.stockRecordOffset) || 0) + added;
+    }
+    drawStockRecordCharts(key, stockRecordTradesForActiveSymbol(key));
+  } catch (error) {
+    console.warn("loadStockRecordChartHistoryPage failed", error);
+  } finally {
+    if (loadGen === stockRecordPageLoadGen) {
+      state.stockRecordPointsLoading = false;
+    }
+  }
+}
+
+function maybeLoadStockRecordChartHistory(symKey) {
+  const pag = state.stockRecordChartPagination;
+  if (!pag?.hasMore || state.stockRecordPointsLoading) {
+    return;
+  }
+  const points = stockRecordChartPointsFromBundle(state.stockRecordBundle);
+  const loadedCount = points.length;
+  if (!loadedCount) {
+    return;
+  }
+  const windowSize = Math.max(
+    STOCK_RECORD_CHART_MIN_WINDOW,
+    Math.min(loadedCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
+  );
+  const offset = Number(state.stockRecordOffset) || 0;
+  const maxOffset = Math.max(0, loadedCount - windowSize);
+  const zoomNeedsMore = Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW) > loadedCount;
+  const atOldestLoaded = maxOffset > 0 && offset >= maxOffset;
+  if (zoomNeedsMore || atOldestLoaded) {
+    scheduleStockRecordChartHistoryLoad(symKey);
+  }
 }
 
 function stockRecordChartPointsFromBundle(bundle) {
@@ -2506,15 +2661,22 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   const pageGen = ++stockRecordPageLoadGen;
   setStockRecordPageLoading(true);
   state.stockRecordBundle = null;
+  resetStockRecordChartPagination();
+  state.stockRecordWindow = 30;
+  state.stockRecordOffset = 0;
   try {
     if (!state.stockRecordFromPublicProfile) {
-      const bundle = await fetchStockRecordBundleMetrics(key, accountId);
+      const bundle = await fetchStockRecordBundleMetrics(key, accountId, "", {
+        limit: STOCK_RECORD_CHART_PAGE_SIZE,
+        offset: 0,
+      });
       if (pageGen !== stockRecordPageLoadGen) {
         return;
       }
       state.stockRecordBundle = bundle;
       if (bundle) {
         applyStockRecordBundleDefaults(bundle);
+        applyStockRecordChartPaginationFromBundle(bundle);
       }
       if (pageGen !== stockRecordPageLoadGen) {
         return;
@@ -2532,13 +2694,19 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       const targetId = String(
         state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "",
       ).trim();
-      const bundle = targetId ? await fetchStockRecordBundleMetrics(key, "all", targetId) : null;
+      const bundle = targetId
+        ? await fetchStockRecordBundleMetrics(key, "all", targetId, {
+            limit: STOCK_RECORD_CHART_PAGE_SIZE,
+            offset: 0,
+          })
+        : null;
       if (pageGen !== stockRecordPageLoadGen) {
         return;
       }
       state.stockRecordBundle = bundle;
       if (bundle) {
         applyStockRecordBundleDefaults(bundle);
+        applyStockRecordChartPaginationFromBundle(bundle);
       }
     }
     if (!state.stockRecordBundle) {
@@ -8532,6 +8700,7 @@ const ANALYSIS_CHART_DEFAULT_WINDOW = 30;
 const ANALYSIS_CHART_MIN_WINDOW = 7;
 const ANALYSIS_CHART_MAX_WINDOW = 365;
 const STOCK_RECORD_CHART_MIN_WINDOW = 12;
+const STOCK_RECORD_CHART_PAGE_SIZE = 30;
 
 function isStockRecordChartMode(mode) {
   return mode === "stock" || mode === "stock-profit" || mode === "stock-weight";
@@ -10186,6 +10355,7 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.stockRecordWindow = 30;
   state.stockRecordOffset = 0;
   state.stockRecordBundle = null;
+  resetStockRecordChartPagination();
   state.stockRecordTrades = [];
   resetStockRecordTradesPager();
   state.stockRecordTradesLoading = !state.stockRecordFromPublicProfile;
@@ -10715,6 +10885,7 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     chartNavTotal: () => totalCount,
     valueFormatter: (value) => `${formatNumber(value, 2)}%`,
   });
+  maybeLoadStockRecordChartHistory(symbol);
 }
 
 function drawStockRecordChartLegacy(symbol, symbolTrades) {
@@ -12051,10 +12222,16 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       const maxOffset = Math.max(0, total - windowSize);
       const next = Math.max(0, Math.min(maxOffset, panAnchorOffset + step));
       if (next === Number(state.stockRecordOffset || 0)) {
+        if (step > 0 && state.stockRecordChartPagination?.hasMore) {
+          scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
+        }
         return;
       }
       state.stockRecordOffset = next;
       requestRefresh("redraw");
+      if (next >= maxOffset && state.stockRecordChartPagination?.hasMore) {
+        scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
+      }
       return;
     }
     if (runtime.options.mode === "analysis") {
@@ -12230,6 +12407,9 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
     nextWindow = total;
     state.stockRecordWindow = nextWindow;
     state.stockRecordOffset = 0;
+    if (state.stockRecordChartPagination?.hasMore) {
+      scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
+    }
     return;
   }
   state.stockRecordWindow = nextWindow;
