@@ -80,15 +80,31 @@ function xirr(datedAmounts, guess = 0.08) {
   return r;
 }
 
-/** 资金加权：期初总资产、区间内出入金、期末总资产 → XIRR */
-function xirrFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
+/** 由年化 IRR 转为区间持有期收益率（不年化）。 */
+function xirrPeriodReturn(datedAmounts) {
+  if (!datedAmounts?.length || datedAmounts.length < 2) {
+    return 0;
+  }
+  const r = xirr(datedAmounts, 0.05);
+  const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
+  const t1 = new Date(`${datedAmounts[datedAmounts.length - 1].date}T12:00:00+08:00`).getTime();
+  const years = (t1 - t0) / (365.25 * 86400000);
+  if (!(years > 1e-6)) {
+    return 0;
+  }
+  return (1 + r) ** years - 1;
+}
+
+function buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd) {
   const start = String(windowStart).slice(0, 10);
   const end = String(windowEnd).slice(0, 10);
   const prev = rowsSortedAsc.filter((r) => r.date < start);
   const bv = prev.length ? Number(prev[prev.length - 1].totalAssets ?? 0) : 0;
   const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : String(start).slice(0, 10);
   const inWin = rowsSortedAsc.filter((r) => r.date >= start && r.date <= end);
-  if (!inWin.length) return 0;
+  if (!inWin.length) {
+    return null;
+  }
   const ev = Number(inWin[inWin.length - 1].totalAssets ?? 0);
   const lastD = String(inWin[inWin.length - 1].date).slice(0, 10);
   const dayMap = new Map();
@@ -109,8 +125,26 @@ function xirrFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
     .map(([date, amt]) => ({ date, amt }))
     .filter((x) => x.amt !== 0)
     .sort((a, b) => a.date.localeCompare(b.date));
-  if (dated.length < 2) return 0;
+  return dated.length >= 2 ? dated : null;
+}
+
+
+/** 资金加权：期初总资产、区间内出入金、期末总资产 → XIRR（年化，展示/兼容用） */
+function xirrFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
+  const dated = buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd);
+  if (!dated) {
+    return 0;
+  }
   return xirr(dated, 0.05);
+}
+
+/** 同上现金流结构，返回区间持有期收益率（入库用，非年化）。 */
+function xirrPeriodFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
+  const dated = buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd);
+  if (!dated) {
+    return 0;
+  }
+  return xirrPeriodReturn(dated);
 }
 
 /** 仅今日：期初总资产 + 当日银证 + 期末总资产 → XIRR */
@@ -227,6 +261,52 @@ function xirrFromSymbolValueFlowPoints(ptsSorted, endDate, endValue) {
   }
   return xirr(dated, 0.05);
 }
+
+/** 个股区间 XIRR → 持有期收益率（入库用，非年化） */
+function xirrPeriodFromSymbolValueFlowPoints(ptsSorted, endDate, endValue) {
+  const list = Array.isArray(ptsSorted) ? ptsSorted.filter((p) => p && p.date) : [];
+  if (!list.length && !(Number(endValue) > 0)) {
+    return 0;
+  }
+  const end = String(endDate || list[list.length - 1]?.date || "").slice(0, 10);
+  const dayMap = new Map();
+  if (list.length) {
+    const first = list[0];
+    const bv = Number(first.value) - Number(first.flow || 0);
+    const anchor = String(first.date).slice(0, 10);
+    if (Number.isFinite(bv) && bv !== 0) {
+      dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
+    }
+    for (const p of list) {
+      const d = String(p.date).slice(0, 10);
+      if (d === end) {
+        continue;
+      }
+      const ef = Number(p.flow || 0) || 0;
+      if (ef) {
+        dayMap.set(d, (dayMap.get(d) || 0) + ef);
+      }
+    }
+    const endPt = list.find((p) => String(p.date).slice(0, 10) === end);
+    const efEnd = Number(endPt?.flow || 0) || 0;
+    if (efEnd) {
+      dayMap.set(end, (dayMap.get(end) || 0) + efEnd);
+    }
+  }
+  const ev = Number(endValue);
+  if (Number.isFinite(ev)) {
+    dayMap.set(end, (dayMap.get(end) || 0) + ev);
+  }
+  const dated = [...dayMap.entries()]
+    .map(([date, amt]) => ({ date, amt }))
+    .filter((x) => x.amt !== 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (dated.length < 2) {
+    return 0;
+  }
+  return xirrPeriodReturn(dated);
+}
+
 
 function computeMoneyWeightedSeries(points) {
   const result = [];
