@@ -8,6 +8,8 @@ const {
   getUserMetricsMeta,
   getSymbolDailyCloseRange,
   getSymbolDailyPnlChartSeriesPage,
+  getSymbolDailyPnlChartSeriesDateRange,
+  hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   getSymbolNameMap,
   formatSymbolForDisplay,
@@ -25,12 +27,15 @@ const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } 
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
+const { monthStartKeyShanghai, yearStartKeyShanghai } = require("./stages");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 
 const POSITION_EPS = 1e-6;
 const DEFAULT_CHART_PAGE_LIMIT = 30;
 const MAX_CHART_PAGE_LIMIT = 200;
+
+const VALID_CHART_RANGES = new Set(["7", "30", "90", "mtd", "ytd", "all"]);
 
 function parseChartPaginationOpts(opts = {}) {
   const limit = Math.max(
@@ -39,6 +44,33 @@ function parseChartPaginationOpts(opts = {}) {
   );
   const offset = Math.max(0, Math.floor(Number(opts.pointsOffset ?? opts.offset) || 0));
   return { limit, offset };
+}
+
+function parseChartRangePreset(opts = {}) {
+  const raw = String(opts.chartRange ?? opts.range ?? "").trim().toLowerCase();
+  return VALID_CHART_RANGES.has(raw) ? raw : null;
+}
+
+function parseStockRecordChartRequest(opts = {}) {
+  const range = parseChartRangePreset(opts);
+  const { limit, offset } = parseChartPaginationOpts(opts);
+  return {
+    range,
+    limit,
+    offset,
+    useRangeInitial: range != null,
+  };
+}
+
+function chartRangeMetaFromPoints(preset, points) {
+  const list = Array.isArray(points) ? points : [];
+  const dates = list.map((p) => String(p.date || "").slice(0, 10)).filter(Boolean).sort();
+  return {
+    preset,
+    returned: list.length,
+    oldestDate: dates[0] || null,
+    newestDate: dates.length ? dates[dates.length - 1] : null,
+  };
 }
 
 function formatQuoteTimeDisplay(timeStr) {
@@ -300,11 +332,11 @@ function pageCloseDateRange(pnlRowsAsc, endDate, bufferDays = 7) {
   };
 }
 
-async function buildStockRecordBundlePayload({ userId, accountScope, symbol, publicLayout = false, ...paginationOpts }) {
+async function buildStockRecordBundlePayload({ userId, accountScope, symbol, publicLayout = false, ...chartOpts }) {
   const uid = String(userId || "").trim();
   const sym = normalizeSymbol(symbol);
   const scope = String(accountScope || "all").trim() || "all";
-  const { limit, offset } = parseChartPaginationOpts(paginationOpts);
+  const { range, limit, offset, useRangeInitial } = parseStockRecordChartRequest(chartOpts);
   if (!uid || !sym) {
     throw new Error("missing user or symbol");
   }
@@ -327,12 +359,49 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const endDate = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : frozenThrough;
   const accountIdForPnl = scope === "all" ? "all" : scope;
   const includeLive = offset === 0;
+  const pnlQueryBase = { accountId: accountIdForPnl, symbol: sym };
 
-  const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
-    { accountId: accountIdForPnl, symbol: sym, to: endDate || "9999-12-31", offset, limit },
-    uid,
-  );
-  const pnlRows = [...pnlPageDesc].reverse();
+  let pnlRows = [];
+  let paginationLimit = limit;
+  let paginationOffset = offset;
+  let hasMore = false;
+  let rangePreset = null;
+
+  if (useRangeInitial) {
+    rangePreset = range;
+    if (range === "mtd" || range === "ytd") {
+      const from =
+        range === "mtd" ? monthStartKeyShanghai(endDate) : yearStartKeyShanghai(endDate);
+      pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
+        { ...pnlQueryBase, from, to: endDate || "9999-12-31" },
+        uid,
+      );
+      paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
+      paginationOffset = 0;
+      hasMore = await hasSymbolDailyPnlBeforeDate({ ...pnlQueryBase, before: from }, uid);
+    } else {
+      const initialLimit =
+        range === "all" ? DEFAULT_CHART_PAGE_LIMIT : Math.max(1, Math.min(MAX_CHART_PAGE_LIMIT, Number(range) || 30));
+      const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
+        { ...pnlQueryBase, to: endDate || "9999-12-31", offset: 0, limit: initialLimit },
+        uid,
+      );
+      pnlRows = [...pnlPageDesc].reverse();
+      paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
+      paginationOffset = 0;
+      hasMore = pnlPageDesc.length === initialLimit;
+    }
+  } else {
+    const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
+      { ...pnlQueryBase, to: endDate || "9999-12-31", offset, limit },
+      uid,
+    );
+    pnlRows = [...pnlPageDesc].reverse();
+    paginationLimit = limit;
+    paginationOffset = offset;
+    hasMore = pnlPageDesc.length === limit;
+  }
+
   const pageRange = pageCloseDateRange(pnlRows, endDate);
   const headlineCloseFrom = addCalendarDays(endDate || frozenThrough || "1970-01-01", -90);
 
@@ -401,11 +470,12 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     },
     charts: {
       points,
+      range: rangePreset ? chartRangeMetaFromPoints(rangePreset, points) : null,
       pagination: {
-        limit,
-        offset,
+        limit: paginationLimit,
+        offset: paginationOffset,
         returned: points.length,
-        hasMore: pnlPageDesc.length === limit,
+        hasMore,
       },
       defaults: {
         showClose: true,
@@ -421,5 +491,6 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
 module.exports = {
   buildStockRecordBundlePayload,
   parseChartPaginationOpts,
+  parseStockRecordChartRequest,
   DEFAULT_CHART_PAGE_LIMIT,
 };

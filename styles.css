@@ -2014,7 +2014,7 @@ h2 {
 }
 
 .stock-record-head-main,
-.stock-record-subhead,
+.stock-record-subhead-panel,
 .stock-record-chart-section,
 .stock-record-chart-block,
 .stock-record-trades-section {
@@ -2029,16 +2029,26 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
+.stock-record-subhead-panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
 .stock-record-subhead {
-  padding: 12px 14px;
+  padding: 12px 14px 8px;
   margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   overflow: visible;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border: none;
+}
+
+.stock-record-range-row {
+  padding: 0 14px 12px;
+  margin: 0;
 }
 
 .stock-record-chart-section,

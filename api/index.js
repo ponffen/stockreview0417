@@ -349,6 +349,10 @@ module.exports = async function handler(req, res) {
       const data = await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
         publicLayout: isPublicStockRecordBundle,
         ...(() => {
+          const range = String(getSearchParam(req, "range") || "").trim().toLowerCase();
+          if (["7", "30", "90", "mtd", "ytd", "all"].includes(range)) {
+            return { chartRange: range };
+          }
           const limit = Math.max(1, Math.min(200, parseInt(String(getSearchParam(req, "limit") || "30"), 10) || 30));
           const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
           return { pointsLimit: limit, pointsOffset: offset };

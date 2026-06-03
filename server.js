@@ -1520,6 +1520,14 @@ function stockRecordChartPaginationFromQuery(query) {
   return { pointsLimit: limit, pointsOffset: offset };
 }
 
+function stockRecordChartQueryFromQuery(query) {
+  const range = String(query?.range || "").trim().toLowerCase();
+  if (["7", "30", "90", "mtd", "ytd", "all"].includes(range)) {
+    return { chartRange: range };
+  }
+  return stockRecordChartPaginationFromQuery(query);
+}
+
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {
   try {
     const accountScope = metricsAccountIdFromQuery(req.query);
@@ -1554,7 +1562,7 @@ app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
     sendMetricsJson(
       res,
       await getMetricsStockRecordBundle(req.userId, accountScope, symbol, {
-        ...stockRecordChartPaginationFromQuery(req.query),
+        ...stockRecordChartQueryFromQuery(req.query),
       }),
     );
   } catch (error) {
@@ -1690,7 +1698,7 @@ app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async 
       res,
       await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
         publicLayout: true,
-        ...stockRecordChartPaginationFromQuery(req.query),
+        ...stockRecordChartQueryFromQuery(req.query),
       }),
     );
   } catch (error) {

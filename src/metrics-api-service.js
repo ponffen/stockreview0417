@@ -1392,6 +1392,8 @@ async function getMetricsStockRecordBundle(userId, accountScope, symbol, opts = 
     accountScope: scope,
     symbol: sym,
     publicLayout: opts.publicLayout === true,
+    chartRange: opts.chartRange,
+    range: opts.chartRange,
     pointsLimit: opts.pointsLimit,
     pointsOffset: opts.pointsOffset,
   });

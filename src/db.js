@@ -1723,6 +1723,58 @@ async function getSymbolDailyPnlChartSeriesPage(query = {}, userId = null) {
   return rows.map(mapSymbolDailyPnlChartRow);
 }
 
+/** 个股图：按日期闭区间 ASC（mtd/ytd 等）。 */
+async function getSymbolDailyPnlChartSeriesDateRange(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
+  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  if (!symbol) {
+    return [];
+  }
+  const { rows } = await q(
+    `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
+            stage_inception_profit, currency, book_currency, day_close_price
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = $3
+       AND date >= $4 AND date <= $5
+     ORDER BY date ASC`,
+    [uid, accountId, symbol, from, to],
+  );
+  return rows.map(mapSymbolDailyPnlChartRow);
+}
+
+async function hasSymbolDailyPnlBeforeDate(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return false;
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  const before = query.before != null && String(query.before).trim() ? String(query.before).trim() : "";
+  if (!symbol || !before) {
+    return false;
+  }
+  const { rows } = await q(
+    `SELECT 1 FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = $3
+       AND date < $4
+     LIMIT 1`,
+    [uid, accountId, symbol, before],
+  );
+  return rows.length > 0;
+}
+
 /** Live 日 totalProfit：取 asOf 及之前最近一行 stage_inception_profit。 */
 async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
   const uid = String(userId || "").trim();
@@ -3399,6 +3451,8 @@ module.exports = {
   getSymbolDailyPnl,
   getSymbolDailyPnlChartSeries,
   getSymbolDailyPnlChartSeriesPage,
+  getSymbolDailyPnlChartSeriesDateRange,
+  hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,

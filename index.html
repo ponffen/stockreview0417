@@ -817,20 +817,30 @@
 
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
-          <div class="stock-record-subhead">
-            <div class="stock-record-subhead-left">
-              <span class="stock-record-interval-label">交易间隔</span>
-              <strong id="stockRecordInterval" class="stock-record-interval-value">--</strong>
-              <span class="stock-rank-help-wrap stock-record-interval-help-wrap">
-                <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="交易间隔说明">?</button>
-                <div class="stock-rank-help-bubble" role="tooltip">交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</div>
-              </span>
+          <div class="stock-record-subhead-panel">
+            <div class="stock-record-subhead">
+              <div class="stock-record-subhead-left">
+                <span class="stock-record-interval-label">交易间隔</span>
+                <strong id="stockRecordInterval" class="stock-record-interval-value">--</strong>
+                <span class="stock-rank-help-wrap stock-record-interval-help-wrap">
+                  <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="交易间隔说明">?</button>
+                  <div class="stock-rank-help-bubble" role="tooltip">交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</div>
+                </span>
+              </div>
+              <div class="stock-record-subhead-right">
+                <label class="head-select-wrap stock-record-account-wrap">
+                  <select id="stockRecordAccountSelect" class="head-select stock-record-account-select"></select>
+                  <span class="arrow">▼</span>
+                </label>
+              </div>
             </div>
-            <div class="stock-record-subhead-right">
-              <label class="head-select-wrap stock-record-account-wrap">
-                <select id="stockRecordAccountSelect" class="head-select stock-record-account-select"></select>
-                <span class="arrow">▼</span>
-              </label>
+            <div id="stockRecordRangeRow" class="range-row stock-record-range-row">
+              <button type="button" class="range-chip" data-stock-record-range="7">最近一周</button>
+              <button type="button" class="range-chip active" data-stock-record-range="30">最近一月</button>
+              <button type="button" class="range-chip" data-stock-record-range="90">最近三月</button>
+              <button type="button" class="range-chip" data-stock-record-range="mtd">月初至今</button>
+              <button type="button" class="range-chip" data-stock-record-range="ytd">年初至今</button>
+              <button type="button" class="range-chip" data-stock-record-range="all">历史以来</button>
             </div>
           </div>
 
