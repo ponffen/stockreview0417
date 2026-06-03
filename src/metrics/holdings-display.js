@@ -17,7 +17,7 @@ const {
 } = require("../account-kpi-surface");
 const { isAggregateScope } = require("./account-book-metrics");
 const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live");
-const { xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
+const { xirrPeriodFromSymbolValueFlowPoints } = require("../home-summary-maths");
 const {
   getPositionDayTradeContext,
   getTradingDateKeyBy0830,

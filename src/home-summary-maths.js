@@ -174,8 +174,7 @@ function xirrTodayOnly(frozenDate, frozenTotalAssetsCny, liveDate, liveTotalAsse
   return xirr(dated, 0.05);
 }
 
-/** 阶段首日至 liveDate 的 XIRR；rows 含区间内银证，期末用 liveTotalAssetsCny */
-function xirrStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
+function buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
   const start = String(windowStart).slice(0, 10);
   const end = String(liveDate).slice(0, 10);
   const prev = rowsSortedAsc.filter((r) => String(r.date).slice(0, 10) < start);
@@ -211,10 +210,25 @@ function xirrStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCn
     .map(([date, amt]) => ({ date, amt }))
     .filter((x) => x.amt !== 0)
     .sort((a, b) => a.date.localeCompare(b.date));
-  if (dated.length < 2) {
+  return dated.length >= 2 ? dated : null;
+}
+
+/** 阶段首日至 liveDate 的 XIRR（年化）；rows 含区间内银证，期末用 liveTotalAssetsCny */
+function xirrStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
+  const dated = buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny);
+  if (!dated) {
     return 0;
   }
   return xirr(dated, 0.05);
+}
+
+/** 阶段首日至 liveDate：区间持有期 XIRR（bundle MWR，非年化） */
+function xirrPeriodStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
+  const dated = buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny);
+  if (!dated) {
+    return 0;
+  }
+  return xirrPeriodReturn(dated);
 }
 
 /** 个股：市值序列 + 买卖流 → 首日至 endValue 的 XIRR（原币） */
@@ -522,6 +536,7 @@ module.exports = {
   xirrPeriodReturn,
   xirrTodayOnly,
   xirrStageToLive,
+  xirrPeriodStageToLive,
   xirrFromSymbolValueFlowPoints,
   xirrPeriodFromSymbolValueFlowPoints,
   xirr,
