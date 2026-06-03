@@ -19,6 +19,10 @@ async function rebuildUser(uid) {
   });
   console.log("[symbol-pnl-done]", uid, JSON.stringify({ ...result, wallMs: Date.now() - t0 }));
   if (!result.ok) {
+    if (result.reason === "no-trades") {
+      console.log("[skip-no-trades]", uid);
+      return;
+    }
     throw new Error(result.reason || "rebuild failed");
   }
 }
