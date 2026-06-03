@@ -1645,7 +1645,7 @@ async function getSymbolDailyPnlChartSeries(query = {}, userId = null) {
     query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
   const { rows } = await q(
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            currency, book_currency, day_close_price
+            stage_inception_profit, currency, book_currency, day_close_price
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1665,6 +1665,8 @@ async function getSymbolDailyPnlChartSeries(query = {}, userId = null) {
         ? null
         : Number(row.eod_market_value_native),
     positionWeight: row.position_weight == null ? null : Number(row.position_weight),
+    stageInceptionProfit:
+      row.stage_inception_profit == null ? null : Number(row.stage_inception_profit),
     currency: row.currency,
     bookCurrency: row.book_currency,
     dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),

@@ -458,6 +458,7 @@ const stockRecordPrice = document.getElementById("stockRecordPrice");
 const stockRecordChange = document.getElementById("stockRecordChange");
 const stockRecordChart = document.getElementById("stockRecordChart");
 const stockRecordWeightChart = document.getElementById("stockRecordWeightChart");
+const stockRecordProfitChart = document.getElementById("stockRecordProfitChart");
 const stockRecordToggleClose = document.getElementById("stockRecordToggleClose");
 const stockRecordToggleShares = document.getElementById("stockRecordToggleShares");
 const stockRecordToggleMarketValue = document.getElementById("stockRecordToggleMarketValue");
@@ -501,6 +502,7 @@ const tradeStockSearchInput = document.getElementById("tradeStockSearchInput");
 const tradeStockSearchResults = document.getElementById("tradeStockSearchResults");
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
 const stockRecordWeightTooltip = document.getElementById("stockRecordWeightTooltip");
+const stockRecordProfitTooltip = document.getElementById("stockRecordProfitTooltip");
 const appRouteLoading = document.getElementById("appRouteLoading");
 const appRouteLoadingText = document.getElementById("appRouteLoadingText");
 
@@ -2422,7 +2424,7 @@ function setStockRecordPageLoading(loading) {
 }
 
 function clearStockRecordChart() {
-  for (const canvas of [stockRecordChart, stockRecordWeightChart]) {
+  for (const canvas of [stockRecordChart, stockRecordProfitChart, stockRecordWeightChart]) {
     if (!canvas) {
       continue;
     }
@@ -2468,6 +2470,7 @@ function stockRecordChartPointsFromBundle(bundle) {
       close: parseBundlePlainNumber(row.close),
       shares: parseBundlePlainNumber(row.shares),
       marketValueNative: parseBundlePlainNumber(row.marketValueNative),
+      totalProfit: parseBundlePlainNumber(row.totalProfit),
       weight: parseBundlePercent(row.weight),
     }))
     .filter((row) => row.date);
@@ -10485,6 +10488,7 @@ function drawStockRecordCharts(symbol, symbolTrades) {
 
 function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
   const canvas = stockRecordChart;
+  const profitCanvas = stockRecordProfitChart;
   const weightCanvas = stockRecordWeightChart;
   if (!canvas) {
     return;
@@ -10605,6 +10609,57 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
       return formatNumber(value, 2);
     },
   });
+
+  if (profitCanvas) {
+    const profitPayload = buildChartPayload(
+      [
+        {
+          key: "totalProfit",
+          label: "持仓收益",
+          color: "#6366f1",
+          axis: "left",
+          values: visible.map((item) => ({ date: item.date, value: item.totalProfit ?? 0 })),
+        },
+      ],
+      {
+        labels: { totalProfit: "持仓收益" },
+        yAxisMode: "single",
+        xMin: 2,
+        xMax: profitCanvas.width - 2,
+        yMin: 20,
+        yMax: profitCanvas.height - 36,
+        yRangePadding: {
+          minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
+          maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
+        },
+      },
+    );
+    const pctx = profitCanvas.getContext("2d");
+    pctx.clearRect(0, 0, profitCanvas.width, profitCanvas.height);
+    drawChartGrid(pctx, profitCanvas.width, profitCanvas.height, profitPayload);
+    profitPayload.seriesList.forEach((s) => {
+      drawSeries(pctx, s.values, profitPayload.mapX, profitPayload.mapY, s.color || "#6366f1");
+    });
+    if (profitPayload.seriesMap?.totalProfit?.values?.length) {
+      drawSeriesExtrema(pctx, profitPayload, profitPayload.seriesMap.totalProfit, (value) =>
+        formatSignedMoney(value, 2),
+      );
+    }
+    drawAxisLabels(pctx, profitPayload, {
+      leftLabel: "",
+      rightLabel: "",
+      xLabel: "",
+      valueFormatter: (value) => formatSignedMoney(value, 2),
+    });
+    drawCrosshairOverlay(pctx, profitPayload, profitCanvas.id, (value) => formatSignedMoney(value, 2));
+    bindInteractiveChart(profitCanvas, stockRecordProfitTooltip, () => profitPayload, {
+      mode: "stock-profit",
+      onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
+      onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+      chartNavTotal: () => totalCount,
+      valueFormatter: (value) => formatSignedMoney(value, 2),
+    });
+  }
 
   if (!weightCanvas) {
     return;

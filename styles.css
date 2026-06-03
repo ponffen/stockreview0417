@@ -1908,6 +1908,7 @@ h2 {
 }
 
 #stockRecordChart,
+#stockRecordProfitChart,
 #stockRecordWeightChart {
   width: 100%;
   height: auto;

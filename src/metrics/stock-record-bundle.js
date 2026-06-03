@@ -23,13 +23,10 @@ const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } 
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
-const { enumerateFreezeSessionDates } = require("./freeze-calendar");
-const {
-  sortTradeAsc,
-  symbolPnlForRankScope,
-  groupPnlRowsBySymbol,
-} = require("./stock-rank-period");
+const { sortTradeAsc, groupPnlRowsBySymbol } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
+
+const POSITION_EPS = 1e-6;
 
 function formatQuoteTimeDisplay(timeStr) {
   const raw = String(timeStr || "").trim();
@@ -168,6 +165,47 @@ async function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
   return { current, prevClose: prev, quoteTime };
 }
 
+function pnlRowsForStockRecordScope(pnlBySym, sym, scope) {
+  const list = pnlBySym.get(sym) || [];
+  const sc = String(scope || "all").trim() || "all";
+  if (sc === "all") {
+    return list.filter((r) => String(r.accountId || "") === "all");
+  }
+  return list.filter((r) => String(r.accountId || "default") === sc);
+}
+
+function todayProfitNativeFromLive(livePosition, ccy, live) {
+  const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
+  if (ccy === "CNY") {
+    return todayProfitCny;
+  }
+  const fx =
+    ccy === "USD"
+      ? Number(live?.fxUsdCny) || 0
+      : ccy === "HKD"
+        ? Number(live?.fxHkdCny) || 0
+        : 1;
+  return fx > 0 ? todayProfitCny / fx : 0;
+}
+
+function frozenInceptionProfitOnOrBefore(pnlRows, asOfDate) {
+  const asOf = String(asOfDate || "").slice(0, 10);
+  if (!asOf) {
+    return 0;
+  }
+  let best = null;
+  for (const row of pnlRows || []) {
+    const dk = String(row.date || "").slice(0, 10);
+    if (!dk || dk > asOf) {
+      continue;
+    }
+    if (!best || dk > best.date) {
+      best = { date: dk, profit: Number(row.stageInceptionProfit) };
+    }
+  }
+  return Number.isFinite(best?.profit) ? best.profit : 0;
+}
+
 function buildChartPoints({
   pnlRows,
   closeLookup,
@@ -176,7 +214,7 @@ function buildChartPoints({
   livePosition,
   ccy,
 }) {
-  if (!closeLookup.sorted.length && !pnlRows.length) {
+  if (!pnlRows.length) {
     return [];
   }
   const firstTrade = symbolTrades[0]?.date ? String(symbolTrades[0].date).slice(0, 10) : "";
@@ -190,32 +228,43 @@ function buildChartPoints({
     return [];
   }
 
-  const pnlByDate = new Map(
-    (pnlRows || []).map((r) => [String(r.date).slice(0, 10), r]),
-  );
-  const days = enumerateFreezeSessionDates(startDate, endDate);
-  const raw = [];
+  const sortedPnl = [...pnlRows]
+    .map((row) => ({ ...row, dk: String(row.date || "").slice(0, 10) }))
+    .filter((row) => row.dk && row.dk >= startDate && row.dk <= endDate)
+    .sort((a, b) => a.dk.localeCompare(b.dk));
 
-  for (const dk of days) {
+  const raw = [];
+  for (const pnl of sortedPnl) {
+    const dk = pnl.dk;
     const close = closeLookup.closeOn(dk);
     if (!(close > 0)) {
       continue;
     }
-    const pnl = pnlByDate.get(dk);
-    const shares = pnl ? Number(pnl.eodShares) || 0 : 0;
+    const shares = Number(pnl.eodShares) || 0;
     const mvNat =
-      pnl?.eodMarketValueNative != null && Number.isFinite(Number(pnl.eodMarketValueNative))
+      pnl.eodMarketValueNative != null && Number.isFinite(Number(pnl.eodMarketValueNative))
         ? Number(pnl.eodMarketValueNative)
         : shares * close;
-    const weight = pnl?.positionWeight != null && Number.isFinite(Number(pnl.positionWeight)) ? Number(pnl.positionWeight) : 0;
-    raw.push({ date: dk, close, shares, mvNat, weight });
+    const weight =
+      pnl.positionWeight != null && Number.isFinite(Number(pnl.positionWeight))
+        ? Number(pnl.positionWeight)
+        : 0;
+    const totalProfitNat = Number(pnl.stageInceptionProfit);
+    raw.push({
+      date: dk,
+      close,
+      shares,
+      mvNat,
+      weight,
+      totalProfitNat: Number.isFinite(totalProfitNat) ? totalProfitNat : 0,
+    });
   }
 
-  if (live?.tradingDay && livePosition) {
+  const liveQty = Number(livePosition?.quantity) || 0;
+  if (live?.tradingDay && livePosition && Math.abs(liveQty) > POSITION_EPS) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
     const current = Number(livePosition.current) || 0;
-    const qty = Number(livePosition.quantity) || 0;
-    const mvNat = qty * current;
+    const mvNat = liveQty * current;
     const totalAssetsCny = Number(live.totalAssetsCny) || 0;
     const rate =
       ccy === "USD"
@@ -225,12 +274,15 @@ function buildChartPoints({
           : 1;
     const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
     const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
+    const frozenProfit = frozenInceptionProfitOnOrBefore(pnlRows, frozenThrough);
+    const totalProfitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
     const row = {
       date: liveDate,
       close: current > 0 ? current : raw.length ? raw[raw.length - 1].close : 0,
-      shares: qty,
+      shares: liveQty,
       mvNat,
       weight,
+      totalProfitNat,
     };
     const hit = raw.findIndex((p) => p.date === liveDate);
     if (hit >= 0) {
@@ -247,6 +299,7 @@ function buildChartPoints({
     shares: formatShares(p.shares),
     marketValueNative: fmtPlainAmount(p.mvNat),
     weight: fmtPercentRatio(p.weight),
+    totalProfit: fmtPlainSignedAmount(p.totalProfitNat),
   }));
 }
 
@@ -276,7 +329,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const frozenThrough = String(live.frozenThrough || um?.frozenThrough || "").slice(0, 10);
   const endDate = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : frozenThrough;
 
-  const accountIdForPnl = scope === "all" ? "" : scope;
+  const accountIdForPnl = scope === "all" ? "all" : scope;
   const [pnlAll, closeRows, nameMap] = await Promise.all([
     getSymbolDailyPnlChartSeries(
       { accountId: accountIdForPnl, symbol: sym, from: firstTrade, to: endDate || "9999-12-31" },
@@ -292,7 +345,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       dayPnlNative: 0,
     })),
   );
-  const pnlRows = symbolPnlForRankScope(pnlBySym, sym, scope);
+  const pnlRows = pnlRowsForStockRecordScope(pnlBySym, sym, scope);
   const closeLookup = closeLookupFromRows(closeRows);
 
   const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
