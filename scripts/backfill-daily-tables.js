@@ -21,6 +21,7 @@ async function main() {
   const result = await runFreezeV3ForUser(uid, {
     frozenDate,
     force: true,
+    fullRebuild: true,
     syncDailyClose: true,
     logger: console,
   });

@@ -33,7 +33,7 @@ const {
   principalCnyUpToDate,
   externalFlowCnyForDate,
 } = require("../ledger-metrics");
-const { xirrFromSnapshotWindow, xirrFromSymbolValueFlowPoints } = require("../home-summary-maths");
+const { accountMwrFromSnapshotWindow, symbolMwrFromValueFlowPoints } = require("../mwr");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
 const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
 const {
@@ -941,8 +941,6 @@ module.exports = {
   runFreezeV3ForUser,
   runSymbolsOnlyV3ForUser,
   runSymbolsFullRebuildForUser,
-  upsertAnalysisBatchV3,
-  upsertSymbolBatchV3,
   buildURankSymbols,
   freezeSymbolsForUser,
   replaySymbolDailyRows,

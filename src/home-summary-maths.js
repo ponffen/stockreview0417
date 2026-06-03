@@ -37,290 +37,26 @@ function normalizeProfitAlgoMode(mode) {
   return "twr";
 }
 
-/** 不规则现金流 XIRR（年化），与 performance-cache-service 一致 */
-function npv(rate, datedAmounts) {
-  const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
-  let s = 0;
-  for (const { date, amt } of datedAmounts) {
-    const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
-    s += amt / (1 + rate) ** years;
-  }
-  return s;
-}
+const {
+  mwrFromCashflows,
+  buildAccountMwrCashflows,
+  buildAccountMwrCashflowsStageToLive,
+  buildAccountMwrCashflowsToday,
+  buildSymbolMwrCashflows,
+  accountMwrFromSnapshotWindow,
+  accountMwrStageToLive,
+  accountMwrTodayOnly,
+  symbolMwrFromValueFlowPoints,
+} = require("./mwr");
 
-function xirr(datedAmounts, guess = 0.08) {
-  if (!datedAmounts.length) return 0;
-  let r = guess;
-  for (let k = 0; k < 40; k += 1) {
-    const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
-    let f = 0;
-    let df = 0;
-    for (const { date, amt } of datedAmounts) {
-      const years = (new Date(`${date}T12:00:00+08:00`).getTime() - t0) / (365.25 * 86400000);
-      const den = (1 + r) ** years;
-      f += amt / den;
-      df += (-years * amt) / ((1 + r) ** (years + 1));
-    }
-    if (!Number.isFinite(f) || Math.abs(f) < 1e-8) return r;
-    if (!Number.isFinite(df) || Math.abs(df) < 1e-12) break;
-    const nr = r - f / df;
-    if (!Number.isFinite(nr) || nr <= -0.9999 || nr > 100) break;
-    r = nr;
-  }
-  let lo = -0.9999;
-  let hi = 10;
-  for (let k = 0; k < 80; k += 1) {
-    const mid = (lo + hi) / 2;
-    const v = npv(mid, datedAmounts);
-    if (!Number.isFinite(v)) break;
-    if (Math.abs(v) < 1e-7) return mid;
-    if (v > 0) lo = mid;
-    else hi = mid;
-  }
-  return r;
-}
-
-/** 由年化 IRR 转为区间持有期收益率（不年化）。 */
-function xirrPeriodReturn(datedAmounts) {
-  if (!datedAmounts?.length || datedAmounts.length < 2) {
-    return 0;
-  }
-  const r = xirr(datedAmounts, 0.05);
-  const t0 = new Date(`${datedAmounts[0].date}T12:00:00+08:00`).getTime();
-  const t1 = new Date(`${datedAmounts[datedAmounts.length - 1].date}T12:00:00+08:00`).getTime();
-  const years = (t1 - t0) / (365.25 * 86400000);
-  if (!(years > 1e-6)) {
-    return 0;
-  }
-  return (1 + r) ** years - 1;
-}
-
-function buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd) {
-  const start = String(windowStart).slice(0, 10);
-  const end = String(windowEnd).slice(0, 10);
-  const prev = rowsSortedAsc.filter((r) => r.date < start);
-  const bv = prev.length ? Number(prev[prev.length - 1].totalAssets ?? 0) : 0;
-  const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : String(start).slice(0, 10);
-  const inWin = rowsSortedAsc.filter((r) => r.date >= start && r.date <= end);
-  if (!inWin.length) {
-    return null;
-  }
-  const ev = Number(inWin[inWin.length - 1].totalAssets ?? 0);
-  const lastD = String(inWin[inWin.length - 1].date).slice(0, 10);
-  const dayMap = new Map();
-  if (Number.isFinite(bv) && bv !== 0) {
-    dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
-  }
-  for (const r of inWin) {
-    const ef = Number(r.externalFlowCny ?? 0) || 0;
-    if (ef) {
-      const d = String(r.date).slice(0, 10);
-      dayMap.set(d, (dayMap.get(d) || 0) + ef);
-    }
-  }
-  if (Number.isFinite(ev)) {
-    dayMap.set(lastD, (dayMap.get(lastD) || 0) + ev);
-  }
-  const dated = [...dayMap.entries()]
-    .map(([date, amt]) => ({ date, amt }))
-    .filter((x) => x.amt !== 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  return dated.length >= 2 ? dated : null;
-}
-
-
-/** 资金加权：期初总资产、区间内出入金、期末总资产 → XIRR（年化，展示/兼容用） */
-function xirrFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
-  const dated = buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd);
-  if (!dated) {
-    return 0;
-  }
-  return xirr(dated, 0.05);
-}
-
-/** 同上现金流结构，返回区间持有期收益率（入库用，非年化）。 */
-function xirrPeriodFromSnapshotWindow(rowsSortedAsc, windowStart, windowEnd) {
-  const dated = buildSnapshotWindowCashflows(rowsSortedAsc, windowStart, windowEnd);
-  if (!dated) {
-    return 0;
-  }
-  return xirrPeriodReturn(dated);
-}
-
-/** 仅今日：期初总资产 + 当日银证 + 期末总资产 → XIRR */
-function xirrTodayOnly(frozenDate, frozenTotalAssetsCny, liveDate, liveTotalAssetsCny, externalFlowTodayCny) {
-  const fd = String(frozenDate || "").slice(0, 10);
-  const ld = String(liveDate || "").slice(0, 10);
-  const bv = Number(frozenTotalAssetsCny) || 0;
-  const ev = Number(liveTotalAssetsCny) || 0;
-  const ef = Number(externalFlowTodayCny) || 0;
-  const dayMap = new Map();
-  if (Number.isFinite(bv) && bv !== 0) {
-    dayMap.set(fd, (dayMap.get(fd) || 0) - bv);
-  }
-  if (ef) {
-    dayMap.set(ld, (dayMap.get(ld) || 0) + ef);
-  }
-  if (Number.isFinite(ev)) {
-    dayMap.set(ld, (dayMap.get(ld) || 0) + ev);
-  }
-  const dated = [...dayMap.entries()]
-    .map(([date, amt]) => ({ date, amt }))
-    .filter((x) => x.amt !== 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (dated.length < 2) {
-    return 0;
-  }
-  return xirr(dated, 0.05);
-}
-
-function buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
-  const start = String(windowStart).slice(0, 10);
-  const end = String(liveDate).slice(0, 10);
-  const prev = rowsSortedAsc.filter((r) => String(r.date).slice(0, 10) < start);
-  const bv = prev.length ? Number(prev[prev.length - 1].totalAssets ?? 0) : 0;
-  const anchor = prev.length ? String(prev[prev.length - 1].date).slice(0, 10) : start;
-  const dayMap = new Map();
-  if (Number.isFinite(bv) && bv !== 0) {
-    dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
-  }
-  for (const r of rowsSortedAsc) {
-    const d = String(r.date).slice(0, 10);
-    if (d < start || d > end) {
-      continue;
-    }
-    if (d === end) {
-      continue;
-    }
-    const ef = Number(r.externalFlowCny ?? 0) || 0;
-    if (ef) {
-      dayMap.set(d, (dayMap.get(d) || 0) + ef);
-    }
-  }
-  const endRow = rowsSortedAsc.find((r) => String(r.date).slice(0, 10) === end);
-  const efEnd = Number(endRow?.externalFlowCny ?? 0) || 0;
-  if (efEnd) {
-    dayMap.set(end, (dayMap.get(end) || 0) + efEnd);
-  }
-  const ev = Number(liveTotalAssetsCny);
-  if (Number.isFinite(ev)) {
-    dayMap.set(end, (dayMap.get(end) || 0) + ev);
-  }
-  const dated = [...dayMap.entries()]
-    .map(([date, amt]) => ({ date, amt }))
-    .filter((x) => x.amt !== 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  return dated.length >= 2 ? dated : null;
-}
-
-/** 阶段首日至 liveDate 的 XIRR（年化）；rows 含区间内银证，期末用 liveTotalAssetsCny */
-function xirrStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
-  const dated = buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny);
-  if (!dated) {
-    return 0;
-  }
-  return xirr(dated, 0.05);
-}
-
-/** 阶段首日至 liveDate：区间持有期 XIRR（bundle MWR，非年化） */
-function xirrPeriodStageToLive(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny) {
-  const dated = buildStageToLiveCashflows(rowsSortedAsc, windowStart, liveDate, liveTotalAssetsCny);
-  if (!dated) {
-    return 0;
-  }
-  return xirrPeriodReturn(dated);
-}
-
-/** 个股：市值序列 + 买卖流 → 首日至 endValue 的 XIRR（原币） */
-function xirrFromSymbolValueFlowPoints(ptsSorted, endDate, endValue) {
-  const list = Array.isArray(ptsSorted) ? ptsSorted.filter((p) => p && p.date) : [];
-  if (!list.length && !(Number(endValue) > 0)) {
-    return 0;
-  }
-  const end = String(endDate || list[list.length - 1]?.date || "").slice(0, 10);
-  const dayMap = new Map();
-  if (list.length) {
-    const first = list[0];
-    const bv = Number(first.value) - Number(first.flow || 0);
-    const anchor = String(first.date).slice(0, 10);
-    if (Number.isFinite(bv) && bv !== 0) {
-      dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
-    }
-    for (const p of list) {
-      const d = String(p.date).slice(0, 10);
-      if (d === end) {
-        continue;
-      }
-      const ef = Number(p.flow || 0) || 0;
-      if (ef) {
-        dayMap.set(d, (dayMap.get(d) || 0) + ef);
-      }
-    }
-    const endPt = list.find((p) => String(p.date).slice(0, 10) === end);
-    const efEnd = Number(endPt?.flow || 0) || 0;
-    if (efEnd) {
-      dayMap.set(end, (dayMap.get(end) || 0) + efEnd);
-    }
-  }
-  const ev = Number(endValue);
-  if (Number.isFinite(ev)) {
-    dayMap.set(end, (dayMap.get(end) || 0) + ev);
-  }
-  const dated = [...dayMap.entries()]
-    .map(([date, amt]) => ({ date, amt }))
-    .filter((x) => x.amt !== 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (dated.length < 2) {
-    return 0;
-  }
-  return xirr(dated, 0.05);
-}
-
-/** 个股区间 XIRR → 持有期收益率（入库用，非年化） */
-function xirrPeriodFromSymbolValueFlowPoints(ptsSorted, endDate, endValue) {
-  const list = Array.isArray(ptsSorted) ? ptsSorted.filter((p) => p && p.date) : [];
-  if (!list.length && !(Number(endValue) > 0)) {
-    return 0;
-  }
-  const end = String(endDate || list[list.length - 1]?.date || "").slice(0, 10);
-  const dayMap = new Map();
-  if (list.length) {
-    const first = list[0];
-    const bv = Number(first.value) - Number(first.flow || 0);
-    const anchor = String(first.date).slice(0, 10);
-    if (Number.isFinite(bv) && bv !== 0) {
-      dayMap.set(anchor, (dayMap.get(anchor) || 0) - bv);
-    }
-    for (const p of list) {
-      const d = String(p.date).slice(0, 10);
-      if (d === end) {
-        continue;
-      }
-      const ef = Number(p.flow || 0) || 0;
-      if (ef) {
-        dayMap.set(d, (dayMap.get(d) || 0) + ef);
-      }
-    }
-    const endPt = list.find((p) => String(p.date).slice(0, 10) === end);
-    const efEnd = Number(endPt?.flow || 0) || 0;
-    if (efEnd) {
-      dayMap.set(end, (dayMap.get(end) || 0) + efEnd);
-    }
-  }
-  const ev = Number(endValue);
-  if (Number.isFinite(ev)) {
-    dayMap.set(end, (dayMap.get(end) || 0) + ev);
-  }
-  const dated = [...dayMap.entries()]
-    .map(([date, amt]) => ({ date, amt }))
-    .filter((x) => x.amt !== 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (dated.length < 2) {
-    return 0;
-  }
-  return xirrPeriodReturn(dated);
-}
-
+const xirrPeriodFromSnapshotWindow = accountMwrFromSnapshotWindow;
+const xirrPeriodStageToLive = accountMwrStageToLive;
+const xirrPeriodFromSymbolValueFlowPoints = symbolMwrFromValueFlowPoints;
+const xirrPeriodReturn = mwrFromCashflows;
+const xirrTodayOnly = accountMwrTodayOnly;
+const xirrStageToLive = accountMwrStageToLive;
+const xirrFromSnapshotWindow = accountMwrFromSnapshotWindow;
+const xirrFromSymbolValueFlowPoints = symbolMwrFromValueFlowPoints;
 
 function computeMoneyWeightedSeries(points) {
   const result = [];
@@ -437,7 +173,7 @@ function metricsForWindow(allRowsThroughF, windowStart, windowEnd) {
   }));
   const profitSeries = buildProfitSeries(pts);
   const rateTwr = rebaseRateSeriesByFirstDay(computeModeSeries(pts, "twr")).at(-1)?.rate ?? 0;
-  const rateMwr = xirrFromSnapshotWindow(rowsAsc, windowStart, windowEnd);
+  const rateMwr = accountMwrFromSnapshotWindow(rowsAsc, windowStart, windowEnd);
   return {
     profitCny: profitSeries.at(-1)?.value ?? 0,
     rateTwr,
@@ -517,7 +253,7 @@ function symbolRatesFromPnlPoints(ptsSorted) {
   const endDate = String(last.date).slice(0, 10);
   return {
     rateTwr: rebaseRateSeriesByFirstDay(computeModeSeries(ptsSorted, "twr")).at(-1)?.rate ?? 0,
-    rateMwr: xirrFromSymbolValueFlowPoints(ptsSorted.slice(0, -1), endDate, endVal),
+    rateMwr: symbolMwrFromValueFlowPoints(ptsSorted.slice(0, -1), endDate, endVal),
   };
 }
 
@@ -531,14 +267,22 @@ module.exports = {
   rebaseRateSeriesByFirstDay,
   computeTimeWeightedSeries,
   metricsForWindow,
-  xirrFromSnapshotWindow,
+  mwrFromCashflows,
+  buildAccountMwrCashflows,
+  buildAccountMwrCashflowsStageToLive,
+  buildAccountMwrCashflowsToday,
+  buildSymbolMwrCashflows,
+  accountMwrFromSnapshotWindow,
+  accountMwrStageToLive,
+  accountMwrTodayOnly,
+  symbolMwrFromValueFlowPoints,
   xirrPeriodFromSnapshotWindow,
+  xirrPeriodStageToLive,
+  xirrPeriodFromSymbolValueFlowPoints,
   xirrPeriodReturn,
   xirrTodayOnly,
   xirrStageToLive,
-  xirrPeriodStageToLive,
+  xirrFromSnapshotWindow,
   xirrFromSymbolValueFlowPoints,
-  xirrPeriodFromSymbolValueFlowPoints,
-  xirr,
   computeModeSeries,
 };

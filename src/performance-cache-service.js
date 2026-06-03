@@ -220,22 +220,15 @@ async function rebuildPerformanceSeriesCache(opts) {
       if (!win.length) continue;
 
       for (const algo of algos) {
+        if (algo === "mwr") {
+          continue;
+        }
         let pr = 0;
         let seriesJson = null;
         const start0 = addCalendarDays(start, -1);
         const sliceForSeries = rows.filter((r) => r.date >= start0 && r.date <= end);
-        if (algo === "twr") {
-          pr = twrPeriodFromSnapshots(rows, start, end);
-          seriesJson = buildTwrPresetSeriesJson(sliceForSeries);
-        } else {
-          pr = mwrPeriodFromSnapshots(rows, start, end);
-          seriesJson = JSON.stringify({
-            ruleVersion: PERFORMANCE_RULE_VERSION,
-            kind: "mwr",
-            xirrAnnualized: pr,
-            note: "no_daily_series",
-          });
-        }
+        pr = twrPeriodFromSnapshots(rows, start, end);
+        seriesJson = buildTwrPresetSeriesJson(sliceForSeries);
         await upsertPerformanceSeriesCacheRow({
           user_id: userId,
           account_id: accountId,
