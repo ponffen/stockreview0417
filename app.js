@@ -8531,6 +8531,11 @@ function metricsStageFromAnalysis() {
 const ANALYSIS_CHART_DEFAULT_WINDOW = 30;
 const ANALYSIS_CHART_MIN_WINDOW = 7;
 const ANALYSIS_CHART_MAX_WINDOW = 365;
+const STOCK_RECORD_CHART_MIN_WINDOW = 12;
+
+function isStockRecordChartMode(mode) {
+  return mode === "stock" || mode === "stock-profit" || mode === "stock-weight";
+}
 
 function resetAnalysisChartViewport() {
   state.analysisChartWindow = ANALYSIS_CHART_DEFAULT_WINDOW;
@@ -10466,7 +10471,7 @@ function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
 function stockRecordVisibleSlice(source) {
   const totalCount = source.length;
   const windowSize = Math.max(
-    12,
+    STOCK_RECORD_CHART_MIN_WINDOW,
     Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
   );
   const maxOffset = Math.max(0, totalCount - windowSize);
@@ -10729,14 +10734,7 @@ function drawStockRecordChartLegacy(symbol, symbolTrades) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
-  const totalCount = source.length;
-  const windowSize = Math.max(12, Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)));
-  const maxOffset = Math.max(0, totalCount - windowSize);
-  const offset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
-  state.stockRecordOffset = offset;
-  const end = totalCount - offset;
-  const start = Math.max(0, end - windowSize);
-  const visible = source.slice(start, end);
+  const { visible, totalCount } = stockRecordVisibleSlice(source);
   const qtyByDate = {};
   let qty = 0;
   sortedTrades.forEach((trade) => {
@@ -11949,7 +11947,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       refreshRafId = 0;
       const mode = runtime.options.mode;
       if (
-        (mode === "analysis" || mode === "stock") &&
+        (mode === "analysis" || isStockRecordChartMode(mode)) &&
         reason === "redraw" &&
         typeof runtime.options.onRedraw === "function"
       ) {
@@ -12025,7 +12023,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       return;
     }
     panAnchorClientX = clientX;
-    if (runtime.options.mode === "stock") {
+    if (isStockRecordChartMode(runtime.options.mode)) {
       panAnchorOffset = Number(state.stockRecordOffset) || 0;
     } else if (runtime.options.mode === "analysis") {
       panAnchorOffset = Number(state.analysisPanOffset) || 0;
@@ -12044,9 +12042,12 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
     }
     const pxPerPoint = chartPxPerPoint();
     const step = Math.round((clientX - panAnchorClientX) / pxPerPoint);
-    if (runtime.options.mode === "stock") {
+    if (isStockRecordChartMode(runtime.options.mode)) {
       const total = chartNavTotalCount();
-      const windowSize = Math.max(12, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW));
+      const windowSize = Math.max(
+        STOCK_RECORD_CHART_MIN_WINDOW,
+        Math.min(total, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
+      );
       const maxOffset = Math.max(0, total - windowSize);
       const next = Math.max(0, Math.min(maxOffset, panAnchorOffset + step));
       if (next === Number(state.stockRecordOffset || 0)) {
@@ -12112,7 +12113,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
       if (Number.isFinite(prevDistance) && Math.abs(distance - prevDistance) > 4) {
         const scale = distance / Math.max(prevDistance, 1);
         const total = chartNavTotalCount();
-        if (runtime.options.mode === "stock") {
+        if (isStockRecordChartMode(runtime.options.mode)) {
           updateStockRecordWindowByScale(scale, total);
         } else if (runtime.options.mode === "analysis") {
           updateAnalysisWindowByScale(scale, total);
@@ -12218,10 +12219,21 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   if (!Number.isFinite(scale) || scale === 1) {
     return;
   }
-  const delta = scale > 1 ? -6 : 6;
-  const maxWindow = Math.max(12, Math.min(240, totalPoints || 240));
-  state.stockRecordWindow = Math.max(12, Math.min(maxWindow, Number(state.stockRecordWindow || 30) + delta));
-  const maxOffset = Math.max(0, Math.max(0, totalPoints || 0) - state.stockRecordWindow);
+  const total = Math.max(0, Number(totalPoints) || 0);
+  const currentWindow = Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW);
+  const zoomInStep = 6;
+  const zoomOutStep = Math.max(6, Math.round(Math.max(currentWindow, STOCK_RECORD_CHART_MIN_WINDOW) * 0.2));
+  const delta = scale > 1 ? -zoomInStep : zoomOutStep;
+  const maxWindow = Math.max(STOCK_RECORD_CHART_MIN_WINDOW, total);
+  let nextWindow = Math.max(STOCK_RECORD_CHART_MIN_WINDOW, Math.min(maxWindow, currentWindow + delta));
+  if (total > 0 && nextWindow >= total) {
+    nextWindow = total;
+    state.stockRecordWindow = nextWindow;
+    state.stockRecordOffset = 0;
+    return;
+  }
+  state.stockRecordWindow = nextWindow;
+  const maxOffset = Math.max(0, total - state.stockRecordWindow);
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
 }
 
