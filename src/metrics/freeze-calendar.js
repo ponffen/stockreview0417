@@ -48,6 +48,16 @@ function ledgerSessionDateKey(naturalDate) {
   return cur;
 }
 
+
+/** 上一交易日（跳过周末）。 */
+function previousSessionDate(dateKey) {
+  let cur = addCalendarDays(normDateKey(dateKey), -1);
+  while (cur && isWeekendDateKey(cur)) {
+    cur = addCalendarDays(cur, -1);
+  }
+  return cur;
+}
+
 /** latest 之后、frozen 及之前的交易日列表（用于日终增量，不含 latest 本身）。 */
 function sessionDatesAfterLatest(latestKey, frozenKey) {
   const latest = normDateKey(latestKey);
