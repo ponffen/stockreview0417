@@ -1903,12 +1903,46 @@ h2 {
   background: #fff;
 }
 
-#stockRecordChart {
+#stockRecordChart,
+#stockRecordWeightChart {
   width: 100%;
   height: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   margin-top: 8px;
+}
+
+.stock-record-chart-block {
+  margin-top: 16px;
+}
+
+.stock-record-chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+.stock-record-chart-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.stock-record-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #5f6b7a;
+  cursor: pointer;
+  user-select: none;
+}
+
+.stock-record-toggle input {
+  accent-color: #4091e0;
 }
 
 .stock-record-note {

@@ -73,6 +73,44 @@ function cnyToBook(amountCny, book, dateKey, fxUsdMap, fxHkdMap) {
   return fx > 0 ? v / fx : v;
 }
 
+function nativeToCny(amountNative, ccy, dateKey, fxUsdMap, fxHkdMap) {
+  const v = Number(amountNative) || 0;
+  const c = String(ccy || "CNY").toUpperCase();
+  if (c === "CNY") {
+    return v;
+  }
+  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey, FX_FALLBACK);
+}
+
+async function loadAccountTotalAssetsCnyMap(client, uid, accounts, minD, maxD, fxUsdMap, fxHkdMap) {
+  const { rows } = await client.query(
+    `SELECT account_id, date, total_assets, fx_usd_cny, fx_hkd_cny
+     FROM analysis_daily_snapshot
+     WHERE user_id = $1 AND date >= $2 AND date <= $3`,
+    [uid, minD, maxD],
+  );
+  const map = new Map();
+  for (const row of rows || []) {
+    const aid = String(row.account_id || "");
+    const dk = String(row.date).slice(0, 10);
+    if (!dk) {
+      continue;
+    }
+    const book = accountBookCurrency(aid, accounts);
+    const ta = Number(row.total_assets) || 0;
+    let taCny = ta;
+    if (book === "USD") {
+      const fx = Number(row.fx_usd_cny ?? fxUsdMap[dk]) || FX_FALLBACK.USD;
+      taCny = ta * fx;
+    } else if (book === "HKD") {
+      const fx = Number(row.fx_hkd_cny ?? fxHkdMap[dk]) || FX_FALLBACK.HKD;
+      taCny = ta * fx;
+    }
+    map.set(`${aid}:${dk}`, taCny);
+  }
+  return map;
+}
+
 async function buildFxMaps(allDates, logger = console) {
   let fxUsdMap = {};
   let fxHkdMap = {};
@@ -254,7 +292,7 @@ async function upsertSymbolBatchV3(client, uid, rows) {
       `INSERT INTO symbol_daily_pnl (
          user_id, account_id, symbol, date, book_currency, source_version,
          daily_profit, daily_trade_qty, daily_trade_amount, daily_trade_flow, daily_rate_twr,
-         eod_shares, eod_price,
+         eod_shares, eod_price, eod_market_value_native, position_weight,
          stage_mtd_profit, stage_mtd_rate_twr, stage_mtd_rate_mwr,
          stage_ytd_profit, stage_ytd_rate_twr, stage_ytd_rate_mwr,
          stage_inception_profit, stage_inception_rate_twr, stage_inception_rate_mwr,
@@ -264,15 +302,18 @@ async function upsertSymbolBatchV3(client, uid, rows) {
          day_trade_qty, day_trade_amount, day_trade_flow_native, day_close_price, day_pnl_native, currency,
          created_at, updated_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-         $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,
-         $32,$33,$34,$35,$36,$37,$38,$39
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,
+         $34,$35,$36,$37,$38,$39,$40,$41
        )
        ON CONFLICT (user_id, account_id, symbol, date) DO UPDATE SET
          book_currency=EXCLUDED.book_currency, source_version=EXCLUDED.source_version,
+         currency=EXCLUDED.currency,
          daily_profit=EXCLUDED.daily_profit, daily_trade_qty=EXCLUDED.daily_trade_qty,
          daily_trade_amount=EXCLUDED.daily_trade_amount, daily_trade_flow=EXCLUDED.daily_trade_flow,
-         daily_rate_twr=EXCLUDED.daily_rate_twr, eod_price=EXCLUDED.eod_price,
+         daily_rate_twr=EXCLUDED.daily_rate_twr,
+         eod_shares=EXCLUDED.eod_shares, eod_price=EXCLUDED.eod_price,
+         eod_market_value_native=EXCLUDED.eod_market_value_native, position_weight=EXCLUDED.position_weight,
          stage_mtd_profit=EXCLUDED.stage_mtd_profit, stage_mtd_rate_twr=EXCLUDED.stage_mtd_rate_twr, stage_mtd_rate_mwr=EXCLUDED.stage_mtd_rate_mwr,
          stage_ytd_profit=EXCLUDED.stage_ytd_profit, stage_ytd_rate_twr=EXCLUDED.stage_ytd_rate_twr, stage_ytd_rate_mwr=EXCLUDED.stage_ytd_rate_mwr,
          stage_inception_profit=EXCLUDED.stage_inception_profit, stage_inception_rate_twr=EXCLUDED.stage_inception_rate_twr, stage_inception_rate_mwr=EXCLUDED.stage_inception_rate_mwr,
@@ -280,6 +321,7 @@ async function upsertSymbolBatchV3(client, uid, rows) {
          stage_last_30d_profit=EXCLUDED.stage_last_30d_profit, stage_last_30d_rate_twr=EXCLUDED.stage_last_30d_rate_twr, stage_last_30d_rate_mwr=EXCLUDED.stage_last_30d_rate_mwr,
          stage_last_90d_profit=EXCLUDED.stage_last_90d_profit, stage_last_90d_rate_twr=EXCLUDED.stage_last_90d_rate_twr, stage_last_90d_rate_mwr=EXCLUDED.stage_last_90d_rate_mwr,
          day_pnl_native=EXCLUDED.daily_profit, day_trade_flow_native=EXCLUDED.daily_trade_flow,
+         day_close_price=EXCLUDED.eod_price,
          updated_at=EXCLUDED.updated_at`,
       [
         uid,
@@ -295,6 +337,8 @@ async function upsertSymbolBatchV3(client, uid, rows) {
         r.dailyRateTwr,
         r.eodShares,
         r.eodPrice,
+        r.eodMarketValueNative,
+        r.positionWeight,
         r.stageMtdProfit,
         r.stageMtdRateTwr,
         r.stageMtdRateMwr,
@@ -578,9 +622,14 @@ async function freezeSymbolsForUser(ctx) {
     logger,
     syncMissingCloses,
     writeFromDate = null,
+    fxUsdMap = {},
+    fxHkdMap = {},
   } = ctx;
   const writeFrom = writeFromDate ? String(writeFromDate).slice(0, 10) : null;
   const accountIds = listAccountIdsForFreeze(allTrades, accounts);
+  const minD = allDates[0] || String(frozenDate).slice(0, 10);
+  const maxD = String(frozenDate).slice(0, 10);
+  const taCnyMap = await loadAccountTotalAssetsCnyMap(client, uid, accounts, minD, maxD, fxUsdMap, fxHkdMap);
   const unionSyms = new Set();
   for (const accountId of accountIds) {
     for (const sym of buildURankSymbols(allTrades, accountId, frozenDate)) {
@@ -633,11 +682,15 @@ async function freezeSymbolsForUser(ctx) {
         if (writeFrom && dk < writeFrom) {
           continue;
         }
+        const eodMarketValueNative = Number(replay.eodShares) * Number(replay.eodPrice);
+        const taCny = taCnyMap.get(`${accountId}:${dk}`) || 0;
+        const mvCny = nativeToCny(eodMarketValueNative, ccy, dk, fxUsdMap, fxHkdMap);
+        const positionWeight = taCny > 0 ? mvCny / taCny : 0;
         symBuffer.push({
           accountId,
           symbol: sym,
           date: dk,
-          bookCurrency: ccy || book,
+          bookCurrency: book,
           currency: ccy,
           dailyProfit: replay.dailyProfit,
           dailyTradeQty: replay.dailyTradeQty,
@@ -646,6 +699,8 @@ async function freezeSymbolsForUser(ctx) {
           dailyRateTwr: replay.dailyRateTwr,
           eodShares: replay.eodShares,
           eodPrice: replay.eodPrice,
+          eodMarketValueNative,
+          positionWeight,
           stageMtdProfit: replay.stageMtdProfit,
           stageMtdRateTwr: replay.stageMtdRateTwr,
           stageMtdRateMwr: replay.stageMtdRateMwr,
@@ -704,7 +759,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
 
   const frozenDateKey = String(frozenDate).slice(0, 10);
   const latest = await getLatestAnalysisSnapshotDate(uid, "all");
-  if (!options.force && !options.symbolsOnly && latest && latest >= frozenDateKey) {
+  if (!options.force && !options.symbolsOnly && !options.symbolsFullRebuild && latest && latest >= frozenDateKey) {
     return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
   }
 
@@ -735,10 +790,11 @@ async function runFreezeV3ForUser(userId, options = {}) {
   const symbols = [...new Set(allTrades.map((t) => t.symbol).filter(Boolean))].sort();
   const accountIds = listAccountIdsForFreeze(allTrades, accounts);
 
-  if (options.syncDailyClose && !options.symbolsOnly) {
+  if (options.syncDailyClose && (!options.symbolsOnly || options.symbolsFullRebuild)) {
+    const closeFrom = options.symbolsFullRebuild ? minD : closeSyncFrom;
     for (const sym of symbols) {
       try {
-        const rows = await fetchRemoteDailyClosesForSymbol(sym, closeSyncFrom, frozenDate);
+        const rows = await fetchRemoteDailyClosesForSymbol(sym, closeFrom, frozenDate);
         if (rows.length) {
           await upsertSymbolDailyCloseBatch(
             rows.map((r) => ({ symbol: sym, date: r.date, close: r.close, source: r.source || "sina" })),
@@ -778,7 +834,9 @@ async function runFreezeV3ForUser(userId, options = {}) {
 
   try {
     await client.query("BEGIN");
-    if (options.symbolsOnly) {
+    if (options.symbolsFullRebuild) {
+      await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
+    } else if (options.symbolsOnly) {
       await client.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date = $2", [uid, frozenDateKey]);
     } else if (incrementalDaily) {
       await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date = ANY($2::text[])", [
@@ -800,7 +858,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
       await client.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
     }
 
-    if (!options.symbolsOnly) {
+    if (!options.symbolsOnly && !options.symbolsFullRebuild) {
       const t0 = Date.now();
       for (const accountId of accountIds) {
         const n = await freezeAccountHistory({
@@ -833,6 +891,8 @@ async function runFreezeV3ForUser(userId, options = {}) {
       logger,
       syncMissingCloses: !partial,
       writeFromDate,
+      fxUsdMap,
+      fxHkdMap,
     });
     timing.symbolRows = symResult.symbolRowsWritten;
     timing.symbolMs = Date.now() - t1;
@@ -873,9 +933,14 @@ async function runSymbolsOnlyV3ForUser(userId, options = {}) {
   return runFreezeV3ForUser(userId, { ...options, symbolsOnly: true, force: true });
 }
 
+async function runSymbolsFullRebuildForUser(userId, options = {}) {
+  return runFreezeV3ForUser(userId, { ...options, symbolsFullRebuild: true, force: true });
+}
+
 module.exports = {
   runFreezeV3ForUser,
   runSymbolsOnlyV3ForUser,
+  runSymbolsFullRebuildForUser,
   buildURankSymbols,
   freezeSymbolsForUser,
   replaySymbolDailyRows,

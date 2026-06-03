@@ -52,6 +52,7 @@ const {
 const { holdingsSymbolsFromTrades, hasOpenPositionQuantity } = require("./metrics/holdings-active-symbols");
 const { buildStockRankPayload } = require("./metrics/stock-rank");
 const { buildBenchmarkSeriesPayload } = require("./metrics/benchmark-series");
+const { buildStockRecordBundlePayload } = require("./metrics/stock-record-bundle");
 const { finalizeMetricsBundlePayload } = require("./metrics/bundle-payload");
 const {
   isAggregateScope,
@@ -1380,6 +1381,20 @@ function todayPointForReturns(live, scope, book, fxUsdCny, fxHkdCny) {
   };
 }
 
+async function getMetricsStockRecordBundle(userId, accountScope, symbol, opts = {}) {
+  const scope = String(accountScope || "all").trim() || "all";
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    throw new Error("missing symbol");
+  }
+  return buildStockRecordBundlePayload({
+    userId,
+    accountScope: scope,
+    symbol: sym,
+    publicLayout: opts.publicLayout === true,
+  });
+}
+
 function todayPointForAssets(live, scope, book, fxU, fxH) {
   if (!live.tradingDay) {
     return null;
@@ -1405,6 +1420,7 @@ module.exports = {
   getMetricsAssets,
   getMetricsHomeBundle,
   getMetricsAnalysisBundle,
+  getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,
   getSeriesDailyProfit,
   getSeriesDailyTwr,

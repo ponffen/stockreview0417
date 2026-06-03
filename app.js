@@ -210,6 +210,10 @@ const state = {
   stockRecordPageLoading: false,
   stockRecordWindow: 30,
   stockRecordOffset: 0,
+  stockRecordBundle: null,
+  stockRecordShowClose: true,
+  stockRecordShowShares: true,
+  stockRecordShowMarketValue: false,
   chartCrosshairMap: {},
   lastPinchDistanceMap: {},
   fxRatesToCnyByDate: {},
@@ -452,6 +456,10 @@ const stockRecordTime = document.getElementById("stockRecordTime");
 const stockRecordPrice = document.getElementById("stockRecordPrice");
 const stockRecordChange = document.getElementById("stockRecordChange");
 const stockRecordChart = document.getElementById("stockRecordChart");
+const stockRecordWeightChart = document.getElementById("stockRecordWeightChart");
+const stockRecordToggleClose = document.getElementById("stockRecordToggleClose");
+const stockRecordToggleShares = document.getElementById("stockRecordToggleShares");
+const stockRecordToggleMarketValue = document.getElementById("stockRecordToggleMarketValue");
 const stockRecordMarket = document.getElementById("stockRecordMarket");
 const stockRecordRegret = document.getElementById("stockRecordRegret");
 const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
@@ -492,6 +500,7 @@ const tradeSearchBackBtn = document.getElementById("tradeSearchBackBtn");
 const tradeStockSearchInput = document.getElementById("tradeStockSearchInput");
 const tradeStockSearchResults = document.getElementById("tradeStockSearchResults");
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
+const stockRecordWeightTooltip = document.getElementById("stockRecordWeightTooltip");
 const appRouteLoading = document.getElementById("appRouteLoading");
 const appRouteLoadingText = document.getElementById("appRouteLoadingText");
 
@@ -2413,14 +2422,77 @@ function setStockRecordPageLoading(loading) {
 }
 
 function clearStockRecordChart() {
-  if (!stockRecordChart) {
-    return;
+  for (const canvas of [stockRecordChart, stockRecordWeightChart]) {
+    if (!canvas) {
+      continue;
+    }
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }
-  const ctx = stockRecordChart.getContext("2d");
-  if (!ctx) {
-    return;
+}
+
+function parseBundlePlainNumber(value) {
+  if (value == null || value === "—" || value === "--") {
+    return null;
   }
-  ctx.clearRect(0, 0, stockRecordChart.width, stockRecordChart.height);
+  const n = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseBundlePercent(value) {
+  if (!value || value === "—") {
+    return 0;
+  }
+  const m = String(value).match(/(-?\d+(?:\.\d+)?)/);
+  return m ? Number(m[1]) / 100 : 0;
+}
+
+async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTargetId = "") {
+  if (!apiReady) {
+    return null;
+  }
+  const params = {
+    symbol: normalizeSymbol(symKey),
+    account_id: resolveValidAccountFilter(accountId),
+  };
+  return fetchMetricsApi("/metrics/stock-record-bundle", params, publicTargetId);
+}
+
+function stockRecordChartPointsFromBundle(bundle) {
+  const list = Array.isArray(bundle?.charts?.points) ? bundle.charts.points : [];
+  return list
+    .map((row) => ({
+      date: String(row.date || "").slice(0, 10),
+      close: parseBundlePlainNumber(row.close),
+      shares: parseBundlePlainNumber(row.shares),
+      marketValueNative: parseBundlePlainNumber(row.marketValueNative),
+      weight: parseBundlePercent(row.weight),
+    }))
+    .filter((row) => row.date);
+}
+
+function applyStockRecordBundleDefaults(bundle) {
+  const defaults = bundle?.charts?.defaults || {};
+  if (defaults.showClose != null) {
+    state.stockRecordShowClose = defaults.showClose !== false;
+  }
+  if (defaults.showShares != null) {
+    state.stockRecordShowShares = defaults.showShares !== false;
+  }
+  if (defaults.showMarketValue != null) {
+    state.stockRecordShowMarketValue = defaults.showMarketValue === true;
+  }
+  if (stockRecordToggleClose) {
+    stockRecordToggleClose.checked = state.stockRecordShowClose;
+  }
+  if (stockRecordToggleShares) {
+    stockRecordToggleShares.checked = state.stockRecordShowShares;
+  }
+  if (stockRecordToggleMarketValue) {
+    stockRecordToggleMarketValue.checked = state.stockRecordShowMarketValue;
+  }
 }
 
 async function refreshStockRecordPageData(symKey, accountId = "all") {
@@ -2430,14 +2502,37 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   }
   const pageGen = ++stockRecordPageLoadGen;
   setStockRecordPageLoading(true);
+  state.stockRecordBundle = null;
   try {
     if (!state.stockRecordFromPublicProfile) {
       await loadStockRecordTradesPage({ reset: true });
       if (pageGen !== stockRecordPageLoadGen) {
         return;
       }
+      const bundle = await fetchStockRecordBundleMetrics(key, accountId);
+      if (pageGen !== stockRecordPageLoadGen) {
+        return;
+      }
+      state.stockRecordBundle = bundle;
+      if (bundle) {
+        applyStockRecordBundleDefaults(bundle);
+      }
+    } else {
+      const targetId = String(
+        state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "",
+      ).trim();
+      const bundle = targetId ? await fetchStockRecordBundleMetrics(key, "all", targetId) : null;
+      if (pageGen !== stockRecordPageLoadGen) {
+        return;
+      }
+      state.stockRecordBundle = bundle;
+      if (bundle) {
+        applyStockRecordBundleDefaults(bundle);
+      }
     }
-    await ensureSymbolData(key);
+    if (!state.stockRecordBundle) {
+      await ensureSymbolData(key);
+    }
     if (pageGen !== stockRecordPageLoadGen) {
       return;
     }
@@ -3075,10 +3170,29 @@ function bindEvents() {
   stockRecordAccountSelect?.addEventListener("change", () => {
     state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
     persistState();
+    resetStockRecordTradesPager();
     if (state.route === "stock-record" && state.activeRecordSymbol) {
       void refreshStockRecordPageData(state.activeRecordSymbol, state.stockRecordAccountId);
     }
   });
+  const stockRecordToggleHandler = () => {
+    state.stockRecordShowClose = stockRecordToggleClose?.checked !== false;
+    state.stockRecordShowShares = stockRecordToggleShares?.checked !== false;
+    state.stockRecordShowMarketValue = stockRecordToggleMarketValue?.checked === true;
+    if (state.route === "stock-record" && state.activeRecordSymbol) {
+      const sym = normalizeSymbol(state.activeRecordSymbol);
+      const detail = state.lastPublicProfileDetail;
+      const usePub = state.stockRecordFromPublicProfile && detail?.publicTrades;
+      const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
+      const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
+        (item) => normalizeSymbol(item.symbol) === sym,
+      );
+      drawStockRecordCharts(sym, scopeTrades);
+    }
+  };
+  stockRecordToggleClose?.addEventListener("change", stockRecordToggleHandler);
+  stockRecordToggleShares?.addEventListener("change", stockRecordToggleHandler);
+  stockRecordToggleMarketValue?.addEventListener("change", stockRecordToggleHandler);
   stockSortButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.sortKey || "default";
@@ -10016,6 +10130,7 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.previousRoute = state.route;
   state.stockRecordWindow = 30;
   state.stockRecordOffset = 0;
+  state.stockRecordBundle = null;
   state.stockRecordTrades = [];
   resetStockRecordTradesPager();
   state.stockRecordTradesLoading = !state.stockRecordFromPublicProfile;
@@ -10064,21 +10179,43 @@ async function renderStockRecordPage(symbol) {
     return;
   }
   const quote = getQuoteBySymbol(symbol);
-  const current = validNumber(quote.current, position?.currentPrice, 0);
+  const bundle = state.stockRecordBundle;
+  const headline = bundle?.headline || null;
+  const current = validNumber(
+    headline ? parseBundlePlainNumber(headline.price) : null,
+    quote.current,
+    position?.currentPrice,
+    0,
+  );
   const prev = validNumber(quote.prevClose, position?.prevClose, current);
   const change = prev > 0 ? (current - prev) / prev : 0;
-  const positionName = position?.name || symbolTrades[0]?.name || quote?.name || symbol;
+  const positionName =
+    headline?.name || position?.name || symbolTrades[0]?.name || quote?.name || symbol;
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
-  stockRecordTime.textContent = quote.time || state.quoteTime || "--";
-  stockRecordPrice.textContent = formatNumber(current, 3);
-  stockRecordPrice.className = `stock-record-price ${change >= 0 ? "up" : "down"}`;
-  stockRecordChange.textContent = `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
-  stockRecordChange.className = `stock-record-change ${change >= 0 ? "up" : "down"}`;
-  const intervalText = position
-    ? formatRegretRateWithSide(position.regretRate, position.lastTradeSide)
-    : "--";
-  stockRecordMarket.textContent = `交易间隔 ${intervalText}`;
+  stockRecordTime.textContent = headline?.quoteTime || quote.time || state.quoteTime || "--";
+  stockRecordPrice.textContent = headline?.price || formatNumber(current, 3);
+  const priceUp = headline?.changePct
+    ? !String(headline.changePct).startsWith("-")
+    : change >= 0;
+  stockRecordPrice.className = `stock-record-price ${priceUp ? "up" : "down"}`;
+  stockRecordChange.textContent = headline
+    ? `${headline.change} ${headline.changePct}`
+    : `${formatSignedMoney(current - prev, 2)} ${formatPercent(change)}`;
+  stockRecordChange.className = `stock-record-change ${priceUp ? "up" : "down"}`;
+  const intervalText = headline?.holdingInterval
+    ? headline.holdingInterval
+    : position
+      ? formatRegretRateWithSide(position.regretRate, position.lastTradeSide)
+      : "--";
+  stockRecordMarket.textContent = headline?.holdingInterval
+    ? `持仓区间 ${intervalText}`
+    : `交易间隔 ${intervalText}`;
+  if (headline?.holdingIntervalHint) {
+    stockRecordMarket.title = headline.holdingIntervalHint;
+  } else {
+    stockRecordMarket.removeAttribute("title");
+  }
   stockRecordRegret.textContent = "";
   stockRecordRegret.className = "hidden";
   if (stockRecordAccountSelect) {
@@ -10139,7 +10276,7 @@ async function renderStockRecordPage(symbol) {
       : "";
   stockRecordListBody.innerHTML = tradeRowsHtml + loadingFooter;
 
-  drawStockRecordChart(symbol, symbolTrades);
+  drawStockRecordCharts(symbol, symbolTrades);
 }
 
 async function ensureSymbolData(symbol) {
@@ -10290,7 +10427,194 @@ function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
   return merged;
 }
 
-function drawStockRecordChart(symbol, symbolTrades) {
+function stockRecordVisibleSlice(source) {
+  const totalCount = source.length;
+  const windowSize = Math.max(
+    12,
+    Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
+  );
+  const maxOffset = Math.max(0, totalCount - windowSize);
+  const offset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
+  state.stockRecordOffset = offset;
+  const end = totalCount - offset;
+  const start = Math.max(0, end - windowSize);
+  return { visible: source.slice(start, end), totalCount };
+}
+
+function drawStockRecordCharts(symbol, symbolTrades) {
+  const bundlePoints = stockRecordChartPointsFromBundle(state.stockRecordBundle);
+  if (bundlePoints.length) {
+    drawStockRecordChartsFromBundle(symbol, symbolTrades, bundlePoints);
+    return;
+  }
+  drawStockRecordChartLegacy(symbol, symbolTrades);
+}
+
+function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
+  const canvas = stockRecordChart;
+  const weightCanvas = stockRecordWeightChart;
+  if (!canvas) {
+    return;
+  }
+  const { visible, totalCount } = stockRecordVisibleSlice(points);
+  if (!visible.length) {
+    clearStockRecordChart();
+    return;
+  }
+
+  const series = [];
+  if (state.stockRecordShowClose) {
+    series.push({
+      key: "close",
+      label: "收盘价",
+      color: "#4091e0",
+      axis: "left",
+      values: visible.map((item) => ({ date: item.date, value: item.close ?? 0 })),
+    });
+  }
+  if (state.stockRecordShowShares) {
+    series.push({
+      key: "shares",
+      label: "持仓股数",
+      color: "#ff4d4f",
+      axis: "right",
+      values: visible.map((item) => ({ date: item.date, value: item.shares ?? 0 })),
+    });
+  }
+  if (state.stockRecordShowMarketValue) {
+    series.push({
+      key: "marketValue",
+      label: "持仓市值",
+      color: "#f59e0b",
+      axis: "right",
+      values: visible.map((item) => ({ date: item.date, value: item.marketValueNative ?? 0 })),
+    });
+  }
+  if (!series.length) {
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  const yAxisMode = series.some((s) => s.axis === "left") && series.some((s) => s.axis === "right") ? "left-right" : "single";
+  const payload = buildChartPayload(series, {
+    labels: Object.fromEntries(series.map((s) => [s.key, s.label])),
+    yAxisMode,
+    xMin: 2,
+    xMax: canvas.width - 2,
+    yMin: 20,
+    yMax: canvas.height - 36,
+    yRangePadding: {
+      minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
+      maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
+    },
+  });
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawChartGrid(ctx, canvas.width, canvas.height, payload);
+  payload.seriesList.forEach((s) => {
+    drawSeries(ctx, s.values, payload.mapX, payload.mapY, s.color || "#2f80f6");
+  });
+  series.forEach((s) => {
+    const mapped = payload.seriesMap?.[s.key];
+    if (!mapped?.values?.length) {
+      return;
+    }
+    const fmt =
+      s.key === "shares"
+        ? (value) => formatNumber(value, 0)
+        : (value) => formatNumber(value, s.key === "close" ? 3 : 2);
+    drawSeriesExtrema(ctx, payload, mapped, fmt);
+  });
+  drawAxisLabels(ctx, payload, {
+    leftLabel: "",
+    rightLabel: "",
+    xLabel: "",
+    valueFormatter: (value, axis, key) => {
+      if (key === "shares") {
+        return formatNumber(value, 0);
+      }
+      if (key === "close") {
+        return formatNumber(value, 3);
+      }
+      return formatNumber(value, 2);
+    },
+  });
+  drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
+    if (key === "shares") {
+      return formatNumber(value, 0);
+    }
+    if (key === "close") {
+      return formatNumber(value, 3);
+    }
+    return formatNumber(value, 2);
+  });
+  bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
+    mode: "stock",
+    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
+    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+    chartNavTotal: () => totalCount,
+    valueFormatter: (value, key, axis) => {
+      if (key === "shares") {
+        return formatNumber(value, 0);
+      }
+      if (key === "close") {
+        return formatNumber(value, 3);
+      }
+      return formatNumber(value, 2);
+    },
+  });
+
+  if (!weightCanvas) {
+    return;
+  }
+  const weightPayload = buildChartPayload(
+    [
+      {
+        key: "weight",
+        label: "持仓占比",
+        color: "#10b981",
+        axis: "left",
+        values: visible.map((item) => ({ date: item.date, value: (item.weight ?? 0) * 100 })),
+      },
+    ],
+    {
+      labels: { weight: "持仓占比" },
+      yAxisMode: "single",
+      xMin: 2,
+      xMax: weightCanvas.width - 2,
+      yMin: 16,
+      yMax: weightCanvas.height - 28,
+    },
+  );
+  const wctx = weightCanvas.getContext("2d");
+  wctx.clearRect(0, 0, weightCanvas.width, weightCanvas.height);
+  drawChartGrid(wctx, weightCanvas.width, weightCanvas.height, weightPayload);
+  weightPayload.seriesList.forEach((s) => {
+    drawSeries(wctx, s.values, weightPayload.mapX, weightPayload.mapY, s.color || "#10b981");
+  });
+  if (weightPayload.seriesMap?.weight?.values?.length) {
+    drawSeriesExtrema(wctx, weightPayload, weightPayload.seriesMap.weight, (value) => `${formatNumber(value, 2)}%`);
+  }
+  drawAxisLabels(wctx, weightPayload, {
+    leftLabel: "",
+    rightLabel: "",
+    xLabel: "",
+    valueFormatter: (value) => `${formatNumber(value, 2)}%`,
+  });
+  drawCrosshairOverlay(wctx, weightPayload, weightCanvas.id, (value) => `${formatNumber(value, 2)}%`);
+  bindInteractiveChart(weightCanvas, stockRecordWeightTooltip, () => weightPayload, {
+    mode: "stock-weight",
+    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
+    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+    chartNavTotal: () => totalCount,
+    valueFormatter: (value) => `${formatNumber(value, 2)}%`,
+  });
+}
+
+function drawStockRecordChartLegacy(symbol, symbolTrades) {
   const canvas = stockRecordChart;
   if (!canvas) {
     return;
@@ -10415,8 +10739,8 @@ function drawStockRecordChart(symbol, symbolTrades) {
   });
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
-    onRefresh: () => drawStockRecordChart(symbol, symbolTrades),
-    onRedraw: () => drawStockRecordChart(symbol, symbolTrades),
+    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
+    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
     chartNavTotal: () => totalCount,
     valueFormatter: (value, key, axis) => {
       if (key === "qty" || axis === "right") {

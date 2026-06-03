@@ -60,6 +60,8 @@ async function ensureMetricsSchemaV3() {
       `daily_trade_flow DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `eod_price DOUBLE PRECISION`,
+      `eod_market_value_native DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `position_weight DOUBLE PRECISION NOT NULL DEFAULT 0`,
       ...ANALYSIS_STAGE_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
     ];
     for (const def of symbolAdds) {

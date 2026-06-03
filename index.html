@@ -814,17 +814,23 @@
               <div id="stockRecordChange" class="stock-record-change">--</div>
             </div>
           </div>
-        <div class="stock-record-legend">
-          <span><i class="legend-dot legend-blue"></i>收盘价</span>
-          <span><i class="legend-dot legend-red"></i>持仓股数</span>
-          <span><i class="legend-dot legend-buy"></i>买入</span>
-          <span><i class="legend-dot legend-sell"></i>卖出</span>
+        <div class="stock-record-legend stock-record-chart-toggles">
+          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleClose" checked /> 收盘价</label>
+          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleShares" checked /> 持仓股数</label>
+          <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleMarketValue" /> 持仓市值</label>
         </div>
         <div class="chart-wrap">
           <canvas id="stockRecordChart" width="700" height="320"></canvas>
           <div id="stockRecordTooltip" class="chart-tooltip"></div>
         </div>
-        <p class="stock-record-note">注：交易间隔指该价格到当日之前最近一笔交易的涨跌幅。</p>
+        <div class="stock-record-chart-block">
+          <div class="stock-record-chart-title">持仓占比</div>
+          <div class="chart-wrap">
+            <canvas id="stockRecordWeightChart" width="700" height="220"></canvas>
+            <div id="stockRecordWeightTooltip" class="chart-tooltip"></div>
+          </div>
+        </div>
+        <p class="stock-record-note">注：图表数据来自冻结快照；交易间隔指当前价相对上一笔成交价的涨跌幅。</p>
 
         <div class="stock-record-subhead">
           <strong id="stockRecordMarket">--</strong>

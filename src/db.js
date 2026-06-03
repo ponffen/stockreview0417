@@ -1633,6 +1633,44 @@ async function getSymbolDailyPnl(query = {}, userId = null) {
   }));
 }
 
+async function getSymbolDailyPnlChartSeries(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return [];
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "1970-01-01";
+  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "9999-12-31";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  const { rows } = await q(
+    `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
+            currency, book_currency, day_close_price
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND date >= $3 AND date <= $4
+       AND ($5 = '' OR symbol = $5)
+     ORDER BY date ASC`,
+    [uid, accountId, from, to, symbol]
+  );
+  return rows.map((row) => ({
+    accountId: row.account_id,
+    symbol: row.symbol,
+    date: row.date,
+    eodShares: Number(row.eod_shares),
+    eodPrice: row.eod_price == null ? null : Number(row.eod_price),
+    eodMarketValueNative:
+      row.eod_market_value_native == null
+        ? null
+        : Number(row.eod_market_value_native),
+    positionWeight: row.position_weight == null ? null : Number(row.position_weight),
+    currency: row.currency,
+    bookCurrency: row.book_currency,
+    dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
+  }));
+}
+
 async function upsertSymbolDailyPnlBatch(rows, userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   const list = Array.isArray(rows) ? rows : [];
@@ -3279,6 +3317,7 @@ module.exports = {
   listCronJobRuns,
   buildAccountKpiSurfaceForScope,
   getSymbolDailyPnl,
+  getSymbolDailyPnlChartSeries,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
   upsertAnalysisDailySnapshot,

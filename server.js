@@ -812,6 +812,7 @@ const {
   getMetricsAssets,
   getMetricsHomeBundle,
   getMetricsAnalysisBundle,
+  getMetricsStockRecordBundle,
   getSeriesDailyProfit,
   getSeriesDailyTwr,
   getSeriesDailyAsset,
@@ -1536,6 +1537,20 @@ app.get("/api/metrics/analysis-bundle", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
+  try {
+    const accountScope = metricsAccountIdFromQuery(req.query);
+    const symbol = String(req.query.symbol || "").trim();
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "missing symbol" });
+      return;
+    }
+    sendMetricsJson(res, await getMetricsStockRecordBundle(req.userId, accountScope, symbol));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "stock-record-bundle failed" });
+  }
+});
+
 app.get("/api/metrics/returns", requireAuth, async (req, res) => {
   try {
     const accountScope = String(req.query.accountScope || "all").trim() || "all";
@@ -1644,6 +1659,28 @@ app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, async (req
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public analysis-bundle failed" });
+  }
+});
+
+app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async (req, res) => {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ ok: false, error: gate.error });
+      return;
+    }
+    const accountScope = metricsAccountIdFromQuery(req.query);
+    const symbol = String(req.query.symbol || "").trim();
+    if (!symbol) {
+      res.status(400).json({ ok: false, error: "missing symbol" });
+      return;
+    }
+    sendMetricsJson(
+      res,
+      await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, { publicLayout: true }),
+    );
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public stock-record-bundle failed" });
   }
 });
 
