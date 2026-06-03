@@ -925,9 +925,12 @@ function normalizeModuleHomeOnColdLoad() {
     return;
   }
   state.appModule = "holdings";
-  if (state.route !== "stock-record") {
-    state.route = "earning";
+  if (state.route === "stock-record") {
+    state.activeRecordSymbol = null;
+    state.stockRecordFromPublicProfile = false;
+    state.stockRecordBundle = null;
   }
+  state.route = "earning";
 }
 
 function resolveValidAccountFilter(accountId) {
@@ -2502,10 +2505,6 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   state.stockRecordBundle = null;
   try {
     if (!state.stockRecordFromPublicProfile) {
-      await loadStockRecordTradesPage({ reset: true });
-      if (pageGen !== stockRecordPageLoadGen) {
-        return;
-      }
       const bundle = await fetchStockRecordBundleMetrics(key, accountId);
       if (pageGen !== stockRecordPageLoadGen) {
         return;
@@ -2513,6 +2512,18 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       state.stockRecordBundle = bundle;
       if (bundle) {
         applyStockRecordBundleDefaults(bundle);
+      }
+      if (pageGen !== stockRecordPageLoadGen) {
+        return;
+      }
+      if (state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
+        return;
+      }
+      setStockRecordPageLoading(false);
+      await renderStockRecordPage(key);
+      await loadStockRecordTradesPage({ reset: true });
+      if (pageGen !== stockRecordPageLoadGen) {
+        return;
       }
     } else {
       const targetId = String(
@@ -10195,16 +10206,20 @@ async function renderStockRecordPage(symbol) {
   if (!usePub && activeAccountId !== state.stockRecordAccountId) {
     state.stockRecordAccountId = activeAccountId;
   }
-  if (!usePub && state.stockRecordTradesLoading && !stockRecordTradesPager.loaded) {
-    return;
-  }
   const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
     (item) => normalizeSymbol(item.symbol) === symKey,
   );
   const portfolio = computePortfolio(scopeTrades, []);
   const position = portfolio.positions.find((item) => normalizeSymbol(item.symbol) === symKey);
   const symbolTrades = [...scopeTrades].sort(sortTradeDesc);
-  if (!position && !symbolTrades.length && !usePub && activeAccountId === "all" && !state.stockRecordTradesLoading) {
+  if (
+    !position &&
+    !symbolTrades.length &&
+    !usePub &&
+    activeAccountId === "all" &&
+    !state.stockRecordTradesLoading &&
+    stockRecordTradesPager.loaded
+  ) {
     if (state.route === "stock-record" && state.activeRecordSymbol === symbol) {
       state.route = state.previousRoute || "earning";
       state.activeRecordSymbol = null;

@@ -1825,7 +1825,7 @@ h2 {
   gap: 12px;
   background: var(--panel);
   border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border-bottom: none;
   padding: 12px 14px;
 }
 
@@ -2024,7 +2024,7 @@ h2 {
 
 .stock-record-head-main {
   padding: 12px 14px;
-  border-top: 1px solid var(--line);
+  border-top: none;
   border-bottom: 1px solid var(--line);
 }
 
