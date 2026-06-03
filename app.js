@@ -475,6 +475,7 @@ const stockRecordAccountSelect = document.getElementById("stockRecordAccountSele
 const stockRecordListBody = document.getElementById("stockRecordListBody");
 const stockRecordLoading = document.getElementById("stockRecordLoading");
 const stockRecordBody = document.getElementById("stockRecordBody");
+const stockRecordChartsLoading = document.getElementById("stockRecordChartsLoading");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
 const accountManageDialog = document.getElementById("accountManageDialog");
@@ -2431,6 +2432,15 @@ function setStockRecordPageLoading(loading) {
   }
 }
 
+function setStockRecordChartPointsLoading(loading) {
+  state.stockRecordPointsLoading = loading === true;
+  stockRecordChartsLoading?.classList.toggle("hidden", !state.stockRecordPointsLoading);
+  if (stockRecordChartsLoading) {
+    stockRecordChartsLoading.setAttribute("aria-busy", state.stockRecordPointsLoading ? "true" : "false");
+  }
+  stockRecordRangeRow?.classList.toggle("is-loading", state.stockRecordPointsLoading);
+}
+
 function clearStockRecordChart() {
   for (const canvas of [stockRecordChart, stockRecordProfitChart, stockRecordWeightChart]) {
     if (!canvas) {
@@ -2495,7 +2505,7 @@ function resetStockRecordChartPagination() {
     nextOffset: 0,
     hasMore: false,
   };
-  state.stockRecordPointsLoading = false;
+  setStockRecordChartPointsLoading(false);
 }
 
 function stockRecordChartEndDateKey() {
@@ -2669,7 +2679,7 @@ async function refreshStockRecordChartsOnly(symKey) {
   }
   const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   const publicTargetId = stockRecordPublicTargetId();
-  state.stockRecordPointsLoading = true;
+  setStockRecordChartPointsLoading(true);
   const loadGen = stockRecordPageLoadGen;
   try {
     const partial = await fetchStockRecordBundleMetrics(key, accountId, publicTargetId, { range });
@@ -2693,7 +2703,7 @@ async function refreshStockRecordChartsOnly(symKey) {
     console.warn("refreshStockRecordChartsOnly failed", error);
   } finally {
     if (loadGen === stockRecordPageLoadGen) {
-      state.stockRecordPointsLoading = false;
+      setStockRecordChartPointsLoading(false);
     }
   }
 }
@@ -2754,7 +2764,7 @@ async function loadStockRecordChartHistoryPage(symKey) {
   }
   const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   const publicTargetId = stockRecordPublicTargetId();
-  state.stockRecordPointsLoading = true;
+  setStockRecordChartPointsLoading(true);
   const loadGen = stockRecordPageLoadGen;
   try {
     const chunk = await fetchStockRecordBundleMetrics(key, accountId, publicTargetId, {
@@ -2815,7 +2825,7 @@ async function loadStockRecordChartHistoryPage(symKey) {
     console.warn("loadStockRecordChartHistoryPage failed", error);
   } finally {
     if (loadGen === stockRecordPageLoadGen) {
-      state.stockRecordPointsLoading = false;
+      setStockRecordChartPointsLoading(false);
     }
   }
 }
@@ -3630,7 +3640,7 @@ function bindEvents() {
   stockRecordToggleMarketValue?.addEventListener("change", stockRecordToggleHandler);
   stockRecordRangeRow?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-stock-record-range]");
-    if (!btn || state.route !== "stock-record" || !state.activeRecordSymbol) {
+    if (!btn || state.route !== "stock-record" || !state.activeRecordSymbol || state.stockRecordPointsLoading) {
       return;
     }
     const nextRange = String(btn.getAttribute("data-stock-record-range") || "").trim();

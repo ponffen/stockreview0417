@@ -846,6 +846,12 @@
 
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
+          <div id="stockRecordChartsPanel" class="stock-record-charts-panel">
+            <div id="stockRecordChartsLoading" class="stock-record-charts-loading hidden" role="status" aria-live="polite" aria-busy="false">
+              <span class="app-boot-spinner" aria-hidden="true"></span>
+              <span>图表加载中…</span>
+            </div>
+
           <div class="stock-record-chart-section">
             <h4 class="stock-record-section-title">持仓市值/股数</h4>
             <div class="stock-record-legend stock-record-chart-toggles">
@@ -877,6 +883,8 @@
               <canvas id="stockRecordWeightChart" width="700" height="320"></canvas>
               <div id="stockRecordWeightTooltip" class="chart-tooltip"></div>
             </div>
+          </div>
+
           </div>
 
           <div class="stock-record-section-gap" aria-hidden="true"></div>
