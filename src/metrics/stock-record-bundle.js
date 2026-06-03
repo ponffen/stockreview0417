@@ -9,6 +9,7 @@ const {
   getSymbolDailyCloseRange,
   getSymbolDailyPnlChartSeriesPage,
   getSymbolDailyPnlChartSeriesDateRange,
+  getEarliestSymbolDailyPnlDate,
   hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   getSymbolNameMap,
@@ -62,11 +63,34 @@ function parseStockRecordChartRequest(opts = {}) {
   };
 }
 
-function chartRangeMetaFromPoints(preset, points) {
+function chartRangeFromPreset(preset, endDate) {
+  const end = String(endDate || "").slice(0, 10);
+  if (!end || !preset) {
+    return null;
+  }
+  if (preset === "mtd") {
+    return monthStartKeyShanghai(end);
+  }
+  if (preset === "ytd") {
+    return yearStartKeyShanghai(end);
+  }
+  if (preset === "all") {
+    return null;
+  }
+  const days = Number(preset);
+  if (Number.isFinite(days) && days > 0) {
+    return addCalendarDays(end, -days);
+  }
+  return null;
+}
+
+function chartRangeMetaFromPoints(preset, points, endDate) {
   const list = Array.isArray(points) ? points : [];
   const dates = list.map((p) => String(p.date || "").slice(0, 10)).filter(Boolean).sort();
+  const fromDate = chartRangeFromPreset(preset, endDate) || dates[0] || null;
   return {
     preset,
+    fromDate,
     returned: list.length,
     oldestDate: dates[0] || null,
     newestDate: dates.length ? dates[dates.length - 1] : null,
@@ -369,27 +393,25 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
 
   if (useRangeInitial) {
     rangePreset = range;
-    if (range === "mtd" || range === "ytd") {
-      const from =
-        range === "mtd" ? monthStartKeyShanghai(endDate) : yearStartKeyShanghai(endDate);
+    if (range === "all") {
+      const earliest = await getEarliestSymbolDailyPnlDate(pnlQueryBase, uid);
+      const from = earliest || endDate || "1970-01-01";
       pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
         { ...pnlQueryBase, from, to: endDate || "9999-12-31" },
         uid,
       );
       paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
       paginationOffset = 0;
-      hasMore = await hasSymbolDailyPnlBeforeDate({ ...pnlQueryBase, before: from }, uid);
+      hasMore = false;
     } else {
-      const initialLimit =
-        range === "all" ? DEFAULT_CHART_PAGE_LIMIT : Math.max(1, Math.min(MAX_CHART_PAGE_LIMIT, Number(range) || 30));
-      const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
-        { ...pnlQueryBase, to: endDate || "9999-12-31", offset: 0, limit: initialLimit },
+      const from = chartRangeFromPreset(range, endDate);
+      pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
+        { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
         uid,
       );
-      pnlRows = [...pnlPageDesc].reverse();
       paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
       paginationOffset = 0;
-      hasMore = pnlPageDesc.length === initialLimit;
+      hasMore = from ? await hasSymbolDailyPnlBeforeDate({ ...pnlQueryBase, before: from }, uid) : false;
     }
   } else {
     const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
@@ -470,7 +492,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     },
     charts: {
       points,
-      range: rangePreset ? chartRangeMetaFromPoints(rangePreset, points) : null,
+      range: rangePreset ? chartRangeMetaFromPoints(rangePreset, points, endDate) : null,
       pagination: {
         limit: paginationLimit,
         offset: paginationOffset,

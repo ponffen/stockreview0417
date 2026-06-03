@@ -1751,6 +1751,30 @@ async function getSymbolDailyPnlChartSeriesDateRange(query = {}, userId = null) 
   return rows.map(mapSymbolDailyPnlChartRow);
 }
 
+/** 个股图：该账户+标的 symbol_daily_pnl 最早日期（range=all 起点）。 */
+async function getEarliestSymbolDailyPnlDate(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const symbol =
+    query.symbol != null && String(query.symbol).trim() ? normalizeSymbol(String(query.symbol).trim()) : "";
+  if (!symbol) {
+    return null;
+  }
+  const { rows } = await q(
+    `SELECT MIN(date)::text AS min_date
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = $3`,
+    [uid, accountId, symbol],
+  );
+  const minDate = rows[0]?.min_date;
+  return minDate ? String(minDate).slice(0, 10) : null;
+}
+
 async function hasSymbolDailyPnlBeforeDate(query = {}, userId = null) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -3452,6 +3476,7 @@ module.exports = {
   getSymbolDailyPnlChartSeries,
   getSymbolDailyPnlChartSeriesPage,
   getSymbolDailyPnlChartSeriesDateRange,
+  getEarliestSymbolDailyPnlDate,
   hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   upsertSymbolDailyPnlBatch,
