@@ -157,6 +157,7 @@ function externalFlowCnyForDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMa
 }
 
 module.exports = {
+  tradeCashFlowInAccountCurrency,
   computeLedgerCashCnyUpToDate,
   principalCnyUpToDate,
   externalFlowCnyForDate,

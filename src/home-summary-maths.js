@@ -438,9 +438,12 @@ module.exports = {
   computeTimeWeightedSeries,
   metricsForWindow,
   xirrFromSnapshotWindow,
+  xirrPeriodFromSnapshotWindow,
+  xirrPeriodReturn,
   xirrTodayOnly,
   xirrStageToLive,
   xirrFromSymbolValueFlowPoints,
+  xirrPeriodFromSymbolValueFlowPoints,
   xirr,
   computeModeSeries,
 };

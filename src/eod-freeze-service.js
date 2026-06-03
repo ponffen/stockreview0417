@@ -54,14 +54,13 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   if (!uid) {
     return { userId: "", skipped: true, reason: "missing-user" };
   }
-  const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
+  const { runFreezeIncrementalForUser } = require("./metrics/freeze-incremental");
   const fd = frozenDate ? resolveFrozenDate(frozenDate) : resolveFrozenDate();
-  const result = await runFreezeV3ForUser(uid, {
+  const result = await runFreezeIncrementalForUser(uid, {
     frozenDate: fd,
     force: options.force === true,
     syncDailyClose: options.syncDailyClose === true,
     fullRebuild: options.fullRebuild === true,
-    rebuildFromDate: options.rebuildFromDate || null,
     logger,
   });
   if (!result.ok) {

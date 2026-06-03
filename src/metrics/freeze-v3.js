@@ -941,6 +941,8 @@ module.exports = {
   runFreezeV3ForUser,
   runSymbolsOnlyV3ForUser,
   runSymbolsFullRebuildForUser,
+  upsertAnalysisBatchV3,
+  upsertSymbolBatchV3,
   buildURankSymbols,
   freezeSymbolsForUser,
   replaySymbolDailyRows,

@@ -108,6 +108,7 @@ module.exports = {
   normDateKey,
   isWeekendDateKey,
   enumerateFreezeSessionDates,
+  previousSessionDate,
   sessionDatesAfterLatest,
   ledgerSessionDateKey,
   hintDatesForRebuild,
