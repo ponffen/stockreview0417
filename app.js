@@ -9318,6 +9318,9 @@ function repaintAnalysisAssetChartFromCache() {
   }
   cachedAnalysisMetricsCharts.payloads.asset = drawAssetChart(
     trimMetricsSeriesPoints(cachedAnalysisAssetChartRows),
+    undefined,
+    undefined,
+    { normalizedAmounts: cachedAnalysisMetricsCharts.isPublicView === true },
   );
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => cachedAnalysisMetricsCharts.payloads.asset, {
     mode: "analysis",
@@ -9479,7 +9482,9 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
         },
       },
     );
-    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows);
+    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows, undefined, undefined, {
+      normalizedAmounts: c.isPublicView === true,
+    });
   };
 
   cachedAnalysisMetricsCharts = {
