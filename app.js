@@ -7119,41 +7119,31 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
   return qty;
 }
 
-function bundleDisplayTone(displayText) {
-  const s = String(displayText || "").trim();
-  if (!s || s === "—") {
-    return "";
-  }
-  if (s.startsWith("+")) {
-    return "up";
-  }
-  if (s.startsWith("-")) {
-    return "down";
-  }
-  return "";
-}
-
 function mapStockRankBundleRow(row) {
+  const profitCnyRaw = Number(row.profitCny);
+  const profitFromText = parseBundleSignedAmount(row.profit);
+  const profitCny = Number.isFinite(profitCnyRaw) ? profitCnyRaw : profitFromText;
+  let pxChange = Number(row.pxChange);
+  if (!Number.isFinite(pxChange)) {
+    pxChange = parseBundlePercent(row.pxChange ?? row.pxChangePct ?? row.pxChangeDisplay);
+  }
+  if (!Number.isFinite(pxChange)) {
+    pxChange = 0;
+  }
+  let profitShare = Number(row.profitShare);
+  if (!Number.isFinite(profitShare)) {
+    profitShare = parseBundlePercent(row.profitShare);
+  }
   const nameCn = String(row.nameCn || "").trim();
   const fallbackName = String(row.name || "").trim();
-  const profitText = String(row.profitCny ?? row.profit ?? "").trim() || "—";
-  const pxText = String(row.pxChange ?? row.pxChangeDisplay ?? "").trim() || "—";
-  const shareText = String(row.profitShare ?? "").trim() || "—";
-  const daysText = String(row.heldDays ?? "").trim() || "—";
-  const profitTone = String(row.profitTone || "").trim();
-  const pxTone = String(row.pxTone || "").trim();
-  const profitSort = parseBundleSignedAmount(profitText);
   return {
     symbol: row.symbol,
     name: nameCn || fallbackName,
     holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
-    profitCny: profitText,
-    pxChange: pxText,
-    heldDays: daysText,
-    profitShare: shareText,
-    profitTone: profitTone || bundleDisplayTone(profitText),
-    pxTone: pxTone || bundleDisplayTone(pxText),
-    profitSort: Number.isFinite(profitSort) ? profitSort : 0,
+    profitCny: Number.isFinite(profitCny) ? profitCny : 0,
+    pxChange,
+    heldDays: Number(row.heldDays) || 0,
+    profitShare: Number.isFinite(profitShare) ? profitShare : null,
   };
 }
 
@@ -7163,21 +7153,18 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
   if (!rows.length) {
     return `<p class="empty">本分析周期内无持仓的标的。</p>`;
   }
-  const totalProfitForShare = rows.reduce((s, r) => s + r.profitCny, 0);
   const profitTh = hideProfitCol
     ? ""
     : `<span class="col-profit" role="columnheader">区间收益(¥)</span>`;
-  const profitShareTh = publicRank
-    ? `<span class="col-profit-share" role="columnheader">收益占比</span>`
-    : "";
+  const profitShareTh = `<span class="col-profit-share" role="columnheader">收益占比</span>`;
 
   return `
     <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
       <div class="analysis-stock-rank-head" role="row">
         <span class="col-rank" role="columnheader">#</span>
         <span class="col-name" role="columnheader">名称</span>
-        ${profitShareTh}
         ${profitTh}
+        ${profitShareTh}
         <span class="col-px col-with-help stock-rank-help-wrap" role="columnheader">
           <span class="col-th-label">个股涨跌幅</span>
           <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="个股涨跌幅说明">?</button>
