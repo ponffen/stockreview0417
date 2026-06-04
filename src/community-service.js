@@ -4,7 +4,6 @@
 
 const {
   getTrades,
-  selectLatestSymbolDailyDate,
   listPublicCommunityUserIds,
   getUserCommunityRow,
   getCommunityLeaderboardCache,
@@ -12,11 +11,10 @@ const {
   isCommunityFollowing,
   listCommunityFolloweeIds,
   getCommunityFeedTradesRecent,
-  selectSymbolDailyPositionsOnDate,
   getLatestSymbolDailyClose,
   normalizeSymbol,
   formatSymbolForDisplay,
-  getAnalysisDailySnapshots,
+  selectAnalysisSnapshotsForPublicMetrics,
   getSettings,
   getAccounts,
 } = require("./db");
