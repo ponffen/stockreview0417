@@ -815,15 +815,17 @@ async function startAppAfterAuth(options = {}) {
     await refreshOverviewProfitRowFromSnapshots();
   }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
-  void hydrateSymbolNameMap(
-    state.route === "earning" || state.route === "analysis"
-      ? collectSymbolsForMarket()
-      : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
-  ).then(() => {
-    renderAll();
-  });
+  if (!isCommunitySquareHomeRoute()) {
+    void hydrateSymbolNameMap(
+      state.route === "earning" || state.route === "analysis"
+        ? collectSymbolsForMarket()
+        : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
+    ).then(() => {
+      renderAll();
+    });
+  }
   renderAll();
-  if (state.route !== "earning") {
+  if (state.route !== "earning" && !isCommunitySquareHomeRoute()) {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
       if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
@@ -9318,9 +9320,6 @@ function repaintAnalysisAssetChartFromCache() {
   }
   cachedAnalysisMetricsCharts.payloads.asset = drawAssetChart(
     trimMetricsSeriesPoints(cachedAnalysisAssetChartRows),
-    undefined,
-    undefined,
-    { normalizedAmounts: cachedAnalysisMetricsCharts.isPublicView === true },
   );
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => cachedAnalysisMetricsCharts.payloads.asset, {
     mode: "analysis",
@@ -9482,9 +9481,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
         },
       },
     );
-    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows, undefined, undefined, {
-      normalizedAmounts: c.isPublicView === true,
-    });
+    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows);
   };
 
   cachedAnalysisMetricsCharts = {
