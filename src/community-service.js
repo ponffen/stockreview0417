@@ -6,6 +6,7 @@ const {
   getTrades,
   selectLatestSymbolDailyDate,
   listPublicCommunityUserIds,
+  getUserCommunityRow,
   getCommunityLeaderboardCache,
   setCommunityLeaderboardCache,
   isCommunityFollowing,
