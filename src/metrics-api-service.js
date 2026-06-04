@@ -1139,6 +1139,7 @@ async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
     stage: st,
     live,
     publicLayout: rankOpts.publicLayout === true,
+    accountProfitCny: rankOpts.accountProfitCny,
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
@@ -1281,7 +1282,7 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
   const pubRank = opts.publicRankLayout === true ? "pub" : "priv";
-  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}|${pubRank}`;
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}|${pubRank}|sr2`;
   const now = Date.now();
   if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
     const hit = analysisBundleCache.get(cacheKey);
@@ -1348,7 +1349,12 @@ async function getHoldings(userId, accountScope) {
 
 async function getStockRank(userId, accountScope, stage) {
   const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildStockRankFromContext(ctx, stage);
+  const st = String(stage || "mtd").trim() || "mtd";
+  const { stages } = await computeReturnStages(ctx, st);
+  const stageRow = stages[st] || { profitCny: 0 };
+  return buildStockRankFromContext(ctx, st, {
+    accountProfitCny: Number(stageRow.profitCny) || 0,
+  });
 }
 
 async function getBenchmarkSeries(userId, symbol, stage) {

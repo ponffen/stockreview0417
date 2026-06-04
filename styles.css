@@ -1048,7 +1048,8 @@ h2 {
     var(--stock-rank-col-rank)
     var(--stock-rank-col-name)
     minmax(5.5rem, max-content)
-    minmax(5.5rem, max-content)
+    minmax(4.5rem, max-content)
+    minmax(5rem, max-content)
     minmax(4.5rem, max-content)
     minmax(12rem, 1fr);
   min-width: max-content;
@@ -1102,7 +1103,6 @@ h2 {
 }
 
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share,
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-px,
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days {
   justify-content: flex-end;
