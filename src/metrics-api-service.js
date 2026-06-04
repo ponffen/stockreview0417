@@ -382,6 +382,7 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
   const todayProfit = liveProfitScalarToBook(todayPFinite, scope, book, fxU, fxH);
   let frozenProfit = 0;
   let rateTwr = 0;
+  let rateMwr = 0;
   if (!freshPeriod) {
     if (stageKey === "mtd") {
       frozenProfit = frozenMetrics.monthProfitCny;
@@ -1238,7 +1239,10 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const rateVal = mwrMode ? stageRow.rateMwr : stageRow.rateTwr;
   const { fxU, fxH, book } = fxFromCtx(ctx);
-  const rankOpts = { publicLayout: bundleOpts.publicRankLayout === true };
+  const rankOpts = {
+    publicLayout: bundleOpts.publicRankLayout === true,
+    accountProfitCny: Number(stageRow.profitCny) || 0,
+  };
 
   const [series, stockRank] = await Promise.all([
     buildAnalysisSeriesBundle(ctx, st, trades, rowsAsc),
@@ -1413,13 +1417,6 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
   };
 }
 
-const { redactPublicHomeBundle } = require("./metrics/public-home-bundle-redact");
-
-async function getMetricsPublicHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
-  const full = await getMetricsHomeBundle(userId, accountScope, stagesRaw, opts);
-  return redactPublicHomeBundle(full);
-}
-
 module.exports = {
   METRICS_RULE_VERSION,
   BENCHMARK_SYMBOLS,
@@ -1427,7 +1424,6 @@ module.exports = {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
-  getMetricsPublicHomeBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,

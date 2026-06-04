@@ -364,15 +364,6 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.overview-head--public-earn {
-  justify-content: flex-end;
-}
-
-/* 他人收益 Tab：物理 10 列，总宽按内容不测 1050 下限 */
-.stock-table.stock-table--layout-locked.stock-table--public-community {
-  min-width: max(100%, var(--stock-table-layout-width-px, 0px));
-}
-
 .profit-block {
   padding: 12px 14px 11px;
 }
@@ -1111,6 +1102,7 @@ h2 {
 }
 
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share,
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-px,
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days {
   justify-content: flex-end;
@@ -1823,34 +1815,6 @@ h2 {
   display: none;
 }
 
-.stock-record-charts-panel {
-  position: relative;
-}
-
-.stock-record-charts-loading {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 240px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.stock-record-charts-loading.hidden {
-  display: none;
-}
-
-.stock-record-range-row.is-loading {
-  pointer-events: none;
-  opacity: 0.65;
-}
-
 .stock-record-body.hidden {
   display: none;
 }
@@ -2051,7 +2015,7 @@ h2 {
 }
 
 .stock-record-head-main,
-.stock-record-subhead-panel,
+.stock-record-subhead,
 .stock-record-chart-section,
 .stock-record-chart-block,
 .stock-record-trades-section {
@@ -2066,26 +2030,16 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
-.stock-record-subhead-panel {
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-
 .stock-record-subhead {
-  padding: 12px 14px 8px;
+  padding: 12px 14px;
   margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   overflow: visible;
-  border: none;
-}
-
-.stock-record-range-row {
-  padding: 0 14px 12px;
-  margin: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stock-record-chart-section,
