@@ -5737,8 +5737,8 @@ async function renderPublicProfileAnalysis(d) {
     }
     const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
     const pubSeries = pubBundle?.series || {};
-    const fullPubTwrPts = pubSeries.dailyTwr || [];
-    const profitPts = pubSeries.dailyProfit || [];
+    const fullPubTwrPts = pubSeries.stageRate || [];
+    const profitPts = pubSeries.stageProfit || [];
     const benchPack = pubBundle?.benchmark;
     const fullPubBenchPts = benchPack?.points || [];
     const rankPack = pubBundle?.stockRank;
@@ -9363,8 +9363,8 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
   }
   const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
   const series = bundle?.series || {};
-  const fullTwrPts = series.dailyTwr || [];
-  const fullProfitPts = series.dailyProfit || [];
+  const fullTwrPts = series.stageRate || [];
+  const fullProfitPts = series.stageProfit || [];
   const benchPack = bundle?.benchmark;
   const fullBenchPts = benchPack?.points || [];
   const rankPack = bundle?.stockRank;

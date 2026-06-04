@@ -1209,8 +1209,8 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload) {
   const liveAssets = todayPointForAssets(live, scope, book, fxU, fxH);
   if (liveAssets && liveAssets.date >= start && liveAssets.date <= end) {
     return {
-      dailyProfit: profitRes.points,
-      dailyTwr: twrRes.points,
+      stageProfit: profitRes.points,
+      stageRate: twrRes.points,
       totalAssets: mergeSeriesLivePoint(totalAssets, liveAssets, "totalAssets"),
       marketValue: mergeSeriesLivePoint(marketValue, liveAssets, "marketValue"),
       cash: mergeSeriesLivePoint(cash, liveAssets, "cash"),
@@ -1219,8 +1219,8 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload) {
   }
 
   return {
-    dailyProfit: profitRes.points,
-    dailyTwr: twrRes.points,
+    stageProfit: profitRes.points,
+    stageRate: twrRes.points,
     totalAssets,
     marketValue,
     cash,
