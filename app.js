@@ -7119,31 +7119,41 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
   return qty;
 }
 
+function bundleDisplayTone(displayText) {
+  const s = String(displayText || "").trim();
+  if (!s || s === "—") {
+    return "";
+  }
+  if (s.startsWith("+")) {
+    return "up";
+  }
+  if (s.startsWith("-")) {
+    return "down";
+  }
+  return "";
+}
+
 function mapStockRankBundleRow(row) {
-  const profitCnyRaw = Number(row.profitCny);
-  const profitFromText = parseBundleSignedAmount(row.profit);
-  const profitCny = Number.isFinite(profitCnyRaw) ? profitCnyRaw : profitFromText;
-  let pxChange = Number(row.pxChange);
-  if (!Number.isFinite(pxChange)) {
-    pxChange = parseBundlePercent(row.pxChange ?? row.pxChangePct ?? row.pxChangeDisplay);
-  }
-  if (!Number.isFinite(pxChange)) {
-    pxChange = 0;
-  }
-  let profitShare = Number(row.profitShare);
-  if (!Number.isFinite(profitShare)) {
-    profitShare = parseBundlePercent(row.profitShare);
-  }
   const nameCn = String(row.nameCn || "").trim();
   const fallbackName = String(row.name || "").trim();
+  const profitText = String(row.profitCny ?? row.profit ?? "").trim() || "—";
+  const pxText = String(row.pxChange ?? row.pxChangeDisplay ?? "").trim() || "—";
+  const shareText = String(row.profitShare ?? "").trim() || "—";
+  const daysText = String(row.heldDays ?? "").trim() || "—";
+  const profitTone = String(row.profitTone || "").trim();
+  const pxTone = String(row.pxTone || "").trim();
+  const profitSort = parseBundleSignedAmount(profitText);
   return {
     symbol: row.symbol,
     name: nameCn || fallbackName,
     holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
-    profitCny: Number.isFinite(profitCny) ? profitCny : 0,
-    pxChange,
-    heldDays: Number(row.heldDays) || 0,
-    profitShare: Number.isFinite(profitShare) ? profitShare : null,
+    profitCny: profitText,
+    pxChange: pxText,
+    heldDays: daysText,
+    profitShare: shareText,
+    profitTone: profitTone || bundleDisplayTone(profitText),
+    pxTone: pxTone || bundleDisplayTone(pxText),
+    profitSort: Number.isFinite(profitSort) ? profitSort : 0,
   };
 }
 
@@ -7186,15 +7196,26 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
       </div>
       ${rows
         .map((row, idx) => {
-          const cls = row.profitTone || "";
-          const pCls = row.pxTone || "";
+          const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
+          const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
           const code = formatSymbolForDisplay(row.symbol);
-          const profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${escapeHtml(
-            row.profitShare,
-          )}</span>`;
+          let profitShareCell = "";
+          if (publicRank) {
+            const shareRatio =
+              row.profitShare != null && Number.isFinite(row.profitShare)
+                ? row.profitShare
+                : Math.abs(totalProfitForShare) < 1e-6
+                  ? NaN
+                  : row.profitCny / totalProfitForShare;
+            const shareText = Number.isFinite(shareRatio) ? formatPercent(shareRatio) : "—";
+            profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${shareText}</span>`;
+          }
           const profitCell = hideProfitCol
             ? ""
-            : `<span class="col-profit ${cls}" role="cell">${escapeHtml(row.profitCny)}</span>`;
+            : `<span class="col-profit ${cls}" role="cell">${row.profitCny >= 0 ? "+" : ""}¥${formatNumber(
+                row.profitCny,
+                2,
+              )}</span>`;
           return `
         <div class="analysis-stock-rank-row" role="row">
           <span class="col-rank" role="cell">${idx + 1}</span>
@@ -7202,10 +7223,10 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
             <span class="rank-code">${escapeHtml(code)}</span>
           </div>
-          ${profitCell}
           ${profitShareCell}
-          <span class="col-px ${pCls}" role="cell">${escapeHtml(row.pxChange)}</span>
-          <span class="col-days" role="cell">${escapeHtml(row.heldDays)}</span>
+          ${profitCell}
+          <span class="col-px ${pCls}" role="cell">${formatPercent(row.pxChange)}</span>
+          <span class="col-days" role="cell">${row.heldDays} 天</span>
           <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
         </div>`;
         })
@@ -7222,7 +7243,7 @@ function paintStockRankFromBundle(rankPayload, targetBody, rankOpts = {}) {
     targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
     return;
   }
-  rows.sort((a, b) => b.profitSort - a.profitSort);
+  rows.sort((a, b) => b.profitCny - a.profitCny);
   targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
