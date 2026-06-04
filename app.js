@@ -9305,7 +9305,8 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     if (benchSym) {
       bundleParams.symbol = benchSym;
     }
-    bundle = await fetchMetricsApi("/analysis-bundle", bundleParams, publicTargetId);
+    const bundlePath = isPublicView ? "/analysis-bundle" : "/metrics/analysis-bundle";
+    bundle = await fetchMetricsApi(bundlePath, bundleParams, publicTargetId);
   }
   const series = bundle?.series || {};
   const fullTwrPts = series.stageRate || series.dailyTwr || [];
