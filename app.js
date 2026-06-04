@@ -7163,21 +7163,18 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
   if (!rows.length) {
     return `<p class="empty">本分析周期内无持仓的标的。</p>`;
   }
-  const totalProfitForShare = rows.reduce((s, r) => s + r.profitCny, 0);
   const profitTh = hideProfitCol
     ? ""
     : `<span class="col-profit" role="columnheader">区间收益(¥)</span>`;
-  const profitShareTh = publicRank
-    ? `<span class="col-profit-share" role="columnheader">收益占比</span>`
-    : "";
+  const profitShareTh = `<span class="col-profit-share" role="columnheader">收益占比</span>`;
 
   return `
     <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
       <div class="analysis-stock-rank-head" role="row">
         <span class="col-rank" role="columnheader">#</span>
         <span class="col-name" role="columnheader">名称</span>
-        ${profitShareTh}
         ${profitTh}
+        ${profitShareTh}
         <span class="col-px col-with-help stock-rank-help-wrap" role="columnheader">
           <span class="col-th-label">个股涨跌幅</span>
           <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="个股涨跌幅说明">?</button>
@@ -7196,26 +7193,15 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
       </div>
       ${rows
         .map((row, idx) => {
-          const cls = row.profitCny > 0 ? "up" : row.profitCny < 0 ? "down" : "";
-          const pCls = row.pxChange > 0 ? "up" : row.pxChange < 0 ? "down" : "";
+          const cls = row.profitTone || "";
+          const pCls = row.pxTone || "";
           const code = formatSymbolForDisplay(row.symbol);
-          let profitShareCell = "";
-          if (publicRank) {
-            const shareRatio =
-              row.profitShare != null && Number.isFinite(row.profitShare)
-                ? row.profitShare
-                : Math.abs(totalProfitForShare) < 1e-6
-                  ? NaN
-                  : row.profitCny / totalProfitForShare;
-            const shareText = Number.isFinite(shareRatio) ? formatPercent(shareRatio) : "—";
-            profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${shareText}</span>`;
-          }
+          const profitShareCell = `<span class="col-profit-share ${cls}" role="cell">${escapeHtml(
+            row.profitShare,
+          )}</span>`;
           const profitCell = hideProfitCol
             ? ""
-            : `<span class="col-profit ${cls}" role="cell">${row.profitCny >= 0 ? "+" : ""}¥${formatNumber(
-                row.profitCny,
-                2,
-              )}</span>`;
+            : `<span class="col-profit ${cls}" role="cell">${escapeHtml(row.profitCny)}</span>`;
           return `
         <div class="analysis-stock-rank-row" role="row">
           <span class="col-rank" role="cell">${idx + 1}</span>
@@ -7223,10 +7209,10 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
             <span class="rank-code">${escapeHtml(code)}</span>
           </div>
-          ${profitShareCell}
           ${profitCell}
-          <span class="col-px ${pCls}" role="cell">${formatPercent(row.pxChange)}</span>
-          <span class="col-days" role="cell">${row.heldDays} 天</span>
+          ${profitShareCell}
+          <span class="col-px ${pCls}" role="cell">${escapeHtml(row.pxChange)}</span>
+          <span class="col-days" role="cell">${escapeHtml(row.heldDays)}</span>
           <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
         </div>`;
         })
@@ -7243,7 +7229,7 @@ function paintStockRankFromBundle(rankPayload, targetBody, rankOpts = {}) {
     targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
     return;
   }
-  rows.sort((a, b) => b.profitCny - a.profitCny);
+  rows.sort((a, b) => b.profitSort - a.profitSort);
   targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
