@@ -11675,18 +11675,21 @@ function analysisSnapshotMoneyFromCny(cnyVal) {
 const ASSET_CHART_Y_MIN_FACTOR = 0.95;
 const ASSET_CHART_Y_MAX_FACTOR = 1.05;
 
-function drawAssetChart(assetSeries, canvas, trendMode) {
+function drawAssetChart(assetSeries, canvas, trendMode, chartOpts = {}) {
   const targetCanvas = canvas || analysisAssetChart;
   const mode = trendMode != null ? trendMode : state.capitalTrendMode;
+  const normalizedAmounts = chartOpts.normalizedAmounts === true;
   const fmtMoney = (v) => formatNumber(analysisSnapshotMoneyFromCny(v), 2);
+  const fmtIndex = (v) => formatNumber(v, 4);
+  const fmtAmount = normalizedAmounts ? fmtIndex : fmtMoney;
   const cfg =
     mode === "market"
-      ? { key: "market", label: "总市值", color: "#4f83f1", fmt: fmtMoney }
+      ? { key: "market", label: "总市值", color: "#4f83f1", fmt: fmtAmount }
       : mode === "cash"
-        ? { key: "cash", label: "现金", color: "#27ae60", fmt: fmtMoney }
+        ? { key: "cash", label: "现金", color: "#27ae60", fmt: fmtAmount }
         : mode === "cash_ratio"
           ? { key: "cashRatio", label: "现金占比", color: "#9b59b6", fmt: (v) => `${formatNumber(v, 2)}%` }
-          : { key: "totalAssets", label: "总资产", color: "#5f6c82", fmt: fmtMoney };
+          : { key: "totalAssets", label: "总资产", color: "#5f6c82", fmt: fmtAmount };
   const series = assetSeries.map((item) => ({
     date: item.date,
     value: Number(item[cfg.key]) || 0,
