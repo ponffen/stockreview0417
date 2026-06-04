@@ -4,6 +4,12 @@
  */
 
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
+const {
+  normalizeMetricTimeSeries,
+  normalizeHeadlineFromSeries,
+  parsePlainAmountText,
+  formatIndexValue,
+} = require("./series-index-normalize");
 
 const STOCK_RANK_PUBLIC_KEYS = new Set([
   "rank",
@@ -15,70 +21,6 @@ const STOCK_RANK_PUBLIC_KEYS = new Set([
   "holdIntervalsLabel",
 ]);
 
-const ASSET_AMOUNT_KEYS = ["totalAssets", "marketValue", "cash", "principal"];
-
-function parsePlainAmountText(text) {
-  let t = String(text ?? "").trim().replace(/,/g, "");
-  if (!t || t === "–" || t === "—" || t === "-") {
-    return null;
-  }
-  t = t.replace(/^¥\s*/i, "");
-  const neg = t.startsWith("-") || t.startsWith("−");
-  const n = parseFloat(t.replace(/^[+−-]/, ""));
-  if (!Number.isFinite(n)) {
-    return null;
-  }
-  return neg ? -n : n;
-}
-
-function formatNormalizedIndex(n) {
-  if (!Number.isFinite(n)) {
-    return "—";
-  }
-  return (Number(n) || 0).toFixed(4);
-}
-
-function normalizeSeriesPoints(points, valueKey) {
-  const list = Array.isArray(points) ? points : [];
-  if (!list.length) {
-    return [];
-  }
-  const nums = list.map((p) => parsePlainAmountText(p?.[valueKey]));
-  let baseIdx = -1;
-  for (let i = 0; i < nums.length; i++) {
-    if (nums[i] != null && Math.abs(nums[i]) > 1e-12) {
-      baseIdx = i;
-      break;
-    }
-  }
-  if (baseIdx < 0) {
-    const first = nums.find((n) => n != null);
-    const base = first != null && Math.abs(first) > 1e-12 ? Math.abs(first) : 1;
-    return list.map((p, i) => ({
-      date: p.date,
-      [valueKey]: formatNormalizedIndex(nums[i] != null ? nums[i] / base : null),
-    }));
-  }
-  const base = nums[baseIdx];
-  const baseAbs = Math.abs(base) > 1e-12 ? base : 1;
-  return list.map((p, i) => {
-    const raw = nums[i];
-    const index = raw == null ? null : raw / baseAbs;
-    return {
-      date: p.date,
-      [valueKey]: formatNormalizedIndex(index),
-    };
-  });
-}
-
-function normalizeHeadlineAmount(text, seriesPoints, valueKey) {
-  const pts = normalizeSeriesPoints(seriesPoints, valueKey);
-  if (!pts.length) {
-    return "—";
-  }
-  return pts[pts.length - 1][valueKey];
-}
-
 function redactAssets(assets, series) {
   const src = assets || {};
   const out = {
@@ -86,24 +28,16 @@ function redactAssets(assets, series) {
     stockRatio: src.stockRatio,
   };
   if (src.totalAssets != null) {
-    out.totalAssets = normalizeHeadlineAmount(
-      src.totalAssets,
-      series?.totalAssets,
-      "totalAssets",
-    );
+    out.totalAssets = normalizeHeadlineFromSeries(series?.totalAssets, "totalAssets");
   }
   if (src.marketValue != null) {
-    out.marketValue = normalizeHeadlineAmount(
-      src.marketValue,
-      series?.marketValue,
-      "marketValue",
-    );
+    out.marketValue = normalizeHeadlineFromSeries(series?.marketValue, "marketValue");
   }
   if (src.cash != null) {
-    out.cash = normalizeHeadlineAmount(src.cash, series?.cash, "cash");
+    out.cash = normalizeHeadlineFromSeries(series?.cash, "cash");
   }
   if (src.principal != null) {
-    out.principal = normalizeHeadlineAmount(src.principal, series?.principal, "principal");
+    out.principal = normalizeHeadlineFromSeries(series?.principal, "principal");
   }
   return out;
 }
@@ -112,7 +46,7 @@ function redactReturns(returns, stageProfitSeries) {
   const row = returns || {};
   const out = { rate: row.rate };
   if (row.profit != null) {
-    out.profit = normalizeHeadlineAmount(row.profit, stageProfitSeries, "profit");
+    out.profit = normalizeHeadlineFromSeries(stageProfitSeries, "profit");
   }
   return out;
 }
@@ -121,20 +55,20 @@ function redactSeries(series) {
   const s = series || {};
   const stageProfitSrc = s.stageProfit || s.dailyProfit || [];
   const stageRateSrc = s.stageRate || s.dailyTwr || [];
-  const totalAssets = normalizeSeriesPoints(s.totalAssets, "totalAssets");
-  const marketValue = normalizeSeriesPoints(s.marketValue, "marketValue");
-  const cash = normalizeSeriesPoints(s.cash, "cash");
+  const totalAssets = normalizeMetricTimeSeries(s.totalAssets, "totalAssets");
+  const marketValue = normalizeMetricTimeSeries(s.marketValue, "marketValue");
+  const cash = normalizeMetricTimeSeries(s.cash, "cash");
   const principalSrc = s.principal;
   const out = {
     stageRate: stageRateSrc.map((p) => ({ date: p.date, rate: p.rate })),
-    stageProfit: normalizeSeriesPoints(stageProfitSrc, "profit"),
+    stageProfit: normalizeMetricTimeSeries(stageProfitSrc, "profit"),
     totalAssets,
     marketValue,
     cash,
     cashRatio: (s.cashRatio || []).map((p) => ({ date: p.date, cashRatio: p.cashRatio })),
   };
   if (Array.isArray(principalSrc) && principalSrc.length) {
-    out.principal = normalizeSeriesPoints(principalSrc, "principal");
+    out.principal = normalizeMetricTimeSeries(principalSrc, "principal");
   }
   return out;
 }
@@ -221,5 +155,5 @@ module.exports = {
   redactPublicAnalysisBundle,
   STOCK_RANK_PUBLIC_KEYS,
   parsePlainAmountText,
-  formatNormalizedIndex,
+  formatNormalizedIndex: formatIndexValue,
 };
