@@ -3860,30 +3860,54 @@ function resetStockRankHelpBubbleLayout(bubble) {
   if (!bubble) {
     return;
   }
-  bubble.classList.remove("is-fixed");
+  bubble.classList.remove("is-open", "is-fixed");
   bubble.style.position = "";
   bubble.style.left = "";
   bubble.style.top = "";
   bubble.style.right = "";
+  bubble.style.bottom = "";
   bubble.style.zIndex = "";
   bubble.style.display = "";
+  bubble.style.visibility = "";
+  bubble.style.width = "";
+  bubble.style.maxWidth = "";
+  if (bubble._helpWrap && bubble.parentNode === document.body) {
+    bubble._helpWrap.appendChild(bubble);
+  }
+  bubble._helpWrap = null;
+  bubble._helpHost = null;
 }
 
-function positionStockRankHelpBubble(btn, bubble) {
+function positionStockRankHelpBubble(btn, bubble, host) {
   if (!btn || !bubble) {
     return;
   }
+  const wrap = btn.closest(".stock-rank-help-wrap");
+  bubble._helpWrap = wrap;
+  bubble._helpHost = host;
+  document.body.appendChild(bubble);
   bubble.classList.add("is-open", "is-fixed");
   bubble.style.position = "fixed";
-  bubble.style.zIndex = "10000";
+  bubble.style.zIndex = "100001";
   bubble.style.display = "block";
+  bubble.style.visibility = "hidden";
+  bubble.style.width = "max-content";
+  bubble.style.maxWidth = "min(280px, 72vw)";
+  bubble.style.left = "-9999px";
+  bubble.style.top = "0";
+  bubble.style.right = "auto";
   const br = btn.getBoundingClientRect();
   const bw = bubble.offsetWidth;
+  const bh = bubble.offsetHeight;
   let left = br.right - bw;
   left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+  let top = br.bottom + 7;
+  if (top + bh > window.innerHeight - 8) {
+    top = Math.max(8, br.top - bh - 7);
+  }
   bubble.style.left = `${left}px`;
-  bubble.style.top = `${br.bottom + 7}px`;
-  bubble.style.right = "auto";
+  bubble.style.top = `${top}px`;
+  bubble.style.visibility = "visible";
 }
 
 function closeStockRankHelpInHost(host) {
@@ -3891,8 +3915,12 @@ function closeStockRankHelpInHost(host) {
     return;
   }
   host.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
-    el.classList.remove("is-open");
     resetStockRankHelpBubbleLayout(el);
+  });
+  document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
+    if (el._helpHost === host) {
+      resetStockRankHelpBubbleLayout(el);
+    }
   });
   host.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
     b.setAttribute("aria-expanded", "false");
@@ -3925,7 +3953,7 @@ function bindAnalysisStockRankHelpOnce() {
     const wasOpen = bubble?.classList.contains("is-open");
     closeStockRankHelpInHost(host);
     if (!wasOpen && bubble) {
-      positionStockRankHelpBubble(btn, bubble);
+      positionStockRankHelpBubble(btn, bubble, host);
       btn.setAttribute("aria-expanded", "true");
     }
   });
@@ -3953,7 +3981,6 @@ function bindAnalysisStockRankHelpOnce() {
     "scroll",
     () => {
       document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
-        el.classList.remove("is-open");
         resetStockRankHelpBubbleLayout(el);
       });
       document.querySelectorAll(".stock-rank-help-btn[aria-expanded='true']").forEach((b) => {
@@ -7332,7 +7359,7 @@ function renderAnalysisStockRank(
       holdIntervalsLabel: r.holdIntervalsLabel,
       profit: formatSignedMoneyInBook(r.profitNum, book),
       pxChange: formatPercent(r.pxChange),
-      heldDays: `${Math.max(0, Math.floor(Number(r.heldDays) || 0))} 天`,
+      heldDays: `${Math.max(0, Math.floor(Number(r.heldDays) || 0))}天`,
       profitShare: Number.isFinite(shareRatio) ? formatPercent(shareRatio) : "—",
       profitTone,
       pxTone,

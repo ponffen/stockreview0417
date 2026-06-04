@@ -50,7 +50,7 @@ function fmtStockRankProfitShare(profitCny, accountProfitCny) {
 
 function fmtStockRankHeldDays(heldDays) {
   const d = Math.max(0, Math.floor(Number(heldDays) || 0));
-  return `${d} 天`;
+  return `${d}天`;
 }
 
 function profitToneFromCny(profitCny) {

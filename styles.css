@@ -1188,7 +1188,8 @@ h2 {
 
 .stock-rank-help-bubble.is-open.is-fixed {
   position: fixed;
-  z-index: 10000;
+  z-index: 100001;
+  width: max-content;
 }
 
 .analysis-stock-rank-head {
