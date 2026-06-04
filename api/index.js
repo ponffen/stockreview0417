@@ -1204,7 +1204,6 @@ module.exports = async function handler(req, res) {
 
       if (req.method === "GET" && pathOnly === "/api/community/feed") {
         const rows = await getFeedTrades(userId);
-        await enrichFeedRowsWithTencent(rows);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: rows }));
         return;

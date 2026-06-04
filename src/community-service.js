@@ -4,8 +4,6 @@
 
 const {
   getTrades,
-  getUserCommunityRow,
-  selectAnalysisSnapshotsForPublicMetrics,
   selectLatestSymbolDailyDate,
   listPublicCommunityUserIds,
   getCommunityLeaderboardCache,
@@ -537,9 +535,7 @@ async function getPublicTrades(viewerId, targetId) {
     return { error: gate.error };
   }
   const tid = gate.userId;
-  const trades = await getTrades(tid);
-  const snaps = await selectAnalysisSnapshotsForPublicMetrics(tid);
-  const lastSnap = snaps.length ? snaps[snaps.length - 1] : null;
+  const trades = (await getTrades(tid)).filter((t) => t.type === "trade");
   const rows = trades.map((t) => ({
     id: t.id,
     date: t.date,
@@ -550,12 +546,9 @@ async function getPublicTrades(viewerId, targetId) {
     quantity: t.quantity,
     amount: t.amount,
     accountId: t.accountId,
-    amountCnyRaw: tradeAmountCny(t),
+    amount_share_ratio: t.amountShareRatio,
   }));
-  return {
-    latestMarketValueCny: lastSnap ? Number(lastSnap.market_value || 0) : 0,
-    rows,
-  };
+  return { rows };
 }
 
 async function enrichPublicTradesWithTencent(payload) {
@@ -606,28 +599,14 @@ async function getFollowingCards(viewerId) {
 async function getFeedTrades(viewerId) {
   const raw = await getCommunityFeedTradesRecent(viewerId, 800);
   const out = [];
-  const mvByUser = Object.create(null);
   for (const t of raw) {
-    const row = await getUserCommunityRow(t.userId);
-    if (!row || !Number(row.community_public)) {
-      continue;
-    }
-    const uid = t.userId;
-    if (mvByUser[uid] === undefined) {
-      const snaps = await selectAnalysisSnapshotsForPublicMetrics(uid);
-      const last = snaps.length ? snaps[snaps.length - 1] : null;
-      mvByUser[uid] = last ? Number(last.market_value || 0) : 0;
-    }
-    const mv = mvByUser[uid];
-    const amountCnyRaw = tradeAmountCny({ symbol: t.symbol, amount: t.amount });
-    const amountShareOfCurrentTotalMv =
-      mv > 1e-9 && Number.isFinite(amountCnyRaw) ? Math.abs(amountCnyRaw) / mv : null;
     const note = String(t.note || "");
     const meta = displayStockMeta(t.symbol);
+    const ratio = t.amountShareRatio;
     out.push({
       id: t.id,
       userId: t.userId,
-      displayName: displayNameForUser(row),
+      displayName: displayNameForUser({ nickname: t.nickname, phone: t.phone }),
       symbol: t.symbol,
       name: t.name || t.symbol,
       price: t.price,
@@ -637,7 +616,7 @@ async function getFeedTrades(viewerId) {
       createdAt: t.createdAt,
       marketTag: meta.marketTag,
       displayCode: meta.displayCode,
-      amountShareOfCurrentTotalMv,
+      amount_share_ratio: ratio != null && Number.isFinite(Number(ratio)) ? Number(ratio) : null,
     });
     if (out.length >= 50) {
       break;

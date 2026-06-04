@@ -4993,7 +4993,7 @@ function feedRowHtml(t) {
   const code = escapeHtml(formatSymbolForDisplay(t.symbol || t.displayCode || ""));
   const priceStr =
     t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
-  const share = t.amountShareOfCurrentTotalMv;
+  const share = t.amount_share_ratio;
   const shareStr =
     share != null && Number.isFinite(Number(share)) ? formatPercent(Number(share)) : "—";
   const dateDisplay = String(t.date || "—").replace(/-/g, "\u2013");
@@ -5154,6 +5154,7 @@ async function loadCommunityLeaderboard() {
       communityLeaderboardList.innerHTML = `<p class="empty">暂无排行（需公开社区、满足归一条件并有交易）</p>`;
       return;
     }
+    await hydrateSymbolNameMap(entries.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityLeaderboardList.innerHTML = entries
       .map((c, idx) =>
         wrapInteractiveCommunityCard(c, { showRank: idx + 1 }),
@@ -5216,17 +5217,12 @@ function useCommunityPublicStockRecord() {
   return !!(state.stockRecordFromPublicProfile && state.communityProfileUserId);
 }
 
-function publicTradeAmountShareOfLatestMv(trade, detail) {
-  const pack = state.communityPublicTradesPack;
-  const mv = Number(pack?.latestMarketValueCny ?? detail?.publicLatestMarketValueCny);
-  const a = Math.abs(Number(trade.amountCnyRaw) || 0);
-  if (!Number.isFinite(mv) || mv < 1e-9) {
-    return null;
+function publicTradeAmountShare(trade) {
+  const stored = trade.amount_share_ratio ?? trade.amountShareRatio;
+  if (stored != null && Number.isFinite(Number(stored))) {
+    return Number(stored);
   }
-  if (!Number.isFinite(a)) {
-    return null;
-  }
-  return a / mv;
+  return null;
 }
 
 /** 他人主页个股表：排除已无持仓（含 A 股股数四舍五入为 0、浮点残差）的行 */
@@ -5696,7 +5692,7 @@ function renderPublicTradeTable() {
   }
   tb.innerHTML = list
     .map((trade) => {
-      const share = publicTradeAmountShareOfLatestMv(trade, null);
+      const share = publicTradeAmountShare(trade);
       const shareStr =
         share != null && Number.isFinite(share) ? formatPercent(share) : "—";
       return `
@@ -7099,7 +7095,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
   const profitShareTh = `<span class="col-profit-share col-profit-share-head" role="columnheader">收益占比</span>`;
 
   return `
-    <div class="analysis-stock-rank-table" role="table" aria-label="个股收益排行">
+    <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
       <div class="analysis-stock-rank-head" role="row">
         <span class="col-rank" role="columnheader">#</span>
         <span class="col-name" role="columnheader">名称</span>
@@ -10554,7 +10550,7 @@ async function renderStockRecordPage(symbol) {
         <td>${formatNumber(trade.price, 2)}</td>`;
       const accCell = `<td class="trade-account-cell">${formatTradeAccountCellHtml(trade, usePub ? detail : null)}</td>`;
       if (usePub) {
-        const share = publicTradeAmountShareOfLatestMv(trade, detail);
+        const share = publicTradeAmountShare(trade);
         const shareCell =
           share != null && Number.isFinite(share) ? formatPercent(share) : "—";
         return `${rowCore}

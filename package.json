@@ -16,6 +16,7 @@
     "db:sync-neon": "node scripts/sync-local-pg-to-neon.js",
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
+    "backfill:trade-amount-share": "node scripts/backfill-trade-amount-share-ratio.js",
     "rebuild:symbol-pnl": "node scripts/rebuild-all-symbol-pnl.js",
     "backfill:daily-close:akshare": "python3 scripts/akshare_fill_symbol_daily_close.py",
     "rebuild:performance": "VERCEL=1 node scripts/rebuild-all-performance.js",

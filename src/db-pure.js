@@ -302,6 +302,11 @@ function normalizeTrade(input) {
   );
   const note = String(raw.note || raw.remark || raw["备注"] || "").trim();
   const createdAt = validNumber(raw.createdAt, raw.created_at, raw.timestamp, Date.parse(date), nowMs());
+  const amountShareRatioRaw = raw.amountShareRatio ?? raw.amount_share_ratio;
+  const amountShareRatio =
+    amountShareRatioRaw == null || amountShareRatioRaw === ""
+      ? null
+      : Number(amountShareRatioRaw);
 
   return {
     id: String(raw.id || raw.tradeId || raw.ts_id || randomUUID()),
@@ -316,12 +321,14 @@ function normalizeTrade(input) {
     date,
     note,
     createdAt,
+    amountShareRatio: Number.isFinite(amountShareRatio) ? amountShareRatio : null,
   };
 }
 
 function tradeToRow(trade, userId) {
   const safe = normalizeTrade(trade);
   const updatedAt = nowMs();
+  const ratio = safe.amountShareRatio;
   return {
     id: safe.id,
     user_id: String(userId || "").trim(),
@@ -337,10 +344,14 @@ function tradeToRow(trade, userId) {
     note: safe.note,
     created_at: safe.createdAt,
     updated_at: updatedAt,
+    amount_share_ratio: ratio == null || !Number.isFinite(Number(ratio)) ? null : Number(ratio),
   };
 }
 
 function rowToTrade(row) {
+  const ratioRaw = row.amount_share_ratio;
+  const amountShareRatio =
+    ratioRaw == null || ratioRaw === "" ? null : Number(ratioRaw);
   return {
     id: row.id,
     accountId: row.account_id || "default",
@@ -354,6 +365,7 @@ function rowToTrade(row) {
     date: row.trade_date,
     note: row.note || "",
     createdAt: Number(row.created_at),
+    amountShareRatio: Number.isFinite(amountShareRatio) ? amountShareRatio : null,
   };
 }
 

@@ -1221,7 +1221,6 @@ app.get("/api/community/following", requireAuth, async (req, res) => {
 app.get("/api/community/feed", requireAuth, async (req, res) => {
   try {
     const rows = await getFeedTrades(req.userId);
-    await enrichFeedRowsWithTencent(rows);
     res.json({ ok: true, data: rows });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "feed failed" });
