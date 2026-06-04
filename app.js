@@ -7133,11 +7133,16 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
             ? ""
             : `<span class="col-profit ${cls}" role="cell">${escapeHtml(row.profit)}</span>`;
           const rankNum = publicRank && row.rank ? row.rank : idx + 1;
+          const rankCode = formatSymbolForDisplay(row.symbol);
+          const rankCodeHtml = rankCode
+            ? `<span class="rank-code">${escapeHtml(rankCode)}</span>`
+            : "";
           return `
         <div class="analysis-stock-rank-row" role="row">
           <span class="col-rank" role="cell">${rankNum}</span>
           <div class="col-name" role="cell">
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
+            ${rankCodeHtml}
           </div>
           ${profitCell}
           ${profitShareCell}
