@@ -7099,7 +7099,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
   const profitShareTh = `<span class="col-profit-share col-profit-share-head" role="columnheader">收益占比</span>`;
 
   return `
-    <div class="analysis-stock-rank-table${publicRank ? " analysis-stock-rank-table--public" : ""}" role="table" aria-label="个股收益排行">
+    <div class="analysis-stock-rank-table" role="table" aria-label="个股收益排行">
       <div class="analysis-stock-rank-head" role="row">
         <span class="col-rank" role="columnheader">#</span>
         <span class="col-name" role="columnheader">名称</span>
