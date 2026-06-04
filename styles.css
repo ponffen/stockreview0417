@@ -2871,29 +2871,11 @@ body.auth-mode {
   min-width: 56px;
 }
 
-.community-profile-footer-disclaimer {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 62px;
-  z-index: 99;
-  margin: 0;
-  padding: 8px 12px;
-  font-size: 11px;
+.community-profile-earning-disclaimer {
+  margin: 12px 14px 16px;
+  font-size: 12px;
   line-height: 1.45;
-  text-align: center;
   color: var(--muted);
-  background: var(--bg);
-  border-top: 1px solid var(--line);
-  box-sizing: border-box;
-}
-
-.community-profile-footer-disclaimer.hidden {
-  display: none;
-}
-
-.app-shell.is-community-profile-route {
-  padding-bottom: calc(62px + 52px + env(safe-area-inset-bottom, 0px));
 }
 
 .community-profile-subtabs {

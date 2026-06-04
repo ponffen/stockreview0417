@@ -438,7 +438,6 @@ const communityProfileBody = document.getElementById("communityProfileBody");
 const communityProfileBackBtn = document.getElementById("communityProfileBackBtn");
 const communityProfileTitle = document.getElementById("communityProfileTitle");
 const communityProfileFollowSlot = document.getElementById("communityProfileFollowSlot");
-const communityProfileFooterDisclaimer = document.getElementById("communityProfileFooterDisclaimer");
 const authGate = document.getElementById("authGate");
 const appShell = document.getElementById("appShell");
 const authLoginForm = document.getElementById("authLoginForm");
@@ -5338,6 +5337,9 @@ function getCommunityEarningPanelHtml() {
         </table>
       </div>
     </article>
+    <p class="community-profile-earning-disclaimer" role="note">
+      组合公开页面金额数据均已归一化处理，持仓占比、收益率与真实情况一致。
+    </p>
   `;
 }
 
@@ -6051,12 +6053,6 @@ function renderRoute() {
   ]);
   if (appTopBar) {
     appTopBar.style.display = secondaryToplessRoutes.has(state.route) ? "none" : "flex";
-  }
-  if (appShell) {
-    appShell.classList.toggle("is-community-profile-route", state.route === "community-profile");
-  }
-  if (communityProfileFooterDisclaimer) {
-    communityProfileFooterDisclaimer.classList.toggle("hidden", state.route !== "community-profile");
   }
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
