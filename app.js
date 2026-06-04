@@ -3871,6 +3871,7 @@ function resetStockRankHelpBubbleLayout(bubble) {
   bubble.style.visibility = "";
   bubble.style.width = "";
   bubble.style.maxWidth = "";
+  bubble.style.removeProperty("--help-arrow-left");
   if (bubble._helpWrap && bubble.parentNode === document.body) {
     bubble._helpWrap.appendChild(bubble);
   }
@@ -3899,7 +3900,8 @@ function positionStockRankHelpBubble(btn, bubble, host) {
   const br = btn.getBoundingClientRect();
   const bw = bubble.offsetWidth;
   const bh = bubble.offsetHeight;
-  let left = br.right - bw;
+  const btnCenterX = br.left + br.width / 2;
+  let left = btnCenterX - bw / 2;
   left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
   let top = br.bottom + 7;
   if (top + bh > window.innerHeight - 8) {
@@ -3907,6 +3909,8 @@ function positionStockRankHelpBubble(btn, bubble, host) {
   }
   bubble.style.left = `${left}px`;
   bubble.style.top = `${top}px`;
+  const arrowLeft = Math.max(10, Math.min(bw - 22, btnCenterX - left - 6));
+  bubble.style.setProperty("--help-arrow-left", `${arrowLeft}px`);
   bubble.style.visibility = "visible";
 }
 

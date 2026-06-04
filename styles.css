@@ -1186,6 +1186,11 @@ h2 {
   display: block;
 }
 
+.stock-rank-help-bubble.is-open.is-fixed::before {
+  right: auto;
+  left: var(--help-arrow-left, calc(100% - 26px));
+}
+
 .stock-rank-help-bubble.is-open.is-fixed {
   position: fixed;
   z-index: 100001;

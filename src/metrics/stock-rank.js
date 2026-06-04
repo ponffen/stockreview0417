@@ -25,10 +25,19 @@ const {
 } = require("./stock-rank-period");
 const {
   fmtPlainAmount,
+  fmtPlainSignedAmount,
   fmtPercentRatio,
   fmtSignedPercentRatio,
 } = require("../account-kpi-surface");
-const { formatSignedProfitForScope } = require("./account-book-metrics");
+const { liveCnyToBookAmount, isAggregateScope } = require("./account-book-metrics");
+
+/** 排行 profitCny 由 profitNativeToAnalysisCny 算出，恒为人民币；单账户展示需换到记账币。 */
+function stockRankRowProfitToBook(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny) {
+  if (isAggregateScope(scope)) {
+    return Number(profitCny) || 0;
+  }
+  return liveCnyToBookAmount(profitCny, bookCurrency, fxUsdCny, fxHkdCny);
+}
 
 function fmtStockRankProfitCny(profitCny) {
   const v = Number(profitCny);
@@ -39,9 +48,9 @@ function fmtStockRankProfitCny(profitCny) {
   return `${sign}¥${fmtPlainAmount(Math.abs(v))}`;
 }
 
-function fmtStockRankProfitShare(profitCny, accountProfitCny) {
-  const num = Number(profitCny);
-  const den = Number(accountProfitCny);
+function fmtStockRankProfitShare(profitBook, accountProfitBook) {
+  const num = Number(profitBook);
+  const den = Number(accountProfitBook);
   if (!Number.isFinite(num) || !Number.isFinite(den) || Math.abs(den) < 1e-9) {
     return "—";
   }
@@ -70,6 +79,7 @@ function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
   const fxHkdCny = scopeCtx.fxHkdCny ?? 0.92;
   return (rows || []).map((r) => {
     const profitCny = Number(r.profitCny) || 0;
+    const profitBook = stockRankRowProfitToBook(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny);
     const pxChange = Number(r.pxChange);
     const heldDays = Number(r.heldDays) || 0;
     return {
@@ -77,11 +87,11 @@ function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
       symbol: r.symbol,
       name: r.name,
       holdIntervalsLabel: r.holdIntervalsLabel,
-      profit: formatSignedProfitForScope(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny),
+      profit: fmtPlainSignedAmount(profitBook),
       pxChange: Number.isFinite(pxChange) ? fmtSignedPercentRatio(pxChange) : "—",
       heldDays: fmtStockRankHeldDays(heldDays),
-      profitShare: fmtStockRankProfitShare(profitCny, accountProfit),
-      profitTone: profitToneFromCny(profitCny),
+      profitShare: fmtStockRankProfitShare(profitBook, accountProfit),
+      profitTone: profitToneFromCny(profitBook),
       pxTone: Number.isFinite(pxChange) ? profitToneFromCny(pxChange) : "",
     };
   });
