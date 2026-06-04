@@ -29,6 +29,7 @@ const {
   tradeCashFlowInAccountCurrency,
 } = require("../ledger-metrics");
 const { xirrPeriodFromSnapshotWindow, xirrPeriodFromSymbolValueFlowPoints } = require("../home-summary-maths");
+const { mwrForFreezeStorage } = require("../mwr");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
 const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
 const {
@@ -254,37 +255,17 @@ function computeMwrPatchPeriod(rowsAsc, asOf, firstTrade) {
     totalAssets: r.totalAssets,
     externalFlowCny: r.dailyExternalFlow,
   }));
+  const wrap = (stage) =>
+    mwrForFreezeStorage(
+      xirrPeriodFromSnapshotWindow(mapped, windowStartForStage(stage, asOf, firstTrade), asOf),
+    );
   return {
-    stageMtdRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("mtd", asOf, firstTrade),
-      asOf,
-    ),
-    stageYtdRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("ytd", asOf, firstTrade),
-      asOf,
-    ),
-    stageInceptionRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("inception", asOf, firstTrade),
-      asOf,
-    ),
-    stageLast7dRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("last_7d", asOf, firstTrade),
-      asOf,
-    ),
-    stageLast30dRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("last_30d", asOf, firstTrade),
-      asOf,
-    ),
-    stageLast90dRateMwr: xirrPeriodFromSnapshotWindow(
-      mapped,
-      windowStartForStage("last_90d", asOf, firstTrade),
-      asOf,
-    ),
+    stageMtdRateMwr: wrap("mtd"),
+    stageYtdRateMwr: wrap("ytd"),
+    stageInceptionRateMwr: wrap("inception"),
+    stageLast7dRateMwr: wrap("last_7d"),
+    stageLast30dRateMwr: wrap("last_30d"),
+    stageLast90dRateMwr: wrap("last_90d"),
   };
 }
 
@@ -533,7 +514,7 @@ async function freezeSymbolOneDay({
   }
 
   const endVal = qty * closeD;
-  const mwrRate = xirrPeriodFromSymbolValueFlowPoints(flowPts, dk, endVal);
+  const mwrRate = mwrForFreezeStorage(xirrPeriodFromSymbolValueFlowPoints(flowPts, dk, endVal));
   const ccy = getSymbolCurrency(sym);
   const eodMarketValueNative = qty * closeD;
   const mvCny = nativeToCny(eodMarketValueNative, ccy, dk, fxUsdMap, fxHkdMap);
