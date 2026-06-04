@@ -438,6 +438,7 @@ const communityProfileBody = document.getElementById("communityProfileBody");
 const communityProfileBackBtn = document.getElementById("communityProfileBackBtn");
 const communityProfileTitle = document.getElementById("communityProfileTitle");
 const communityProfileFollowSlot = document.getElementById("communityProfileFollowSlot");
+const communityProfileFooterDisclaimer = document.getElementById("communityProfileFooterDisclaimer");
 const authGate = document.getElementById("authGate");
 const appShell = document.getElementById("appShell");
 const authLoginForm = document.getElementById("authLoginForm");
@@ -5578,7 +5579,10 @@ function mountCommunityAnalysisRoutePane() {
   if (!analysisRouteHomeParent) {
     analysisRouteHomeParent = pane.parentElement;
   }
-  mount.appendChild(pane);
+  mount.querySelectorAll(".community-profile-analysis-loading").forEach((el) => el.remove());
+  if (!mount.contains(pane)) {
+    mount.appendChild(pane);
+  }
   pane.classList.add("route-pane--community-analysis");
   const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
   if (accWrap) {
@@ -5601,23 +5605,44 @@ function unmountCommunityAnalysisRoutePane() {
   }
 }
 
+function setPublicAnalysisPanelLoading(loading) {
+  const mount = document.querySelector('[data-profile-panel="analysis"]');
+  if (!mount) {
+    return;
+  }
+  if (!loading) {
+    return;
+  }
+  if (mount.querySelector("#route-analysis")) {
+    return;
+  }
+  mount.innerHTML = `<p class="empty community-profile-analysis-loading">加载中…</p>`;
+}
+
 async function loadPublicAnalysisTabData(targetId) {
   const tid = String(targetId || "").trim();
   if (!tid) {
     return;
   }
-  mountCommunityAnalysisRoutePane();
-  renderControls();
-  const bundle = await fetchPublicAnalysisBundleMetrics(tid);
-  if (!bundle) {
-    clearAnalysisChartsToEmpty();
-    if (analysisStockRankBody) {
-      analysisStockRankBody.innerHTML = `<p class="empty">加载失败</p>`;
+  showRouteLoading("加载中…");
+  setPublicAnalysisPanelLoading(true);
+  try {
+    mountCommunityAnalysisRoutePane();
+    renderControls();
+    state.publicAnalysisBundleUi.loading = false;
+    const bundle = await fetchPublicAnalysisBundleMetrics(tid);
+    if (!bundle) {
+      clearAnalysisChartsToEmpty();
+      if (analysisStockRankBody) {
+        analysisStockRankBody.innerHTML = `<p class="empty">加载失败</p>`;
+      }
+      return;
     }
-    return;
+    const renderRequestId = ++analysisRenderRequestSeq;
+    await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
+  } finally {
+    hideRouteLoading();
   }
-  const renderRequestId = ++analysisRenderRequestSeq;
-  await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
 }
 
 async function openCommunityProfileAnalysisTab() {
@@ -6026,6 +6051,12 @@ function renderRoute() {
   ]);
   if (appTopBar) {
     appTopBar.style.display = secondaryToplessRoutes.has(state.route) ? "none" : "flex";
+  }
+  if (appShell) {
+    appShell.classList.toggle("is-community-profile-route", state.route === "community-profile");
+  }
+  if (communityProfileFooterDisclaimer) {
+    communityProfileFooterDisclaimer.classList.toggle("hidden", state.route !== "community-profile");
   }
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
