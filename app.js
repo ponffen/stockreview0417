@@ -75,9 +75,14 @@ const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 /** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
 const INITIAL_SETTINGS_SYNC_DEFER_MS = 4000;
-/** 首屏 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
+/** 持仓收益首页 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
 const METRICS_HOME_BUNDLE_STAGES = "today,mtd,ytd,inception";
 const homeBundleInflightByKey = new Map();
+
+function isEarningHomeRoute() {
+  return state.appModule === "holdings" && state.route === "earning";
+}
+
 const STATE_SYNC_KEYS = [
   "route",
   "useDemoData",
@@ -802,19 +807,12 @@ async function startAppAfterAuth(options = {}) {
   if (!options.sessionAlreadyFresh) {
     await refreshSessionFromServer();
   }
-  const { preloadedHomeBundle } = await hydrateState({
-    parallelHomeBundle: !!sessionPhone,
-  });
+  await hydrateState();
   normalizeModuleHomeOnColdLoad();
   persistState({ skipSettingsSync: true });
   scheduleDeferredInitialSettingsSync();
-  if (state.route === "earning" && apiReady) {
-    const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-    if (preloadedHomeBundle && aid === "all") {
-      await applyPreloadedHomeBundleOnEarning(preloadedHomeBundle, aid);
-    } else {
-      await refreshOverviewProfitRowFromSnapshots();
-    }
+  if (isEarningHomeRoute() && apiReady) {
+    await refreshOverviewProfitRowFromSnapshots();
   }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
   void hydrateSymbolNameMap(
@@ -1978,23 +1976,11 @@ async function fetchStaticSiteState() {
   }
 }
 
-async function hydrateState(options = {}) {
+async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
   let staticParsed = null;
-  let preloadedHomeBundle = null;
-  const parallelHomeBundle = options.parallelHomeBundle === true && !!sessionPhone;
-  let boot;
-  if (parallelHomeBundle) {
-    const [bootResult, bundle] = await Promise.all([
-      fetchApiStateBootstrap(),
-      fetchHomeBundleMetrics("all", { allowBeforeApiReady: true }),
-    ]);
-    boot = bootResult;
-    preloadedHomeBundle = bundle;
-  } else {
-    boot = await fetchApiStateBootstrap();
-  }
+  const boot = await fetchApiStateBootstrap();
   apiReady = boot.apiReady;
   const bootstrapKind = boot.bootstrapKind || "none";
   if (apiReady) {
@@ -2142,7 +2128,6 @@ async function hydrateState(options = {}) {
   }
   normalizeModuleHomeOnColdLoad();
   invalidateOverviewMetricsUi();
-  return { preloadedHomeBundle };
 }
 
 function pickSettingsPayload(payload = {}) {
@@ -2273,8 +2258,11 @@ function invalidateHomeBundleInflight(accountId) {
   }
 }
 
-/** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages */
+/** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages（仅持仓收益首页拉取） */
 async function fetchHomeBundleMetrics(aid, opts = {}) {
+  if (!opts.allowOffEarning && !isEarningHomeRoute()) {
+    return null;
+  }
   const id = normalizeMetricsAccountId(aid);
   const stages = String(opts.stages || METRICS_HOME_BUNDLE_STAGES).trim() || METRICS_HOME_BUNDLE_STAGES;
   const key = homeBundleInflightKey(id, stages);
@@ -4536,8 +4524,11 @@ function renderAll() {
     (state.route === "earning" && prevSnap != null && prevSnap !== "earning")
   ) {
     invalidateOverviewMetricsUi();
+    if (prevSnap === "earning" && state.route !== "earning") {
+      stopMetricsRebuildPoll();
+    }
   }
-  if (state.route === "earning" && prevSnap != null && prevSnap !== "earning") {
+  if (isEarningHomeRoute() && prevSnap != null && prevSnap !== "earning") {
     invalidateOverviewMetricsUi();
     void refreshOverviewProfitRowFromSnapshots();
   }
@@ -6368,7 +6359,7 @@ async function paintOverviewSnapshotUiTestMode() {
 }
 
 function renderOverviewAndStockTable() {
-  if (state.route === "community-profile" || state.route === "stock-record") {
+  if (!isEarningHomeRoute()) {
     return;
   }
   if (isSnapshotUiTestMode()) {
@@ -7857,7 +7848,7 @@ function scheduleMetricsRebuildUiRefresh() {
   state.metricsRebuilding = true;
   applyMetricsRebuildStatusUi(true);
   stopMetricsRebuildPoll();
-  if (!apiReady) {
+  if (!apiReady || !isEarningHomeRoute()) {
     return;
   }
   const aid = resolveValidAccountFilter(state.selectedAccountId) || "all";
@@ -7865,10 +7856,14 @@ function scheduleMetricsRebuildUiRefresh() {
   const maxPolls = 120;
   metricsRebuildPollTimer = setInterval(() => {
     polls += 1;
-    if (!apiReady || polls > maxPolls) {
-      stopMetricsRebuildPoll();
-      state.metricsRebuilding = false;
-      applyMetricsRebuildStatusUi(false);
+    if (!apiReady || polls > maxPolls || !isEarningHomeRoute()) {
+      if (polls > maxPolls || !isEarningHomeRoute()) {
+        stopMetricsRebuildPoll();
+        if (polls > maxPolls) {
+          state.metricsRebuilding = false;
+          applyMetricsRebuildStatusUi(false);
+        }
+      }
       return;
     }
     void (async () => {
@@ -9539,7 +9534,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
 
 
 async function refreshOverviewProfitRowFromSnapshots() {
-  if (state.route === "community-profile" || state.route === "stock-record") return;
+  if (!isEarningHomeRoute()) return;
   if (!todayProfitMain || !monthProfitMain) return;
   const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const stageKey = metricsStageFromHome();
@@ -9583,42 +9578,6 @@ function applyHomeBundleToOverviewUi(bundle, aid, seq) {
     paintOverviewFromMetricsBundle(ret, assets, hold, metricsStageFromHome());
   }
   return true;
-}
-
-async function applyPreloadedHomeBundleOnEarning(bundle, aid) {
-  const reqKey = overviewMetricsBundleCacheKey(aid);
-  if (_overviewProfitInflight?.key === reqKey) {
-    return _overviewProfitInflight.promise;
-  }
-  const flightKey = homeBundleInflightKey(aid, METRICS_HOME_BUNDLE_STAGES);
-  homeBundleInflightByKey.set(flightKey, {
-    promise: Promise.resolve(bundle),
-    resolved: bundle,
-  });
-  const seq = ++overviewProfitRefreshSeq;
-  state.overviewMetricsUi.loading = true;
-  const promise = (async () => {
-    try {
-      if (!apiReady) {
-        return;
-      }
-      applyHomeBundleToOverviewUi(bundle, aid, seq);
-    } catch {
-      if (seq === overviewProfitRefreshSeq) {
-        state.overviewMetricsUi.ready = false;
-        setOverviewProfitKpisDash();
-        setOverviewAssetsGridDash();
-        paintOverviewStockTableLoading("暂时无法加载持仓数据，请稍后刷新页面。");
-      }
-    } finally {
-      state.overviewMetricsUi.loading = false;
-      if (_overviewProfitInflight?.key === reqKey) {
-        _overviewProfitInflight = null;
-      }
-    }
-  })();
-  _overviewProfitInflight = { key: reqKey, promise };
-  return promise;
 }
 
 async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
