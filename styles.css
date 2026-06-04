@@ -374,23 +374,33 @@ body {
 }
 
 .profit-row--pub-four .profit-block {
-  padding: 10px 6px 9px;
-  text-align: center;
+  padding: 8px 14px;
+  text-align: left;
 }
 
+/* 与下方 overview-grid 的 .kpi-label / .kpi-value 同字号 */
 .profit-row--pub-four .profit-label {
-  margin: 0 0 4px;
-  font-size: 12px;
+  margin: 0 0 6px;
+  color: #9ca5b4;
+  font-size: 15px;
   line-height: 1.2;
 }
 
 .profit-row--pub-four .pub-stage-rate.profit-main {
-  font-size: clamp(15px, 3.6vw, 18px);
-  letter-spacing: -0.2px;
+  margin: 0;
+  font-size: clamp(18px, 5vw, 20px);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .profit-row--pub-four .profit-main .profit-rate-inline.profit-rate-only {
+  margin-left: 0;
   font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
 }
 
 /* 他人收益 Tab：物理 10 列，总宽按内容不测 1050 下限 */
