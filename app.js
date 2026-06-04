@@ -210,7 +210,11 @@ const state = {
   stockRecordPageLoading: false,
   stockRecordWindow: 30,
   stockRecordOffset: 0,
+  stockRecordChartRange: "30",
   stockRecordBundle: null,
+  stockRecordChartPointsCache: [],
+  stockRecordChartHistoryComplete: false,
+  stockRecordChartViewExpanded: false,
   stockRecordChartPagination: { limit: 30, nextOffset: 0, hasMore: false },
   stockRecordPointsLoading: false,
   stockRecordShowClose: true,
@@ -224,17 +228,25 @@ const state = {
   fxLoaded: false,
   communityProfileStage: "month",
   communityProfileTab: "earning",
-  /** 他人主页个股表排序（不影响首页） */
-  publicStockSortKey: "default",
-  publicStockSortOrder: "default",
-  /** 他人持仓「分析」Tab 独立区间/基准，避免改动本人分析页 state */
-  publicProfileAnalysisUi: null,
-  /** 与 publicProfileAnalysisUi 同步：仅对对应 userId 种子化一次，切换用户时重置 */
-  publicProfileAnalysisUiSeededFor: null,
   /** 查看他人主页时临时覆盖总览展示币种（与对方 selectedAccountId 一致） */
   _overviewBookCurrencyOverride: null,
   lastPublicProfileDetail: null,
-  /** 个股记录页：true 时用 lastPublicProfileDetail.publicTrades 展示对方成交 */
+  communityPublicTradesPack: null,
+  publicEarningBundleUi: {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  },
+  publicAnalysisBundleUi: {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  },
+  /** 个股记录页：true 时用 communityPublicTradesPack 展示对方成交 */
   stockRecordFromPublicProfile: false,
   /** 进入「搜索股票」页面前的 route，用于返回 */
   tradeSearchReturnRoute: "trade",
@@ -466,10 +478,12 @@ const stockRecordToggleClose = document.getElementById("stockRecordToggleClose")
 const stockRecordToggleShares = document.getElementById("stockRecordToggleShares");
 const stockRecordToggleMarketValue = document.getElementById("stockRecordToggleMarketValue");
 const stockRecordInterval = document.getElementById("stockRecordInterval");
+const stockRecordRangeRow = document.getElementById("stockRecordRangeRow");
 const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
 const stockRecordListBody = document.getElementById("stockRecordListBody");
 const stockRecordLoading = document.getElementById("stockRecordLoading");
 const stockRecordBody = document.getElementById("stockRecordBody");
+const stockRecordChartsLoading = document.getElementById("stockRecordChartsLoading");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
 const accountManageDialog = document.getElementById("accountManageDialog");
@@ -814,11 +828,8 @@ async function startAppAfterAuth(options = {}) {
   if (state.route !== "earning") {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
-      if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
-        refreshPublicProfileEarningPanel();
-        if (state.communityProfileTab === "analysis") {
-          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-        }
+      if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
+        void openCommunityProfileAnalysisTab();
       }
     });
   }
@@ -2426,6 +2437,15 @@ function setStockRecordPageLoading(loading) {
   }
 }
 
+function setStockRecordChartPointsLoading(loading) {
+  state.stockRecordPointsLoading = loading === true;
+  stockRecordChartsLoading?.classList.toggle("hidden", !state.stockRecordPointsLoading);
+  if (stockRecordChartsLoading) {
+    stockRecordChartsLoading.setAttribute("aria-busy", state.stockRecordPointsLoading ? "true" : "false");
+  }
+  stockRecordRangeRow?.classList.toggle("is-loading", state.stockRecordPointsLoading);
+}
+
 function clearStockRecordChart() {
   for (const canvas of [stockRecordChart, stockRecordProfitChart, stockRecordWeightChart]) {
     if (!canvas) {
@@ -2461,9 +2481,13 @@ async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTa
   const params = {
     symbol: normalizeSymbol(symKey),
     account_id: resolveValidAccountFilter(accountId),
-    limit: String(chartOpts.limit ?? STOCK_RECORD_CHART_PAGE_SIZE),
-    offset: String(chartOpts.offset ?? 0),
   };
+  if (chartOpts.range != null && String(chartOpts.range).trim() !== "") {
+    params.range = String(chartOpts.range).trim();
+  } else {
+    params.limit = String(chartOpts.limit ?? STOCK_RECORD_CHART_PAGE_SIZE);
+    params.offset = String(chartOpts.offset ?? 0);
+  }
   return fetchMetricsApi("/metrics/stock-record-bundle", params, publicTargetId);
 }
 
@@ -2474,24 +2498,269 @@ function stockRecordPublicTargetId() {
   return String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim();
 }
 
+function resetStockRecordChartCache() {
+  state.stockRecordChartPointsCache = [];
+  state.stockRecordChartHistoryComplete = false;
+  state.stockRecordChartViewExpanded = false;
+}
+
 function resetStockRecordChartPagination() {
   state.stockRecordChartPagination = {
     limit: STOCK_RECORD_CHART_PAGE_SIZE,
     nextOffset: 0,
     hasMore: false,
   };
-  state.stockRecordPointsLoading = false;
+  setStockRecordChartPointsLoading(false);
+}
+
+function stockRecordChartEndDateKey() {
+  const meta = state.stockRecordBundle?.meta || {};
+  if (meta.tradingDay && meta.liveDate) {
+    return String(meta.liveDate).slice(0, 10);
+  }
+  const frozen = String(meta.frozenThrough || "").slice(0, 10);
+  if (frozen) {
+    return frozen;
+  }
+  return toDateKey(new Date());
+}
+
+function stockRecordRangeFromDateKey(range, endDate) {
+  const end = String(endDate || "").slice(0, 10);
+  if (!end) {
+    return null;
+  }
+  const preset = String(range || "30").trim().toLowerCase();
+  if (preset === "all") {
+    return null;
+  }
+  if (preset === "mtd") {
+    const d = new Date(`${end}T12:00:00`);
+    return toDateKey(new Date(d.getFullYear(), d.getMonth(), 1));
+  }
+  if (preset === "ytd") {
+    const d = new Date(`${end}T12:00:00`);
+    return toDateKey(new Date(d.getFullYear(), 0, 1));
+  }
+  const days = Number(preset);
+  if (Number.isFinite(days) && days > 0) {
+    return addCalendarDaysToDateKey(end, -days);
+  }
+  return addCalendarDaysToDateKey(end, -30);
+}
+
+function stockRecordChartCacheOldestDate() {
+  const cache = state.stockRecordChartPointsCache;
+  if (!Array.isArray(cache) || !cache.length) {
+    return null;
+  }
+  let oldest = null;
+  for (const row of cache) {
+    const dk = String(row?.date || "").slice(0, 10);
+    if (dk && (!oldest || dk < oldest)) {
+      oldest = dk;
+    }
+  }
+  return oldest;
+}
+
+function stockRecordChartCacheCoversRange(range) {
+  const cache = state.stockRecordChartPointsCache;
+  if (!Array.isArray(cache) || !cache.length) {
+    return false;
+  }
+  const preset = String(range || "30").trim().toLowerCase();
+  if (preset === "all") {
+    return !!state.stockRecordChartHistoryComplete;
+  }
+  const from = stockRecordRangeFromDateKey(preset, stockRecordChartEndDateKey());
+  if (!from) {
+    return false;
+  }
+  const oldest = stockRecordChartCacheOldestDate();
+  return !!oldest && oldest <= from;
+}
+
+function filterStockRecordChartCacheForDisplay() {
+  const cache = state.stockRecordChartPointsCache || [];
+  if (!cache.length) {
+    return [];
+  }
+  if (state.stockRecordChartViewExpanded) {
+    return [...cache];
+  }
+  const preset = String(state.stockRecordChartRange || "").trim().toLowerCase();
+  if (!preset) {
+    return [...cache];
+  }
+  if (preset === "all" && state.stockRecordChartHistoryComplete) {
+    return [...cache];
+  }
+  const from = stockRecordRangeFromDateKey(preset, stockRecordChartEndDateKey());
+  if (!from) {
+    return [...cache];
+  }
+  return cache.filter((row) => String(row?.date || "").slice(0, 10) >= from);
+}
+
+function mergeStockRecordChartCache(incomingRows) {
+  const existing = state.stockRecordChartPointsCache || [];
+  const { merged } = mergeStockRecordChartPoints(existing, incomingRows);
+  state.stockRecordChartPointsCache = merged;
+  return merged;
+}
+
+function applyStockRecordChartDisplayFromCache() {
+  if (!state.stockRecordBundle?.charts) {
+    return;
+  }
+  const displayPoints = filterStockRecordChartCacheForDisplay();
+  state.stockRecordBundle.charts.points = displayPoints;
+  applyStockRecordChartFitAll(displayPoints.length);
+  syncStockRecordRangeChipUi();
+  drawStockRecordCharts(
+    state.activeRecordSymbol,
+    stockRecordTradesForActiveSymbol(state.activeRecordSymbol),
+  );
+}
+
+function ingestStockRecordChartPoints(bundle, rangePreset) {
+  const incoming = Array.isArray(bundle?.charts?.points) ? bundle.charts.points : [];
+  mergeStockRecordChartCache(incoming);
+  const preset = String(rangePreset || state.stockRecordChartRange || "30").trim().toLowerCase();
+  if (preset === "all" && !bundle?.charts?.pagination?.hasMore) {
+    state.stockRecordChartHistoryComplete = true;
+  }
+  state.stockRecordChartViewExpanded = false;
+  if (state.stockRecordBundle?.charts) {
+    state.stockRecordBundle.charts.points = filterStockRecordChartCacheForDisplay();
+  }
 }
 
 function applyStockRecordChartPaginationFromBundle(bundle) {
   const pag = bundle?.charts?.pagination;
   const limit = Number(pag?.limit) || STOCK_RECORD_CHART_PAGE_SIZE;
   const offset = Number(pag?.offset) || 0;
+  const returned = Number(pag?.returned) || (Array.isArray(bundle?.charts?.points) ? bundle.charts.points.length : 0);
   state.stockRecordChartPagination = {
     limit,
-    nextOffset: offset + limit,
+    nextOffset: offset + returned,
     hasMore: !!pag?.hasMore,
   };
+}
+
+function applyStockRecordChartFitAll(pointCount) {
+  const n = Math.max(0, Number(pointCount) || 0);
+  if (n <= 0) {
+    return;
+  }
+  state.stockRecordWindow = Math.max(n, STOCK_RECORD_CHART_MIN_WINDOW);
+  state.stockRecordOffset = 0;
+}
+
+function syncStockRecordRangeChipUi() {
+  if (!stockRecordRangeRow) {
+    return;
+  }
+  const active = String(state.stockRecordChartRange || "").trim();
+  stockRecordRangeRow.querySelectorAll("[data-stock-record-range]").forEach((btn) => {
+    btn.classList.toggle("active", !!active && String(btn.getAttribute("data-stock-record-range")) === active);
+  });
+}
+
+function clearStockRecordRangeSelection() {
+  if (!state.stockRecordChartRange) {
+    return;
+  }
+  state.stockRecordChartRange = "";
+  syncStockRecordRangeChipUi();
+}
+
+function stockRecordViewMatchesRangePreset() {
+  const range = String(state.stockRecordChartRange || "").trim();
+  if (!range || state.stockRecordChartViewExpanded) {
+    return false;
+  }
+  const points = stockRecordChartPointsFromBundle(state.stockRecordBundle);
+  const totalCount = points.length;
+  if (!totalCount) {
+    return false;
+  }
+  const offset = Number(state.stockRecordOffset) || 0;
+  const fitAllWindow = Math.max(totalCount, STOCK_RECORD_CHART_MIN_WINDOW);
+  const windowSize = Math.max(
+    STOCK_RECORD_CHART_MIN_WINDOW,
+    Math.min(totalCount, Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW)),
+  );
+  if (offset !== 0 || windowSize < fitAllWindow) {
+    return false;
+  }
+  if (range === "all") {
+    return !!state.stockRecordChartHistoryComplete;
+  }
+  const expectedFrom = stockRecordRangeFromDateKey(range, stockRecordChartEndDateKey());
+  if (!expectedFrom) {
+    return true;
+  }
+  const oldestVisible = String(points[0]?.date || "").slice(0, 10);
+  return oldestVisible >= expectedFrom;
+}
+
+function syncStockRecordRangeChipWithView() {
+  if (!state.stockRecordChartRange) {
+    return;
+  }
+  if (!stockRecordViewMatchesRangePreset()) {
+    clearStockRecordRangeSelection();
+  }
+}
+
+async function refreshStockRecordChartsOnly(symKey) {
+  const key = normalizeSymbol(symKey);
+  if (
+    !key ||
+    state.route !== "stock-record" ||
+    normalizeSymbol(state.activeRecordSymbol) !== key ||
+    state.stockRecordPageLoading
+  ) {
+    return;
+  }
+  const range = state.stockRecordChartRange || "30";
+  resetStockRecordChartPagination();
+  state.stockRecordChartViewExpanded = false;
+  if (stockRecordChartCacheCoversRange(range)) {
+    applyStockRecordChartDisplayFromCache();
+    return;
+  }
+  const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
+  const publicTargetId = stockRecordPublicTargetId();
+  setStockRecordChartPointsLoading(true);
+  const loadGen = stockRecordPageLoadGen;
+  try {
+    const partial = await fetchStockRecordBundleMetrics(key, accountId, publicTargetId, { range });
+    if (
+      loadGen !== stockRecordPageLoadGen ||
+      state.route !== "stock-record" ||
+      normalizeSymbol(state.activeRecordSymbol) !== key
+    ) {
+      return;
+    }
+    if (!partial?.charts || !state.stockRecordBundle) {
+      return;
+    }
+    state.stockRecordBundle.charts = partial.charts;
+    ingestStockRecordChartPoints(partial, range);
+    applyStockRecordChartPaginationFromBundle(partial);
+    applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(state.stockRecordBundle).length);
+    syncStockRecordRangeChipUi();
+    drawStockRecordCharts(key, stockRecordTradesForActiveSymbol(key));
+  } catch (error) {
+    console.warn("refreshStockRecordChartsOnly failed", error);
+  } finally {
+    if (loadGen === stockRecordPageLoadGen) {
+      setStockRecordChartPointsLoading(false);
+    }
+  }
 }
 
 function mergeStockRecordChartPoints(existingRows, incomingRows) {
@@ -2515,7 +2784,7 @@ function mergeStockRecordChartPoints(existingRows, incomingRows) {
 
 function stockRecordTradesForActiveSymbol(symKey) {
   const key = normalizeSymbol(symKey);
-  const usePub = state.stockRecordFromPublicProfile && state.lastPublicProfileDetail?.publicTrades;
+  const usePub = useCommunityPublicStockRecord();
   const detail = state.lastPublicProfileDetail;
   const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   return stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
@@ -2550,7 +2819,7 @@ async function loadStockRecordChartHistoryPage(symKey) {
   }
   const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   const publicTargetId = stockRecordPublicTargetId();
-  state.stockRecordPointsLoading = true;
+  setStockRecordChartPointsLoading(true);
   const loadGen = stockRecordPageLoadGen;
   try {
     const chunk = await fetchStockRecordBundleMetrics(key, accountId, publicTargetId, {
@@ -2567,21 +2836,44 @@ async function loadStockRecordChartHistoryPage(symKey) {
     const chunkPag = chunk?.charts?.pagination;
     if (!chunk?.charts?.points?.length) {
       state.stockRecordChartPagination = { ...pag, hasMore: false };
+      if (!chunkPag?.hasMore) {
+        state.stockRecordChartHistoryComplete = true;
+      }
       return;
     }
-    const existing = Array.isArray(state.stockRecordBundle.charts.points)
-      ? state.stockRecordBundle.charts.points
-      : [];
-    const { merged, added } = mergeStockRecordChartPoints(existing, chunk.charts.points);
+    const existing = filterStockRecordChartCacheForDisplay();
+    const loadedBefore = existing.length;
+    const wasFitAll =
+      (Number(state.stockRecordOffset) || 0) === 0 &&
+      Number(state.stockRecordWindow || 0) >= loadedBefore &&
+      loadedBefore > 0;
+    const wantedWindow = Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW);
+    const wasExpanding = wantedWindow > loadedBefore;
+    mergeStockRecordChartCache(chunk.charts.points);
+    if (!chunkPag?.hasMore) {
+      state.stockRecordChartHistoryComplete = true;
+    }
+    state.stockRecordChartViewExpanded = true;
+    clearStockRecordRangeSelection();
+    const merged = filterStockRecordChartCacheForDisplay();
     state.stockRecordBundle.charts.points = merged;
     const limit = Number(chunkPag?.limit) || pag.limit;
     const offset = Number(chunkPag?.offset) || pag.nextOffset;
+    const added = Math.max(0, merged.length - loadedBefore);
     state.stockRecordChartPagination = {
       limit,
-      nextOffset: offset + limit,
+      nextOffset: offset + (Number(chunkPag?.returned) || chunk.charts.points.length),
       hasMore: !!chunkPag?.hasMore,
     };
-    if (added > 0) {
+    if (wasFitAll) {
+      applyStockRecordChartFitAll(merged.length);
+    } else if (wasExpanding) {
+      state.stockRecordOffset = 0;
+      state.stockRecordWindow = Math.max(
+        Math.min(wantedWindow, merged.length),
+        STOCK_RECORD_CHART_MIN_WINDOW,
+      );
+    } else if (added > 0) {
       state.stockRecordOffset = (Number(state.stockRecordOffset) || 0) + added;
     }
     drawStockRecordCharts(key, stockRecordTradesForActiveSymbol(key));
@@ -2589,7 +2881,7 @@ async function loadStockRecordChartHistoryPage(symKey) {
     console.warn("loadStockRecordChartHistoryPage failed", error);
   } finally {
     if (loadGen === stockRecordPageLoadGen) {
-      state.stockRecordPointsLoading = false;
+      setStockRecordChartPointsLoading(false);
     }
   }
 }
@@ -2611,7 +2903,7 @@ function maybeLoadStockRecordChartHistory(symKey) {
   const offset = Number(state.stockRecordOffset) || 0;
   const maxOffset = Math.max(0, loadedCount - windowSize);
   const zoomNeedsMore = Number(state.stockRecordWindow || ANALYSIS_CHART_DEFAULT_WINDOW) > loadedCount;
-  const atOldestLoaded = maxOffset > 0 && offset >= maxOffset;
+  const atOldestLoaded = offset >= maxOffset;
   if (zoomNeedsMore || atOldestLoaded) {
     scheduleStockRecordChartHistoryLoad(symKey);
   }
@@ -2661,14 +2953,13 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   const pageGen = ++stockRecordPageLoadGen;
   setStockRecordPageLoading(true);
   state.stockRecordBundle = null;
+  resetStockRecordChartCache();
   resetStockRecordChartPagination();
-  state.stockRecordWindow = 30;
-  state.stockRecordOffset = 0;
+  state.stockRecordChartRange = "30";
   try {
     if (!state.stockRecordFromPublicProfile) {
       const bundle = await fetchStockRecordBundleMetrics(key, accountId, "", {
-        limit: STOCK_RECORD_CHART_PAGE_SIZE,
-        offset: 0,
+        range: state.stockRecordChartRange,
       });
       if (pageGen !== stockRecordPageLoadGen) {
         return;
@@ -2676,7 +2967,9 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       state.stockRecordBundle = bundle;
       if (bundle) {
         applyStockRecordBundleDefaults(bundle);
+        ingestStockRecordChartPoints(bundle, state.stockRecordChartRange);
         applyStockRecordChartPaginationFromBundle(bundle);
+        applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(bundle).length);
       }
       if (pageGen !== stockRecordPageLoadGen) {
         return;
@@ -2696,8 +2989,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       ).trim();
       const bundle = targetId
         ? await fetchStockRecordBundleMetrics(key, "all", targetId, {
-            limit: STOCK_RECORD_CHART_PAGE_SIZE,
-            offset: 0,
+            range: state.stockRecordChartRange,
           })
         : null;
       if (pageGen !== stockRecordPageLoadGen) {
@@ -2706,7 +2998,9 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       state.stockRecordBundle = bundle;
       if (bundle) {
         applyStockRecordBundleDefaults(bundle);
+        ingestStockRecordChartPoints(bundle, state.stockRecordChartRange);
         applyStockRecordChartPaginationFromBundle(bundle);
+        applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(bundle).length);
       }
     }
     if (!state.stockRecordBundle) {
@@ -2741,8 +3035,8 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
 }
 
 function stockRecordTradesForScope(activeAccountId, usePub, detail) {
-  if (usePub && detail?.publicTrades) {
-    const list = Array.isArray(detail.publicTrades) ? detail.publicTrades : [];
+  if (usePub) {
+    const list = Array.isArray(state.communityPublicTradesPack?.rows) ? state.communityPublicTradesPack.rows : [];
     if (activeAccountId === "all") {
       return list;
     }
@@ -3196,19 +3490,25 @@ function bindEvents() {
   });
 
   appShell?.addEventListener("click", (e) => {
-    const pubSortBtn = e.target.closest(".public-profile-stock-table .th-sort-btn");
-    if (pubSortBtn && appShell.contains(pubSortBtn) && state.route === "community-profile") {
-      const key = pubSortBtn.dataset.sortKey || "default";
-      if (state.publicStockSortKey !== key) {
-        state.publicStockSortKey = key;
-        state.publicStockSortOrder = "desc";
+    const sortBtn = e.target.closest(".stock-table .th-sort-btn");
+    if (
+      sortBtn &&
+      appShell.contains(sortBtn) &&
+      state.route === "community-profile" &&
+      state.communityProfileTab === "earning"
+    ) {
+      const key = sortBtn.dataset.sortKey || "default";
+      if (state.stockSortKey !== key) {
+        state.stockSortKey = key;
+        state.stockSortOrder = "desc";
       } else {
-        state.publicStockSortOrder = cycleSortOrder(state.publicStockSortOrder);
-        if (state.publicStockSortOrder === "default") {
-          state.publicStockSortKey = "default";
+        state.stockSortOrder = cycleSortOrder(state.stockSortOrder);
+        if (state.stockSortOrder === "default") {
+          state.stockSortKey = "default";
         }
       }
-      refreshPublicProfileEarningPanel();
+      repaintPublicEarningHoldingsFromCache();
+      syncCommunityEarningSortHeaderUi();
       return;
     }
     const profileTabHit = e.target.closest(".bottom-tabs--profile .bottom-tab-btn");
@@ -3223,7 +3523,15 @@ function bindEvents() {
           p.classList.toggle("is-active", p.getAttribute("data-profile-panel") === sub);
         });
         if (sub === "analysis" && state.lastPublicProfileDetail) {
-          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+          void openCommunityProfileAnalysisTab();
+        } else {
+          unmountCommunityAnalysisRoutePane();
+        }
+        if (sub === "earning" && state.communityProfileUserId) {
+          void loadPublicEarningTabData(state.communityProfileUserId);
+        }
+        if (sub === "trade" && state.communityProfileUserId) {
+          void loadCommunityPublicTrades(state.communityProfileUserId);
         }
       }
       e.preventDefault();
@@ -3331,7 +3639,12 @@ function bindEvents() {
   benchmarkSelect.addEventListener("change", () => {
     state.benchmark = benchmarkSelect.value;
     persistState();
-    void renderAnalysis();
+    if (analysisMetricsUiActive()) {
+      state.publicAnalysisBundleUi.ready = false;
+      void refreshAnalysisMetricsView({ showLoading: false });
+    } else {
+      void renderAnalysis();
+    }
     void refreshMarketData();
   });
 
@@ -3389,7 +3702,7 @@ function bindEvents() {
     if (state.route === "stock-record" && state.activeRecordSymbol) {
       const sym = normalizeSymbol(state.activeRecordSymbol);
       const detail = state.lastPublicProfileDetail;
-      const usePub = state.stockRecordFromPublicProfile && detail?.publicTrades;
+      const usePub = useCommunityPublicStockRecord();
       const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
       const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
         (item) => normalizeSymbol(item.symbol) === sym,
@@ -3400,6 +3713,19 @@ function bindEvents() {
   stockRecordToggleClose?.addEventListener("change", stockRecordToggleHandler);
   stockRecordToggleShares?.addEventListener("change", stockRecordToggleHandler);
   stockRecordToggleMarketValue?.addEventListener("change", stockRecordToggleHandler);
+  stockRecordRangeRow?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-stock-record-range]");
+    if (!btn || state.route !== "stock-record" || !state.activeRecordSymbol || state.stockRecordPointsLoading) {
+      return;
+    }
+    const nextRange = String(btn.getAttribute("data-stock-record-range") || "").trim();
+    if (!nextRange || nextRange === state.stockRecordChartRange) {
+      return;
+    }
+    state.stockRecordChartRange = nextRange;
+    syncStockRecordRangeChipUi();
+    void refreshStockRecordChartsOnly(state.activeRecordSymbol);
+  });
   stockSortButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.sortKey || "default";
@@ -3447,7 +3773,12 @@ function bindEvents() {
         resetAnalysisChartViewport();
       }
       persistState();
-      void renderAnalysis();
+      if (analysisMetricsUiActive()) {
+        state.publicAnalysisBundleUi.ready = false;
+        void refreshAnalysisMetricsView({ showLoading: false });
+      } else {
+        void renderAnalysis();
+      }
       renderControls();
     });
   });
@@ -3490,17 +3821,26 @@ function bindEvents() {
     resetAnalysisChartViewport();
     persistState();
     renderControls();
-    void renderAnalysis();
+    if (analysisMetricsUiActive()) {
+      state.publicAnalysisBundleUi.ready = false;
+      void refreshAnalysisMetricsView({ showLoading: false });
+    } else {
+      void renderAnalysis();
+    }
   });
 
   assetCurveModeSelect?.addEventListener("change", () => {
     state.capitalTrendMode = assetCurveModeSelect.value || "total_assets";
     persistState();
-    if (cachedAnalysisAssetChartRows?.length && state.route === "analysis") {
+    if (cachedAnalysisAssetChartRows?.length && analysisMetricsUiActive()) {
       repaintAnalysisAssetChartFromCache();
       return;
     }
-    void renderAnalysis();
+    if (analysisMetricsUiActive()) {
+      void refreshAnalysisMetricsView({ showLoading: false });
+    } else {
+      void renderAnalysis();
+    }
   });
 
   [quickTradeBtn, recordTradeBtn].filter(Boolean).forEach((button) => {
@@ -3856,81 +4196,6 @@ function bindEvents() {
   bindAnalysisStockRankHelpOnce();
 }
 
-function resetStockRankHelpBubbleLayout(bubble) {
-  if (!bubble) {
-    return;
-  }
-  bubble.classList.remove("is-open", "is-fixed");
-  bubble.style.position = "";
-  bubble.style.left = "";
-  bubble.style.top = "";
-  bubble.style.right = "";
-  bubble.style.bottom = "";
-  bubble.style.zIndex = "";
-  bubble.style.display = "";
-  bubble.style.visibility = "";
-  bubble.style.width = "";
-  bubble.style.maxWidth = "";
-  bubble.style.removeProperty("--help-arrow-left");
-  if (bubble._helpWrap && bubble.parentNode === document.body) {
-    bubble._helpWrap.appendChild(bubble);
-  }
-  bubble._helpWrap = null;
-  bubble._helpHost = null;
-}
-
-function positionStockRankHelpBubble(btn, bubble, host) {
-  if (!btn || !bubble) {
-    return;
-  }
-  const wrap = btn.closest(".stock-rank-help-wrap");
-  bubble._helpWrap = wrap;
-  bubble._helpHost = host;
-  document.body.appendChild(bubble);
-  bubble.classList.add("is-open", "is-fixed");
-  bubble.style.position = "fixed";
-  bubble.style.zIndex = "100001";
-  bubble.style.display = "block";
-  bubble.style.visibility = "hidden";
-  bubble.style.width = "max-content";
-  bubble.style.maxWidth = "min(280px, 72vw)";
-  bubble.style.left = "-9999px";
-  bubble.style.top = "0";
-  bubble.style.right = "auto";
-  const br = btn.getBoundingClientRect();
-  const bw = bubble.offsetWidth;
-  const bh = bubble.offsetHeight;
-  const btnCenterX = br.left + br.width / 2;
-  let left = btnCenterX - bw / 2;
-  left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
-  let top = br.bottom + 7;
-  if (top + bh > window.innerHeight - 8) {
-    top = Math.max(8, br.top - bh - 7);
-  }
-  bubble.style.left = `${left}px`;
-  bubble.style.top = `${top}px`;
-  const arrowLeft = Math.max(10, Math.min(bw - 22, btnCenterX - left - 6));
-  bubble.style.setProperty("--help-arrow-left", `${arrowLeft}px`);
-  bubble.style.visibility = "visible";
-}
-
-function closeStockRankHelpInHost(host) {
-  if (!host) {
-    return;
-  }
-  host.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
-    resetStockRankHelpBubbleLayout(el);
-  });
-  document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
-    if (el._helpHost === host) {
-      resetStockRankHelpBubbleLayout(el);
-    }
-  });
-  host.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
-    b.setAttribute("aria-expanded", "false");
-  });
-}
-
 function bindAnalysisStockRankHelpOnce() {
   if (analysisStockRankHelpListenersBound) {
     return;
@@ -3955,9 +4220,14 @@ function bindAnalysisStockRankHelpOnce() {
     const wrap = btn.closest(".stock-rank-help-wrap");
     const bubble = wrap?.querySelector(".stock-rank-help-bubble");
     const wasOpen = bubble?.classList.contains("is-open");
-    closeStockRankHelpInHost(host);
+    host.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    host.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
     if (!wasOpen && bubble) {
-      positionStockRankHelpBubble(btn, bubble, host);
+      bubble.classList.add("is-open");
       btn.setAttribute("aria-expanded", "true");
     }
   });
@@ -3965,34 +4235,37 @@ function bindAnalysisStockRankHelpOnce() {
     if (e.target.closest(".stock-rank-help-wrap")) {
       return;
     }
-    document.querySelectorAll(".analysis-stock-rank-body").forEach((host) => {
-      closeStockRankHelpInHost(host);
+    document.querySelectorAll(".analysis-stock-rank-body .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
     });
-    document.querySelectorAll(".stock-record-body").forEach((host) => {
-      closeStockRankHelpInHost(host);
+    document.querySelectorAll(".analysis-stock-rank-body .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
     });
-    document.querySelectorAll(".stock-record-table--pub").forEach((host) => {
-      closeStockRankHelpInHost(host);
+    document.querySelectorAll(".stock-record-body .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
     });
-    document.querySelectorAll(".community-feed-card").forEach((host) => {
-      closeStockRankHelpInHost(host);
+    document.querySelectorAll(".stock-record-body .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
     });
-    document.querySelectorAll(".public-profile-trade-table").forEach((host) => {
-      closeStockRankHelpInHost(host);
+    document.querySelectorAll(".stock-record-table--pub .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    document.querySelectorAll(".stock-record-table--pub .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
+    document.querySelectorAll(".community-feed-card .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    document.querySelectorAll(".community-feed-card .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
+    });
+    document.querySelectorAll(".public-profile-trade-table .stock-rank-help-bubble.is-open").forEach((el) => {
+      el.classList.remove("is-open");
+    });
+    document.querySelectorAll(".public-profile-trade-table .stock-rank-help-btn").forEach((b) => {
+      b.setAttribute("aria-expanded", "false");
     });
   });
-  window.addEventListener(
-    "scroll",
-    () => {
-      document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
-        resetStockRankHelpBubbleLayout(el);
-      });
-      document.querySelectorAll(".stock-rank-help-btn[aria-expanded='true']").forEach((b) => {
-        b.setAttribute("aria-expanded", "false");
-      });
-    },
-    true,
-  );
 }
 
 function applyTradeTypePreset() {
@@ -4219,9 +4492,12 @@ function renderAll() {
       void renderStockRecordPage(state.activeRecordSymbol);
     }
   } else if (state.route === "community-profile") {
-    refreshPublicProfileEarningPanel();
-    if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-      void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+    if (state.communityProfileTab === "earning" && state.communityProfileUserId) {
+      void loadPublicEarningTabData(state.communityProfileUserId);
+    } else if (state.communityProfileTab === "trade" && state.communityProfileUserId) {
+      void loadCommunityPublicTrades(state.communityProfileUserId);
+    } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
+      void openCommunityProfileAnalysisTab();
     }
   }
 }
@@ -4534,11 +4810,24 @@ function openCommunityProfile(userId) {
   state.appModule = "community";
   state.communityProfileStage = "month";
   state.communityProfileTab = "earning";
-  state.publicStockSortKey = "weight";
-  state.publicStockSortOrder = "desc";
-  state.publicProfileAnalysisUi = null;
-  state.publicProfileAnalysisUiSeededFor = null;
+  state.stockSortKey = "weight";
+  state.stockSortOrder = "desc";
   state.lastPublicProfileDetail = null;
+  state.communityPublicTradesPack = null;
+  state.publicEarningBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
+  state.publicAnalysisBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
   lastCommunityDataKey = "";
   persistState();
   renderAll();
@@ -4861,9 +5150,18 @@ function formatPublicProfileRateOnlyHtml(rate) {
   return `<span class="profit-rate-inline profit-rate-only ${rateCls}">${rateText}</span>`;
 }
 
-/** 他人主页个股记录：真实人民币成交额 ÷ 对方当前总市值（最近快照，接口 amountCnyRaw、publicLatestMarketValueCny） */
+/** 他人主页个股记录：成交额占对方最近一日总市值比 */
+function communityPublicTradesReady() {
+  return Array.isArray(state.communityPublicTradesPack?.rows);
+}
+
+function useCommunityPublicStockRecord() {
+  return !!(state.stockRecordFromPublicProfile && state.communityProfileUserId);
+}
+
 function publicTradeAmountShareOfLatestMv(trade, detail) {
-  const mv = Number(detail?.publicLatestMarketValueCny);
+  const pack = state.communityPublicTradesPack;
+  const mv = Number(pack?.latestMarketValueCny ?? detail?.publicLatestMarketValueCny);
   const a = Math.abs(Number(trade.amountCnyRaw) || 0);
   if (!Number.isFinite(mv) || mv < 1e-9) {
     return null;
@@ -4886,92 +5184,18 @@ function isPublicProfileActiveHoldingRow(row) {
   return true;
 }
 
-/** 分析区：总资产按区间内首日归一为 1（脱敏，仅形态） */
-function paintPublicProfileMarketIndexChart(canvas, tooltipEl, selectedPoints, onDataRefresh) {
-  if (!canvas || !selectedPoints?.length) {
-    return;
-  }
-  const v0 = Number(selectedPoints[0]?.value);
-  const denom = Math.abs(v0) > 1e-9 ? v0 : 1;
-  const series = selectedPoints.map((p) => ({
-    date: p.date,
-    value: (Number(p.value) || 0) / denom,
-  }));
-  const chartOpts = {
-    keyA: "mvIdx",
-    labelA: "总资产指数",
-    yAxisMode: "left",
-    leftLabel: "",
-    xLabel: "",
-    valueFormatter: (value) => formatNumber(value, 4),
-    axisFormatter: (value) => formatNumber(value, 3),
-    yRangePadding: { minFactor: 0.92, maxFactor: 1.08 },
-  };
-  const payloads = { mkt: drawDualLineChart(canvas, series, null, "#4f83f1", null, chartOpts) };
-  if (tooltipEl && onDataRefresh) {
-    bindInteractiveChart(canvas, tooltipEl, () => payloads.mkt, {
-      mode: "analysis",
-      onRefresh: onDataRefresh,
-      onRedraw: () => {
-        payloads.mkt = drawDualLineChart(canvas, series, null, "#4f83f1", null, chartOpts);
-      },
-      valueFormatter: (val) => formatNumber(val, 4),
-    });
-  }
-}
-
-function paintPublicProfileCashRatioChart(canvas, tooltipEl, sliceRows, onDataRefresh) {
-  if (!canvas || !sliceRows?.length) {
-    return;
-  }
-  const series = sliceRows.map((r) => ({
-    date: r.date,
-    value: Number(r.cashRatio) || 0,
-  }));
-  const chartOpts = {
-    keyA: "cashRatio",
-    labelA: "现金占比",
-    yAxisMode: "left",
-    leftLabel: "",
-    xLabel: "",
-    valueFormatter: (value) => `${formatNumber(value, 2)}%`,
-    axisFormatter: (value) => `${formatNumber(value, 2)}%`,
-    yRangePadding: { minFactor: 0.92, maxFactor: 1.08 },
-  };
-  const payloads = { ratio: drawDualLineChart(canvas, series, null, "#9b59b6", null, chartOpts) };
-  if (tooltipEl && onDataRefresh) {
-    bindInteractiveChart(canvas, tooltipEl, () => payloads.ratio, {
-      mode: "analysis",
-      onRefresh: onDataRefresh,
-      onRedraw: () => {
-        payloads.ratio = drawDualLineChart(canvas, series, null, "#9b59b6", null, chartOpts);
-      },
-      valueFormatter: (val) => `${formatNumber(val, 2)}%`,
-    });
-  }
-}
-
 /** 与首页总览一致：用对方脱敏后的 trades + 资金/资产口径，在当前行情下重算（与本人「全部账户」视图对齐）。 */
 function withPublicTradesContext(d, fn) {
-  if (!d || !Array.isArray(d.publicTrades)) {
+  const pubRows = state.communityPublicTradesPack?.rows;
+  if (!Array.isArray(pubRows) || !pubRows.length) {
     return fn();
   }
   const prevTrades = state.trades;
   const prevAlgo = state.algoMode;
   const prevBook = state._overviewBookCurrencyOverride;
-  state.trades = d.publicTrades;
+  state.trades = pubRows;
   state.algoMode = "twr";
-  const book = d.publicOverviewBookCurrency;
-  if (book && typeof book === "string") {
-    const c = book.toUpperCase();
-    if (c === "USD" || c === "HKD" || c === "CNY") {
-      state._overviewBookCurrencyOverride = c;
-    } else {
-      state._overviewBookCurrencyOverride = null;
-    }
-  } else {
-    state._overviewBookCurrencyOverride = null;
-  }
+  state._overviewBookCurrencyOverride = null;
   try {
     return fn();
   } finally {
@@ -4982,25 +5206,16 @@ function withPublicTradesContext(d, fn) {
 }
 
 async function withPublicTradesContextAsync(d, asyncFn) {
-  if (!d || !Array.isArray(d.publicTrades) || typeof asyncFn !== "function") {
+  const pubRows = state.communityPublicTradesPack?.rows;
+  if (!Array.isArray(pubRows) || !pubRows.length || typeof asyncFn !== "function") {
     return;
   }
   const prevTrades = state.trades;
   const prevAlgo = state.algoMode;
   const prevBook = state._overviewBookCurrencyOverride;
-  state.trades = d.publicTrades;
+  state.trades = pubRows;
   state.algoMode = "twr";
-  const book = d.publicOverviewBookCurrency;
-  if (book && typeof book === "string") {
-    const c = book.toUpperCase();
-    if (c === "USD" || c === "HKD" || c === "CNY") {
-      state._overviewBookCurrencyOverride = c;
-    } else {
-      state._overviewBookCurrencyOverride = null;
-    }
-  } else {
-    state._overviewBookCurrencyOverride = null;
-  }
+  state._overviewBookCurrencyOverride = null;
   try {
     await asyncFn();
   } finally {
@@ -5010,412 +5225,354 @@ async function withPublicTradesContextAsync(d, asyncFn) {
   }
 }
 
-function renderPublicEarningProfileHtml(d) {
-  if (!d || !Array.isArray(d.publicTrades)) {
-    return `<p class="empty">暂无脱敏持仓数据</p>`;
-  }
-  return withPublicTradesContext(d, () => {
-    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-    const portfolio = computePortfolio(scope.trades, []);
-    const vis = portfolio.visiblePositions;
-    const bookCcy = portfolio.overviewBookCurrency || "CNY";
-    const toOb = (p, v) => nativeToOverviewBook(p, v, bookCcy);
-    const stageMap = { month: "month", ytd: "ytd", total: "total" };
-    const sr = stageMap[state.communityProfileStage] || "month";
-    const prevSr = state.stageRange;
-    state.stageRange = sr;
-    let stockRows = "";
-    let todayInner = "";
-    let todayCls = "profit-main";
-    let stageInner = "";
-    let stageCls = "profit-main";
-    try {
-      const snap =
-        Array.isArray(d.analysisDaily) && d.analysisDaily.length
-          ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, state.stageRange, state.algoMode)
-          : null;
-      const stageRateOv =
-        snap && Number.isFinite(Number(snap.stageRate)) ? Number(snap.stageRate) : null;
-      todayInner = formatPublicProfileRateOnlyHtml(portfolio.todayRate);
-      todayCls = `profit-main ${twrColorClass(portfolio.todayRate)}`;
-      stageInner = formatPublicProfileRateOnlyHtml(stageRateOv);
-      stageCls = `profit-main ${twrColorClass(stageRateOv)}`;
-      const listed = vis.filter(isPublicProfileActiveHoldingRow);
-      const monthDenPub = listed.reduce((s, p) => s + Math.abs(toOb(p, p.monthProfitNative)), 0);
-      const yearDenPub = listed.reduce((s, p) => s + Math.abs(toOb(p, p.yearProfitNative)), 0);
-      const pubDenoms = { monthDenPub, yearDenPub };
-      const rows = sortPublicProfileStockRows(
-        listed,
-        state.publicStockSortKey,
-        state.publicStockSortOrder,
-        bookCcy,
-        scope.trades,
-        pubDenoms,
-      );
-      stockRows =
-        rows.length === 0
-          ? `<tr><td colspan="9"><p class="empty">暂无持仓</p></td></tr>`
-          : rows
-              .map((row) => {
-                const stockCode = formatSymbolForDisplay(row.symbol);
-                const tag =
-                  row.market === "A股" ? "CN" : row.market === "港股" ? "HK" : row.market === "美股" ? "US" : "OT";
-                const tagLower = tag.toLowerCase();
-                const toBk = (v) => nativeToOverviewBook(row, v, bookCcy);
-                const monthWPub = monthDenPub !== 0 ? toBk(row.monthProfitNative) / monthDenPub : 0;
-                const yearWPub = yearDenPub !== 0 ? toBk(row.yearProfitNative) / yearDenPub : 0;
-                const changeClass = row.dayChangeRate >= 0 ? "up" : "down";
-                const totalRateCls = row.totalRate >= 0 ? "up" : "down";
-                const symEsc = escapeHtml(row.symbol);
-                return `
-        <tr>
-          <td class="stock-name">
-            <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
-            <span><i class="market-tag market-tag--${tagLower}">${tag}</i> ${escapeHtml(stockCode)}</span>
-          </td>
-          <td>
-            <div class="cell-main">${formatNumber(row.currentPrice, 3)}</div>
-            <div class="cell-sub ${changeClass}">${formatPercent(row.dayChangeRate)}</div>
-          </td>
-          <td>${formatPercent(row.weight)}</td>
-          <td>${formatNumber(row.cost, 3)}</td>
-          <td>${formatPercent(monthWPub)}</td>
-          <td>${formatPercent(yearWPub)}</td>
-          <td class="${totalRateCls}">${formatPercent(row.totalRate)}</td>
-          <td class="${row.regretRate >= 0 ? "up" : "down"}">${formatRegretRateWithSide(row.regretRate, row.lastTradeSide)}</td>
-          <td><a href="javascript:void(0)" class="record-link" data-stock-record="${symEsc}">记录</a></td>
-        </tr>`;
-              })
-              .join("");
-    } finally {
-      state.stageRange = prevSr;
-    }
-    return `
+/** 他人收益 Tab：物理渲染列（与私人表同列索引的 th/td 规则，不含金额列） */
+const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14];
+
+function stockTableAllColIndices() {
+  return Array.from({ length: OVERVIEW_STOCK_TABLE_COL_COUNT }, (_, i) => i);
+}
+
+function stockTableVisibleColIndices(ctx) {
+  return ctx?.visibleColIndices?.length ? ctx.visibleColIndices : stockTableAllColIndices();
+}
+
+function stockTableVisibleColCount(ctx) {
+  return stockTableVisibleColIndices(ctx).length;
+}
+const PUBLIC_EARNING_STAGE_DEFS = [
+  { key: "today", label: "今日收益" },
+  { key: "mtd", label: "本月收益" },
+  { key: "ytd", label: "本年收益" },
+  { key: "inception", label: "总收益" },
+];
+
+function publicEarningBundleCacheKey(targetId) {
+  return `pub-earn::${String(targetId || "").trim()}::all::${METRICS_HOME_BUNDLE_STAGES}`;
+}
+
+function formatBundleRateOnlyHtml(rateStr) {
+  const text = bundleFmtText(rateStr);
+  const rate = parseBundlePercent(rateStr);
+  const cls = Number.isFinite(rate) ? twrColorClass(rate) : "";
+  return `<span class="profit-rate-inline profit-rate-only ${cls}">${escapeHtml(text)}</span>`;
+}
+
+function getCommunityEarningPanelHtml() {
+  return `
     <article class="overview-card community-profile-overview-min">
-      <div class="profit-row">
-        <div class="profit-block">
-          <p class="profit-label">今日收益</p>
-          <p id="pubTodayProfitMain" class="${todayCls}">${todayInner}</p>
-        </div>
-        <div class="profit-block">
-          <label class="profit-label stage-select-wrap">
-            <select id="pubStageRangeSelect" class="stage-select">
-              <option value="month">本月收益</option>
-              <option value="ytd">本年收益</option>
-              <option value="total">总收益</option>
-            </select>
-            <span class="arrow">▼</span>
-          </label>
-          <p id="pubStageProfitMain" class="${stageCls}">${stageInner}</p>
-        </div>
+      <div class="overview-head overview-head--public-earn">
+        <span id="pubQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
       </div>
+      <div class="profit-row" id="pubReturnsGrid">
+        ${PUBLIC_EARNING_STAGE_DEFS.map(
+          (s) => `
+        <div class="profit-block">
+          <p class="profit-label">${escapeHtml(s.label)}</p>
+          <p class="pub-stage-rate profit-main" data-pub-stage="${escapeHtml(s.key)}">--</p>
+        </div>`,
+        ).join("")}
+      </div>
+      <div id="pubOverviewGrid" class="overview-grid"></div>
     </article>
     <article class="stock-card">
       <div class="stock-head stock-head-row">
         <h2 class="stock-title">个股收益</h2>
       </div>
       <div class="table-scroll">
-        <table class="stock-table public-profile-stock-table">
-          <thead>
-            <tr>
-              <th class="name-head"><button type="button" class="th-sort-btn th-sort-btn--name" data-sort-key="symbol">名称<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="currentPrice">现价/涨跌<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="weight">仓位<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="cost">成本<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
-              <th><span class="th-sort-static">记录</span></th>
-            </tr>
-          </thead>
-          <tbody>${stockRows}</tbody>
+        <table class="stock-table stock-table--public-community">
+          <tbody id="pubStockTableBody"></tbody>
         </table>
       </div>
     </article>
   `;
-  });
 }
 
-function bindPublicProfileStageSelect() {
-  const sel = document.getElementById("pubStageRangeSelect");
-  if (!sel) {
+function mountPublicCommunityStockTableHead() {
+  const pubTable = document.getElementById("pubStockTableBody")?.closest("table.stock-table");
+  const srcThs = stockTableBody?.closest("table.stock-table")?.querySelectorAll("thead th");
+  if (!pubTable || !srcThs?.length) {
     return;
   }
-  sel.value = state.communityProfileStage;
-  sel.onchange = () => {
-    state.communityProfileStage = sel.value;
-    syncPublicProfileStageRow();
+  let thead = pubTable.querySelector("thead");
+  if (!thead) {
+    thead = document.createElement("thead");
+    pubTable.insertBefore(thead, pubTable.querySelector("tbody"));
+  }
+  const tr = document.createElement("tr");
+  for (const col of PUBLIC_EARNING_VISIBLE_COL_INDICES) {
+    const src = srcThs[col];
+    if (!src) {
+      continue;
+    }
+    const th = src.cloneNode(true);
+    th.setAttribute("data-stock-col", String(col));
+    tr.appendChild(th);
+  }
+  thead.replaceChildren(tr);
+}
+
+function getPrivateStockTableCtx() {
+  return {
+    tbody: stockTableBody,
+    table: stockTableBody?.closest("table.stock-table") || null,
+    visibleColIndices: null,
+    showTradeLink: true,
+    opProbeText: "记录  交易",
+    layoutCacheKey: overviewStockTableLayoutCacheKey,
+    widthCache: overviewStockColWidthCache,
   };
-  syncPublicProfileStageRow();
 }
 
-function syncPublicProfileStageRow() {
-  const d = state.lastPublicProfileDetail;
-  if (!d?.publicTrades) {
+function getPublicStockTableCtx() {
+  const tbody = document.getElementById("pubStockTableBody");
+  return {
+    tbody,
+    table: tbody?.closest("table.stock-table") || null,
+    visibleColIndices: PUBLIC_EARNING_VISIBLE_COL_INDICES,
+    showTradeLink: false,
+    opProbeText: "记录",
+    layoutCacheKey: (rows) =>
+      `${publicEarningBundleCacheKey(state.communityProfileUserId)}::${overviewStockTableLayoutCacheKey(rows).split("::").slice(1).join("::")}`,
+    widthCache: publicEarningColWidthCache,
+  };
+}
+
+let publicEarningColWidthCache = { key: "", widths: null };
+
+function syncStockTableSortHeaderUi(ctx) {
+  const table = ctx?.table;
+  if (!table) {
     return;
   }
-  const sel = document.getElementById("pubStageRangeSelect");
-  if (sel) {
-    sel.value = state.communityProfileStage;
-  }
-  const stageMap = { month: "month", ytd: "ytd", total: "total" };
-  const sr = stageMap[state.communityProfileStage] || "month";
-  const main = document.getElementById("pubStageProfitMain");
-  if (!main) {
-    return;
-  }
-  withPublicTradesContext(d, () => {
-    const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-    const portfolio = computePortfolio(scope.trades, []);
-    const prevSr = state.stageRange;
-    state.stageRange = sr;
-    try {
-      const snap =
-        Array.isArray(d.analysisDaily) && d.analysisDaily.length
-          ? computeStageOverviewFromSnapshotRows(d.analysisDaily, portfolio, scope, sr, state.algoMode)
-          : null;
-      const stageRateOv =
-        snap && Number.isFinite(Number(snap.stageRate)) ? Number(snap.stageRate) : null;
-      main.innerHTML = formatPublicProfileRateOnlyHtml(stageRateOv);
-      main.className = `profit-main ${twrColorClass(stageRateOv)}`;
-    } finally {
-      state.stageRange = prevSr;
+  table.querySelectorAll(".th-sort-btn").forEach((button) => {
+    const key = button.dataset.sortKey || "";
+    button.classList.remove("asc", "desc", "active");
+    if (state.stockSortOrder !== "default" && key === state.stockSortKey) {
+      button.classList.add("active", state.stockSortOrder);
     }
   });
 }
 
-function ensurePublicProfileAnalysisUi() {
-  if (!state.publicProfileAnalysisUi) {
-    state.publicProfileAnalysisUi = {
-      analysisRangeMode: "preset",
-      analysisPreset: null,
-      rangeDays: 30,
-      analysisPanOffset: 0,
-      customRangeStart: "",
-      customRangeEnd: "",
-      customRangeDraftStart: "",
-      customRangeDraftEnd: "",
-      benchmark: "none",
-      capitalTrendMode: "total_assets",
+function syncCommunityEarningSortHeaderUi() {
+  syncStockTableSortHeaderUi(getPublicStockTableCtx());
+}
+
+function applyPublicEarningMetaToUi(meta) {
+  if (!meta || typeof meta !== "object") {
+    return;
+  }
+  if (meta.quoteTime) {
+    state.quoteTime = String(meta.quoteTime);
+  }
+  const pubQuote = document.getElementById("pubQuoteTime");
+  if (pubQuote) {
+    if (meta.rebuilding) {
+      pubQuote.textContent = "历史指标重算中，请稍候…";
+      pubQuote.classList.add("is-rebuilding");
+      return;
+    }
+    pubQuote.classList.remove("is-rebuilding");
+    const timeText = state.quoteTime ? `${formatQuoteTimeForStatus(state.quoteTime)} 更新` : "-- 更新";
+    pubQuote.textContent = timeText;
+    pubQuote.classList.toggle("is-delayed", !!meta.delayed);
+  }
+}
+
+function paintPublicEarningFromBundle(bundle) {
+  return paintOverviewFromMetricsBundle(bundle.returns, bundle.assets, bundle.holdings, { mode: "public" });
+}
+
+function repaintPublicEarningHoldingsFromCache() {
+  const bundle = state.publicEarningBundleUi.bundle;
+  if (!bundle?.holdings?.rows) {
+    return;
+  }
+  mountPublicCommunityStockTableHead();
+  paintStockTableFromMetricsRows(bundle.holdings.rows, getPublicStockTableCtx());
+  syncCommunityEarningSortHeaderUi();
+}
+
+async function fetchPublicHomeBundleMetrics(targetId) {
+  const tid = String(targetId || "").trim();
+  if (!tid || !apiReady) {
+    return null;
+  }
+  const key = publicEarningBundleCacheKey(tid);
+  if (state.publicEarningBundleUi.ready && state.publicEarningBundleUi.key === key && state.publicEarningBundleUi.bundle) {
+    return state.publicEarningBundleUi.bundle;
+  }
+  if (state.publicEarningBundleUi.loading) {
+    return null;
+  }
+  state.publicEarningBundleUi.loading = true;
+  try {
+    const data = await fetchMetricsApi(
+      "/home-bundle",
+      { account_id: "all", stages: METRICS_HOME_BUNDLE_STAGES },
+      tid,
+    );
+    if (!data) {
+      return null;
+    }
+    state.publicEarningBundleUi = {
+      ready: true,
+      loading: false,
+      key,
+      bundle: data,
+      meta: data.meta || null,
     };
+    return data;
+  } finally {
+    state.publicEarningBundleUi.loading = false;
   }
-  return state.publicProfileAnalysisUi;
 }
 
-/** 用接口下发的对方设置初始化「分析」控件，使默认曲线/基准与本人首页一致。 */
-function seedPublicProfileAnalysisUiFromDetail(d) {
-  if (!d || d.isSelf || !Array.isArray(d.publicTrades)) {
+async function loadPublicEarningTabData(targetId) {
+  const earningPane = document.querySelector('[data-profile-panel="earning"]');
+  if (!earningPane) {
     return;
   }
-  const uid = String(d.userId || "");
-  if (state.publicProfileAnalysisUiSeededFor !== uid) {
-    state.publicProfileAnalysisUi = null;
-    state.publicProfileAnalysisUiSeededFor = uid;
+  const pubColCount = PUBLIC_EARNING_VISIBLE_COL_INDICES.length;
+  const tbody = document.getElementById("pubStockTableBody");
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">数据加载中…</p></td></tr>`;
   }
-  const ui = ensurePublicProfileAnalysisUi();
-  const bench = String(d.publicBenchmark || "none");
-  ui.benchmark = ALLOWED_PUBLIC_BENCHMARKS.has(bench) ? bench : "none";
-  const tm = String(d.publicCapitalTrendMode || "total_assets");
-  ui.capitalTrendMode =
-    tm === "market" || tm === "cash" || tm === "cash_ratio" || tm === "total_assets"
-      ? tm
-      : "total_assets";
-  const arm = String(d.publicAnalysisRangeMode || "preset");
-  ui.analysisRangeMode = ["preset", "custom", "all"].includes(arm) ? arm : "preset";
-  ui.analysisPreset = d.publicAnalysisPreset ?? null;
-  ui.rangeDays = Number(d.publicRangeDays) || 30;
-  const po = Number(d.publicAnalysisPanOffset);
-  ui.analysisPanOffset = Number.isFinite(po) ? Math.max(0, po) : 0;
-  ui.customRangeStart = String(d.publicCustomRangeStart || "");
-  ui.customRangeEnd = String(d.publicCustomRangeEnd || "");
-  ui.customRangeDraftStart = ui.customRangeStart;
-  ui.customRangeDraftEnd = ui.customRangeEnd;
-}
-
-function withPublicProfileAnalysisUi(fn) {
-  const ui = ensurePublicProfileAnalysisUi();
-  const snap = {
-    analysisRangeMode: state.analysisRangeMode,
-    analysisPreset: state.analysisPreset,
-    rangeDays: state.rangeDays,
-    analysisPanOffset: state.analysisPanOffset,
-    customRangeStart: state.customRangeStart,
-    customRangeEnd: state.customRangeEnd,
-    customRangeDraftStart: state.customRangeDraftStart,
-    customRangeDraftEnd: state.customRangeDraftEnd,
-    benchmark: state.benchmark,
-    capitalTrendMode: state.capitalTrendMode,
-  };
-  Object.assign(state, {
-    analysisRangeMode: ui.analysisRangeMode,
-    analysisPreset: ui.analysisPreset,
-    rangeDays: ui.rangeDays,
-    analysisPanOffset: ui.analysisPanOffset,
-    customRangeStart: ui.customRangeStart,
-    customRangeEnd: ui.customRangeEnd,
-    customRangeDraftStart: ui.customRangeDraftStart,
-    customRangeDraftEnd: ui.customRangeDraftEnd,
-    benchmark: ui.benchmark,
-    capitalTrendMode: ui.capitalTrendMode,
-  });
-  try {
-    return fn();
-  } finally {
-    Object.assign(state, snap);
-  }
-}
-
-async function withPublicProfileAnalysisUiAsync(asyncFn) {
-  const ui = ensurePublicProfileAnalysisUi();
-  const snap = {
-    analysisRangeMode: state.analysisRangeMode,
-    analysisPreset: state.analysisPreset,
-    rangeDays: state.rangeDays,
-    analysisPanOffset: state.analysisPanOffset,
-    customRangeStart: state.customRangeStart,
-    customRangeEnd: state.customRangeEnd,
-    customRangeDraftStart: state.customRangeDraftStart,
-    customRangeDraftEnd: state.customRangeDraftEnd,
-    benchmark: state.benchmark,
-    capitalTrendMode: state.capitalTrendMode,
-  };
-  Object.assign(state, {
-    analysisRangeMode: ui.analysisRangeMode,
-    analysisPreset: ui.analysisPreset,
-    rangeDays: ui.rangeDays,
-    analysisPanOffset: ui.analysisPanOffset,
-    customRangeStart: ui.customRangeStart,
-    customRangeEnd: ui.customRangeEnd,
-    customRangeDraftStart: ui.customRangeDraftStart,
-    customRangeDraftEnd: ui.customRangeDraftEnd,
-    benchmark: ui.benchmark,
-    capitalTrendMode: ui.capitalTrendMode,
-  });
-  try {
-    await asyncFn();
-  } finally {
-    Object.assign(state, snap);
-  }
-}
-
-function syncCommunityProfileAnalysisControls() {
-  const root = document.getElementById("pubAnalysisRoot");
-  if (!root) {
-    return;
-  }
-  const ui = ensurePublicProfileAnalysisUi();
-  root.querySelectorAll(".range-chip").forEach((chip) => {
-    const value = chip.dataset.range;
-    let active = false;
-    if (value === "custom") {
-      active = ui.analysisRangeMode === "custom";
-    } else if (value === "all") {
-      active = ui.analysisRangeMode === "all";
-    } else if (value === "mtd") {
-      active = ui.analysisRangeMode === "preset" && ui.analysisPreset === "mtd";
-    } else if (value === "365") {
-      active = ui.analysisRangeMode === "preset" && ui.analysisPreset === "ytd";
-    } else {
-      active =
-        ui.analysisRangeMode === "preset" &&
-        ui.analysisPreset !== "mtd" &&
-        ui.analysisPreset !== "ytd" &&
-        Number(value) === ui.rangeDays;
+  const bundle = await fetchPublicHomeBundleMetrics(targetId);
+  if (!bundle) {
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">加载失败</p></td></tr>`;
     }
-    chip.classList.toggle("active", active);
-  });
-  const cr = document.getElementById("pubCustomRangeRow");
-  if (cr) {
-    cr.classList.toggle("hidden", ui.analysisRangeMode !== "custom");
+    return;
   }
-  const sIn = document.getElementById("pubCustomRangeStart");
-  const eIn = document.getElementById("pubCustomRangeEnd");
-  if (sIn) {
-    sIn.value =
-      ui.analysisRangeMode === "custom" ? ui.customRangeDraftStart || "" : ui.customRangeStart || "";
+  mountPublicCommunityStockTableHead();
+  paintPublicEarningFromBundle(bundle);
+}
+
+function renderPublicEarningProfileHtml(_d) {
+  return getCommunityEarningPanelHtml();
+}
+
+function bindPublicProfileStageSelect() {}
+
+function syncPublicProfileStageRow() {}
+
+let analysisRouteHomeParent = null;
+
+function analysisMetricsUiActive() {
+  return (
+    state.route === "analysis" ||
+    (state.route === "community-profile" && (state.communityProfileTab || "earning") === "analysis")
+  );
+}
+
+function communityAnalysisTargetId() {
+  if (state.route !== "community-profile") {
+    return "";
   }
-  if (eIn) {
-    eIn.value =
-      ui.analysisRangeMode === "custom" ? ui.customRangeDraftEnd || "" : ui.customRangeEnd || "";
+  return String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim();
+}
+
+function publicAnalysisBundleCacheKey(targetId) {
+  const tid = String(targetId || "").trim();
+  const stage = metricsStageFromAnalysis();
+  const bench = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
+  return `pub-analysis::${tid}::all::${stage}::${bench}`;
+}
+
+async function fetchPublicAnalysisBundleMetrics(targetId) {
+  const tid = String(targetId || "").trim();
+  if (!tid || !apiReady) {
+    return null;
   }
-  const bs = document.getElementById("pubBenchmarkSelect");
-  if (bs) {
-    bs.value = ui.benchmark;
+  const stage = metricsStageFromAnalysis();
+  const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
+  const key = publicAnalysisBundleCacheKey(tid);
+  if (state.publicAnalysisBundleUi.ready && state.publicAnalysisBundleUi.key === key && state.publicAnalysisBundleUi.bundle) {
+    return state.publicAnalysisBundleUi.bundle;
+  }
+  if (state.publicAnalysisBundleUi.loading) {
+    return null;
+  }
+  state.publicAnalysisBundleUi.loading = true;
+  try {
+    const params = { account_id: "all", stage };
+    if (benchSym) {
+      params.symbol = benchSym;
+    }
+    const data = await fetchMetricsApi("/analysis-bundle", params, tid);
+    if (!data) {
+      return null;
+    }
+    state.publicAnalysisBundleUi = {
+      ready: true,
+      loading: false,
+      key,
+      bundle: data,
+      meta: data.meta || null,
+    };
+    return data;
+  } finally {
+    state.publicAnalysisBundleUi.loading = false;
   }
 }
 
-function getPublicProfileAnalysisSectionHtml() {
-  return `
-    <article class="panel">
-      <div class="panel-head">
-        <h2>分析范围</h2>
-      </div>
-      <div class="form-row">
-        <label for="pubBenchmarkSelect">指数对比</label>
-        <select id="pubBenchmarkSelect">
-          <option value="none">不对比</option>
-          <option value="sh000001">上证指数</option>
-          <option value="sz399001">深证成指</option>
-          <option value="rt_hkHSI">恒生指数</option>
-          <option value="gb_inx">标普500</option>
-        </select>
-      </div>
-      <div id="pubAnalysisRoot">
-        <div class="range-row">
-          <button type="button" class="range-chip" data-range="7">最近一周</button>
-          <button type="button" class="range-chip active" data-range="30">最近一月</button>
-          <button type="button" class="range-chip" data-range="90">最近三月</button>
-          <button type="button" class="range-chip" data-range="mtd">月初至今</button>
-          <button type="button" class="range-chip" data-range="365">年初至今</button>
-          <button type="button" class="range-chip" data-range="all">历史以来</button>
-          <button type="button" class="range-chip" data-range="custom">自定义</button>
-        </div>
-        <div id="pubCustomRangeRow" class="custom-range-row hidden">
-          <input id="pubCustomRangeStart" type="date" />
-          <span>至</span>
-          <input id="pubCustomRangeEnd" type="date" />
-          <button id="pubApplyCustomRangeBtn" type="button" class="btn btn-ghost">应用</button>
-        </div>
-      </div>
-    </article>
-    <article class="panel">
-      <div class="panel-head">
-        <h2>收益率走势</h2>
-        <span id="pubAnalysisRateSummary" class="caption"></span>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="pubAnalysisRateChart" width="700" height="320"></canvas>
-        <div id="pubAnalysisRateTooltip" class="chart-tooltip"></div>
-      </div>
-    </article>
-    <article class="panel">
-      <div class="panel-head">
-        <h2>总资产走势</h2>
-        <span class="caption">以首日为基数1，不展示真实金额</span>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="pubAnalysisMarketIndexChart" width="700" height="320"></canvas>
-        <div id="pubAnalysisMarketIndexTooltip" class="chart-tooltip"></div>
-      </div>
-    </article>
-    <article class="panel">
-      <div class="panel-head">
-        <h2>现金占比</h2>
-        <span class="caption">现金 / 总资产 × 100%</span>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="pubAnalysisCashRatioChart" width="700" height="280"></canvas>
-        <div id="pubAnalysisCashRatioTooltip" class="chart-tooltip"></div>
-      </div>
-    </article>
-    <article class="panel analysis-stock-rank-panel">
-      <div class="panel-head">
-        <h2>个股收益排行</h2>
-      </div>
-      <div id="pubAnalysisStockRankBody" class="analysis-stock-rank-body analysis-stock-rank-body--public"></div>
-    </article>
-  `;
+function mountCommunityAnalysisRoutePane() {
+  const mount = document.querySelector('[data-profile-panel="analysis"]');
+  const pane = document.getElementById("route-analysis");
+  if (!mount || !pane) {
+    return;
+  }
+  if (!analysisRouteHomeParent) {
+    analysisRouteHomeParent = pane.parentElement;
+  }
+  mount.appendChild(pane);
+  pane.classList.add("route-pane--community-analysis");
+  const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
+  if (accWrap) {
+    accWrap.style.display = "none";
+  }
+}
+
+function unmountCommunityAnalysisRoutePane() {
+  const pane = document.getElementById("route-analysis");
+  if (!pane || !analysisRouteHomeParent) {
+    return;
+  }
+  if (pane.parentElement !== analysisRouteHomeParent) {
+    analysisRouteHomeParent.appendChild(pane);
+  }
+  pane.classList.remove("route-pane--community-analysis");
+  const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
+  if (accWrap) {
+    accWrap.style.display = "";
+  }
+}
+
+async function loadPublicAnalysisTabData(targetId) {
+  const tid = String(targetId || "").trim();
+  if (!tid) {
+    return;
+  }
+  mountCommunityAnalysisRoutePane();
+  renderControls();
+  const bundle = await fetchPublicAnalysisBundleMetrics(tid);
+  if (!bundle) {
+    clearAnalysisChartsToEmpty();
+    if (analysisStockRankBody) {
+      analysisStockRankBody.innerHTML = `<p class="empty">加载失败</p>`;
+    }
+    return;
+  }
+  const renderRequestId = ++analysisRenderRequestSeq;
+  await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
+}
+
+async function openCommunityProfileAnalysisTab() {
+  const tid = communityAnalysisTargetId();
+  if (!tid) {
+    return;
+  }
+  await loadPublicAnalysisTabData(tid);
 }
 
 function getPublicProfileTradeSectionHtml() {
@@ -5452,17 +5609,26 @@ function renderCommunityProfilePageHtml(d) {
   const earningInner = renderPublicEarningProfileHtml(d);
   return `
     <div class="community-profile-tab-panel ${tab === "earning" ? "is-active" : ""}" data-profile-panel="earning">${earningInner}</div>
-    <div class="community-profile-tab-panel ${tab === "analysis" ? "is-active" : ""}" data-profile-panel="analysis">${getPublicProfileAnalysisSectionHtml()}</div>
+    <div class="community-profile-tab-panel ${tab === "analysis" ? "is-active" : ""}" data-profile-panel="analysis"></div>
     <div class="community-profile-tab-panel ${tab === "trade" ? "is-active" : ""}" data-profile-panel="trade">${getPublicProfileTradeSectionHtml()}</div>
   `;
 }
 
-function renderPublicTradeTable(d) {
+function renderPublicTradeTable() {
   const tb = document.getElementById("pubTradeTableBody");
-  if (!tb || !d?.publicTrades) {
+  if (!tb) {
     return;
   }
-  const list = [...d.publicTrades].sort(sortTradeDesc);
+  const pack = state.communityPublicTradesPack;
+  if (!pack?.rows?.length) {
+    tb.innerHTML = `
+      <tr>
+        <td colspan="5"><p class="empty">${pack ? "暂无交易记录" : "暂无交易数据"}</p></td>
+      </tr>
+    `;
+    return;
+  }
+  const list = [...pack.rows].sort(sortTradeDesc);
   if (!list.length) {
     tb.innerHTML = `
       <tr>
@@ -5473,7 +5639,7 @@ function renderPublicTradeTable(d) {
   }
   tb.innerHTML = list
     .map((trade) => {
-      const share = publicTradeAmountShareOfLatestMv(trade, d);
+      const share = publicTradeAmountShareOfLatestMv(trade, null);
       const shareStr =
         share != null && Number.isFinite(share) ? formatPercent(share) : "—";
       return `
@@ -5489,402 +5655,49 @@ function renderPublicTradeTable(d) {
     .join("");
 }
 
-function bindPublicProfileAnalysisInteractions(d) {
-  const ui = ensurePublicProfileAnalysisUi();
-  const root = document.getElementById("pubAnalysisRoot");
-  if (root) {
-    root.querySelectorAll(".range-chip").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        const value = chip.dataset.range;
-        if (value === "custom") {
-          ui.analysisRangeMode = "custom";
-          ui.analysisPreset = null;
-          ui.customRangeDraftStart = ui.customRangeStart;
-          ui.customRangeDraftEnd = ui.customRangeEnd;
-        } else if (value === "all") {
-          ui.analysisRangeMode = "all";
-          ui.analysisPreset = null;
-          resetAnalysisChartViewport();
-        } else if (value === "mtd") {
-          ui.analysisRangeMode = "preset";
-          ui.analysisPreset = "mtd";
-          resetAnalysisChartViewport();
-        } else {
-          ui.analysisRangeMode = "preset";
-          const n = Number(value);
-          if (n === 365) {
-            ui.analysisPreset = "ytd";
-            ui.rangeDays = 365;
-          } else {
-            ui.analysisPreset = null;
-            ui.rangeDays = n;
-          }
-          resetAnalysisChartViewport();
-        }
-        syncCommunityProfileAnalysisControls();
-        void renderPublicProfileAnalysis(d);
-      });
-    });
-  }
-  const sIn = document.getElementById("pubCustomRangeStart");
-  const eIn = document.getElementById("pubCustomRangeEnd");
-  const syncDraft = () => {
-    if (sIn) {
-      ui.customRangeDraftStart = sIn.value || "";
-    }
-    if (eIn) {
-      ui.customRangeDraftEnd = eIn.value || "";
-    }
-  };
-  sIn?.addEventListener("input", syncDraft);
-  sIn?.addEventListener("change", syncDraft);
-  eIn?.addEventListener("input", syncDraft);
-  eIn?.addEventListener("change", syncDraft);
-  document.getElementById("pubApplyCustomRangeBtn")?.addEventListener("click", () => {
-    syncDraft();
-    let start = ui.customRangeDraftStart || "";
-    let end = ui.customRangeDraftEnd || "";
-    if (!start && !end) {
-      return;
-    }
-    if (!start) {
-      start = toDateKey(new Date(Date.now() - 29 * 86400000));
-    }
-    if (!end) {
-      end = toDateKey(new Date());
-    }
-    if (start > end) {
-      [start, end] = [end, start];
-    }
-    ui.customRangeStart = start;
-    ui.customRangeEnd = end;
-    ui.customRangeDraftStart = start;
-    ui.customRangeDraftEnd = end;
-    ui.analysisRangeMode = "custom";
-    ui.analysisPreset = null;
-    resetAnalysisChartViewport();
-    syncCommunityProfileAnalysisControls();
-    void renderPublicProfileAnalysis(d);
-  });
-  document.getElementById("pubBenchmarkSelect")?.addEventListener("change", (e) => {
-    ui.benchmark = e.target.value || "none";
-    syncCommunityProfileAnalysisControls();
-    void renderPublicProfileAnalysis(d);
-  });
-}
-
-function paintPublicProfileAnalysisCore(
-  d,
-  { useDbRows, dbRows, portfolio, scope, todayKey, liveByMode, perfSnap = null },
-) {
-  const pubRate = document.getElementById("pubAnalysisRateChart");
-  const pubRateTip = document.getElementById("pubAnalysisRateTooltip");
-  const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
-  const pubMkt = document.getElementById("pubAnalysisMarketIndexChart");
-  const pubMktTip = document.getElementById("pubAnalysisMarketIndexTooltip");
-  const pubRatio = document.getElementById("pubAnalysisCashRatioChart");
-  const pubRatioTip = document.getElementById("pubAnalysisCashRatioTooltip");
-  const pubRank = document.getElementById("pubAnalysisStockRankBody");
-  if (!pubRate) {
-    return;
-  }
-
-  const refresh = () => {
-    void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-  };
-
-  const rankOpts = { publicStockRankLayout: true };
-
-  const bindRateOnly = (mySeries, benchSeries, opts = {}) => {
-    const mwrUi = opts.mwrUi === true;
-    const headlineMwr = Number(opts.headlineMwr) || 0;
-    const drawRate = () =>
-      mwrUi
-        ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。")
-        : drawLineChart(mySeries, benchSeries, pubRate);
-    const payloads = { rate: drawRate() };
-    const rateHasBenchmark = state.benchmark !== "none";
-    bindInteractiveChart(pubRate, pubRateTip, () => payloads.rate, {
-      mode: "analysis",
-      onRefresh: refresh,
-      onRedraw: () => {
-        payloads.rate = drawRate();
-      },
-      valueFormatter: (_value, key) => {
-        if (key === "benchmark" && !rateHasBenchmark) {
-          return "--";
-        }
-        return `${formatNumber(_value, 2)}%`;
-      },
-    });
-    const lastMyTwr = mySeries.at(-1)?.rate ?? 0;
-    const lastBench = benchSeries.at(-1)?.rate ?? 0;
-    const excess = lastMyTwr - lastBench;
-    if (pubRateSummary) {
-      if (mwrUi) {
-        pubRateSummary.textContent =
-          state.benchmark === "none"
-            ? `我的收益率 ${formatPercent(headlineMwr)}`
-            : `我的 ${formatPercent(headlineMwr)} / 基准 ${formatPercent(lastBench)} / 对比 –`;
-      } else {
-        pubRateSummary.textContent =
-          state.benchmark === "none"
-            ? `我的收益率 ${formatPercent(lastMyTwr)}`
-            : `我的 ${formatPercent(lastMyTwr)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
-      }
-    }
-  };
-
-  if (!useDbRows || !dbRows.length) {
-    clearCanvasChart(pubRate);
-    clearCanvasChart(pubMkt);
-    if (pubRatio) {
-      clearCanvasChart(pubRatio);
-    }
-    if (pubRank) {
-      pubRank.innerHTML = `<p class="empty">暂无日快照数据。</p>`;
-    }
-    if (pubRateSummary) {
-      pubRateSummary.textContent =
-        state.benchmark === "none" ? "我的收益率 –" : "我的 – / 基准 – / 对比 –";
-    }
-    return;
-  }
-
-  const sorted = [...dbRows].sort((a, b) => a.date.localeCompare(b.date));
-  const mergedFull = mergeAnalysisSliceWithLive(
-    sorted.map((row) => ({ ...row })),
-    portfolio,
-    todayKey,
-    liveByMode,
-    scope.cashTransfers,
-  );
-  const pseudoHistory = mergedFull.map((row) => ({
-    date: row.date,
-    value: analysisTotalAssetsFromRow(row),
-    flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
-  }));
-  const perfPresetKey = resolvePerformancePresetKeyFromStateLike(state);
-  let selectedPh = resolveAnalysisRange(pseudoHistory);
-  if (
-    perfPresetKey &&
-    (perfPresetKey === "last_7d" || perfPresetKey === "last_30d" || perfPresetKey === "last_90d") &&
-    Number(state.analysisPanOffset || 0) === 0
-  ) {
-    const len = perfPresetKey === "last_7d" ? 7 : perfPresetKey === "last_30d" ? 30 : 90;
-    const end = String(mergedFull[mergedFull.length - 1]?.date || todayKey).slice(0, 10);
-    const start = addCalendarDaysToDateKey(end, -(len - 1));
-    const alt = pseudoHistory.filter((p) => p.date >= start && p.date <= end);
-    if (alt.length >= 2) {
-      selectedPh = alt;
-    }
-  }
-  const dateSet = new Set(selectedPh.map((p) => p.date));
-  const sliceRows = mergedFull.filter((row) => dateSet.has(row.date));
-
-  const modePts = sliceRows.map((r) => ({
-    date: r.date,
-    value: analysisTotalAssetsFromRow(r),
-    flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
-  }));
-  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const bundle = buildAnalysisChartsSeriesBundle({
-    modePts,
-    selectedPh,
-    useMwrUi,
-    algoMode: state.algoMode,
-    perfSnap: perfSnap ?? null,
-  });
-  const mySeries = bundle.mySeries;
-  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
-  let headlineMwrPub = 0;
-  if (useMwrUi && sliceRows.length) {
-    if (bundle.cacheHeadlineMwr != null && Number.isFinite(bundle.cacheHeadlineMwr)) {
-      headlineMwrPub = bundle.cacheHeadlineMwr;
-    } else {
-      headlineMwrPub = analysisXirrForStage(
-        mergedFull,
-        String(sliceRows[0].date).slice(0, 10),
-        String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
-      );
-    }
-  }
-  bindRateOnly(mySeries, benchSeries, { mwrUi: useMwrUi, headlineMwr: headlineMwrPub });
-  const pubAssetIdx = sliceRows.map((r) => ({
-    date: r.date,
-    value: Number(r.totalAssets) || Number(r.marketValue) || 0,
-  }));
-  paintPublicProfileMarketIndexChart(pubMkt, pubMktTip, pubAssetIdx, refresh);
-  if (pubRatio) {
-    paintPublicProfileCashRatioChart(pubRatio, pubRatioTip, sliceRows, refresh);
-  }
-  renderAnalysisStockRank(pseudoHistory, scope, portfolio, pubRank, rankOpts);
-}
-
-async function renderPublicProfileAnalysis(d) {
-  const detail = d || state.lastPublicProfileDetail;
-  if (!detail?.publicTrades || !Array.isArray(detail.publicTrades)) {
-    return;
-  }
-  ensurePublicProfileAnalysisUi();
-  const targetId = String(detail.userId || state.communityProfileUserId || "").trim();
-  if (apiReady && targetId) {
-    const stage = metricsStageFromAnalysis();
-    const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
-    const pubParams = { accountScope: "all", stage };
-    if (benchSym) {
-      pubParams.symbol = benchSym;
-    }
-    const pubBundle = await fetchMetricsApi("/metrics/analysis-bundle", pubParams, targetId);
-    const pubSeries = pubBundle?.series || {};
-    const fullPubTwrPts = pubSeries.stageRate || [];
-    const profitPts = pubSeries.stageProfit || [];
-    const benchPack = pubBundle?.benchmark;
-    const fullPubBenchPts = benchPack?.points || [];
-    const rankPack = pubBundle?.stockRank;
-    const retPack = pubBundle?.returns;
-    if (fullPubTwrPts.length || profitPts.length) {
-      resetAnalysisChartViewport();
-      await withPublicProfileAnalysisUiAsync(async () => {
-        const pubRate = document.getElementById("pubAnalysisRateChart");
-        const pubMkt = document.getElementById("pubAnalysisMarketChart");
-        const pubRank = document.getElementById("pubAnalysisStockRankBody");
-        const pubRateSummary = document.getElementById("pubAnalysisRateSummary");
-        const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-        let mySeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(fullPubTwrPts));
-        let benchSeries = analysisRateSeriesForChart(trimMetricsSeriesPoints(fullPubBenchPts));
-        const assetChartRows = analysisAssetChartRowsFromSeries(pubSeries);
-        const assetIdx = trimMetricsSeriesPoints(assetChartRows).map((r) => ({
-          date: r.date,
-          value: Number(r.totalAssets) || 0,
-        }));
-        let pubTwrPts = trimMetricsSeriesPoints(fullPubTwrPts);
-        let pubBenchPts = trimMetricsSeriesPoints(fullPubBenchPts);
-        const refresh = () => void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-        let pubRatePayload = null;
-        const redrawPubRate = () => {
-          if (!pubRate) {
-            return null;
-          }
-          pubTwrPts = trimMetricsSeriesPoints(fullPubTwrPts);
-          pubBenchPts = trimMetricsSeriesPoints(fullPubBenchPts);
-          mySeries = analysisRateSeriesForChart(pubTwrPts);
-          benchSeries = analysisRateSeriesForChart(pubBenchPts);
-          pubRatePayload = useMwrUi
-            ? drawAnalysisMwrRatePlaceholder(pubRate, "资金加权收益率只算总值、不算每日走势。")
-            : drawLineChart(mySeries, benchSeries, pubRate);
-          return pubRatePayload;
-        };
-        if (pubRate) {
-          redrawPubRate();
-          bindInteractiveChart(pubRate, document.getElementById("pubAnalysisRateTooltip"), () => pubRatePayload, {
-            mode: "analysis",
-            onRefresh: refresh,
-            onRedraw: redrawPubRate,
-            chartNavTotal: () => Math.max(fullPubTwrPts.length, fullPubBenchPts.length),
-            valueFormatter: (_value, key) => {
-              const date = state.chartCrosshairMap[pubRate.id]?.date;
-              if (key === "benchmark") {
-                const pt = pubBenchPts.find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
-                return bundleFmtText(pt?.rate ?? pt?.rateDisplay);
-              }
-              const pt = pubTwrPts.find((p) => String(p.date).slice(0, 10) === String(date).slice(0, 10));
-              return bundleFmtText(pt?.rate);
-            },
-          });
-          if (pubRateSummary) {
-            pubRateSummary.textContent = useMwrUi
-              ? `我的收益率 ${bundleFmtText(retPack?.rate)}`
-              : `我的收益率 ${bundleFmtText(retPack?.rate)}`;
-          }
-        }
-        if (pubMkt) paintPublicProfileMarketIndexChart(pubMkt, document.getElementById("pubAnalysisMarketTooltip"), assetIdx, refresh);
-        paintStockRankFromBundle(rankPack, pubRank, { publicStockRankLayout: true });
-      });
-      syncCommunityProfileAnalysisControls();
-      return;
-    }
-  }
-  await withPublicTradesContextAsync(detail, async () => {
-    await withPublicProfileAnalysisUiAsync(async () => {
-      const scope = { accountId: "all", trades: state.trades, cashTransfers: [] };
-      const portfolio = computePortfolio(scope.trades, []);
-      const todayKey = toDateKey(new Date());
-      const dbRows = Array.isArray(detail.analysisDaily) ? detail.analysisDaily : [];
-      if (!dbRows.length) {
-        paintPublicProfileAnalysisCore(detail, {
-          useDbRows: false,
-          dbRows: [],
-          portfolio,
-          scope,
-          todayKey,
-          liveByMode: { twr: 0, mwr: 0 },
-        });
-        return;
-      }
-      const sorted = [...dbRows].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-      const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, []);
-      const mergedFull = mergeAnalysisSliceWithLive(
-        sorted.map((row) => ({ ...row })),
-        portfolio,
-        todayKey,
-        liveByMode,
-        scope.cashTransfers,
-      );
-      const pseudoHistory = mergedFull.map((row) => ({
-        date: row.date,
-        value: analysisTotalAssetsFromRow(row),
-        flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
-      }));
-      const perfPresetKey = resolvePerformancePresetKeyFromStateLike(state);
-      let selectedPh = resolveAnalysisRange(pseudoHistory);
-      if (
-        perfPresetKey &&
-        (perfPresetKey === "last_7d" || perfPresetKey === "last_30d" || perfPresetKey === "last_90d") &&
-        Number(state.analysisPanOffset || 0) === 0
-      ) {
-        const len = perfPresetKey === "last_7d" ? 7 : perfPresetKey === "last_30d" ? 30 : 90;
-        const end = String(mergedFull[mergedFull.length - 1]?.date || todayKey).slice(0, 10);
-        const start = addCalendarDaysToDateKey(end, -(len - 1));
-        const alt = pseudoHistory.filter((p) => p.date >= start && p.date <= end);
-        if (alt.length >= 2) {
-          selectedPh = alt;
-        }
-      }
-      const symSet = new Set();
-      for (const pos of portfolio.positions || []) {
-        const ns = normalizeSymbol(pos.symbol);
-        if (ns) {
-          symSet.add(ns);
-        }
-      }
-      if (state.benchmark !== "none") {
-        const nb = normalizeSymbol(state.benchmark);
-        if (nb) {
-          symSet.add(nb);
-        }
-      }
-      const win = Math.min(900, Math.max(120, selectedPh.length + 200));
-      await fetchSymbolCloseIntoKlineMap([...symSet], win);
-      let perfSnap = null;
-      if (apiReady && perfPresetKey && detail.userId) {
-        perfSnap = await fetchCommunityPerformancePresetRemote(String(detail.userId), perfPresetKey);
-      }
-      paintPublicProfileAnalysisCore(detail, {
-        useDbRows: true,
-        dbRows,
-        portfolio,
-        scope,
-        todayKey,
-        liveByMode,
-        perfSnap,
-      });
-    });
-  });
-  syncCommunityProfileAnalysisControls();
-}
-
 let lastCommunityDataKey = "";
+
+async function loadCommunityPublicTrades(targetId) {
+  const uid = String(targetId || state.communityProfileUserId || "").trim();
+  if (!uid || !apiReady) {
+    return;
+  }
+  const tb = document.getElementById("pubTradeTableBody");
+  if (state.communityPublicTradesPack?.rows) {
+    renderPublicTradeTable();
+    return;
+  }
+  if (tb) {
+    tb.innerHTML = `
+      <tr>
+        <td colspan="5"><p class="empty">加载中…</p></td>
+      </tr>
+    `;
+  }
+  try {
+    const base = getApiBaseForFetch();
+    const r = await apiFetch(`${base}/public/${encodeURIComponent(uid)}/trades`, {
+      cache: "no-store",
+      timeoutMs: 25_000,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      state.communityPublicTradesPack = null;
+      if (tb) {
+        tb.innerHTML = `<tr><td colspan="5"><p class="empty">${escapeHtml(j?.error || "加载失败")}</p></td></tr>`;
+      }
+      return;
+    }
+    state.communityPublicTradesPack = j.data;
+    await hydrateSymbolNameMap((j.data?.rows || []).map((row) => row?.symbol));
+    renderPublicTradeTable();
+  } catch {
+    state.communityPublicTradesPack = null;
+    if (tb) {
+      tb.innerHTML = `<tr><td colspan="5"><p class="empty">网络错误</p></td></tr>`;
+    }
+  }
+}
 
 async function loadCommunityProfileDetail() {
   if (!communityProfileBody || !state.communityProfileUserId) {
@@ -5899,31 +5712,37 @@ async function loadCommunityProfileDetail() {
   if (communityProfileTitle) {
     communityProfileTitle.textContent = "加载中…";
   }
+  state.publicEarningBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
+  state.communityPublicTradesPack = null;
+  state.publicAnalysisBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
   try {
-    const r = await apiFetch(
-      `${getApiBaseForFetch()}/community/users/${encodeURIComponent(uid)}/profile`,
-      { cache: "no-store" },
-    );
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 404) {
+    const base = getApiBaseForFetch();
+    const enc = encodeURIComponent(uid);
+    const profileRes = await apiFetch(`${base}/community/users/${enc}/profile`, { cache: "no-store" });
+    const profileJson = await profileRes.json().catch(() => ({}));
+    if (profileRes.status === 404) {
       communityProfileBody.innerHTML = `<p class="empty">用户未公开或不可见</p>`;
       return;
     }
-    if (!r.ok || !j?.ok) {
-      communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+    if (!profileRes.ok || !profileJson?.ok) {
+      communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(profileJson?.error || "加载失败")}</p>`;
       return;
     }
-    const d = j.data;
+    const d = profileJson.data;
     state.lastPublicProfileDetail = d;
-    mergeFxRatesFromAnalysisDailyRows(Array.isArray(d?.analysisDaily) ? d.analysisDaily : []);
-    await hydrateSymbolNameMap([
-      ...(d?.positions || []).map((row) => row?.symbol),
-      ...(d?.topPositions || []).map((row) => row?.symbol),
-      ...(d?.publicTrades || []).map((row) => row?.symbol),
-    ]);
-    seedPublicProfileAnalysisUiFromDetail(d);
-    const psr = String(d.publicStageRange || "month");
-    state.communityProfileStage = ["month", "ytd", "total"].includes(psr) ? psr : "month";
+
     if (communityProfileTitle) {
       communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
     }
@@ -5939,20 +5758,17 @@ async function loadCommunityProfileDetail() {
         communityProfileFollowSlot.innerHTML = "";
       }
     }
-    await refreshMarketData({ skipFinalRender: true });
     communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
-    bindPublicProfileStageSelect();
-    syncPublicProfileStockSortControls();
-    bindPublicProfileAnalysisInteractions(d);
-    renderPublicTradeTable(d);
-    syncCommunityProfileAnalysisControls();
+    mountPublicCommunityStockTableHead();
     renderRoute();
-    window.setTimeout(() => {
-      if (state.route !== "community-profile" || state.lastPublicProfileDetail !== d) {
-        return;
-      }
-      void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-    }, 0);
+    const tab = state.communityProfileTab || "earning";
+    if (tab === "earning") {
+      void loadPublicEarningTabData(uid);
+    } else if (tab === "trade") {
+      void loadCommunityPublicTrades(uid);
+    } else if (tab === "analysis") {
+      void openCommunityProfileAnalysisTab();
+    }
   } catch {
     communityProfileBody.innerHTML = `<p class="empty">网络错误</p>`;
   } finally {
@@ -6125,6 +5941,13 @@ function renderRoute() {
     state.route = state.appModule === "community" ? "community-feed" : "earning";
   }
   const routeChanged = state.route !== lastRenderedRouteForScrollReset;
+  if (
+    routeChanged &&
+    lastRenderedRouteForScrollReset === "community-profile" &&
+    state.route !== "community-profile"
+  ) {
+    unmountCommunityAnalysisRoutePane();
+  }
   if (appHeaderTitle) {
     if (state.route === "trade-search") {
       appHeaderTitle.textContent = "搜索股票";
@@ -6200,9 +6023,6 @@ function renderRoute() {
     bar.style.display = show ? "grid" : "none";
   });
   scheduleCommunityDataLoad();
-  if (state.route === "community-profile") {
-    syncPublicProfileStockSortControls();
-  }
   if (!browserHistorySeeded) {
     syncBrowserRouteHistory("replace");
     browserHistorySeeded = true;
@@ -6218,27 +6038,6 @@ function renderRoute() {
     });
   }
   lastRenderedRouteForScrollReset = state.route;
-}
-
-function syncPublicProfileStockSortControls() {
-  document.querySelectorAll(".public-profile-stock-table .th-sort-btn").forEach((button) => {
-    const key = button.dataset.sortKey || "";
-    button.classList.remove("asc", "desc", "active");
-    if (state.publicStockSortOrder !== "default" && key === state.publicStockSortKey) {
-      button.classList.add("active", state.publicStockSortOrder);
-    }
-  });
-}
-
-function refreshPublicProfileEarningPanel() {
-  const d = state.lastPublicProfileDetail;
-  const earningPane = document.querySelector('[data-profile-panel="earning"]');
-  if (!earningPane || !d?.publicTrades) {
-    return;
-  }
-  earningPane.innerHTML = renderPublicEarningProfileHtml(d);
-  bindPublicProfileStageSelect();
-  syncPublicProfileStockSortControls();
 }
 
 function invalidateOverviewMetricsUi() {
@@ -6313,7 +6112,7 @@ function formatOverviewStockRatioFromTotals(totalAssetsBook, marketValueBook) {
   return `${formatNumber((mv / ta) * 100, 2)}%`;
 }
 
-/** 总览 KPI 六项：总资产、总市值 | 现金、本金 | 现金占比、股票占比。 */
+/** 总览 KPI 六项：总资产、总市值 | 现金、本金 | 现金占比、股票占比。ratiosOnly 仅两项占比（他人公开收益 Tab）。 */
 function buildOverviewKpiEntries({
   totalAssets,
   marketValue,
@@ -6321,7 +6120,14 @@ function buildOverviewKpiEntries({
   stockRatio,
   cashRatio,
   principal,
+  ratiosOnly,
 }) {
+  if (ratiosOnly) {
+    return [
+      { label: "现金占比", value: cashRatio },
+      { label: "股票占比", value: stockRatio },
+    ];
+  }
   return [
     { label: "总资产", value: totalAssets },
     { label: "总市值", value: marketValue },
@@ -7186,20 +6992,6 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
   return qty;
 }
 
-function bundleDisplayTone(displayText) {
-  const s = String(displayText || "").trim();
-  if (!s || s === "—") {
-    return "";
-  }
-  if (s.startsWith("+")) {
-    return "up";
-  }
-  if (s.startsWith("-")) {
-    return "down";
-  }
-  return "";
-}
-
 function mapStockRankBundleRow(row) {
   const name = String(row.name || "").trim() || String(row.symbol || "").trim();
   const profitText = String(row.profit ?? row.profitCny ?? "").trim() || "—";
@@ -7210,6 +7002,7 @@ function mapStockRankBundleRow(row) {
   const pxTone = String(row.pxTone || "").trim();
   const profitSort = parseBundleSignedAmount(profitText);
   return {
+    rank: Number(row.rank) || 0,
     symbol: row.symbol,
     name,
     holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
@@ -7267,9 +7060,10 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
           const profitCell = hideProfitCol
             ? ""
             : `<span class="col-profit ${cls}" role="cell">${escapeHtml(row.profit)}</span>`;
+          const rankNum = publicRank && row.rank ? row.rank : idx + 1;
           return `
         <div class="analysis-stock-rank-row" role="row">
-          <span class="col-rank" role="cell">${idx + 1}</span>
+          <span class="col-rank" role="cell">${rankNum}</span>
           <div class="col-name" role="cell">
             <strong>${escapeHtml(getDisplayName(row.symbol, row.name))}</strong>
           </div>
@@ -7293,7 +7087,11 @@ function paintStockRankFromBundle(rankPayload, targetBody, rankOpts = {}) {
     targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
     return;
   }
-  rows.sort((a, b) => b.profitSort - a.profitSort);
+  if (rankOpts.publicStockRankLayout === true) {
+    rows.sort((a, b) => (Number(a.rank) || 0) - (Number(b.rank) || 0));
+  } else {
+    rows.sort((a, b) => b.profitSort - a.profitSort);
+  }
   targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
@@ -7317,8 +7115,7 @@ function renderAnalysisStockRank(
     return;
   }
   const { a, b } = resolveAnalysisPeriodAB(history);
-  const book = getOverviewBookCurrency();
-  const draftRows = [];
+  const rows = [];
   for (const pos of portfolio.positions) {
     const symbolTrades = scope.trades.filter((t) => t.symbol === pos.symbol).sort(sortTradeAsc);
     if (!symbolTrades.length) {
@@ -7339,38 +7136,19 @@ function renderAnalysisStockRank(
     }
     const m = computePositionPeriodMetrics(pos, effStart, effEnd, scope.trades);
     const profitCny = profitNativeToAnalysisCny(pos, m.profitNative);
-    const profitNum = amountBookFromCny(profitCny, book);
     const holdIntervalsLabel = publicHoldIntervals
       ? formatHoldingSegmentsLabelPublic(pos, symbolTrades, a, b, scope.trades)
       : formatHoldingSegmentsLabel(pos, symbolTrades, a, b, scope.trades);
-    draftRows.push({
+    rows.push({
       symbol: pos.symbol,
       name: pos.name,
       holdIntervalsLabel,
-      profitNum,
+      profitCny,
       pxChange: m.pxChange,
       heldDays: m.heldDays,
     });
   }
-  const totalProfitNum = draftRows.reduce((s, r) => s + r.profitNum, 0);
-  const rows = draftRows.map((r) => {
-    const profitTone = r.profitNum > 0 ? "up" : r.profitNum < 0 ? "down" : "";
-    const pxTone = r.pxChange > 0 ? "up" : r.pxChange < 0 ? "down" : "";
-    const shareRatio = Math.abs(totalProfitNum) < 1e-6 ? NaN : r.profitNum / totalProfitNum;
-    return {
-      symbol: r.symbol,
-      name: r.name,
-      holdIntervalsLabel: r.holdIntervalsLabel,
-      profit: formatSignedMoneyInBook(r.profitNum, book),
-      pxChange: formatPercent(r.pxChange),
-      heldDays: `${Math.max(0, Math.floor(Number(r.heldDays) || 0))}天`,
-      profitShare: Number.isFinite(shareRatio) ? formatPercent(shareRatio) : "—",
-      profitTone,
-      pxTone,
-      profitSort: r.profitNum,
-    };
-  });
-  rows.sort((a, b) => b.profitSort - a.profitSort);
+  rows.sort((a, b) => b.profitCny - a.profitCny);
   targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
@@ -8103,7 +7881,54 @@ function bundleSignedClass(text) {
   return "";
 }
 
-function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
+function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpts) {
+  let stageKey = metricsStageFromHome();
+  let opts = {};
+  if (typeof stageKeyOrOpts === "string") {
+    stageKey = stageKeyOrOpts;
+  } else if (stageKeyOrOpts && typeof stageKeyOrOpts === "object") {
+    opts = stageKeyOrOpts;
+    if (opts.stageKey) {
+      stageKey = opts.stageKey;
+    }
+  }
+
+  if (opts.mode === "public") {
+    if (!returns?.stages || !assets || !holdings) {
+      return false;
+    }
+    const stages = returns.stages;
+    for (const def of PUBLIC_EARNING_STAGE_DEFS) {
+      const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
+      if (el) {
+        const row = stages[def.key];
+        el.innerHTML = formatBundleRateOnlyHtml(row?.rate);
+        el.className = `pub-stage-rate profit-main ${bundleSignedClass(row?.rate)}`;
+      }
+    }
+    const grid = document.getElementById("pubOverviewGrid");
+    if (grid) {
+      grid.innerHTML = buildOverviewKpiGridInnerHtml(
+        buildOverviewKpiEntries({
+          stockRatio: bundleFmtText(assets.stockRatio),
+          cashRatio: bundleFmtText(assets.cashRatio),
+          ratiosOnly: true,
+        }),
+      );
+    }
+    const holdRows = holdings.rows || [];
+    for (const row of holdRows) {
+      const label = String(row.name || "").trim();
+      if (label) {
+        upsertNameMapEntry(row.symbol, label);
+      }
+    }
+    mountPublicCommunityStockTableHead();
+    paintStockTableFromMetricsRows(holdRows, getPublicStockTableCtx());
+    applyPublicEarningMetaToUi(state.publicEarningBundleUi?.meta);
+    return true;
+  }
+
   if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
     return false;
   }
@@ -9001,15 +8826,24 @@ function overviewStockNameColWidthPx() {
   return Math.max(nameW, headW);
 }
 
-function measureOverviewStockColWidths(measureCellText) {
-  const headers = readOverviewStockTableHeaderLabels();
-  const widths = headers.map((label) =>
-    Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X),
-  );
+function readStockTableHeaderLabelsForCtx(ctx) {
+  const all = readOverviewStockTableHeaderLabels();
+  const indices = stockTableVisibleColIndices(ctx);
+  return indices.map((col) => all[col] || "");
+}
+
+function measureStockTableColWidths(measureCellText, ctx) {
+  const indices = stockTableVisibleColIndices(ctx);
+  const allHeaders = readOverviewStockTableHeaderLabels();
+  const widths = indices.map((col) => {
+    const label = allHeaders[col] || "";
+    return Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X);
+  });
   const modes = ["cny", "native"];
   for (const row of measureCellText.rows || []) {
     for (const mode of modes) {
-      for (let col = 0; col < OVERVIEW_STOCK_TABLE_COL_COUNT; col += 1) {
+      for (let vi = 0; vi < indices.length; vi += 1) {
+        const col = indices[vi];
         if (col === 0) {
           continue;
         }
@@ -9020,27 +8854,34 @@ function measureOverviewStockColWidths(measureCellText) {
           if (!t) {
             continue;
           }
-          widths[col] = Math.max(
-            widths[col],
+          widths[vi] = Math.max(
+            widths[vi],
             Math.ceil(measureStockTableTextPx(t, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
           );
         }
       }
     }
   }
-  widths[0] = overviewStockNameColWidthPx();
-  widths[14] = Math.max(
-    widths[14],
-    Math.ceil(measureStockTableTextPx("记录  交易", STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
-  );
+  const nameVi = indices.indexOf(0);
+  if (nameVi >= 0) {
+    widths[nameVi] = overviewStockNameColWidthPx();
+  }
+  const opVi = indices.indexOf(14);
+  if (opVi >= 0) {
+    widths[opVi] = Math.max(
+      widths[opVi],
+      Math.ceil(measureStockTableTextPx(ctx.opProbeText, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
+    );
+  }
   return widths.map((w) => w + 2);
 }
 
-function applyOverviewStockTableColWidths(widths) {
-  const table = stockTableBody?.closest("table.stock-table");
+function applyStockTableColWidths(ctx, widths) {
+  const table = ctx.table;
   if (!table || !widths?.length) {
     return;
   }
+  const indices = stockTableVisibleColIndices(ctx);
   let colgroup = table.querySelector("colgroup");
   if (!colgroup) {
     colgroup = document.createElement("colgroup");
@@ -9048,46 +8889,73 @@ function applyOverviewStockTableColWidths(widths) {
   }
   colgroup.replaceChildren();
   let sum = 0;
-  for (const w of widths) {
-    const col = document.createElement("col");
-    col.style.width = `${w}px`;
-    colgroup.appendChild(col);
+  for (let vi = 0; vi < widths.length; vi += 1) {
+    const w = widths[vi];
+    const colEl = document.createElement("col");
+    colEl.setAttribute("data-stock-col", String(indices[vi]));
+    colEl.style.width = `${w}px`;
+    colgroup.appendChild(colEl);
     sum += w;
   }
   table.classList.add("stock-table--layout-locked");
   table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
-  table.style.setProperty("--stock-table-name-col-px", `${widths[0]}px`);
+  const nameVi = indices.indexOf(0);
+  const nameW = nameVi >= 0 ? widths[nameVi] : widths[0];
+  table.style.setProperty("--stock-table-name-col-px", `${nameW}px`);
+  if (ctx.visibleColIndices) {
+    table.style.minWidth = `max(100%, ${sum}px)`;
+  } else {
+    table.style.removeProperty("min-width");
+  }
 }
 
-function clearOverviewStockTableColLayout() {
-  overviewStockColWidthCache = { key: "", widths: null };
-  const table = stockTableBody?.closest("table.stock-table");
+function clearStockTableColLayout(ctx) {
+  ctx.widthCache.key = "";
+  ctx.widthCache.widths = null;
+  const table = ctx.table;
   if (!table) {
     return;
   }
   table.classList.remove("stock-table--layout-locked");
   table.style.removeProperty("--stock-table-layout-width-px");
   table.style.removeProperty("--stock-table-name-col-px");
+  table.style.removeProperty("min-width");
   table.querySelector("colgroup")?.remove();
 }
 
-function ensureOverviewStockTableColWidths(rows, measureCell) {
+function ensureStockTableColWidths(rows, ctx, measureCell) {
   if (!rows?.length) {
-    clearOverviewStockTableColLayout();
+    clearStockTableColLayout(ctx);
     return;
   }
-  const key = overviewStockTableLayoutCacheKey(rows);
-  if (overviewStockColWidthCache.key === key && overviewStockColWidthCache.widths) {
-    applyOverviewStockTableColWidths(overviewStockColWidthCache.widths);
+  const key = ctx.layoutCacheKey(rows);
+  if (ctx.widthCache.key === key && ctx.widthCache.widths) {
+    applyStockTableColWidths(ctx, ctx.widthCache.widths);
     return;
   }
-  const widths = measureOverviewStockColWidths({
-    rows,
-    fn: measureCell.fn,
-    ctx: measureCell.ctx,
-  });
-  overviewStockColWidthCache = { key, widths };
-  applyOverviewStockTableColWidths(widths);
+  const widths = measureStockTableColWidths(
+    {
+      rows,
+      fn: measureCell.fn,
+      ctx: measureCell.ctx,
+    },
+    ctx,
+  );
+  ctx.widthCache.key = key;
+  ctx.widthCache.widths = widths;
+  applyStockTableColWidths(ctx, widths);
+}
+
+function clearOverviewStockTableColLayout() {
+  clearStockTableColLayout(getPrivateStockTableCtx());
+}
+
+function applyOverviewStockTableColWidths(widths) {
+  applyStockTableColWidths(getPrivateStockTableCtx(), widths);
+}
+
+function ensureOverviewStockTableColWidths(rows, measureCell) {
+  ensureStockTableColWidths(rows, getPrivateStockTableCtx(), measureCell);
 }
 
 function metricsHoldingsRowCellTexts(row, col, displayMode) {
@@ -9220,36 +9088,93 @@ function metricsHoldingsMoneyCell(row, fieldBase, displayMode = null) {
   return text;
 }
 
-function paintOverviewStockTableFromMetricsRows(rows) {
-  if (!stockTableBody) return;
-  const sorted = sortMetricsHoldingsRows(rows);
-  if (!sorted.length) {
-    clearOverviewStockTableColLayout();
-    stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+function buildMetricsHoldingsCellTd(row, col, ctx) {
+  const sym = normalizeSymbol(row.symbol);
+  const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
+  const dayClass = bundleSignedClass(row.dayChange);
+  const todayClass = metricsRowProfitClass(row, "todayProfit");
+  const monthClass = metricsRowProfitClass(row, "monthProfit");
+  const yearClass = metricsRowProfitClass(row, "yearProfit");
+  const totalClass = metricsRowProfitClass(row, "totalProfit");
+  const totalRateClass = bundleSignedClass(row.totalRate);
+  const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+  const qty = bundleFmtText(row.quantity);
+  const symEsc = escapeHtml(sym);
+  const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">记录</a>`;
+  const tradeLink = ctx.showTradeLink
+    ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}">交易</a>`
+    : "";
+  const attr = ` data-stock-col="${col}"`;
+  switch (col) {
+    case 0:
+      return `<td${attr} class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>`;
+    case 1:
+      return `<td${attr} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>`;
+    case 2:
+      return `<td${attr}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>`;
+    case 3:
+      return `<td${attr}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>`;
+    case 4:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.weight))}</td>`;
+    case 5:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.cost))}</td>`;
+    case 6:
+      return `<td${attr} class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td>`;
+    case 7:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.monthWeight))}</td>`;
+    case 8:
+      return `<td${attr} class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td>`;
+    case 9:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.yearWeight))}</td>`;
+    case 10:
+      return `<td${attr} class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td>`;
+    case 11:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.totalWeight))}</td>`;
+    case 12:
+      return `<td${attr} class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>`;
+    case 13:
+      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
+    case 14:
+      return `<td${attr} class="stock-table-op-cell">${recordLink}${tradeLink}</td>`;
+    default:
+      return `<td${attr}></td>`;
+  }
+}
+
+function buildMetricsHoldingsRowHtml(row, ctx) {
+  const indices = stockTableVisibleColIndices(ctx);
+  const cells = indices.map((col) => buildMetricsHoldingsCellTd(row, col, ctx)).join("");
+  return `<tr>${cells}</tr>`;
+}
+
+function paintStockTableFromMetricsRows(rows, ctx) {
+  const tbody = ctx.tbody;
+  if (!tbody) {
     return;
   }
-  ensureOverviewStockTableColWidths(sorted, {
+  const colCount = stockTableVisibleColCount(ctx);
+  const sorted = sortMetricsHoldingsRows(rows);
+  if (!sorted.length) {
+    clearStockTableColLayout(ctx);
+    tbody.innerHTML = `<tr><td colspan="${colCount}"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+    return;
+  }
+  ensureStockTableColWidths(sorted, ctx, {
     fn: metricsHoldingsRowCellTexts,
     ctx: null,
   });
-  stockTableBody.innerHTML = sorted.map((row) => {
-    const sym = normalizeSymbol(row.symbol);
-    const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
-    const dayClass = bundleSignedClass(row.dayChange);
-    const todayClass = metricsRowProfitClass(row, "todayProfit");
-    const monthClass = metricsRowProfitClass(row, "monthProfit");
-    const yearClass = metricsRowProfitClass(row, "yearProfit");
-    const totalClass = metricsRowProfitClass(row, "totalProfit");
-    const totalRateClass = bundleSignedClass(row.totalRate);
-    const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
-    const qty = bundleFmtText(row.quantity);
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(sym)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
-  }).join("");
+  tbody.innerHTML = sorted.map((row) => buildMetricsHoldingsRowHtml(row, ctx)).join("");
+  syncStockTableSortHeaderUi(ctx);
 }
-function analysisAssetChartRowsFromSeries(series) {
+
+function paintOverviewStockTableFromMetricsRows(rows) {
+  paintStockTableFromMetricsRows(rows, getPrivateStockTableCtx());
+}
+function analysisAssetChartRowsFromSeries(series, opts = {}) {
   if (!series || typeof series !== "object") {
     return [];
   }
+  const normalized = opts.normalizedAmounts === true;
   const dateSet = new Set();
   for (const key of ["totalAssets", "marketValue", "cash", "cashRatio"]) {
     for (const p of series[key] || []) {
@@ -9266,6 +9191,9 @@ function analysisAssetChartRowsFromSeries(series) {
     }
     if (metric === "cashRatio") {
       return parseBundlePercentChart(hit.cashRatio);
+    }
+    if (normalized) {
+      return parseBundlePlainNumber(hit[metric]) ?? 0;
     }
     return parseBundleSignedAmount(hit[metric]);
   };
@@ -9342,7 +9270,8 @@ function bindAnalysisMetricsChartsInteractive() {
     onRefresh: ctx.refreshAnalysisView,
     onRedraw: ctx.redrawChartsOnly,
     ...chartNav,
-    valueFormatter: (value) => formatNumber(value, 2),
+    valueFormatter: (value) =>
+      typeof ctx.profitValueFormatter === "function" ? ctx.profitValueFormatter(value) : formatNumber(value, 2),
   });
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => ctx.payloads.asset, {
     mode: "analysis",
@@ -9353,18 +9282,34 @@ function bindAnalysisMetricsChartsInteractive() {
   });
 }
 
-async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "", opts = {}) {
-  const stage = metricsStageFromAnalysis();
-  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-  const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
-  const bundleParams = { accountScope: aid, stage };
-  if (benchSym) {
-    bundleParams.symbol = benchSym;
+async function refreshAnalysisMetricsView(opts = {}) {
+  const pubTid = communityAnalysisTargetId();
+  if (pubTid) {
+    state.publicAnalysisBundleUi.ready = false;
+    await loadPublicAnalysisTabData(pubTid);
+    return;
   }
-  const bundle = await fetchMetricsApi("/metrics/analysis-bundle", bundleParams, publicTargetId);
+  if (state.route === "analysis") {
+    await renderAnalysis(opts);
+  }
+}
+
+async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "", opts = {}) {
+  const isPublicView = !!String(publicTargetId || "").trim();
+  const stage = metricsStageFromAnalysis();
+  const aid = isPublicView ? "all" : state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
+  const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
+  let bundle = opts.bundle || null;
+  if (!bundle) {
+    const bundleParams = { account_id: aid, stage };
+    if (benchSym) {
+      bundleParams.symbol = benchSym;
+    }
+    bundle = await fetchMetricsApi("/analysis-bundle", bundleParams, publicTargetId);
+  }
   const series = bundle?.series || {};
-  const fullTwrPts = series.stageRate || [];
-  const fullProfitPts = series.stageProfit || [];
+  const fullTwrPts = series.stageRate || series.dailyTwr || [];
+  const fullProfitPts = series.stageProfit || series.dailyProfit || [];
   const benchPack = bundle?.benchmark;
   const fullBenchPts = benchPack?.points || [];
   const rankPack = bundle?.stockRank;
@@ -9374,26 +9319,36 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
   if (opts.resetViewport) {
     resetAnalysisChartViewport();
   }
-  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const metaAlgo = String(bundle?.meta?.algoMode || "").trim();
+  const useMwrUi = isPublicView
+    ? normalizeProfitAlgoMode(metaAlgo || state.algoMode) === "mwr"
+    : normalizeProfitAlgoMode(state.algoMode) === "mwr";
+  const parseAmountPoint = (p) =>
+    isPublicView ? parseBundlePlainNumber(p.profit) ?? 0 : parseBundleSignedAmount(p.profit);
   const twrPtsTrim = trimMetricsSeriesPoints(fullTwrPts);
   const benchPtsTrim = trimMetricsSeriesPoints(fullBenchPts);
   const mySeries = analysisRateSeriesForChart(twrPtsTrim);
   const benchSeries = analysisRateSeriesForChart(benchPtsTrim);
   const profitSeries = trimMetricsSeriesPoints(fullProfitPts).map((p) => ({
     date: p.date,
-    value: parseBundleSignedAmount(p.profit),
+    value: parseAmountPoint(p),
   }));
-  const fullAssetRows = analysisAssetChartRowsFromSeries(series);
+  const fullAssetRows = analysisAssetChartRowsFromSeries(series, {
+    normalizedAmounts: isPublicView,
+  });
   cachedAnalysisAssetChartRows = trimMetricsSeriesPoints(fullAssetRows);
 
   const refreshAnalysisView = () => {
     renderControls();
-    void renderAnalysis({ showLoading: false });
+    void refreshAnalysisMetricsView({ showLoading: false });
   };
   const assetValueFormatter = (value) =>
     state.capitalTrendMode === "cash_ratio"
       ? `${formatNumber(value, 2)}%`
-      : formatNumber(analysisSnapshotMoneyFromCny(value), 2);
+      : isPublicView
+        ? formatNumber(value, 4)
+        : formatNumber(analysisSnapshotMoneyFromCny(value), 2);
+  const profitValueFormatter = (v) => formatNumber(v, isPublicView ? 4 : 2);
 
   const rebuildVisibleAnalysisSeries = () => {
     const c = cachedAnalysisMetricsCharts;
@@ -9408,7 +9363,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     c.benchSeries = analysisRateSeriesForChart(benchTrim);
     c.profitSeries = trimMetricsSeriesPoints(c.fullProfitPts).map((p) => ({
       date: p.date,
-      value: parseBundleSignedAmount(p.profit),
+      value: c.isPublicView ? parseBundlePlainNumber(p.profit) ?? 0 : parseBundleSignedAmount(p.profit),
     }));
     cachedAnalysisAssetChartRows = trimMetricsSeriesPoints(c.fullAssetRows);
   };
@@ -9434,8 +9389,8 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
         yAxisMode: "left",
         leftLabel: "",
         xLabel: "",
-        valueFormatter: (v) => formatNumber(v, 2),
-        axisFormatter: (v) => formatNumber(v, 2),
+        valueFormatter: profitValueFormatter,
+        axisFormatter: profitValueFormatter,
         yRangePadding: {
           minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
           maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
@@ -9456,10 +9411,12 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     benchSeries,
     profitSeries,
     useMwrUi,
+    isPublicView,
     refreshAnalysisView,
     redrawChartsOnly,
     rebuildVisibleAnalysisSeries,
     assetValueFormatter,
+    profitValueFormatter,
     payloads: {
       rate: null,
       profit: null,
@@ -9483,9 +9440,13 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     }
   }
   if (analysisProfitSummary && retPack) {
-    analysisProfitSummary.textContent = `累计收益 ${bundleFmtText(retPack.profit)}`;
+    analysisProfitSummary.textContent = isPublicView
+      ? `相对首日 ${bundleFmtText(retPack.profit)}`
+      : `累计收益 ${bundleFmtText(retPack.profit)}`;
   }
-  paintStockRankFromBundle(rankPack, analysisStockRankBody, {});
+  paintStockRankFromBundle(rankPack, analysisStockRankBody, {
+    publicStockRankLayout: isPublicView,
+  });
   if (analysisEodAccountCaption) {
     analysisEodAccountCaption.textContent = "";
     analysisEodAccountCaption.hidden = true;
@@ -10428,13 +10389,19 @@ async function openStockRecordDialog(symbol, opts = {}) {
   if (!symKey) {
     return;
   }
-  state.stockRecordFromPublicProfile = opts.fromPublicProfile === true;
+  const fromPublicProfile = opts.fromPublicProfile === true;
+  if (fromPublicProfile && state.communityProfileUserId) {
+    await loadCommunityPublicTrades(state.communityProfileUserId);
+  }
+  state.stockRecordFromPublicProfile = fromPublicProfile;
   state.activeRecordSymbol = symKey;
   state.stockRecordAccountId = "all";
   state.previousRoute = state.route;
   state.stockRecordWindow = 30;
   state.stockRecordOffset = 0;
+  state.stockRecordChartRange = "30";
   state.stockRecordBundle = null;
+  resetStockRecordChartCache();
   resetStockRecordChartPagination();
   state.stockRecordTrades = [];
   resetStockRecordTradesPager();
@@ -10459,7 +10426,7 @@ async function renderStockRecordPage(symbol) {
     return;
   }
   const detail = state.lastPublicProfileDetail;
-  const usePub = state.stockRecordFromPublicProfile && detail?.publicTrades;
+  const usePub = useCommunityPublicStockRecord();
   const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   if (!usePub && activeAccountId !== state.stockRecordAccountId) {
     state.stockRecordAccountId = activeAccountId;
@@ -10518,6 +10485,7 @@ async function renderStockRecordPage(symbol) {
     stockRecordAddTradeBtn.disabled = usePub;
     stockRecordAddTradeBtn.classList.toggle("hidden", usePub);
   }
+  syncStockRecordRangeChipUi();
 
   const recTable = stockRecordListBody?.closest("table");
   const headRow = recTable?.querySelector("thead tr");
@@ -10613,8 +10581,8 @@ async function ensureSymbolData(symbol) {
   const normalizedSymbol = normalizeSymbol(symbol);
   const legacyAlias = getLegacyUsAlias(normalizedSymbol);
   const sourceTrades =
-    state.stockRecordFromPublicProfile && Array.isArray(state.lastPublicProfileDetail?.publicTrades)
-      ? state.lastPublicProfileDetail.publicTrades
+    useCommunityPublicStockRecord() && communityPublicTradesReady()
+      ? state.communityPublicTradesPack.rows
       : state.stockRecordTrades;
   const latestTradeDate = sourceTrades
     .filter((trade) => normalizeSymbol(trade?.symbol) === normalizedSymbol)
@@ -10965,7 +10933,6 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     chartNavTotal: () => totalCount,
     valueFormatter: (value) => `${formatNumber(value, 2)}%`,
   });
-  maybeLoadStockRecordChartHistory(symbol);
 }
 
 function drawStockRecordChartLegacy(symbol, symbolTrades) {
@@ -12308,6 +12275,7 @@ function bindInteractiveChart(canvas, tooltip, payloadBuilder, options = {}) {
         return;
       }
       state.stockRecordOffset = next;
+      syncStockRecordRangeChipWithView();
       requestRefresh("redraw");
       if (next >= maxOffset && state.stockRecordChartPagination?.hasMore) {
         scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
@@ -12487,6 +12455,7 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
     nextWindow = total;
     state.stockRecordWindow = nextWindow;
     state.stockRecordOffset = 0;
+    syncStockRecordRangeChipWithView();
     if (state.stockRecordChartPagination?.hasMore) {
       scheduleStockRecordChartHistoryLoad(state.activeRecordSymbol);
     }
@@ -12495,6 +12464,7 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   state.stockRecordWindow = nextWindow;
   const maxOffset = Math.max(0, total - state.stockRecordWindow);
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset || 0)));
+  syncStockRecordRangeChipWithView();
 }
 
 async function refreshMarketData(opts = {}) {
@@ -12600,11 +12570,8 @@ async function refreshMarketData(opts = {}) {
     state.marketLoading = false;
     if (!skipFinalRender && state.route !== "analysis") {
       renderAll();
-      if (state.route === "community-profile" && state.lastPublicProfileDetail?.publicTrades) {
-        refreshPublicProfileEarningPanel();
-        if (state.communityProfileTab === "analysis") {
-          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-        }
+      if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
+        void openCommunityProfileAnalysisTab();
       }
     }
   }

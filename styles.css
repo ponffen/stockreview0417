@@ -2990,6 +2990,18 @@ body.auth-mode {
   display: block;
 }
 
+.community-profile-tab-panel[data-profile-panel="analysis"] .route-pane--community-analysis {
+  display: block;
+}
+
+.route-pane--community-analysis {
+  padding: 0;
+}
+
+.route-pane--community-analysis.active {
+  display: block;
+}
+
 /* 他人主页交易列表：名称列宽约 40% */
 /* 名称列约为原 40% 宽度时的视觉宽度（原 max 40% → 16%） */
 .public-profile-trade-table .pub-trade-col-name {

@@ -1425,6 +1425,22 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
   };
 }
 
+const { redactPublicHomeBundle } = require("./metrics/public-home-bundle-redact");
+const { redactPublicAnalysisBundle } = require("./metrics/public-analysis-bundle-redact");
+
+async function getMetricsPublicHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
+  const full = await getMetricsHomeBundle(userId, accountScope, stagesRaw, opts);
+  return redactPublicHomeBundle(full);
+}
+
+async function getMetricsPublicAnalysisBundle(userId, accountScope, stage, benchmarkSymbol, opts = {}) {
+  const full = await getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSymbol, {
+    ...opts,
+    publicRankLayout: true,
+  });
+  return redactPublicAnalysisBundle(full);
+}
+
 module.exports = {
   METRICS_RULE_VERSION,
   BENCHMARK_SYMBOLS,
@@ -1432,6 +1448,8 @@ module.exports = {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  getMetricsPublicHomeBundle,
+  getMetricsPublicAnalysisBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,

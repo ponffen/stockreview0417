@@ -796,7 +796,6 @@ const {
   getLeaderboard,
   getPublicProfileDetail,
   getPublicTrades,
-  getPublicAnalysisUiPrefs,
   enrichPublicTradesWithTencent,
   getFollowingCards,
   getFeedTrades,
@@ -815,6 +814,7 @@ const {
   getMetricsAssets,
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
+  getMetricsPublicAnalysisBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   getSeriesDailyProfit,
@@ -1268,25 +1268,6 @@ app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/public/:targetId/analysis-ui-prefs", requireAuth, async (req, res) => {
-  try {
-    const targetId = String(req.params.targetId || "").trim();
-    const data = await getPublicAnalysisUiPrefs(req.userId, targetId);
-    if (data.error === "unauthorized") {
-      res.status(401).json({ ok: false, error: "未登录" });
-      return;
-    }
-    if (data.error === "hidden") {
-      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
-      return;
-    }
-    res.set("Cache-Control", "no-store");
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "analysis ui prefs failed" });
-  }
-});
-
 app.get("/api/community/users/:targetId/performance-preset", requireAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
@@ -1703,26 +1684,27 @@ app.get("/api/series/benchmark", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, async (req, res) => {
+async function handlePublicAnalysisBundle(req, res) {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
     if (!gate.ok) {
       res.status(gate.status).json({ ok: false, error: gate.error });
       return;
     }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
+    const accountScope = metricsAccountIdFromQuery(req.query);
     const stage = String(req.query.stage || "mtd").trim() || "mtd";
     const symbol = String(req.query.symbol || "").trim();
     sendMetricsJson(
       res,
-      await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol, {
-        publicRankLayout: true,
-      }),
+      await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public analysis-bundle failed" });
   }
-});
+}
+
+app.get("/api/public/:targetId/analysis-bundle", requireAuth, handlePublicAnalysisBundle);
+app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, handlePublicAnalysisBundle);
 
 app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async (req, res) => {
   try {

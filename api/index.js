@@ -287,7 +287,7 @@ module.exports = async function handler(req, res) {
   }
 
   // analysis-bundle：与 home-bundle 相同直连策略（勿落入 Express 懒加载）
-  const isPublicAnalysisBundle = /^\/api\/public\/[^/]+\/metrics\/analysis-bundle$/.test(pathKey);
+  const isPublicAnalysisBundle = /^\/api\/public\/[^/]+\/(?:metrics\/)?analysis-bundle$/.test(pathKey);
   if (req.method === "GET" && (pathKey === "/api/metrics/analysis-bundle" || isPublicAnalysisBundle)) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -303,10 +303,10 @@ module.exports = async function handler(req, res) {
         "all";
       const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
       const symbol = String(getSearchParam(req, "symbol") || "").trim();
-      const { getMetricsAnalysisBundle } = require("../src/metrics-api-service");
-      const data = await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol, {
-        publicRankLayout: isPublicAnalysisBundle,
-      });
+      const { getMetricsAnalysisBundle, getMetricsPublicAnalysisBundle } = require("../src/metrics-api-service");
+      const data = isPublicAnalysisBundle
+        ? await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol)
+        : await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol);
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v9-analysis-bundle-stock-rank" } }));
       return;
@@ -444,48 +444,6 @@ module.exports = async function handler(req, res) {
           ok: false,
           error: error?.message || "public trades direct failed",
           build: "v8-public-trades",
-        }),
-      );
-      return;
-    }
-  }
-
-  const publicAnalysisPrefsMatch = pathKey.match(/^\/api\/public\/([^/]+)\/analysis-ui-prefs$/);
-  if (req.method === "GET" && publicAnalysisPrefsMatch) {
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    try {
-      const { readUserIdFromRequest } = require("../src/auth-session");
-      const { getPublicAnalysisUiPrefs } = require("../src/community-service");
-      const viewerId = readUserIdFromRequest(req);
-      if (!viewerId) {
-        res.statusCode = 401;
-        res.end(JSON.stringify({ ok: false, error: "未登录" }));
-        return;
-      }
-      const targetId = String(publicAnalysisPrefsMatch[1] || "").trim();
-      const data = await getPublicAnalysisUiPrefs(viewerId, targetId);
-      if (data.error === "unauthorized") {
-        res.statusCode = 401;
-        res.end(JSON.stringify({ ok: false, error: "未登录" }));
-        return;
-      }
-      if (data.error === "hidden") {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
-        return;
-      }
-      res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, data, direct: true, build: "v8-public-analysis-prefs" }));
-      return;
-    } catch (error) {
-      console.error("[api/index.js] direct public analysis-ui-prefs error:", error);
-      res.statusCode = 500;
-      res.end(
-        JSON.stringify({
-          ok: false,
-          error: error?.message || "public analysis-ui-prefs direct failed",
-          build: "v8-public-analysis-prefs",
         }),
       );
       return;
