@@ -815,17 +815,15 @@ async function startAppAfterAuth(options = {}) {
     await refreshOverviewProfitRowFromSnapshots();
   }
   // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
-  if (!isCommunitySquareHomeRoute()) {
-    void hydrateSymbolNameMap(
-      state.route === "earning" || state.route === "analysis"
-        ? collectSymbolsForMarket()
-        : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
-    ).then(() => {
-      renderAll();
-    });
-  }
+  void hydrateSymbolNameMap(
+    state.route === "earning" || state.route === "analysis"
+      ? collectSymbolsForMarket()
+      : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
+  ).then(() => {
+    renderAll();
+  });
   renderAll();
-  if (state.route !== "earning" && !isCommunitySquareHomeRoute()) {
+  if (state.route !== "earning") {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
       if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
@@ -5156,7 +5154,6 @@ async function loadCommunityLeaderboard() {
       communityLeaderboardList.innerHTML = `<p class="empty">暂无排行（需公开社区、满足归一条件并有交易）</p>`;
       return;
     }
-    await hydrateSymbolNameMap(entries.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityLeaderboardList.innerHTML = entries
       .map((c, idx) =>
         wrapInteractiveCommunityCard(c, { showRank: idx + 1 }),
