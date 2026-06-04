@@ -364,16 +364,22 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.profit-row--four-grid .profit-block:nth-child(odd) {
-  border-right: 1px solid var(--line);
-}
-
-.profit-row--four-grid .profit-block:nth-child(n + 3) {
-  border-top: 1px solid var(--line);
-}
-
 .overview-head--public-earn {
   justify-content: flex-end;
+}
+
+/* 他人收益 Tab：与私人表同 thead，隐藏金额列 */
+.stock-table--public-community th[data-stock-col="1"],
+.stock-table--public-community th[data-stock-col="3"],
+.stock-table--public-community th[data-stock-col="6"],
+.stock-table--public-community th[data-stock-col="8"],
+.stock-table--public-community th[data-stock-col="10"],
+.stock-table--public-community td[data-stock-col="1"],
+.stock-table--public-community td[data-stock-col="3"],
+.stock-table--public-community td[data-stock-col="6"],
+.stock-table--public-community td[data-stock-col="8"],
+.stock-table--public-community td[data-stock-col="10"] {
+  display: none;
 }
 
 .profit-block {

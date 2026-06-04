@@ -5263,7 +5263,8 @@ async function withPublicTradesContextAsync(d, asyncFn) {
   }
 }
 
-const PUBLIC_EARNING_TABLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14];
+/** 他人收益 Tab：与私人表同 15 列 DOM，隐藏含金额的列 */
+const PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS = new Set([1, 3, 6, 8, 10]);
 const PUBLIC_EARNING_STAGE_DEFS = [
   { key: "today", label: "今日收益" },
   { key: "mtd", label: "本月收益" },
@@ -5284,11 +5285,11 @@ function formatBundleRateOnlyHtml(rateStr) {
 
 function getCommunityEarningPanelHtml() {
   return `
-    <article class="overview-card">
+    <article class="overview-card community-profile-overview-min">
       <div class="overview-head overview-head--public-earn">
         <span id="pubQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
       </div>
-      <div class="profit-row profit-row--four-grid" id="pubReturnsGrid">
+      <div class="profit-row" id="pubReturnsGrid">
         ${PUBLIC_EARNING_STAGE_DEFS.map(
           (s) => `
         <div class="profit-block">
@@ -5304,21 +5305,7 @@ function getCommunityEarningPanelHtml() {
         <h2 class="stock-title">个股收益</h2>
       </div>
       <div class="table-scroll">
-        <table class="stock-table">
-          <thead>
-            <tr>
-              <th class="name-head"><button type="button" class="th-sort-btn th-sort-btn--name" data-sort-key="symbol">名称<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="currentPrice">现价/涨跌<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="weight">仓位<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="cost">成本<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="totalWeight">总收益占比<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
-              <th><button type="button" class="th-sort-btn" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
-              <th class="stock-table-op-head"><span class="th-sort-static">记录</span></th>
-            </tr>
-          </thead>
+        <table class="stock-table stock-table--public-community">
           <tbody id="pubStockTableBody"></tbody>
         </table>
       </div>
@@ -5326,141 +5313,55 @@ function getCommunityEarningPanelHtml() {
   `;
 }
 
-function getPublicStockTableElements() {
-  const tbody = document.getElementById("pubStockTableBody");
-  const table = tbody?.closest("table.stock-table");
-  return { tbody, table };
-}
-
-function readStockTableHeaderLabelsForTable(table) {
-  if (!table) {
-    return [];
+function mountPublicCommunityStockTableHead() {
+  const pubTable = document.getElementById("pubStockTableBody")?.closest("table.stock-table");
+  const srcRow = stockTableBody?.closest("table.stock-table")?.querySelector("thead tr");
+  if (!pubTable || !srcRow) {
+    return;
   }
-  return [...table.querySelectorAll("thead th")].map((th) =>
-    String(th.innerText || "")
-      .replace(/\s+/g, " ")
-      .trim(),
-  );
-}
-
-function measureStockColWidthsForTable(table, rows, colIndices, opProbeText) {
-  const headers = readStockTableHeaderLabelsForTable(table);
-  const widths = colIndices.map((privIdx, i) => {
-    const label = headers[i] || "";
-    return Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X);
+  let thead = pubTable.querySelector("thead");
+  if (!thead) {
+    thead = document.createElement("thead");
+    pubTable.insertBefore(thead, pubTable.querySelector("tbody"));
+  }
+  const tr = srcRow.cloneNode(true);
+  tr.querySelectorAll("th").forEach((th, col) => {
+    th.setAttribute("data-stock-col", String(col));
+    th.hidden = PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS.has(col);
   });
-  for (const row of rows || []) {
-    for (let i = 0; i < colIndices.length; i += 1) {
-      const privCol = colIndices[i];
-      if (privCol === 0) {
-        continue;
-      }
-      const raw = metricsHoldingsRowCellTexts(row, privCol, "native");
-      const parts = Array.isArray(raw) ? raw : [raw];
-      for (const part of parts) {
-        const t = String(part ?? "").trim();
-        if (!t) {
-          continue;
-        }
-        widths[i] = Math.max(
-          widths[i],
-          Math.ceil(measureStockTableTextPx(t, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
-        );
-      }
-    }
-  }
-  widths[0] = overviewStockNameColWidthPx();
-  const opIdx = colIndices.indexOf(14);
-  if (opIdx >= 0) {
-    widths[opIdx] = Math.max(
-      widths[opIdx],
-      Math.ceil(measureStockTableTextPx(opProbeText, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
-    );
-  }
-  return widths.map((w) => w + 2);
+  thead.replaceChildren(tr);
 }
 
-function applyStockTableColWidthsForTable(table, widths) {
-  if (!table || !widths?.length) {
-    return;
-  }
-  let colgroup = table.querySelector("colgroup");
-  if (!colgroup) {
-    colgroup = document.createElement("colgroup");
-    table.insertBefore(colgroup, table.firstChild);
-  }
-  colgroup.replaceChildren();
-  let sum = 0;
-  for (const w of widths) {
-    const col = document.createElement("col");
-    col.style.width = `${w}px`;
-    colgroup.appendChild(col);
-    sum += w;
-  }
-  table.classList.add("stock-table--layout-locked");
-  table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
-  table.style.setProperty("--stock-table-name-col-px", `${widths[0]}px`);
+function getPrivateStockTableCtx() {
+  return {
+    tbody: stockTableBody,
+    table: stockTableBody?.closest("table.stock-table") || null,
+    hiddenCols: null,
+    showTradeLink: true,
+    opProbeText: "记录  交易",
+    layoutCacheKey: overviewStockTableLayoutCacheKey,
+    widthCache: overviewStockColWidthCache,
+  };
 }
 
-function clearStockTableColLayoutForTable(table) {
-  if (!table) {
-    return;
-  }
-  table.classList.remove("stock-table--layout-locked");
-  table.style.removeProperty("--stock-table-layout-width-px");
-  table.style.removeProperty("--stock-table-name-col-px");
-  table.querySelector("colgroup")?.remove();
+function getPublicStockTableCtx() {
+  const tbody = document.getElementById("pubStockTableBody");
+  return {
+    tbody,
+    table: tbody?.closest("table.stock-table") || null,
+    hiddenCols: PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS,
+    showTradeLink: false,
+    opProbeText: "记录",
+    layoutCacheKey: (rows) =>
+      `${publicEarningBundleCacheKey(state.communityProfileUserId)}::${overviewStockTableLayoutCacheKey(rows).split("::").slice(1).join("::")}`,
+    widthCache: publicEarningColWidthCache,
+  };
 }
 
 let publicEarningColWidthCache = { key: "", widths: null };
 
-function buildPublicEarningHoldingsRowHtml(row) {
-  const sym = normalizeSymbol(row.symbol);
-  const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
-  const dayClass = bundleSignedClass(row.dayChange);
-  const totalRateClass = bundleSignedClass(row.totalRate);
-  const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
-  const symEsc = escapeHtml(sym);
-  return `<tr>
-    <td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>
-    <td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>
-    <td>${escapeHtml(bundleFmtText(row.weight))}</td>
-    <td>${escapeHtml(bundleFmtText(row.cost))}</td>
-    <td>${escapeHtml(bundleFmtText(row.monthWeight))}</td>
-    <td>${escapeHtml(bundleFmtText(row.yearWeight))}</td>
-    <td>${escapeHtml(bundleFmtText(row.totalWeight))}</td>
-    <td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>
-    <td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>
-    <td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">记录</a></td>
-  </tr>`;
-}
-
-function paintPublicEarningHoldingsTable(rows) {
-  const { tbody, table } = getPublicStockTableElements();
-  if (!tbody || !table) {
-    return;
-  }
-  const sorted = sortMetricsHoldingsRows(rows);
-  const colCount = PUBLIC_EARNING_TABLE_COL_INDICES.length;
-  if (!sorted.length) {
-    clearStockTableColLayoutForTable(table);
-    tbody.innerHTML = `<tr><td colspan="${colCount}"><p class="empty">暂无持仓</p></td></tr>`;
-    return;
-  }
-  const sig = sorted.map((r) => normalizeSymbol(r.symbol)).join(";");
-  const cacheKey = `${publicEarningBundleCacheKey(state.communityProfileUserId)}::${sig}`;
-  if (publicEarningColWidthCache.key !== cacheKey || !publicEarningColWidthCache.widths) {
-    publicEarningColWidthCache = {
-      key: cacheKey,
-      widths: measureStockColWidthsForTable(table, sorted, PUBLIC_EARNING_TABLE_COL_INDICES, "记录"),
-    };
-  }
-  applyStockTableColWidthsForTable(table, publicEarningColWidthCache.widths);
-  tbody.innerHTML = sorted.map((row) => buildPublicEarningHoldingsRowHtml(row)).join("");
-}
-
-function syncCommunityEarningSortHeaderUi() {
-  const { table } = getPublicStockTableElements();
+function syncStockTableSortHeaderUi(ctx) {
+  const table = ctx?.table;
   if (!table) {
     return;
   }
@@ -5471,6 +5372,10 @@ function syncCommunityEarningSortHeaderUi() {
       button.classList.add("active", state.stockSortOrder);
     }
   });
+}
+
+function syncCommunityEarningSortHeaderUi() {
+  syncStockTableSortHeaderUi(getPublicStockTableCtx());
 }
 
 function applyPublicEarningMetaToUi(meta) {
@@ -5495,42 +5400,7 @@ function applyPublicEarningMetaToUi(meta) {
 }
 
 function paintPublicEarningFromBundle(bundle) {
-  if (!bundle?.returns?.stages || !bundle.assets || !bundle.holdings) {
-    return false;
-  }
-  const stages = bundle.returns.stages;
-  for (const def of PUBLIC_EARNING_STAGE_DEFS) {
-    const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
-    if (el) {
-      const row = stages[def.key];
-      el.innerHTML = formatBundleRateOnlyHtml(row?.rate);
-      el.className = `pub-stage-rate profit-main ${bundleSignedClass(row?.rate)}`;
-    }
-  }
-  const grid = document.getElementById("pubOverviewGrid");
-  if (grid) {
-    grid.innerHTML = buildOverviewKpiGridInnerHtml(
-      buildOverviewKpiEntries({
-        totalAssets: "–",
-        marketValue: "–",
-        cash: "–",
-        stockRatio: bundleFmtText(bundle.assets.stockRatio),
-        cashRatio: bundleFmtText(bundle.assets.cashRatio),
-        principal: "–",
-      }),
-    );
-  }
-  const holdRows = bundle.holdings.rows || [];
-  for (const row of holdRows) {
-    const label = String(row.name || "").trim();
-    if (label) {
-      upsertNameMapEntry(row.symbol, label);
-    }
-  }
-  paintPublicEarningHoldingsTable(holdRows);
-  applyPublicEarningMetaToUi(bundle.meta);
-  syncCommunityEarningSortHeaderUi();
-  return true;
+  return paintOverviewFromMetricsBundle(bundle.returns, bundle.assets, bundle.holdings, { mode: "public" });
 }
 
 function repaintPublicEarningHoldingsFromCache() {
@@ -5538,7 +5408,8 @@ function repaintPublicEarningHoldingsFromCache() {
   if (!bundle?.holdings?.rows) {
     return;
   }
-  paintPublicEarningHoldingsTable(bundle.holdings.rows);
+  mountPublicCommunityStockTableHead();
+  paintStockTableFromMetricsRows(bundle.holdings.rows, getPublicStockTableCtx());
   syncCommunityEarningSortHeaderUi();
 }
 
@@ -5584,15 +5455,16 @@ async function loadPublicEarningTabData(targetId) {
   }
   const tbody = document.getElementById("pubStockTableBody");
   if (tbody) {
-    tbody.innerHTML = `<tr><td colspan="${PUBLIC_EARNING_TABLE_COL_INDICES.length}"><p class="empty">数据加载中…</p></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">数据加载中…</p></td></tr>`;
   }
   const bundle = await fetchPublicHomeBundleMetrics(targetId);
   if (!bundle) {
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="${PUBLIC_EARNING_TABLE_COL_INDICES.length}"><p class="empty">加载失败</p></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">加载失败</p></td></tr>`;
     }
     return;
   }
+  mountPublicCommunityStockTableHead();
   paintPublicEarningFromBundle(bundle);
 }
 
@@ -6455,6 +6327,7 @@ async function loadCommunityProfileDetail() {
       }
     }
     communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
+    mountPublicCommunityStockTableHead();
     bindPublicProfileAnalysisInteractions(d);
     syncCommunityProfileAnalysisControls();
     renderRoute();
@@ -6802,7 +6675,7 @@ function formatOverviewStockRatioFromTotals(totalAssetsBook, marketValueBook) {
   return `${formatNumber((mv / ta) * 100, 2)}%`;
 }
 
-/** 总览 KPI 六项：总资产、总市值 | 现金、本金 | 现金占比、股票占比。 */
+/** 总览 KPI 六项：总资产、总市值 | 现金、本金 | 现金占比、股票占比。ratiosOnly 仅两项占比（他人公开收益 Tab）。 */
 function buildOverviewKpiEntries({
   totalAssets,
   marketValue,
@@ -6810,7 +6683,14 @@ function buildOverviewKpiEntries({
   stockRatio,
   cashRatio,
   principal,
+  ratiosOnly,
 }) {
+  if (ratiosOnly) {
+    return [
+      { label: "现金占比", value: cashRatio },
+      { label: "股票占比", value: stockRatio },
+    ];
+  }
   return [
     { label: "总资产", value: totalAssets },
     { label: "总市值", value: marketValue },
@@ -8579,7 +8459,54 @@ function bundleSignedClass(text) {
   return "";
 }
 
-function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKey) {
+function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpts) {
+  let stageKey = metricsStageFromHome();
+  let opts = {};
+  if (typeof stageKeyOrOpts === "string") {
+    stageKey = stageKeyOrOpts;
+  } else if (stageKeyOrOpts && typeof stageKeyOrOpts === "object") {
+    opts = stageKeyOrOpts;
+    if (opts.stageKey) {
+      stageKey = opts.stageKey;
+    }
+  }
+
+  if (opts.mode === "public") {
+    if (!returns?.stages || !assets || !holdings) {
+      return false;
+    }
+    const stages = returns.stages;
+    for (const def of PUBLIC_EARNING_STAGE_DEFS) {
+      const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
+      if (el) {
+        const row = stages[def.key];
+        el.innerHTML = formatBundleRateOnlyHtml(row?.rate);
+        el.className = `pub-stage-rate profit-main ${bundleSignedClass(row?.rate)}`;
+      }
+    }
+    const grid = document.getElementById("pubOverviewGrid");
+    if (grid) {
+      grid.innerHTML = buildOverviewKpiGridInnerHtml(
+        buildOverviewKpiEntries({
+          stockRatio: bundleFmtText(assets.stockRatio),
+          cashRatio: bundleFmtText(assets.cashRatio),
+          ratiosOnly: true,
+        }),
+      );
+    }
+    const holdRows = holdings.rows || [];
+    for (const row of holdRows) {
+      const label = String(row.name || "").trim();
+      if (label) {
+        upsertNameMapEntry(row.symbol, label);
+      }
+    }
+    mountPublicCommunityStockTableHead();
+    paintStockTableFromMetricsRows(holdRows, getPublicStockTableCtx());
+    applyPublicEarningMetaToUi(state.publicEarningBundleUi?.meta);
+    return true;
+  }
+
   if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
     return false;
   }
@@ -9477,16 +9404,17 @@ function overviewStockNameColWidthPx() {
   return Math.max(nameW, headW);
 }
 
-function measureOverviewStockColWidths(measureCellText) {
+function measureStockTableColWidths(measureCellText, ctx) {
   const headers = readOverviewStockTableHeaderLabels();
   const widths = headers.map((label) =>
     Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X),
   );
   const modes = ["cny", "native"];
+  const hidden = ctx.hiddenCols;
   for (const row of measureCellText.rows || []) {
     for (const mode of modes) {
       for (let col = 0; col < OVERVIEW_STOCK_TABLE_COL_COUNT; col += 1) {
-        if (col === 0) {
+        if (col === 0 || (hidden && hidden.has(col))) {
           continue;
         }
         const raw = measureCellText.fn(row, col, mode, measureCellText.ctx);
@@ -9507,13 +9435,13 @@ function measureOverviewStockColWidths(measureCellText) {
   widths[0] = overviewStockNameColWidthPx();
   widths[14] = Math.max(
     widths[14],
-    Math.ceil(measureStockTableTextPx("记录  交易", STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
+    Math.ceil(measureStockTableTextPx(ctx.opProbeText, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
   );
-  return widths.map((w) => w + 2);
+  return widths.map((w, col) => (hidden && hidden.has(col) ? 0 : w + 2));
 }
 
-function applyOverviewStockTableColWidths(widths) {
-  const table = stockTableBody?.closest("table.stock-table");
+function applyStockTableColWidths(ctx, widths) {
+  const table = ctx.table;
   if (!table || !widths?.length) {
     return;
   }
@@ -9524,20 +9452,27 @@ function applyOverviewStockTableColWidths(widths) {
   }
   colgroup.replaceChildren();
   let sum = 0;
-  for (const w of widths) {
-    const col = document.createElement("col");
-    col.style.width = `${w}px`;
-    colgroup.appendChild(col);
-    sum += w;
+  for (let col = 0; col < widths.length; col += 1) {
+    const w = widths[col];
+    const colEl = document.createElement("col");
+    colEl.setAttribute("data-stock-col", String(col));
+    if (w > 0) {
+      colEl.style.width = `${w}px`;
+      sum += w;
+    } else {
+      colEl.style.width = "0";
+    }
+    colgroup.appendChild(colEl);
   }
   table.classList.add("stock-table--layout-locked");
   table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
   table.style.setProperty("--stock-table-name-col-px", `${widths[0]}px`);
 }
 
-function clearOverviewStockTableColLayout() {
-  overviewStockColWidthCache = { key: "", widths: null };
-  const table = stockTableBody?.closest("table.stock-table");
+function clearStockTableColLayout(ctx) {
+  ctx.widthCache.key = "";
+  ctx.widthCache.widths = null;
+  const table = ctx.table;
   if (!table) {
     return;
   }
@@ -9547,23 +9482,39 @@ function clearOverviewStockTableColLayout() {
   table.querySelector("colgroup")?.remove();
 }
 
-function ensureOverviewStockTableColWidths(rows, measureCell) {
+function ensureStockTableColWidths(rows, ctx, measureCell) {
   if (!rows?.length) {
-    clearOverviewStockTableColLayout();
+    clearStockTableColLayout(ctx);
     return;
   }
-  const key = overviewStockTableLayoutCacheKey(rows);
-  if (overviewStockColWidthCache.key === key && overviewStockColWidthCache.widths) {
-    applyOverviewStockTableColWidths(overviewStockColWidthCache.widths);
+  const key = ctx.layoutCacheKey(rows);
+  if (ctx.widthCache.key === key && ctx.widthCache.widths) {
+    applyStockTableColWidths(ctx, ctx.widthCache.widths);
     return;
   }
-  const widths = measureOverviewStockColWidths({
-    rows,
-    fn: measureCell.fn,
-    ctx: measureCell.ctx,
-  });
-  overviewStockColWidthCache = { key, widths };
-  applyOverviewStockTableColWidths(widths);
+  const widths = measureStockTableColWidths(
+    {
+      rows,
+      fn: measureCell.fn,
+      ctx: measureCell.ctx,
+    },
+    ctx,
+  );
+  ctx.widthCache.key = key;
+  ctx.widthCache.widths = widths;
+  applyStockTableColWidths(ctx, widths);
+}
+
+function clearOverviewStockTableColLayout() {
+  clearStockTableColLayout(getPrivateStockTableCtx());
+}
+
+function applyOverviewStockTableColWidths(widths) {
+  applyStockTableColWidths(getPrivateStockTableCtx(), widths);
+}
+
+function ensureOverviewStockTableColWidths(rows, measureCell) {
+  ensureStockTableColWidths(rows, getPrivateStockTableCtx(), measureCell);
 }
 
 function metricsHoldingsRowCellTexts(row, col, displayMode) {
@@ -9696,31 +9647,70 @@ function metricsHoldingsMoneyCell(row, fieldBase, displayMode = null) {
   return text;
 }
 
-function paintOverviewStockTableFromMetricsRows(rows) {
-  if (!stockTableBody) return;
-  const sorted = sortMetricsHoldingsRows(rows);
-  if (!sorted.length) {
-    clearOverviewStockTableColLayout();
-    stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+function stockColAttr(col, hiddenCols) {
+  if (hiddenCols && hiddenCols.has(col)) {
+    return ` data-stock-col="${col}" hidden`;
+  }
+  return ` data-stock-col="${col}"`;
+}
+
+function buildMetricsHoldingsRowHtml(row, ctx) {
+  const sym = normalizeSymbol(row.symbol);
+  const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
+  const dayClass = bundleSignedClass(row.dayChange);
+  const todayClass = metricsRowProfitClass(row, "todayProfit");
+  const monthClass = metricsRowProfitClass(row, "monthProfit");
+  const yearClass = metricsRowProfitClass(row, "yearProfit");
+  const totalClass = metricsRowProfitClass(row, "totalProfit");
+  const totalRateClass = bundleSignedClass(row.totalRate);
+  const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+  const qty = bundleFmtText(row.quantity);
+  const symEsc = escapeHtml(sym);
+  const hidden = ctx.hiddenCols;
+  const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">记录</a>`;
+  const tradeLink = ctx.showTradeLink
+    ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}">交易</a>`
+    : "";
+  return `<tr>
+    <td${stockColAttr(0, hidden)} class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>
+    <td${stockColAttr(1, hidden)} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>
+    <td${stockColAttr(2, hidden)}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>
+    <td${stockColAttr(3, hidden)}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>
+    <td${stockColAttr(4, hidden)}>${escapeHtml(bundleFmtText(row.weight))}</td>
+    <td${stockColAttr(5, hidden)}>${escapeHtml(bundleFmtText(row.cost))}</td>
+    <td${stockColAttr(6, hidden)} class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td>
+    <td${stockColAttr(7, hidden)}>${escapeHtml(bundleFmtText(row.monthWeight))}</td>
+    <td${stockColAttr(8, hidden)} class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td>
+    <td${stockColAttr(9, hidden)}>${escapeHtml(bundleFmtText(row.yearWeight))}</td>
+    <td${stockColAttr(10, hidden)} class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td>
+    <td${stockColAttr(11, hidden)}>${escapeHtml(bundleFmtText(row.totalWeight))}</td>
+    <td${stockColAttr(12, hidden)} class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>
+    <td${stockColAttr(13, hidden)} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>
+    <td${stockColAttr(14, hidden)} class="stock-table-op-cell">${recordLink}${tradeLink}</td>
+  </tr>`;
+}
+
+function paintStockTableFromMetricsRows(rows, ctx) {
+  const tbody = ctx.tbody;
+  if (!tbody) {
     return;
   }
-  ensureOverviewStockTableColWidths(sorted, {
+  const sorted = sortMetricsHoldingsRows(rows);
+  if (!sorted.length) {
+    clearStockTableColLayout(ctx);
+    tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+    return;
+  }
+  ensureStockTableColWidths(sorted, ctx, {
     fn: metricsHoldingsRowCellTexts,
     ctx: null,
   });
-  stockTableBody.innerHTML = sorted.map((row) => {
-    const sym = normalizeSymbol(row.symbol);
-    const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
-    const dayClass = bundleSignedClass(row.dayChange);
-    const todayClass = metricsRowProfitClass(row, "todayProfit");
-    const monthClass = metricsRowProfitClass(row, "monthProfit");
-    const yearClass = metricsRowProfitClass(row, "yearProfit");
-    const totalClass = metricsRowProfitClass(row, "totalProfit");
-    const totalRateClass = bundleSignedClass(row.totalRate);
-    const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
-    const qty = bundleFmtText(row.quantity);
-    return `<tr><td class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td><td class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td><td><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td><td><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td><td>${escapeHtml(bundleFmtText(row.weight))}</td><td>${escapeHtml(bundleFmtText(row.cost))}</td><td class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td><td>${escapeHtml(bundleFmtText(row.monthWeight))}</td><td class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td><td>${escapeHtml(bundleFmtText(row.yearWeight))}</td><td class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td><td>${escapeHtml(bundleFmtText(row.totalWeight))}</td><td class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td><td class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td><td class="stock-table-op-cell"><a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${escapeHtml(sym)}">记录</a><a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${escapeHtml(sym)}">交易</a></td></tr>`;
-  }).join("");
+  tbody.innerHTML = sorted.map((row) => buildMetricsHoldingsRowHtml(row, ctx)).join("");
+  syncStockTableSortHeaderUi(ctx);
+}
+
+function paintOverviewStockTableFromMetricsRows(rows) {
+  paintStockTableFromMetricsRows(rows, getPrivateStockTableCtx());
 }
 function analysisAssetChartRowsFromSeries(series) {
   if (!series || typeof series !== "object") {
