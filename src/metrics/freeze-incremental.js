@@ -153,13 +153,14 @@ function marketValueCny(holdings, klineBySym, dk, fxUsdMap, fxHkdMap) {
 
 function dayCashTransferBook(sessionCash, accounts, accountId, dk, book, fxUsdMap, fxHkdMap) {
   const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const scopeAll = String(accountId || "all").trim() === "all";
   let sum = 0;
   for (const r of sessionCash || []) {
-    if (String(r.accountId || "default") !== String(accountId)) continue;
+    const rowAccId = String(r.accountId || "default");
+    if (!scopeAll && rowAccId !== String(accountId)) continue;
     if (String(r.date).slice(0, 10) !== dk) continue;
-    const acc = accById.get(String(accountId)) || { currency: "CNY" };
+    const acc = accById.get(rowAccId) || { currency: "CNY" };
     const ccy = String(acc.currency || "CNY").toUpperCase();
-    const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : -1;
     const signIn = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
     const nat = signIn * Math.abs(Number(r.amount) || 0);
     const cny = ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk, FX_FALLBACK);
