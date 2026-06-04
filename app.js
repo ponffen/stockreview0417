@@ -5301,7 +5301,7 @@ function getCommunityEarningPanelHtml() {
       <div class="overview-head overview-head--public-earn">
         <span id="pubQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
       </div>
-      <div class="profit-row profit-row--pub-four" id="pubReturnsGrid">
+      <div class="profit-row" id="pubReturnsGrid">
         ${PUBLIC_EARNING_STAGE_DEFS.map(
           (s) => `
         <div class="profit-block">
