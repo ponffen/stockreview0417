@@ -4196,6 +4196,81 @@ function bindEvents() {
   bindAnalysisStockRankHelpOnce();
 }
 
+function resetStockRankHelpBubbleLayout(bubble) {
+  if (!bubble) {
+    return;
+  }
+  bubble.classList.remove("is-open", "is-fixed");
+  bubble.style.position = "";
+  bubble.style.left = "";
+  bubble.style.top = "";
+  bubble.style.right = "";
+  bubble.style.bottom = "";
+  bubble.style.zIndex = "";
+  bubble.style.display = "";
+  bubble.style.visibility = "";
+  bubble.style.width = "";
+  bubble.style.maxWidth = "";
+  bubble.style.removeProperty("--help-arrow-left");
+  if (bubble._helpWrap && bubble.parentNode === document.body) {
+    bubble._helpWrap.appendChild(bubble);
+  }
+  bubble._helpWrap = null;
+  bubble._helpHost = null;
+}
+
+function positionStockRankHelpBubble(btn, bubble, host) {
+  if (!btn || !bubble) {
+    return;
+  }
+  const wrap = btn.closest(".stock-rank-help-wrap");
+  bubble._helpWrap = wrap;
+  bubble._helpHost = host;
+  document.body.appendChild(bubble);
+  bubble.classList.add("is-open", "is-fixed");
+  bubble.style.position = "fixed";
+  bubble.style.zIndex = "100001";
+  bubble.style.display = "block";
+  bubble.style.visibility = "hidden";
+  bubble.style.width = "max-content";
+  bubble.style.maxWidth = "min(280px, 72vw)";
+  bubble.style.left = "-9999px";
+  bubble.style.top = "0";
+  bubble.style.right = "auto";
+  const br = btn.getBoundingClientRect();
+  const bw = bubble.offsetWidth;
+  const bh = bubble.offsetHeight;
+  const btnCenterX = br.left + br.width / 2;
+  let left = btnCenterX - bw / 2;
+  left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+  let top = br.bottom + 7;
+  if (top + bh > window.innerHeight - 8) {
+    top = Math.max(8, br.top - bh - 7);
+  }
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${top}px`;
+  const arrowLeft = Math.max(10, Math.min(bw - 22, btnCenterX - left - 6));
+  bubble.style.setProperty("--help-arrow-left", `${arrowLeft}px`);
+  bubble.style.visibility = "visible";
+}
+
+function closeStockRankHelpInHost(host) {
+  if (!host) {
+    return;
+  }
+  host.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
+    resetStockRankHelpBubbleLayout(el);
+  });
+  document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
+    if (el._helpHost === host) {
+      resetStockRankHelpBubbleLayout(el);
+    }
+  });
+  host.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
+    b.setAttribute("aria-expanded", "false");
+  });
+}
+
 function bindAnalysisStockRankHelpOnce() {
   if (analysisStockRankHelpListenersBound) {
     return;
@@ -4220,14 +4295,9 @@ function bindAnalysisStockRankHelpOnce() {
     const wrap = btn.closest(".stock-rank-help-wrap");
     const bubble = wrap?.querySelector(".stock-rank-help-bubble");
     const wasOpen = bubble?.classList.contains("is-open");
-    host.querySelectorAll(".stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
-    });
-    host.querySelectorAll(".stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
-    });
+    closeStockRankHelpInHost(host);
     if (!wasOpen && bubble) {
-      bubble.classList.add("is-open");
+      positionStockRankHelpBubble(btn, bubble, host);
       btn.setAttribute("aria-expanded", "true");
     }
   });
@@ -4235,37 +4305,34 @@ function bindAnalysisStockRankHelpOnce() {
     if (e.target.closest(".stock-rank-help-wrap")) {
       return;
     }
-    document.querySelectorAll(".analysis-stock-rank-body .stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
+    document.querySelectorAll(".analysis-stock-rank-body").forEach((host) => {
+      closeStockRankHelpInHost(host);
     });
-    document.querySelectorAll(".analysis-stock-rank-body .stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
+    document.querySelectorAll(".stock-record-body").forEach((host) => {
+      closeStockRankHelpInHost(host);
     });
-    document.querySelectorAll(".stock-record-body .stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
+    document.querySelectorAll(".stock-record-table--pub").forEach((host) => {
+      closeStockRankHelpInHost(host);
     });
-    document.querySelectorAll(".stock-record-body .stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
+    document.querySelectorAll(".community-feed-card").forEach((host) => {
+      closeStockRankHelpInHost(host);
     });
-    document.querySelectorAll(".stock-record-table--pub .stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
-    });
-    document.querySelectorAll(".stock-record-table--pub .stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
-    });
-    document.querySelectorAll(".community-feed-card .stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
-    });
-    document.querySelectorAll(".community-feed-card .stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
-    });
-    document.querySelectorAll(".public-profile-trade-table .stock-rank-help-bubble.is-open").forEach((el) => {
-      el.classList.remove("is-open");
-    });
-    document.querySelectorAll(".public-profile-trade-table .stock-rank-help-btn").forEach((b) => {
-      b.setAttribute("aria-expanded", "false");
+    document.querySelectorAll(".public-profile-trade-table").forEach((host) => {
+      closeStockRankHelpInHost(host);
     });
   });
+  window.addEventListener(
+    "scroll",
+    () => {
+      document.querySelectorAll(".stock-rank-help-bubble.is-open.is-fixed").forEach((el) => {
+        resetStockRankHelpBubbleLayout(el);
+      });
+      document.querySelectorAll(".stock-rank-help-btn[aria-expanded='true']").forEach((b) => {
+        b.setAttribute("aria-expanded", "false");
+      });
+    },
+    true,
+  );
 }
 
 function applyTradeTypePreset() {
@@ -6990,6 +7057,20 @@ function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
     }
   }
   return qty;
+}
+
+function bundleDisplayTone(displayText) {
+  const s = String(displayText || "").trim();
+  if (!s || s === "—") {
+    return "";
+  }
+  if (s.startsWith("+")) {
+    return "up";
+  }
+  if (s.startsWith("-")) {
+    return "down";
+  }
+  return "";
 }
 
 function mapStockRankBundleRow(row) {
