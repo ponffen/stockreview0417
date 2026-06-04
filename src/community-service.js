@@ -477,7 +477,7 @@ function overviewBookCurrencyFromSettings(settings) {
   return "CNY";
 }
 
-async function getPublicProfileDetail(viewerId, targetId) {
+async function assertPublicCommunityTarget(viewerId, targetId) {
   const vid = String(viewerId || "").trim();
   const tid = String(targetId || "").trim();
   if (!vid || !tid) {
@@ -488,151 +488,40 @@ async function getPublicProfileDetail(viewerId, targetId) {
   if (!row || (!isSelf && !Number(row.community_public))) {
     return { error: "hidden" };
   }
-  const card = await buildUserCard(tid, vid, { applyScale: true, allowHidden: isSelf });
+  return { ok: true, userId: tid, isSelf };
+}
+
+async function getPublicProfileDetail(viewerId, targetId) {
+  const gate = await assertPublicCommunityTarget(viewerId, targetId);
+  if (gate.error) {
+    return { error: gate.error };
+  }
+  const tid = gate.userId;
+  const card = await buildUserCard(tid, viewerId, { applyScale: false, allowHidden: gate.isSelf });
   if (!card) {
     return { error: "hidden" };
   }
-  const norm = await getNormalizationMeta(tid);
-  if (!norm) {
-    return { error: "hidden" };
-  }
-  const dk = await selectLatestSymbolDailyDate(tid, "all");
-  const trades = await getTrades(tid);
-  let positions = [];
-  if (dk) {
-    const rows = await selectSymbolDailyPositionsOnDate(tid, "all", dk);
-    let sumMv = 0;
-    const staged = rows.map((r) => {
-      const q = Number(r.eod_shares);
-      const px = Number(r.day_close_price) || 0;
-      const mv = Math.abs(q * px);
-      sumMv += mv;
-      return { r, q, px, mv };
-    });
-    positions = staged.map(({ r, q, px, mv }) => ({
-      symbol: r.symbol,
-      name: resolveNameForSymbol(trades, r.symbol),
-      quantity: q,
-      close: px,
-      marketValue: mv * norm.factor,
-      dayPnl: Number(r.day_pnl_native) * norm.factor,
-      currency: r.currency || "CNY",
-      weight: sumMv > 0 ? mv / sumMv : 0,
-    }));
-  }
-  if (!positions.length && isSelf) {
-    const qtyMap = netQtyBySymbolFromTrades(trades);
-    const staged = [];
-    let sumMv = 0;
-    for (const [symNorm, rawQty] of qtyMap.entries()) {
-      if (!isActiveHoldQty(symNorm, rawQty)) {
-        continue;
-      }
-      const closeRow = await getLatestSymbolDailyClose(symNorm);
-      const px = closeRow?.close ?? lastTradePriceForSymbol(trades, symNorm);
-      if (!Number.isFinite(px) || px <= 0) {
-        continue;
-      }
-      const mv = Math.abs(Number(rawQty)) * Number(px);
-      sumMv += mv;
-      const meta = displayStockMeta(symNorm);
-      staged.push({
-        symbol: symNorm,
-        name: resolveNameForSymbol(trades, symNorm),
-        quantity: Number(rawQty),
-        close: Number(px),
-        marketValueRaw: mv,
-        dayPnlRaw: 0,
-        currency: bookCurrencyForSymbolNorm(symNorm),
-        marketTag: meta.marketTag,
-        displayCode: meta.displayCode,
-      });
-    }
-    positions = staged
-      .sort((a, b) => b.marketValueRaw - a.marketValueRaw)
-      .map((item) => ({
-        symbol: item.symbol,
-        name: item.name,
-        quantity: item.quantity,
-        close: item.close,
-        marketValue: item.marketValueRaw * norm.factor,
-        dayPnl: item.dayPnlRaw * norm.factor,
-        currency: item.currency || "CNY",
-        weight: sumMv > 0 ? item.marketValueRaw / sumMv : 0,
-        marketTag: item.marketTag,
-        displayCode: item.displayCode,
-      }));
-  }
-  const snaps = await selectAnalysisSnapshotsForPublicMetrics(tid);
-  const lastSnap = snaps.length ? snaps[snaps.length - 1] : null;
-  const overview = lastSnap
-    ? {
-        marketValue: Number(lastSnap.market_value || 0) * norm.factor,
-        profitCnyDay: Number(lastSnap.profit_cny || 0) * norm.factor,
-      }
-    : { marketValue: 0, profitCnyDay: 0 };
-
-  const settings = await getSettings(tid);
-  const accRows = await getAccounts(tid);
-  const publicAccountNames = Object.fromEntries(
-    (accRows || []).map((a) => {
-      const id = String(a.id || "default").trim() || "default";
-      const nm = String(a.name || "").trim();
-      return [id, nm || id];
-    }),
-  );
-  const capRaw = Number(settings.capitalAmount) || 0;
-  const panOff = Number(settings.analysisPanOffset);
-  const analysisPanOffset = Number.isFinite(panOff) ? panOff : 0;
-
-  const f = norm.factor;
-  const publicTrades = trades.map((t) => ({
-    ...t,
-    quantity: Number(t.quantity) * f,
-    amount: Number(t.amount) * f,
-    // 该笔成交金额折算人民币（未乘脱敏系数），供他人主页「金额占比」列
-    amountCnyRaw: tradeAmountCny(t),
-  }));
-  const analysisDaily = (await getAnalysisDailySnapshots(
-    { accountId: "all", from: "1970-01-01", to: "2099-12-31" },
-    tid,
-  )).map((row) => ({
-    ...row,
-    profitCny: Number(row.profitCny) * f,
-    totalProfit: Number(row.totalProfit) * f,
-    principal: 0,
-    marketValue: Number(row.marketValue) * f,
-    totalAssets: Number(row.totalAssets ?? 0) * f,
-    cash: Number(row.cash ?? 0) * f,
-    cashRatio: Number(row.cashRatio ?? 0),
-  }));
-
   return {
-    isSelf,
+    isSelf: gate.isSelf,
     userId: tid,
     displayName: card.displayName,
-    todayTwr: card.todayTwr,
-    mtdTwr: card.mtdTwr,
-    ytdTwr: card.ytdTwr,
-    totalTwr: card.totalTwr,
-    topPositions: card.topPositions,
-    positions,
-    overview,
     following: card.following,
     mutual: card.mutual,
-    normalizationVersion: norm.normalizationVersion,
-    normalizationFactor: f,
-    // 对方最近一日快照总市值（人民币，未乘脱敏系数），与 amountCnyRaw 同口径
-    publicLatestMarketValueCny: lastSnap ? Number(lastSnap.market_value || 0) : 0,
-    publicCapitalAmount: capRaw * f,
-    publicTrades,
-    publicAccountNames,
-    analysisDaily,
+  };
+}
+
+async function getPublicAnalysisUiPrefs(viewerId, targetId) {
+  const gate = await assertPublicCommunityTarget(viewerId, targetId);
+  if (gate.error) {
+    return { error: gate.error };
+  }
+  const settings = await getSettings(gate.userId);
+  const panOff = Number(settings.analysisPanOffset);
+  const analysisPanOffset = Number.isFinite(panOff) ? panOff : 0;
+  return {
     publicAlgoMode: normalizePublicAlgoMode(settings.algoMode),
-    publicOverviewBookCurrency: overviewBookCurrencyFromSettings(settings),
     publicBenchmark: normalizePublicBenchmark(settings.benchmark),
     publicCapitalTrendMode: normalizePublicCapitalTrendMode(settings.capitalTrendMode),
-    publicStageRange: normalizePublicStageRange(settings.stageRange),
     publicAnalysisRangeMode: String(settings.analysisRangeMode || "preset"),
     publicAnalysisPreset: settings.analysisPreset ?? null,
     publicRangeDays: Number(settings.rangeDays) || 30,
@@ -642,21 +531,41 @@ async function getPublicProfileDetail(viewerId, targetId) {
   };
 }
 
-async function enrichPublicProfileDetailWithTencent(detail) {
-  if (!detail || detail.isSelf || detail.error) {
+async function getPublicTrades(viewerId, targetId) {
+  const gate = await assertPublicCommunityTarget(viewerId, targetId);
+  if (gate.error) {
+    return { error: gate.error };
+  }
+  const tid = gate.userId;
+  const trades = await getTrades(tid);
+  const snaps = await selectAnalysisSnapshotsForPublicMetrics(tid);
+  const lastSnap = snaps.length ? snaps[snaps.length - 1] : null;
+  const rows = trades.map((t) => ({
+    id: t.id,
+    date: t.date,
+    symbol: t.symbol,
+    name: t.name,
+    side: t.side,
+    price: t.price,
+    quantity: t.quantity,
+    amount: t.amount,
+    accountId: t.accountId,
+    amountCnyRaw: tradeAmountCny(t),
+  }));
+  return {
+    latestMarketValueCny: lastSnap ? Number(lastSnap.market_value || 0) : 0,
+    rows,
+  };
+}
+
+async function enrichPublicTradesWithTencent(payload) {
+  if (!payload || !Array.isArray(payload.rows)) {
     return;
   }
   const syms = [];
   const seen = new Set();
-  for (const t of detail.publicTrades || []) {
+  for (const t of payload.rows) {
     const s = String(t.symbol || "").trim();
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      syms.push(s);
-    }
-  }
-  for (const p of detail.topPositions || []) {
-    const s = String(p.symbol || "").trim();
     if (s && !seen.has(s)) {
       seen.add(s);
       syms.push(s);
@@ -666,24 +575,16 @@ async function enrichPublicProfileDetailWithTencent(detail) {
     return;
   }
   const meta = await fetchTencentQuoteMetaForSymbols(syms);
-  for (const t of detail.publicTrades || []) {
+  for (const t of payload.rows) {
     const m = meta.get(t.symbol);
     if (m?.name) {
       t.name = m.name;
     }
   }
-  for (const p of detail.topPositions || []) {
-    const m = meta.get(p.symbol);
-    if (m?.name) {
-      p.name = m.name;
-    }
-    if (m?.marketTag) {
-      p.marketTag = m.marketTag;
-    }
-    if (m?.displayCode) {
-      p.displayCode = m.displayCode;
-    }
-  }
+}
+
+async function enrichPublicProfileDetailWithTencent(_detail) {
+  /* identity-only profile; symbol names enriched via trades bundle */
 }
 
 async function getFollowingCards(viewerId) {
@@ -805,11 +706,14 @@ module.exports = {
   getLeaderboard,
   buildUserCard,
   getPublicProfileDetail,
+  getPublicTrades,
+  getPublicAnalysisUiPrefs,
   getFollowingCards,
   getFeedTrades,
   enrichFeedRowsWithTencent,
   enrichCardsTopPositionsWithTencent,
   enrichLeaderboardPayloadWithTencent,
   enrichPublicProfileDetailWithTencent,
+  enrichPublicTradesWithTencent,
   NORMALIZATION_VERSION,
 };

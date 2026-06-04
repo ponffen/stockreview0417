@@ -795,6 +795,9 @@ const {
   displayNameForUser,
   getLeaderboard,
   getPublicProfileDetail,
+  getPublicTrades,
+  getPublicAnalysisUiPrefs,
+  enrichPublicTradesWithTencent,
   getFollowingCards,
   getFeedTrades,
   enrichFeedRowsWithTencent,
@@ -811,6 +814,7 @@ const {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  getMetricsPublicHomeBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   getSeriesDailyProfit,
@@ -1241,6 +1245,45 @@ app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) 
     res.json({ ok: true, data: detail });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "profile failed" });
+  }
+});
+
+app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const data = await getPublicTrades(req.userId, targetId);
+    if (data.error === "unauthorized") {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    if (data.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.set("Cache-Control", "no-store");
+    await enrichPublicTradesWithTencent(data);
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public trades failed" });
+  }
+});
+
+app.get("/api/public/:targetId/analysis-ui-prefs", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const data = await getPublicAnalysisUiPrefs(req.userId, targetId);
+    if (data.error === "unauthorized") {
+      res.status(401).json({ ok: false, error: "未登录" });
+      return;
+    }
+    if (data.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "analysis ui prefs failed" });
   }
 });
 
@@ -1713,8 +1756,8 @@ app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, async (req, re
       res.status(gate.status).json({ ok: false, error: gate.error });
       return;
     }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, await getMetricsHomeBundle(gate.userId, accountScope, req.query.stages));
+    const accountScope = metricsAccountIdFromQuery(req.query);
+    sendMetricsJson(res, await getMetricsPublicHomeBundle(gate.userId, accountScope, req.query.stages));
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public home-bundle failed" });
   }

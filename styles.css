@@ -364,6 +364,18 @@ body {
   border-top: 1px solid var(--line);
 }
 
+.profit-row--four-grid .profit-block:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+.profit-row--four-grid .profit-block:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+
+.overview-head--public-earn {
+  justify-content: flex-end;
+}
+
 .profit-block {
   padding: 12px 14px 11px;
 }

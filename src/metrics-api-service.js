@@ -1413,6 +1413,13 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
   };
 }
 
+const { redactPublicHomeBundle } = require("./metrics/public-home-bundle-redact");
+
+async function getMetricsPublicHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
+  const full = await getMetricsHomeBundle(userId, accountScope, stagesRaw, opts);
+  return redactPublicHomeBundle(full);
+}
+
 module.exports = {
   METRICS_RULE_VERSION,
   BENCHMARK_SYMBOLS,
@@ -1420,6 +1427,7 @@ module.exports = {
   getMetricsReturns,
   getMetricsAssets,
   getMetricsHomeBundle,
+  getMetricsPublicHomeBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,

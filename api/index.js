@@ -387,8 +387,9 @@ module.exports = async function handler(req, res) {
         return;
       }
       const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
-      const { getMetricsHomeBundle } = require("../src/metrics-api-service");
-      const data = await getMetricsHomeBundle(gate.userId, accountScope, getSearchParam(req, "stages"));
+      const { getMetricsPublicHomeBundle } = require("../src/metrics-api-service");
+      const accountId = String(getSearchParam(req, "account_id") || getSearchParam(req, "accountScope") || "all").trim() || "all";
+      const data = await getMetricsPublicHomeBundle(gate.userId, accountId, getSearchParam(req, "stages"));
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-home-bundle" } }));
       return;
