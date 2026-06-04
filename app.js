@@ -827,7 +827,7 @@ async function startAppAfterAuth(options = {}) {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
       renderAll();
       if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        void openCommunityProfileAnalysisTab();
       }
     });
   }
@@ -13086,7 +13086,7 @@ async function refreshMarketData(opts = {}) {
     if (!skipFinalRender && state.route !== "analysis") {
       renderAll();
       if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+        void openCommunityProfileAnalysisTab();
       }
     }
   }
