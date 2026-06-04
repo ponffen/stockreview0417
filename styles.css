@@ -1104,7 +1104,9 @@ h2 {
 
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit,
 .analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-px,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days {
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share,
+.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share-head {
   justify-content: flex-end;
   white-space: nowrap;
 }
@@ -1120,6 +1122,8 @@ h2 {
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
+  z-index: 30;
+  overflow: visible;
 }
 
 .analysis-stock-rank-head .stock-rank-help-wrap .col-th-label {
@@ -1180,6 +1184,11 @@ h2 {
 
 .stock-rank-help-bubble.is-open {
   display: block;
+}
+
+.stock-rank-help-bubble.is-open.is-fixed {
+  position: fixed;
+  z-index: 10000;
 }
 
 .analysis-stock-rank-head {
@@ -1291,7 +1300,7 @@ h2 {
 
 .analysis-stock-rank-table .analysis-stock-rank-row .col-hold-interval {
   font-size: 12px;
-  color: #5d6a82;
+  color: var(--text);
   line-height: 1.45;
   white-space: pre-line;
   word-break: normal;
@@ -1306,6 +1315,14 @@ h2 {
 .analysis-stock-rank-table .col-days {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.analysis-stock-rank-table .col-profit-share,
+.analysis-stock-rank-table .col-profit-share-head {
+  justify-content: flex-end;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .analysis-stock-rank-table .col-rank {

@@ -28,6 +28,7 @@ const {
   fmtPercentRatio,
   fmtSignedPercentRatio,
 } = require("../account-kpi-surface");
+const { formatSignedProfitForScope } = require("./account-book-metrics");
 
 function fmtStockRankProfitCny(profitCny) {
   const v = Number(profitCny);
@@ -61,8 +62,12 @@ function profitToneFromCny(profitCny) {
 }
 
 /** analysis-bundle：排行行输出为前端可直接展示的字符串 */
-function formatStockRankRowsForBundle(rows, accountProfitCny) {
+function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
   const accountProfit = Number(accountProfitCny);
+  const scope = scopeCtx.scope ?? "all";
+  const bookCurrency = scopeCtx.bookCurrency ?? "CNY";
+  const fxUsdCny = scopeCtx.fxUsdCny ?? 7.2;
+  const fxHkdCny = scopeCtx.fxHkdCny ?? 0.92;
   return (rows || []).map((r) => {
     const profitCny = Number(r.profitCny) || 0;
     const pxChange = Number(r.pxChange);
@@ -71,9 +76,8 @@ function formatStockRankRowsForBundle(rows, accountProfitCny) {
       rank: r.rank,
       symbol: r.symbol,
       name: r.name,
-      nameCn: r.nameCn,
       holdIntervalsLabel: r.holdIntervalsLabel,
-      profitCny: fmtStockRankProfitCny(profitCny),
+      profit: formatSignedProfitForScope(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny),
       pxChange: Number.isFinite(pxChange) ? fmtSignedPercentRatio(pxChange) : "—",
       heldDays: fmtStockRankHeldDays(heldDays),
       profitShare: fmtStockRankProfitShare(profitCny, accountProfit),
@@ -90,6 +94,7 @@ async function buildStockRankPayload({
   live,
   publicLayout = false,
   accountProfitCny = null,
+  scopeCtx = null,
 }) {
   const scope = String(accountScope || "all").trim() || "all";
   const asOf = liveDateKeyShanghai();
@@ -185,7 +190,6 @@ async function buildStockRankPayload({
       rank: i + 1,
       symbol: r.symbol,
       name: displayName,
-      nameCn,
       holdIntervalsLabel: r.holdIntervalsLabel,
       profitCny: r.profitCny,
       pxChange: r.pxChange,
@@ -198,7 +202,9 @@ async function buildStockRankPayload({
     periodEnd,
     accountProfitCny: accountProfit,
     rows:
-      accountProfit != null ? formatStockRankRowsForBundle(rawRows, accountProfit) : rawRows,
+      accountProfit != null
+        ? formatStockRankRowsForBundle(rawRows, accountProfit, scopeCtx || {})
+        : rawRows,
   };
 }
 

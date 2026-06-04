@@ -1133,6 +1133,7 @@ async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, met
 async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
   const { userId, scope, settings, live, um } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
+  const { fxU, fxH, book } = fxFromCtx(ctx);
   const payload = await buildStockRankPayload({
     userId,
     accountScope: scope,
@@ -1140,6 +1141,7 @@ async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
     live,
     publicLayout: rankOpts.publicLayout === true,
     accountProfitCny: rankOpts.accountProfitCny,
+    scopeCtx: { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH },
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
