@@ -43,7 +43,7 @@ const { resolveFrozenDate } = require("../eod-freeze-service");
 const {
   upsertAnalysisBatchV3,
   upsertSymbolBatchV3,
-} = require("./freeze-v3");
+} = require("./freeze-v3-upsert");
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 
