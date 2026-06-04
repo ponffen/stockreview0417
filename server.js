@@ -1749,7 +1749,7 @@ app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async 
   }
 });
 
-app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, async (req, res) => {
+async function handlePublicHomeBundle(req, res) {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
     if (!gate.ok) {
@@ -1761,7 +1761,10 @@ app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, async (req, re
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public home-bundle failed" });
   }
-});
+}
+
+app.get("/api/public/:targetId/home-bundle", requireAuth, handlePublicHomeBundle);
+app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, handlePublicHomeBundle);
 
 app.get("/api/public/:targetId/metrics/returns", requireAuth, async (req, res) => {
   try {

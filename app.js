@@ -3521,10 +3521,13 @@ function bindEvents() {
           p.classList.toggle("is-active", p.getAttribute("data-profile-panel") === sub);
         });
         if (sub === "analysis" && state.lastPublicProfileDetail) {
-          void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+          void openCommunityProfileAnalysisTab();
         }
         if (sub === "earning" && state.communityProfileUserId) {
           void loadPublicEarningTabData(state.communityProfileUserId);
+        }
+        if (sub === "trade" && state.communityProfileUserId) {
+          void loadCommunityPublicTrades(state.communityProfileUserId);
         }
       }
       e.preventDefault();
@@ -4468,8 +4471,10 @@ function renderAll() {
   } else if (state.route === "community-profile") {
     if (state.communityProfileTab === "earning" && state.communityProfileUserId) {
       void loadPublicEarningTabData(state.communityProfileUserId);
+    } else if (state.communityProfileTab === "trade" && state.communityProfileUserId) {
+      void loadCommunityPublicTrades(state.communityProfileUserId);
     } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-      void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
+      void openCommunityProfileAnalysisTab();
     }
   }
 }
@@ -5552,7 +5557,7 @@ async function fetchPublicHomeBundleMetrics(targetId) {
   state.publicEarningBundleUi.loading = true;
   try {
     const data = await fetchMetricsApi(
-      "/metrics/home-bundle",
+      "/home-bundle",
       { account_id: "all", stages: METRICS_HOME_BUNDLE_STAGES },
       tid,
     );
@@ -6155,6 +6160,8 @@ async function renderPublicProfileAnalysis(d) {
   if (!detail?.userId) {
     return;
   }
+  await ensureCommunityAnalysisUiPrefs(detail.userId);
+  seedPublicProfileAnalysisUiFromDetail(detail);
   ensurePublicProfileAnalysisUi();
   const targetId = String(detail.userId || state.communityProfileUserId || "").trim();
   if (apiReady && targetId) {
@@ -6315,6 +6322,85 @@ async function renderPublicProfileAnalysis(d) {
 
 let lastCommunityDataKey = "";
 
+async function loadCommunityPublicTrades(targetId) {
+  const uid = String(targetId || state.communityProfileUserId || "").trim();
+  if (!uid || !apiReady) {
+    return;
+  }
+  const tb = document.getElementById("pubTradeTableBody");
+  if (state.communityPublicTradesPack?.rows) {
+    renderPublicTradeTable();
+    return;
+  }
+  if (tb) {
+    tb.innerHTML = `
+      <tr>
+        <td colspan="5"><p class="empty">加载中…</p></td>
+      </tr>
+    `;
+  }
+  try {
+    const base = getApiBaseForFetch();
+    const r = await apiFetch(`${base}/public/${encodeURIComponent(uid)}/trades`, {
+      cache: "no-store",
+      timeoutMs: 25_000,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      state.communityPublicTradesPack = null;
+      if (tb) {
+        tb.innerHTML = `<tr><td colspan="5"><p class="empty">${escapeHtml(j?.error || "加载失败")}</p></td></tr>`;
+      }
+      return;
+    }
+    state.communityPublicTradesPack = j.data;
+    await hydrateSymbolNameMap((j.data?.rows || []).map((row) => row?.symbol));
+    renderPublicTradeTable();
+  } catch {
+    state.communityPublicTradesPack = null;
+    if (tb) {
+      tb.innerHTML = `<tr><td colspan="5"><p class="empty">网络错误</p></td></tr>`;
+    }
+  }
+}
+
+async function ensureCommunityAnalysisUiPrefs(targetId) {
+  const uid = String(targetId || state.communityProfileUserId || "").trim();
+  if (!uid || !apiReady) {
+    return false;
+  }
+  if (state.communityAnalysisUiPrefs && state.publicProfileAnalysisUiSeededFor === uid) {
+    return true;
+  }
+  try {
+    const base = getApiBaseForFetch();
+    const r = await apiFetch(`${base}/public/${encodeURIComponent(uid)}/analysis-ui-prefs`, {
+      cache: "no-store",
+      timeoutMs: 12_000,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      return false;
+    }
+    state.communityAnalysisUiPrefs = j.data;
+    seedPublicProfileAnalysisUiFromPrefs(j.data, uid);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openCommunityProfileAnalysisTab() {
+  const d = state.lastPublicProfileDetail;
+  if (!d?.userId) {
+    return;
+  }
+  await ensureCommunityAnalysisUiPrefs(d.userId);
+  seedPublicProfileAnalysisUiFromDetail(d);
+  syncCommunityProfileAnalysisControls();
+  await renderPublicProfileAnalysis(d);
+}
+
 async function loadCommunityProfileDetail() {
   if (!communityProfileBody || !state.communityProfileUserId) {
     return;
@@ -6340,11 +6426,7 @@ async function loadCommunityProfileDetail() {
   try {
     const base = getApiBaseForFetch();
     const enc = encodeURIComponent(uid);
-    const [profileRes, tradesRes, prefsRes] = await Promise.all([
-      apiFetch(`${base}/community/users/${enc}/profile`, { cache: "no-store" }),
-      apiFetch(`${base}/public/${enc}/trades`, { cache: "no-store" }),
-      apiFetch(`${base}/public/${enc}/analysis-ui-prefs`, { cache: "no-store" }),
-    ]);
+    const profileRes = await apiFetch(`${base}/community/users/${enc}/profile`, { cache: "no-store" });
     const profileJson = await profileRes.json().catch(() => ({}));
     if (profileRes.status === 404) {
       communityProfileBody.innerHTML = `<p class="empty">用户未公开或不可见</p>`;
@@ -6356,24 +6438,6 @@ async function loadCommunityProfileDetail() {
     }
     const d = profileJson.data;
     state.lastPublicProfileDetail = d;
-
-    if (tradesRes.ok) {
-      const tradesJson = await tradesRes.json().catch(() => ({}));
-      if (tradesJson?.ok && tradesJson.data) {
-        state.communityPublicTradesPack = tradesJson.data;
-      }
-    }
-    if (prefsRes.ok) {
-      const prefsJson = await prefsRes.json().catch(() => ({}));
-      if (prefsJson?.ok && prefsJson.data) {
-        state.communityAnalysisUiPrefs = prefsJson.data;
-      }
-    }
-
-    await hydrateSymbolNameMap(
-      (state.communityPublicTradesPack?.rows || []).map((row) => row?.symbol),
-    );
-    seedPublicProfileAnalysisUiFromDetail(d);
 
     if (communityProfileTitle) {
       communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
@@ -6392,20 +6456,16 @@ async function loadCommunityProfileDetail() {
     }
     communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
     bindPublicProfileAnalysisInteractions(d);
-    renderPublicTradeTable();
     syncCommunityProfileAnalysisControls();
     renderRoute();
-    if ((state.communityProfileTab || "earning") === "earning") {
+    const tab = state.communityProfileTab || "earning";
+    if (tab === "earning") {
       void loadPublicEarningTabData(uid);
+    } else if (tab === "trade") {
+      void loadCommunityPublicTrades(uid);
+    } else if (tab === "analysis") {
+      void openCommunityProfileAnalysisTab();
     }
-    window.setTimeout(() => {
-      if (state.route !== "community-profile" || state.lastPublicProfileDetail !== d) {
-        return;
-      }
-      if (state.communityProfileTab === "analysis") {
-        void renderPublicProfileAnalysis(state.lastPublicProfileDetail);
-      }
-    }, 0);
   } catch {
     communityProfileBody.innerHTML = `<p class="empty">网络错误</p>`;
   } finally {
@@ -10844,7 +10904,11 @@ async function openStockRecordDialog(symbol, opts = {}) {
   if (!symKey) {
     return;
   }
-  state.stockRecordFromPublicProfile = opts.fromPublicProfile === true;
+  const fromPublicProfile = opts.fromPublicProfile === true;
+  if (fromPublicProfile && state.communityProfileUserId) {
+    await loadCommunityPublicTrades(state.communityProfileUserId);
+  }
+  state.stockRecordFromPublicProfile = fromPublicProfile;
   state.activeRecordSymbol = symKey;
   state.stockRecordAccountId = "all";
   state.previousRoute = state.route;
