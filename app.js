@@ -5263,8 +5263,20 @@ async function withPublicTradesContextAsync(d, asyncFn) {
   }
 }
 
-/** 他人收益 Tab：与私人表同 15 列 DOM，隐藏含金额的列 */
-const PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS = new Set([1, 3, 6, 8, 10]);
+/** 他人收益 Tab：物理渲染列（与私人表同列索引的 th/td 规则，不含金额列） */
+const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14];
+
+function stockTableAllColIndices() {
+  return Array.from({ length: OVERVIEW_STOCK_TABLE_COL_COUNT }, (_, i) => i);
+}
+
+function stockTableVisibleColIndices(ctx) {
+  return ctx?.visibleColIndices?.length ? ctx.visibleColIndices : stockTableAllColIndices();
+}
+
+function stockTableVisibleColCount(ctx) {
+  return stockTableVisibleColIndices(ctx).length;
+}
 const PUBLIC_EARNING_STAGE_DEFS = [
   { key: "today", label: "今日收益" },
   { key: "mtd", label: "本月收益" },
@@ -5315,8 +5327,8 @@ function getCommunityEarningPanelHtml() {
 
 function mountPublicCommunityStockTableHead() {
   const pubTable = document.getElementById("pubStockTableBody")?.closest("table.stock-table");
-  const srcRow = stockTableBody?.closest("table.stock-table")?.querySelector("thead tr");
-  if (!pubTable || !srcRow) {
+  const srcThs = stockTableBody?.closest("table.stock-table")?.querySelectorAll("thead th");
+  if (!pubTable || !srcThs?.length) {
     return;
   }
   let thead = pubTable.querySelector("thead");
@@ -5324,11 +5336,16 @@ function mountPublicCommunityStockTableHead() {
     thead = document.createElement("thead");
     pubTable.insertBefore(thead, pubTable.querySelector("tbody"));
   }
-  const tr = srcRow.cloneNode(true);
-  tr.querySelectorAll("th").forEach((th, col) => {
+  const tr = document.createElement("tr");
+  for (const col of PUBLIC_EARNING_VISIBLE_COL_INDICES) {
+    const src = srcThs[col];
+    if (!src) {
+      continue;
+    }
+    const th = src.cloneNode(true);
     th.setAttribute("data-stock-col", String(col));
-    th.hidden = PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS.has(col);
-  });
+    tr.appendChild(th);
+  }
   thead.replaceChildren(tr);
 }
 
@@ -5336,7 +5353,7 @@ function getPrivateStockTableCtx() {
   return {
     tbody: stockTableBody,
     table: stockTableBody?.closest("table.stock-table") || null,
-    hiddenCols: null,
+    visibleColIndices: null,
     showTradeLink: true,
     opProbeText: "记录  交易",
     layoutCacheKey: overviewStockTableLayoutCacheKey,
@@ -5349,7 +5366,7 @@ function getPublicStockTableCtx() {
   return {
     tbody,
     table: tbody?.closest("table.stock-table") || null,
-    hiddenCols: PUBLIC_COMMUNITY_HIDDEN_STOCK_COLS,
+    visibleColIndices: PUBLIC_EARNING_VISIBLE_COL_INDICES,
     showTradeLink: false,
     opProbeText: "记录",
     layoutCacheKey: (rows) =>
@@ -5453,14 +5470,15 @@ async function loadPublicEarningTabData(targetId) {
   if (!earningPane) {
     return;
   }
+  const pubColCount = PUBLIC_EARNING_VISIBLE_COL_INDICES.length;
   const tbody = document.getElementById("pubStockTableBody");
   if (tbody) {
-    tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">数据加载中…</p></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">数据加载中…</p></td></tr>`;
   }
   const bundle = await fetchPublicHomeBundleMetrics(targetId);
   if (!bundle) {
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">加载失败</p></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">加载失败</p></td></tr>`;
     }
     return;
   }
@@ -9404,17 +9422,25 @@ function overviewStockNameColWidthPx() {
   return Math.max(nameW, headW);
 }
 
+function readStockTableHeaderLabelsForCtx(ctx) {
+  const all = readOverviewStockTableHeaderLabels();
+  const indices = stockTableVisibleColIndices(ctx);
+  return indices.map((col) => all[col] || "");
+}
+
 function measureStockTableColWidths(measureCellText, ctx) {
-  const headers = readOverviewStockTableHeaderLabels();
-  const widths = headers.map((label) =>
-    Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X),
-  );
+  const indices = stockTableVisibleColIndices(ctx);
+  const allHeaders = readOverviewStockTableHeaderLabels();
+  const widths = indices.map((col) => {
+    const label = allHeaders[col] || "";
+    return Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X);
+  });
   const modes = ["cny", "native"];
-  const hidden = ctx.hiddenCols;
   for (const row of measureCellText.rows || []) {
     for (const mode of modes) {
-      for (let col = 0; col < OVERVIEW_STOCK_TABLE_COL_COUNT; col += 1) {
-        if (col === 0 || (hidden && hidden.has(col))) {
+      for (let vi = 0; vi < indices.length; vi += 1) {
+        const col = indices[vi];
+        if (col === 0) {
           continue;
         }
         const raw = measureCellText.fn(row, col, mode, measureCellText.ctx);
@@ -9424,20 +9450,26 @@ function measureStockTableColWidths(measureCellText, ctx) {
           if (!t) {
             continue;
           }
-          widths[col] = Math.max(
-            widths[col],
+          widths[vi] = Math.max(
+            widths[vi],
             Math.ceil(measureStockTableTextPx(t, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
           );
         }
       }
     }
   }
-  widths[0] = overviewStockNameColWidthPx();
-  widths[14] = Math.max(
-    widths[14],
-    Math.ceil(measureStockTableTextPx(ctx.opProbeText, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
-  );
-  return widths.map((w, col) => (hidden && hidden.has(col) ? 0 : w + 2));
+  const nameVi = indices.indexOf(0);
+  if (nameVi >= 0) {
+    widths[nameVi] = overviewStockNameColWidthPx();
+  }
+  const opVi = indices.indexOf(14);
+  if (opVi >= 0) {
+    widths[opVi] = Math.max(
+      widths[opVi],
+      Math.ceil(measureStockTableTextPx(ctx.opProbeText, STOCK_TABLE_MEASURE_FONT_TD) + STOCK_TABLE_MEASURE_PAD_X),
+    );
+  }
+  return widths.map((w) => w + 2);
 }
 
 function applyStockTableColWidths(ctx, widths) {
@@ -9445,6 +9477,7 @@ function applyStockTableColWidths(ctx, widths) {
   if (!table || !widths?.length) {
     return;
   }
+  const indices = stockTableVisibleColIndices(ctx);
   let colgroup = table.querySelector("colgroup");
   if (!colgroup) {
     colgroup = document.createElement("colgroup");
@@ -9452,21 +9485,24 @@ function applyStockTableColWidths(ctx, widths) {
   }
   colgroup.replaceChildren();
   let sum = 0;
-  for (let col = 0; col < widths.length; col += 1) {
-    const w = widths[col];
+  for (let vi = 0; vi < widths.length; vi += 1) {
+    const w = widths[vi];
     const colEl = document.createElement("col");
-    colEl.setAttribute("data-stock-col", String(col));
-    if (w > 0) {
-      colEl.style.width = `${w}px`;
-      sum += w;
-    } else {
-      colEl.style.width = "0";
-    }
+    colEl.setAttribute("data-stock-col", String(indices[vi]));
+    colEl.style.width = `${w}px`;
     colgroup.appendChild(colEl);
+    sum += w;
   }
   table.classList.add("stock-table--layout-locked");
   table.style.setProperty("--stock-table-layout-width-px", `${sum}px`);
-  table.style.setProperty("--stock-table-name-col-px", `${widths[0]}px`);
+  const nameVi = indices.indexOf(0);
+  const nameW = nameVi >= 0 ? widths[nameVi] : widths[0];
+  table.style.setProperty("--stock-table-name-col-px", `${nameW}px`);
+  if (ctx.visibleColIndices) {
+    table.style.minWidth = `max(100%, ${sum}px)`;
+  } else {
+    table.style.removeProperty("min-width");
+  }
 }
 
 function clearStockTableColLayout(ctx) {
@@ -9479,6 +9515,7 @@ function clearStockTableColLayout(ctx) {
   table.classList.remove("stock-table--layout-locked");
   table.style.removeProperty("--stock-table-layout-width-px");
   table.style.removeProperty("--stock-table-name-col-px");
+  table.style.removeProperty("min-width");
   table.querySelector("colgroup")?.remove();
 }
 
@@ -9647,14 +9684,7 @@ function metricsHoldingsMoneyCell(row, fieldBase, displayMode = null) {
   return text;
 }
 
-function stockColAttr(col, hiddenCols) {
-  if (hiddenCols && hiddenCols.has(col)) {
-    return ` data-stock-col="${col}" hidden`;
-  }
-  return ` data-stock-col="${col}"`;
-}
-
-function buildMetricsHoldingsRowHtml(row, ctx) {
+function buildMetricsHoldingsCellTd(row, col, ctx) {
   const sym = normalizeSymbol(row.symbol);
   const tag = row.marketTag === "CN" ? "cn" : row.marketTag === "HK" ? "hk" : row.marketTag === "US" ? "us" : "ot";
   const dayClass = bundleSignedClass(row.dayChange);
@@ -9666,28 +9696,51 @@ function buildMetricsHoldingsRowHtml(row, ctx) {
   const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
   const qty = bundleFmtText(row.quantity);
   const symEsc = escapeHtml(sym);
-  const hidden = ctx.hiddenCols;
   const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">记录</a>`;
   const tradeLink = ctx.showTradeLink
     ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}">交易</a>`
     : "";
-  return `<tr>
-    <td${stockColAttr(0, hidden)} class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>
-    <td${stockColAttr(1, hidden)} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>
-    <td${stockColAttr(2, hidden)}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>
-    <td${stockColAttr(3, hidden)}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>
-    <td${stockColAttr(4, hidden)}>${escapeHtml(bundleFmtText(row.weight))}</td>
-    <td${stockColAttr(5, hidden)}>${escapeHtml(bundleFmtText(row.cost))}</td>
-    <td${stockColAttr(6, hidden)} class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td>
-    <td${stockColAttr(7, hidden)}>${escapeHtml(bundleFmtText(row.monthWeight))}</td>
-    <td${stockColAttr(8, hidden)} class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td>
-    <td${stockColAttr(9, hidden)}>${escapeHtml(bundleFmtText(row.yearWeight))}</td>
-    <td${stockColAttr(10, hidden)} class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td>
-    <td${stockColAttr(11, hidden)}>${escapeHtml(bundleFmtText(row.totalWeight))}</td>
-    <td${stockColAttr(12, hidden)} class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>
-    <td${stockColAttr(13, hidden)} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>
-    <td${stockColAttr(14, hidden)} class="stock-table-op-cell">${recordLink}${tradeLink}</td>
-  </tr>`;
+  const attr = ` data-stock-col="${col}"`;
+  switch (col) {
+    case 0:
+      return `<td${attr} class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>`;
+    case 1:
+      return `<td${attr} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>`;
+    case 2:
+      return `<td${attr}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>`;
+    case 3:
+      return `<td${attr}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>`;
+    case 4:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.weight))}</td>`;
+    case 5:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.cost))}</td>`;
+    case 6:
+      return `<td${attr} class="${monthClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "monthProfit"))}</td>`;
+    case 7:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.monthWeight))}</td>`;
+    case 8:
+      return `<td${attr} class="${yearClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "yearProfit"))}</td>`;
+    case 9:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.yearWeight))}</td>`;
+    case 10:
+      return `<td${attr} class="${totalClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "totalProfit"))}</td>`;
+    case 11:
+      return `<td${attr}>${escapeHtml(bundleFmtText(row.totalWeight))}</td>`;
+    case 12:
+      return `<td${attr} class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>`;
+    case 13:
+      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
+    case 14:
+      return `<td${attr} class="stock-table-op-cell">${recordLink}${tradeLink}</td>`;
+    default:
+      return `<td${attr}></td>`;
+  }
+}
+
+function buildMetricsHoldingsRowHtml(row, ctx) {
+  const indices = stockTableVisibleColIndices(ctx);
+  const cells = indices.map((col) => buildMetricsHoldingsCellTd(row, col, ctx)).join("");
+  return `<tr>${cells}</tr>`;
 }
 
 function paintStockTableFromMetricsRows(rows, ctx) {
@@ -9695,10 +9748,11 @@ function paintStockTableFromMetricsRows(rows, ctx) {
   if (!tbody) {
     return;
   }
+  const colCount = stockTableVisibleColCount(ctx);
   const sorted = sortMetricsHoldingsRows(rows);
   if (!sorted.length) {
     clearStockTableColLayout(ctx);
-    tbody.innerHTML = `<tr><td colspan="${OVERVIEW_STOCK_TABLE_COL_COUNT}"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colCount}"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
     return;
   }
   ensureStockTableColWidths(sorted, ctx, {

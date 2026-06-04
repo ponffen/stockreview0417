@@ -368,18 +368,9 @@ body {
   justify-content: flex-end;
 }
 
-/* 他人收益 Tab：与私人表同 thead，隐藏金额列 */
-.stock-table--public-community th[data-stock-col="1"],
-.stock-table--public-community th[data-stock-col="3"],
-.stock-table--public-community th[data-stock-col="6"],
-.stock-table--public-community th[data-stock-col="8"],
-.stock-table--public-community th[data-stock-col="10"],
-.stock-table--public-community td[data-stock-col="1"],
-.stock-table--public-community td[data-stock-col="3"],
-.stock-table--public-community td[data-stock-col="6"],
-.stock-table--public-community td[data-stock-col="8"],
-.stock-table--public-community td[data-stock-col="10"] {
-  display: none;
+/* 他人收益 Tab：物理 10 列，总宽按内容不测 1050 下限 */
+.stock-table.stock-table--layout-locked.stock-table--public-community {
+  min-width: max(100%, var(--stock-table-layout-width-px, 0px));
 }
 
 .profit-block {
