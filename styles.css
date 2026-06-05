@@ -949,101 +949,17 @@ h2 {
   --stock-rank-sticky-z-head-name: 4;
   --stock-rank-sticky-z-row-rank: 4;
   --stock-rank-sticky-z-row-name: 3;
-}
-
-/* 他人个人页「个股收益排行」：名称后「收益占比」；列宽跟内容走，余量给持仓区间 */
-.analysis-stock-rank-table--public {
   display: grid;
-  grid-template-columns:
-    var(--stock-rank-col-rank)
-    var(--stock-rank-col-name)
-    minmax(4.5rem, max-content)
-    minmax(5rem, max-content)
-    minmax(6rem, max-content)
-    minmax(11rem, 1fr);
   min-width: max-content;
   padding-left: 10px;
   padding-right: 10px;
   box-sizing: border-box;
   font-size: 13px;
-  /* stretch：同行各格等高，底边 border 才不会「错行」；勿用 center */
   align-items: stretch;
 }
 
-.analysis-stock-rank-table--public > .analysis-stock-rank-head,
-.analysis-stock-rank-table--public > .analysis-stock-rank-row {
-  display: contents;
-}
-
-.analysis-stock-rank-table--public > .analysis-stock-rank-head > *,
-.analysis-stock-rank-table--public > .analysis-stock-rank-row > * {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-}
-
-.analysis-stock-rank-table--public .col-rank {
-  justify-content: center;
-}
-
-.analysis-stock-rank-table--public .col-px,
-.analysis-stock-rank-table--public .col-days {
-  justify-content: flex-end;
-}
-
-.analysis-stock-rank-table--public > .analysis-stock-rank-head > * {
-  background: #f6f8fb;
-  border-bottom: 1px solid var(--line);
-}
-
-.analysis-stock-rank-table--public > .analysis-stock-rank-row > * {
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-}
-
-.analysis-stock-rank-table--public > .analysis-stock-rank-row:last-child > * {
-  border-bottom: none;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-head .stock-rank-help-wrap {
-  flex-wrap: nowrap;
-  min-width: max-content;
-  justify-content: flex-end;
-}
-
-.analysis-stock-rank-table--public .col-profit-share {
-  justify-content: flex-end;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 去掉主持仓同款右侧阴影条（左滑时像裂缝）；只保留名称列右侧一根淡分割线 */
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-rank,
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-rank,
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
-  box-shadow: none;
-}
-
-.analysis-stock-rank-table--public .analysis-stock-rank-head .col-name,
-.analysis-stock-rank-table--public .analysis-stock-rank-row .col-name {
-  border-right: 1px solid var(--line);
-}
-
-/* 数值/涨跌幅列完整显示，避免 +xxx% 被格宽裁掉 */
-.analysis-stock-rank-table--public .col-profit-share,
-.analysis-stock-rank-table--public .col-px,
-.analysis-stock-rank-table--public .col-days {
-  white-space: nowrap;
-  overflow: visible;
-}
-
-/* 私有分析排行：与 --public 相同「整表 grid + 行 display:contents」，避免每行独立 grid 导致 sticky 被穿透 */
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) {
-  display: grid;
+/* 整表 grid + 行 display:contents；列数由是否渲染 .col-profit（公开页隐藏区间收益）决定 */
+.analysis-stock-rank-table:has(.col-profit) {
   grid-template-columns:
     var(--stock-rank-col-rank)
     var(--stock-rank-col-name)
@@ -1052,21 +968,25 @@ h2 {
     minmax(5rem, max-content)
     minmax(4.5rem, max-content)
     minmax(12rem, 1fr);
-  min-width: max-content;
-  padding-left: 10px;
-  padding-right: 10px;
-  box-sizing: border-box;
-  font-size: 13px;
-  align-items: stretch;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row {
+.analysis-stock-rank-table:not(:has(.col-profit)) {
+  grid-template-columns:
+    var(--stock-rank-col-rank)
+    var(--stock-rank-col-name)
+    minmax(4.5rem, max-content)
+    minmax(5rem, max-content)
+    minmax(6rem, max-content)
+    minmax(11rem, 1fr);
+}
+
+.analysis-stock-rank-table > .analysis-stock-rank-head,
+.analysis-stock-rank-table > .analysis-stock-rank-row {
   display: contents;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > * {
+.analysis-stock-rank-table > .analysis-stock-rank-head > *,
+.analysis-stock-rank-table > .analysis-stock-rank-row > * {
   padding: 8px calc(var(--stock-rank-col-gap) / 2);
   box-sizing: border-box;
   display: flex;
@@ -1074,41 +994,47 @@ h2 {
   min-width: 0;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *:first-child,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > *:first-child {
+.analysis-stock-rank-table > .analysis-stock-rank-head > *:first-child,
+.analysis-stock-rank-table > .analysis-stock-rank-row > *:first-child {
   padding-left: 0;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > *:last-child,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > *:last-child {
+.analysis-stock-rank-table > .analysis-stock-rank-head > *:last-child,
+.analysis-stock-rank-table > .analysis-stock-rank-row > *:last-child {
   padding-right: 0;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-head > * {
+.analysis-stock-rank-table > .analysis-stock-rank-head > * {
   background: #f6f8fb;
   border-bottom: 1px solid var(--line);
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row > * {
+.analysis-stock-rank-table > .analysis-stock-rank-row > * {
   background: #fff;
   border-bottom: 1px solid var(--line);
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) > .analysis-stock-rank-row:last-child > * {
+.analysis-stock-rank-table > .analysis-stock-rank-row:last-child > * {
   border-bottom: none;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-rank {
+.analysis-stock-rank-table .col-rank {
   justify-content: center;
 }
 
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-px,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-days,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share,
-.analysis-stock-rank-table:not(.analysis-stock-rank-table--public) .col-profit-share-head {
+.analysis-stock-rank-table .col-profit,
+.analysis-stock-rank-table .col-px,
+.analysis-stock-rank-table .col-days,
+.analysis-stock-rank-table .col-profit-share,
+.analysis-stock-rank-table .col-profit-share-head {
   justify-content: flex-end;
   white-space: nowrap;
+  overflow: visible;
+}
+
+.analysis-stock-rank-table .analysis-stock-rank-head .stock-rank-help-wrap {
+  flex-wrap: nowrap;
+  min-width: max-content;
 }
 
 .analysis-stock-rank-head,
@@ -2903,7 +2829,10 @@ body.auth-mode {
 }
 
 .community-profile-head-panel {
+  margin-top: 0;
   margin-bottom: 0;
+  border-top: none;
+  padding-top: max(8px, env(safe-area-inset-top, 0px));
 }
 
 .community-profile-top-row {
