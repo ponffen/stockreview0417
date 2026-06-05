@@ -2574,9 +2574,9 @@ body.auth-mode {
 
 .community-card {
   background: var(--panel);
-  border-radius: 12px;
+  border-radius: 0;
   border: 1px solid var(--line);
-  margin: 0 12px 12px;
+  margin: 0 0 12px;
   padding: 14px 14px 12px;
 }
 
