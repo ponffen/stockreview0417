@@ -69,8 +69,6 @@ function readMarketDelayFromResponse(response) {
 const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
-/** 与 performance_series_cache / PERFORMANCE_RULE_VERSION 一致；低于此版本则前端回退本地计算 */
-const ANALYSIS_PERFORMANCE_RULE_VERSION = 2;
 const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 /** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
@@ -274,8 +272,6 @@ let analysisRenderRequestSeq = 0;
 let cachedAnalysisAssetChartRows = null;
 /** metrics 分析图：缓存序列与 payload，十字星 onRedraw 不重拉接口 */
 let cachedAnalysisMetricsCharts = null;
-/** 分析页本地 fallback：捏合/平移重绘，不重新请求 */
-let legacyAnalysisPanContext = null;
 const analysisDailyResponseCache = new Map();
 const analysisDailyInFlight = new Map();
 /** 与 account-daily 类似：合并并发、短缓存，避免连续 renderAll 打出两条相同 symbol-daily */
@@ -1632,40 +1628,6 @@ function shiftDateKeyByDays(dateKey, deltaDays) {
   }
   t.setDate(t.getDate() + Number(deltaDays || 0));
   return toDateKey(t);
-}
-
-function buildAnalysisDailyFetchRange(scope) {
-  const today = toDateKey(new Date());
-  const to = shiftDateKeyByDays(today, 1);
-  const trades = Array.isArray(scope?.trades) ? scope.trades : [];
-  const earliestTradeDate = trades
-    .map((trade) => toDateKey(trade?.date))
-    .filter(Boolean)
-    .sort()[0];
-  if (state.analysisRangeMode === "custom") {
-    const customStart =
-      state.customRangeStart || earliestTradeDate || shiftDateKeyByDays(today, -365);
-    return {
-      from: shiftDateKeyByDays(customStart, -20),
-      to,
-    };
-  }
-  if (isAnalysisMtdPreset()) {
-    return { from: shiftDateKeyByDays(monthToDateStartKey(), -10), to };
-  }
-  if (isAnalysisYtdPreset()) {
-    return { from: shiftDateKeyByDays(ytdStartDateKey(), -20), to };
-  }
-  if (state.analysisRangeMode === "all") {
-    return {
-      from: shiftDateKeyByDays(earliestTradeDate || today, -20),
-      to,
-    };
-  }
-  return {
-    from: shiftDateKeyByDays(today, -(Math.max(Number(state.rangeDays) || 30, 7) + 20)),
-    to,
-  };
 }
 
 function symbolCloseRowsToKline(arr) {
@@ -7204,51 +7166,6 @@ function computePositionPeriodMetrics(position, startKey, endKey, trades) {
   return { profitNative, pxChange, heldDays };
 }
 
-/**
- * 分析 Tab 所选完整周期 [a,b]（与顶部区间一致，不受图表横向平移窗口影响）。
- */
-function resolveAnalysisPeriodAB(history) {
-  const todayKey = toDateKey(new Date());
-  if (!history.length) {
-    return { a: todayKey, b: todayKey };
-  }
-  const lastH = history[history.length - 1].date;
-  if (state.analysisRangeMode === "all") {
-    return { a: history[0].date, b: lastH };
-  }
-  if (state.analysisRangeMode === "custom") {
-    let start = state.customRangeStart || history[0].date;
-    let end = state.customRangeEnd || lastH;
-    if (start > end) {
-      [start, end] = [end, start];
-    }
-    const picked = history.filter((p) => p.date >= start && p.date <= end);
-    if (picked.length) {
-      return { a: start, b: end };
-    }
-  }
-  if (isAnalysisMtdPreset()) {
-    return { a: monthToDateStartKey(), b: lastH };
-  }
-  if (isAnalysisYtdPreset()) {
-    return { a: ytdStartDateKey(), b: lastH };
-  }
-  const windowSize = Math.min(Math.max(state.rangeDays, 2), history.length);
-  const startIdx = Math.max(0, history.length - windowSize);
-  return { a: history[startIdx].date, b: lastH };
-}
-
-/** 标的在 dateKey 当日及以前成交累计后的日终股数（含 dateKey 当天）。 */
-function symbolEodQtyOnOrBefore(symbolTrades, dateKey) {
-  let qty = 0;
-  for (const t of symbolTrades) {
-    if (t.date <= dateKey) {
-      qty += t.side === "buy" ? t.quantity : -t.quantity;
-    }
-  }
-  return qty;
-}
-
 function bundleDisplayTone(displayText) {
   const s = String(displayText || "").trim();
   if (!s || s === "—") {
@@ -7368,63 +7285,6 @@ function paintStockRankFromBundle(rankPayload, targetBody, rankOpts = {}) {
   } else {
     rows.sort((a, b) => b.profitSort - a.profitSort);
   }
-  targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
-}
-
-/**
- * 个股排行：周期 a、b 来自顶部选择；仅展示 [a,b] 内至少有一天日终持仓大于 0 的标的。
- * 有效区间：effStart=A早于a则a否则A；effEnd 默认 B 早于 b 取 B 否则取 b；若周期末日 b 仍持仓则强制 effEnd=b，避免仅一笔买入时 B 停在买入日导致涨跌幅异常。
- */
-function renderAnalysisStockRank(
-  history,
-  scope,
-  portfolio,
-  targetBody = analysisStockRankBody,
-  rankOpts = {},
-) {
-  if (!targetBody) {
-    return;
-  }
-  const publicHoldIntervals = rankOpts.publicStockRankLayout === true || rankOpts.publicHoldIntervals === true;
-  if (!history.length) {
-    targetBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
-    return;
-  }
-  const { a, b } = resolveAnalysisPeriodAB(history);
-  const rows = [];
-  for (const pos of portfolio.positions) {
-    const symbolTrades = scope.trades.filter((t) => t.symbol === pos.symbol).sort(sortTradeAsc);
-    if (!symbolTrades.length) {
-      continue;
-    }
-    const A = symbolTrades[0].date;
-    const B = symbolTrades[symbolTrades.length - 1].date;
-    if (countHeldDaysInRange(symbolTrades, a, b) < 1) {
-      continue;
-    }
-    const effStart = A < a ? a : A;
-    let effEnd = B < b ? B : b;
-    if (symbolEodQtyOnOrBefore(symbolTrades, b) > 1e-6) {
-      effEnd = b;
-    }
-    if (effStart > effEnd) {
-      continue;
-    }
-    const m = computePositionPeriodMetrics(pos, effStart, effEnd, scope.trades);
-    const profitCny = profitNativeToAnalysisCny(pos, m.profitNative);
-    const holdIntervalsLabel = publicHoldIntervals
-      ? formatHoldingSegmentsLabelPublic(pos, symbolTrades, a, b, scope.trades)
-      : formatHoldingSegmentsLabel(pos, symbolTrades, a, b, scope.trades);
-    rows.push({
-      symbol: pos.symbol,
-      name: pos.name,
-      holdIntervalsLabel,
-      profitCny,
-      pxChange: m.pxChange,
-      heldDays: m.heldDays,
-    });
-  }
-  rows.sort((a, b) => b.profitCny - a.profitCny);
   targetBody.innerHTML = buildAnalysisStockRankHtml(rows, rankOpts);
 }
 
@@ -8431,7 +8291,7 @@ function analysisXirr(datedAmounts, guess = 0.08) {
   return r;
 }
 
-/** 资金加权（XIRR）：与 performance-cache-service.mwrPeriodFromSnapshots 同结构，价值用总资产 */
+/** 资金加权（XIRR）：阶段内现金流与总资产序列，价值用总资产 */
 function analysisXirrForStage(mergedRows, startKey, endKey) {
   const rows = [...(mergedRows || [])]
     .map((r) => ({
@@ -9792,6 +9652,9 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     analysisEodAccountCaption.hidden = true;
   }
   bindAnalysisMetricsChartsInteractive();
+  if (!isPublicView) {
+    void warmOverviewDailySnapshotsForEarning(getPortfolioScope(), state.stageRange);
+  }
   return true;
 }
 
@@ -9954,195 +9817,6 @@ function resolvePerformancePresetKeyFromAnalysisState() {
   return resolvePerformancePresetKeyFromStateLike(state);
 }
 
-function parsePerformanceTwrSeriesPayload(raw) {
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-  const dates = Array.isArray(raw.dates) ? raw.dates.map((x) => String(x).slice(0, 10)) : null;
-  const twrRebased = Array.isArray(raw.twrRebased) ? raw.twrRebased.map((x) => Number(x) || 0) : null;
-  const cumulativeProfit = Array.isArray(raw.cumulativeProfit)
-    ? raw.cumulativeProfit.map((x) => Number(x) || 0)
-    : null;
-  if (!dates?.length || !twrRebased || dates.length !== twrRebased.length) {
-    return null;
-  }
-  const cp =
-    cumulativeProfit && cumulativeProfit.length === dates.length ? cumulativeProfit : dates.map(() => 0);
-  const ruleVersion = Number(raw.ruleVersion) || 1;
-  return { ruleVersion, dates, twrRebased, cumulativeProfit: cp };
-}
-
-async function fetchAnalysisPerformancePresetRemote(accountId, preset) {
-  if (!apiReady) {
-    return null;
-  }
-  const aid = accountId === "all" ? "all" : accountId;
-  try {
-    const res = await apiFetch(
-      `${getApiBaseForFetch()}/snapshot/performance-preset?accountId=${encodeURIComponent(
-        aid,
-      )}&preset=${encodeURIComponent(preset)}`,
-      { cache: "no-store", timeoutMs: 15_000 },
-    );
-    if (!res.ok) {
-      return null;
-    }
-    const j = await res.json().catch(() => ({}));
-    if (!j?.ok || !j.data) {
-      return null;
-    }
-    const d = j.data;
-    const twrSeries = d.twr?.series && typeof d.twr.series === "object" ? d.twr.series : null;
-    const twrPayload = parsePerformanceTwrSeriesPayload(twrSeries);
-    if (!twrPayload || twrPayload.ruleVersion < ANALYSIS_PERFORMANCE_RULE_VERSION) {
-      return null;
-    }
-    return {
-      asOfDate: String(d.asOfDate || "").slice(0, 10),
-      twrPayload,
-      periodReturnTwr: Number(d.twr?.periodReturn) || 0,
-      periodReturnMwr: Number(d.mwr?.periodReturn) || 0,
-      mwrRuleVersion: Number(d.mwr?.ruleVersion) || 1,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function fetchCommunityPerformancePresetRemote(targetUserId, preset) {
-  if (!apiReady) {
-    return null;
-  }
-  const tid = String(targetUserId || "").trim();
-  if (!tid || !preset) {
-    return null;
-  }
-  try {
-    const res = await apiFetch(
-      `${getApiBaseForFetch()}/community/users/${encodeURIComponent(
-        tid,
-      )}/performance-preset?accountId=all&preset=${encodeURIComponent(preset)}`,
-      { cache: "no-store", timeoutMs: 15_000 },
-    );
-    if (!res.ok) {
-      return null;
-    }
-    const j = await res.json().catch(() => ({}));
-    if (!j?.ok || !j.data) {
-      return null;
-    }
-    const d = j.data;
-    const twrSeries = d.twr?.series && typeof d.twr.series === "object" ? d.twr.series : null;
-    const twrPayload = parsePerformanceTwrSeriesPayload(twrSeries);
-    if (!twrPayload || twrPayload.ruleVersion < ANALYSIS_PERFORMANCE_RULE_VERSION) {
-      return null;
-    }
-    return {
-      asOfDate: String(d.asOfDate || "").slice(0, 10),
-      twrPayload,
-      periodReturnTwr: Number(d.twr?.periodReturn) || 0,
-      periodReturnMwr: Number(d.mwr?.periodReturn) || 0,
-      mwrRuleVersion: Number(d.mwr?.ruleVersion) || 1,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 用服务端 materialized series_json（TWR）对齐分析窗首日，并与 modePts 上「冻结日之后」的 live 日拼接。
- * @returns {{ mySeries: {date:string, rate:number}[], profitSeries: {date:string, value:number}[] } | null}
- */
-function buildAnalysisRateProfitFromPerfCache(twrPayload, selectedOrderedDates, asOf, modePts) {
-  if (!twrPayload || !modePts.length || !selectedOrderedDates.length) {
-    return null;
-  }
-  const map = new Map();
-  for (let i = 0; i < twrPayload.dates.length; i += 1) {
-    map.set(twrPayload.dates[i], i);
-  }
-  const firstD = selectedOrderedDates[0];
-  if (!map.has(firstD)) {
-    return null;
-  }
-  const j = map.get(firstD);
-  const twrR = twrPayload.twrRebased;
-  const cumP = twrPayload.cumulativeProfit;
-  const baseTr = twrR[j];
-  const baseCum = cumP[j];
-  const rebLive = rebaseRateSeriesByFirstDay(computeTimeWeightedSeries(modePts));
-  const liveRateBy = new Map(rebLive.map((x) => [String(x.date).slice(0, 10), Number(x.rate) || 0]));
-  const profLive = buildProfitSeries(modePts);
-  const liveProfBy = new Map(profLive.map((x) => [String(x.date).slice(0, 10), Number(x.value) || 0]));
-  const asOfS = String(asOf || "").slice(0, 10);
-  let anchorL = "";
-  for (let k = selectedOrderedDates.length - 1; k >= 0; k -= 1) {
-    const dk = selectedOrderedDates[k];
-    if (dk <= asOfS && map.has(dk)) {
-      anchorL = dk;
-      break;
-    }
-  }
-  if (!anchorL) {
-    return null;
-  }
-  const idxL = map.get(anchorL);
-  const rateC_L = (1 + twrR[idxL]) / (1 + baseTr) - 1;
-  const profC_L = cumP[idxL] - baseCum;
-  const liveL = liveRateBy.get(anchorL) ?? 0;
-  const liveProfL = liveProfBy.get(anchorL) ?? 0;
-  const mySeries = [];
-  const profitSeries = [];
-  for (const dk of selectedOrderedDates) {
-    const idx = map.get(dk);
-    if (idx != null && dk <= asOfS) {
-      const rate = (1 + twrR[idx]) / (1 + baseTr) - 1;
-      const prof = cumP[idx] - baseCum;
-      mySeries.push({ date: dk, rate });
-      profitSeries.push({ date: dk, value: prof });
-    } else {
-      const CLd = liveRateBy.get(dk);
-      if (CLd === undefined) {
-        return null;
-      }
-      const rate = (1 + rateC_L) * (1 + CLd) / (1 + liveL) - 1;
-      const PLd = liveProfBy.get(dk);
-      if (PLd === undefined) {
-        return null;
-      }
-      const prof = profC_L + (PLd - liveProfL);
-      mySeries.push({ date: dk, rate });
-      profitSeries.push({ date: dk, value: prof });
-    }
-  }
-  return { mySeries, profitSeries };
-}
-
-function buildAnalysisChartsSeriesBundle({ modePts, selectedPh, useMwrUi, algoMode, perfSnap }) {
-  const selectedOrderedDates = selectedPh.map((p) => String(p.date).slice(0, 10));
-  const fromCache = perfSnap
-    ? buildAnalysisRateProfitFromPerfCache(perfSnap.twrPayload, selectedOrderedDates, perfSnap.asOfDate, modePts)
-    : null;
-  if (fromCache) {
-    let cacheHeadlineMwr = null;
-    if (
-      useMwrUi &&
-      perfSnap &&
-      Number(perfSnap.mwrRuleVersion) >= ANALYSIS_PERFORMANCE_RULE_VERSION &&
-      Number.isFinite(perfSnap.periodReturnMwr)
-    ) {
-      cacheHeadlineMwr = perfSnap.periodReturnMwr;
-    }
-    return { mySeries: fromCache.mySeries, profitSeries: fromCache.profitSeries, cacheHeadlineMwr };
-  }
-  const mySeriesRaw = computeModeSeries(modePts, useMwrUi ? "twr" : algoMode);
-  return {
-    mySeries: rebaseRateSeriesByFirstDay(mySeriesRaw),
-    profitSeries: buildProfitSeries(modePts),
-    cacheHeadlineMwr: null,
-  };
-}
-
 const SYMBOL_SNAPSHOT_CHUNK = 14;
 
 async function fetchSymbolDailyChunkOnce(aid, fromKey, toKey, part) {
@@ -10241,395 +9915,34 @@ async function renderAnalysis(options = {}) {
   if (showLoading) {
     cachedAnalysisAssetChartRows = null;
     cachedAnalysisMetricsCharts = null;
-    legacyAnalysisPanContext = null;
     showRouteLoading("数据正在加载中");
   }
   try {
-  const renderRequestId = ++analysisRenderRequestSeq;
-  setAnalysisSummariesDash();
-  clearAnalysisChartsToEmpty();
-  if (apiReady) {
-    const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId, "", {
-      resetViewport: showLoading,
-    });
-    if (metricsPainted && renderRequestId === analysisRenderRequestSeq) {
-      return;
-    }
-  }
-  const scope = getPortfolioScope();
-  const portfolio = computePortfolio(scope.trades, scope.cashTransfers);
-  const todayKey = toDateKey(new Date());
-  const fetchRange = buildAnalysisDailyFetchRange(scope);
-
-  let dbRows = [];
-  if (apiReady) {
-    try {
-      const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-      dbRows = await fetchAnalysisDailyRowsRemote({
-        accountId: aid,
-        from: fetchRange.from,
-        to: fetchRange.to,
+    const renderRequestId = ++analysisRenderRequestSeq;
+    setAnalysisSummariesDash();
+    clearAnalysisChartsToEmpty();
+    if (apiReady) {
+      const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId, "", {
+        resetViewport: showLoading,
       });
-    } catch (error) {
-      console.warn("加载 analysis_daily 失败", error);
+      if (metricsPainted && renderRequestId === analysisRenderRequestSeq) {
+        return;
+      }
     }
-  }
-
-  if (renderRequestId !== analysisRenderRequestSeq) {
-    return;
-  }
-  if (!dbRows.length) {
     if (renderRequestId === analysisRenderRequestSeq) {
-      renderAnalysisStockRank([], scope, portfolio);
+      if (analysisStockRankBody) {
+        analysisStockRankBody.innerHTML = `<p class="empty">暂无分析区间数据。</p>`;
+      }
       if (analysisEodAccountCaption) {
         analysisEodAccountCaption.textContent = "";
         analysisEodAccountCaption.hidden = true;
       }
     }
-    return;
-  }
-
-  const sorted = [...dbRows].sort((a, b) => a.date.localeCompare(b.date));
-  const liveByMode = buildLiveByModeFromSnapshotDaily(sorted, portfolio, todayKey, scope.cashTransfers);
-  const mergedFull = mergeAnalysisSliceWithLive(
-    sorted.map((row) => ({ ...row })),
-    portfolio,
-    todayKey,
-    liveByMode,
-    scope.cashTransfers,
-  );
-  const pseudoHistory = mergedFull.map((row) => ({
-    date: row.date,
-    value: analysisTotalAssetsFromRow(row),
-    flow: Number(row.externalFlowCny ?? row.external_flow_cny ?? 0),
-  }));
-  const perfPresetKey = resolvePerformancePresetKeyFromAnalysisState();
-  let selectedPh = resolveAnalysisRange(pseudoHistory);
-  if (
-    perfPresetKey &&
-    (perfPresetKey === "last_7d" || perfPresetKey === "last_30d" || perfPresetKey === "last_90d") &&
-    Number(state.analysisPanOffset || 0) === 0
-  ) {
-    const len = perfPresetKey === "last_7d" ? 7 : perfPresetKey === "last_30d" ? 30 : 90;
-    const end = String(mergedFull[mergedFull.length - 1]?.date || todayKey).slice(0, 10);
-    const start = addCalendarDaysToDateKey(end, -(len - 1));
-    const alt = pseudoHistory.filter((p) => p.date >= start && p.date <= end);
-    if (alt.length >= 2) {
-      selectedPh = alt;
-    }
-  }
-  const dateSet = new Set(selectedPh.map((p) => p.date));
-  let sliceRows = mergedFull.filter((row) => dateSet.has(row.date));
-  const symSet = new Set();
-  for (const pos of portfolio.positions || []) {
-    const ns = normalizeSymbol(pos.symbol);
-    if (ns) {
-      symSet.add(ns);
-    }
-  }
-  if (state.benchmark !== "none") {
-    const nb = normalizeSymbol(state.benchmark);
-    if (nb) {
-      symSet.add(nb);
-    }
-  }
-  const win = Math.min(900, Math.max(120, selectedPh.length + 200));
-  await fetchSymbolCloseIntoKlineMap([...symSet], win);
-
-  if (renderRequestId !== analysisRenderRequestSeq) {
-    return;
-  }
-
-  const modePts = sliceRows.map((r) => ({
-    date: r.date,
-    value: analysisTotalAssetsFromRow(r),
-    flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
-  }));
-  const useMwrUi = normalizeProfitAlgoMode(state.algoMode) === "mwr";
-  const aid = state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
-  let perfSnap = null;
-  if (apiReady && perfPresetKey) {
-    perfSnap = await fetchAnalysisPerformancePresetRemote(aid, perfPresetKey);
-  }
-  if (renderRequestId !== analysisRenderRequestSeq) {
-    return;
-  }
-  const bundle = buildAnalysisChartsSeriesBundle({
-    modePts,
-    selectedPh,
-    useMwrUi,
-    algoMode: state.algoMode,
-    perfSnap,
-  });
-  const mySeries = bundle.mySeries;
-  const profitSeries = bundle.profitSeries;
-  const benchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(selectedPh));
-  const assetSeries = sliceRows.map((row) => {
-    const mv = Number(row.marketValue) || 0;
-    const cash = Number(row.cash) || 0;
-    const taDb = Number(row.totalAssets);
-    const totalAssets = Number.isFinite(taDb) && Math.abs(taDb) > 1e-9 ? taDb : mv + cash;
-    const ratioDb = Number(row.cashRatio);
-    const cashRatio = Number.isFinite(ratioDb)
-      ? ratioDb
-      : totalAssets > 0
-        ? (cash / totalAssets) * 100
-        : 0;
-    return {
-      date: row.date,
-      totalAssets,
-      market: mv,
-      cash,
-      cashRatio,
-    };
-  });
-
-  const ratePayload = useMwrUi
-    ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
-    : drawLineChart(mySeries, benchSeries);
-  const profitPayload = drawDualLineChart(
-    analysisProfitChart,
-    profitSeries.map((item) => ({ date: item.date, value: item.value })),
-    null,
-    "#f45a68",
-    null,
-    {
-      keyA: "profit",
-      labelA: "收益",
-      yAxisMode: "left",
-      leftLabel: "",
-      xLabel: "",
-      valueFormatter: (value) => formatNumber(value, 2),
-      axisFormatter: (value) => formatNumber(value, 2),
-      yRangePadding: {
-        minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
-        maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
-      },
-    }
-  );
-  const assetPayload = drawAssetChart(assetSeries);
-
-  const refreshAnalysisView = () => {
-    renderControls();
-    void renderAnalysis({ showLoading: false });
-  };
-
-  const analysisChartPayloads = {
-    rate: ratePayload,
-    profit: profitPayload,
-    asset: assetPayload,
-  };
-  legacyAnalysisPanContext = {
-    pseudoHistory,
-    mergedFull,
-    useMwrUi,
-    perfSnap,
-    perfPresetKey,
-    todayKey,
-    analysisChartPayloads,
-  };
-  const redrawAnalysisChartsOnly = () => {
-    const ctx = legacyAnalysisPanContext;
-    if (!ctx) {
-      return;
-    }
-    let nextSelectedPh = resolveAnalysisRange(ctx.pseudoHistory);
-    if (
-      ctx.perfPresetKey &&
-      (ctx.perfPresetKey === "last_7d" || ctx.perfPresetKey === "last_30d" || ctx.perfPresetKey === "last_90d") &&
-      Number(state.analysisPanOffset || 0) === 0
-    ) {
-      const len = ctx.perfPresetKey === "last_7d" ? 7 : ctx.perfPresetKey === "last_30d" ? 30 : 90;
-      const end = String(ctx.mergedFull[ctx.mergedFull.length - 1]?.date || ctx.todayKey).slice(0, 10);
-      const start = addCalendarDaysToDateKey(end, -(len - 1));
-      const alt = ctx.pseudoHistory.filter((p) => p.date >= start && p.date <= end);
-      if (alt.length >= 2) {
-        nextSelectedPh = alt;
-      }
-    }
-    const dateSet = new Set(nextSelectedPh.map((p) => p.date));
-    const nextSliceRows = ctx.mergedFull.filter((row) => dateSet.has(row.date));
-    const nextModePts = nextSliceRows.map((r) => ({
-      date: r.date,
-      value: analysisTotalAssetsFromRow(r),
-      flow: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0),
-    }));
-    const nextBundle = buildAnalysisChartsSeriesBundle({
-      modePts: nextModePts,
-      selectedPh: nextSelectedPh,
-      useMwrUi: ctx.useMwrUi,
-      algoMode: state.algoMode,
-      perfSnap: ctx.perfSnap,
-    });
-    const nextBenchSeries = rebaseRateSeriesByFirstDay(buildBenchmarkSeries(nextSelectedPh));
-    const nextAssetSeries = nextSliceRows.map((row) => {
-      const mv = Number(row.marketValue) || 0;
-      const cash = Number(row.cash) || 0;
-      const taDb = Number(row.totalAssets);
-      const totalAssets = Number.isFinite(taDb) && Math.abs(taDb) > 1e-9 ? taDb : mv + cash;
-      const ratioDb = Number(row.cashRatio);
-      const cashRatio = Number.isFinite(ratioDb)
-        ? ratioDb
-        : totalAssets > 0
-          ? (cash / totalAssets) * 100
-          : 0;
-      return {
-        date: row.date,
-        totalAssets,
-        market: mv,
-        cash,
-        cashRatio,
-      };
-    });
-    ctx.analysisChartPayloads.rate = ctx.useMwrUi
-      ? drawAnalysisMwrRatePlaceholder(analysisRateChart, "资金加权收益率只算总值、不算每日走势。")
-      : drawLineChart(nextBundle.mySeries, nextBenchSeries);
-    ctx.analysisChartPayloads.profit = drawDualLineChart(
-      analysisProfitChart,
-      nextBundle.profitSeries.map((item) => ({ date: item.date, value: item.value })),
-      null,
-      "#f45a68",
-      null,
-      {
-        keyA: "profit",
-        labelA: "收益",
-        yAxisMode: "left",
-        leftLabel: "",
-        xLabel: "",
-        valueFormatter: (value) => formatNumber(value, 2),
-        axisFormatter: (value) => formatNumber(value, 2),
-        yRangePadding: {
-          minFactor: ANALYSIS_CHART_AXIS_MIN_FACTOR,
-          maxFactor: ANALYSIS_CHART_AXIS_MAX_FACTOR,
-        },
-      },
-    );
-    ctx.analysisChartPayloads.asset = drawAssetChart(nextAssetSeries);
-  };
-
-  const rateHasBenchmark = state.benchmark !== "none";
-  bindInteractiveChart(analysisRateChart, analysisRateTooltip, () => analysisChartPayloads.rate, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    onRedraw: redrawAnalysisChartsOnly,
-    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
-    valueFormatter: (_value, key) => {
-      if (key === "benchmark" && !rateHasBenchmark) {
-        return "--";
-      }
-      return `${formatNumber(_value, 2)}%`;
-    },
-  });
-  bindInteractiveChart(analysisProfitChart, analysisProfitTooltip, () => analysisChartPayloads.profit, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    onRedraw: redrawAnalysisChartsOnly,
-    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
-    valueFormatter: (value) => formatNumber(value, 2),
-  });
-  bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => analysisChartPayloads.asset, {
-    mode: "analysis",
-    onRefresh: refreshAnalysisView,
-    onRedraw: redrawAnalysisChartsOnly,
-    chartNavTotal: () => legacyAnalysisPanContext?.pseudoHistory?.length || 0,
-    valueFormatter: (value) =>
-      state.capitalTrendMode === "cash_ratio"
-        ? `${formatNumber(value, 2)}%`
-        : formatNumber(analysisSnapshotMoneyFromCny(value), 2),
-  });
-
-  /** 与曲线、tooltip 同一序列 */
-  let headlineMwr = 0;
-  if (useMwrUi && sliceRows.length) {
-    if (bundle.cacheHeadlineMwr != null && Number.isFinite(bundle.cacheHeadlineMwr)) {
-      headlineMwr = bundle.cacheHeadlineMwr;
-    } else {
-      headlineMwr = analysisXirrForStage(
-        mergedFull,
-        String(sliceRows[0].date).slice(0, 10),
-        String(sliceRows[sliceRows.length - 1].date).slice(0, 10),
-      );
-    }
-  }
-  const lastMyTwr = mySeries.at(-1)?.rate ?? 0;
-  const lastBench = benchSeries.at(-1)?.rate ?? 0;
-  const lastProfit = profitSeries.at(-1)?.value ?? 0;
-  const excess = lastMyTwr - lastBench;
-  if (analysisRateSummary) {
-    if (useMwrUi) {
-      analysisRateSummary.textContent =
-        state.benchmark === "none"
-          ? `我的收益率 ${formatPercent(headlineMwr)}`
-          : `我的 ${formatPercent(headlineMwr)} / 基准 ${formatPercent(lastBench)} / 对比 –`;
-    } else {
-      analysisRateSummary.textContent =
-        state.benchmark === "none"
-          ? `我的收益率 ${formatPercent(lastMyTwr)}`
-          : `我的 ${formatPercent(lastMyTwr)} / 基准 ${formatPercent(lastBench)} / 对比 ${formatPercent(excess)}`;
-    }
-  }
-  if (analysisProfitSummary) {
-    analysisProfitSummary.textContent = `累计收益 ${formatSignedMoney(lastProfit, 2)}`;
-  }
-  if (analysisEodAccountCaption) {
-    analysisEodAccountCaption.textContent = "";
-    analysisEodAccountCaption.hidden = true;
-  }
-  renderAnalysisStockRank(pseudoHistory, scope, portfolio);
-  void warmOverviewDailySnapshotsForEarning(scope, state.stageRange);
   } finally {
     if (showLoading) {
       hideRouteLoading();
     }
   }
-}
-
-function sliceHistoryWithChartWindow(filtered) {
-  const list = Array.isArray(filtered) ? filtered : [];
-  if (!list.length) {
-    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-  }
-  const windowSize = Math.max(
-    2,
-    Math.min(list.length, Number(state.analysisChartWindow) || ANALYSIS_CHART_DEFAULT_WINDOW),
-  );
-  const maxOffset = Math.max(0, list.length - windowSize);
-  const offset = Math.max(0, Math.min(maxOffset, Number(state.analysisPanOffset) || 0));
-  state.analysisPanOffset = offset;
-  const end = list.length - offset;
-  const start = Math.max(0, end - windowSize);
-  return list.slice(start, end);
-}
-
-function resolveAnalysisRange(history) {
-  if (!history.length) {
-    return [{ date: toDateKey(new Date()), value: 0, flow: 0 }];
-  }
-  if (state.analysisRangeMode === "custom") {
-    let start = state.customRangeStart || history[0].date;
-    let end = state.customRangeEnd || history[history.length - 1].date;
-    if (start > end) {
-      [start, end] = [end, start];
-    }
-    const picked = history.filter((point) => point.date >= start && point.date <= end);
-    if (picked.length) {
-      return sliceHistoryWithChartWindow(picked);
-    }
-  }
-  if (isAnalysisMtdPreset()) {
-    const mtdKey = monthToDateStartKey();
-    const filtered = history.filter((point) => point.date >= mtdKey);
-    return sliceHistoryWithChartWindow(filtered);
-  }
-  if (isAnalysisYtdPreset()) {
-    const ytdKey = ytdStartDateKey();
-    const filtered = history.filter((point) => point.date >= ytdKey);
-    return sliceHistoryWithChartWindow(filtered);
-  }
-  if (state.analysisRangeMode === "all") {
-    return sliceHistoryWithChartWindow(history);
-  }
-  return sliceHistoryWithChartWindow(history);
 }
 
 function buildProfitSeries(points) {

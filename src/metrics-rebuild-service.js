@@ -6,7 +6,6 @@ const {
   upsertUserMetricsMeta,
   getUserMetricsMeta,
   getLatestAnalysisSnapshotDate,
-  deletePerformanceSeriesCacheForUser,
 } = require("./db");
 const { resolveFrozenDate } = require("./eod-freeze-service");
 const { addCalendarDays } = require("./metrics/stages");
@@ -68,7 +67,6 @@ async function refreshLiveMetricsOnly(userId) {
   if (!uid) {
     return { ok: false };
   }
-  await deletePerformanceSeriesCacheForUser(uid);
   const meta = await getUserMetricsMeta(uid, { light: true });
   if (meta.rebuilding) {
     await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
@@ -112,7 +110,6 @@ async function runMetricsRebuildForUser(userId, opts = {}) {
     rebuilding: true,
     rebuildFrom: rebuildFromDate || null,
   });
-  await deletePerformanceSeriesCacheForUser(uid);
 
   const freezeOpts = {
     frozenDate: frozenEnd,

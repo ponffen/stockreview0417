@@ -1,5 +1,5 @@
 /**
- * 个股排行周期指标：与前端 renderAnalysisStockRank / computePositionPeriodMetrics 同口径。
+ * 个股排行周期指标：与前端 computePositionPeriodMetrics 同口径。
  */
 const { normalizeSymbol } = require("../db");
 

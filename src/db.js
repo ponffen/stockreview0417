@@ -367,19 +367,6 @@ const DDL = [
     PRIMARY KEY (user_id, account_id, date)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_analysis_daily_snapshot_date ON analysis_daily_snapshot (date ASC)`,
-  `CREATE TABLE IF NOT EXISTS performance_series_cache (
-    user_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    as_of_date TEXT NOT NULL,
-    preset TEXT NOT NULL,
-    algo TEXT NOT NULL,
-    period_return DOUBLE PRECISION NOT NULL DEFAULT 0,
-    series_json TEXT,
-    source_frozen_through TEXT NOT NULL,
-    updated_at BIGINT NOT NULL,
-    PRIMARY KEY (user_id, account_id, as_of_date, preset, algo)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_perf_series_user_asof ON performance_series_cache (user_id, as_of_date DESC)`,
   `CREATE TABLE IF NOT EXISTS symbol_daily_close (
     symbol TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -2129,14 +2116,6 @@ async function deleteAllAnalysisDailySnapshot(userId = null) {
   await q("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
 }
 
-async function deletePerformanceSeriesCacheForUser(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return;
-  }
-  await q("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
-}
-
 let homeSummarySchemaPromise = null;
 
 /** 首页「截止到昨日日终」汇总表（幂等建表）。 */
@@ -2536,85 +2515,6 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
   });
 }
 
-const PERFORMANCE_PRESET_KEYS = new Set(["last_7d", "last_30d", "last_90d", "mtd", "ytd", "inception"]);
-
-/**
- * 读取某冻结日上的业绩曲线缓存（twr + mwr 两行）。as_of 缺省时取该用户该账户该 preset 下最大的 as_of_date。
- * @returns {Promise<{ asOfDate: string, twr: object|null, mwr: object|null }|null>}
- */
-async function getPerformancePresetSnapshot(userId, accountId, preset, asOfDateOpt) {
-  const uid = String(userId || "").trim();
-  const acc = String(accountId || "all").trim() || "all";
-  const presetKey = String(preset || "").trim();
-  if (!uid || !PERFORMANCE_PRESET_KEYS.has(presetKey)) {
-    return null;
-  }
-  let asOf = String(asOfDateOpt || "").trim().slice(0, 10);
-  if (!asOf) {
-    const { rows: mx } = await q(
-      `SELECT MAX(as_of_date) AS d FROM performance_series_cache
-       WHERE user_id = $1 AND account_id = $2 AND preset = $3`,
-      [uid, acc, presetKey]
-    );
-    asOf = mx[0]?.d ? String(mx[0].d).slice(0, 10) : "";
-  }
-  if (!asOf) {
-    return null;
-  }
-  const { rows } = await q(
-    `SELECT algo, period_return, series_json, rule_version, as_of_date
-     FROM performance_series_cache
-     WHERE user_id = $1 AND account_id = $2 AND preset = $3 AND as_of_date = $4
-       AND algo IN ('twr','mwr')`,
-    [uid, acc, presetKey, asOf]
-  );
-  const out = { asOfDate: asOf, twr: null, mwr: null };
-  for (const row of rows) {
-    const algo = String(row.algo || "").trim();
-    const slot = {
-      periodReturn: validNumber(row.period_return, 0),
-      ruleVersion: Number.isFinite(Number(row.rule_version)) ? Math.trunc(Number(row.rule_version)) : 1,
-      seriesJson: row.series_json == null ? null : String(row.series_json),
-      asOfDate: String(row.as_of_date || asOf).slice(0, 10),
-    };
-    if (algo === "twr") {
-      out.twr = slot;
-    } else if (algo === "mwr") {
-      out.mwr = slot;
-    }
-  }
-  return out;
-}
-
-async function upsertPerformanceSeriesCacheRow(input) {
-  const r = input || {};
-  const now = nowMs();
-  const rv = Number.isFinite(Number(r.rule_version)) ? Math.trunc(Number(r.rule_version)) : 1;
-  await q(
-    `INSERT INTO performance_series_cache (
-       user_id, account_id, as_of_date, preset, algo, period_return, series_json, source_frozen_through, rule_version, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-     ON CONFLICT (user_id, account_id, as_of_date, preset, algo) DO UPDATE SET
-       period_return = EXCLUDED.period_return,
-       series_json = EXCLUDED.series_json,
-       source_frozen_through = EXCLUDED.source_frozen_through,
-       rule_version = EXCLUDED.rule_version,
-       updated_at = EXCLUDED.updated_at`,
-    [
-      String(r.user_id || "").trim(),
-      String(r.account_id || "default").trim() || "default",
-      String(r.as_of_date || "").slice(0, 10),
-      String(r.preset || "").trim(),
-      String(r.algo || "").trim(),
-      validNumber(r.period_return, 0),
-      r.series_json == null ? null : String(r.series_json),
-      String(r.source_frozen_through || "").slice(0, 10),
-      rv,
-      now,
-    ]
-  );
-}
-
 async function deleteAllDataForUser(userId) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -2628,7 +2528,6 @@ async function deleteAllDataForUser(userId) {
     await c.query("DELETE FROM cash_transfers WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
-    await c.query("DELETE FROM performance_series_cache WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM account_home_summary WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM symbol_home_summary WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
@@ -3017,30 +2916,13 @@ async function getTradeWindowForDailyClose(userId) {
 }
 
 let perfSchemaV2Promise = null;
-/** 已有库升级到 TWR 新列、performance_series_cache、symbol 日净流入列（幂等）。 */
+/** 已有库升级到 TWR 新列、symbol 日净流入列（幂等）；废弃 performance_series_cache 则 DROP。 */
 async function ensurePerformanceSchemaV2() {
   if (perfSchemaV2Promise) {
     return perfSchemaV2Promise;
   }
   perfSchemaV2Promise = (async () => {
-    await q(`CREATE TABLE IF NOT EXISTS performance_series_cache (
-        user_id TEXT NOT NULL,
-        account_id TEXT NOT NULL,
-        as_of_date TEXT NOT NULL,
-        preset TEXT NOT NULL,
-        algo TEXT NOT NULL,
-        period_return DOUBLE PRECISION NOT NULL DEFAULT 0,
-        series_json TEXT,
-        source_frozen_through TEXT NOT NULL,
-        updated_at BIGINT NOT NULL,
-        PRIMARY KEY (user_id, account_id, as_of_date, preset, algo)
-      )`).catch(() => {});
-    await q(
-      `CREATE INDEX IF NOT EXISTS idx_perf_series_user_asof ON performance_series_cache (user_id, as_of_date DESC)`
-    ).catch(() => {});
-    await q(
-      `ALTER TABLE performance_series_cache ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`
-    ).catch(() => {});
+    await q(`DROP TABLE IF EXISTS performance_series_cache`).catch(() => {});
     await q(
       `ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`
     ).catch(() => {});
@@ -3568,9 +3450,6 @@ module.exports = {
   upsertAnalysisDailySnapshotBatch,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
-  deletePerformanceSeriesCacheForUser,
-  getPerformancePresetSnapshot,
-  upsertPerformanceSeriesCacheRow,
   ensureHomeSummaryTables,
   ensureMetricsOpsTables,
   ensureAppDerivedTables,

@@ -20,15 +20,6 @@ function hintDatesFromImportRows(rows, dateField = "date") {
   return hintDatesForRebuild(raw);
 }
 
-function clearUserMetricsCaches(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return;
-  }
-  const { deletePerformanceSeriesCacheForUser } = require("./db");
-  void deletePerformanceSeriesCacheForUser(uid);
-}
-
 /**
  * @param {string} userId
  * @param {{ hintDates?: string[], fullRebuild?: boolean }} opts
@@ -36,7 +27,6 @@ function clearUserMetricsCaches(userId) {
 function notifyLedgerMutation(userId, opts = {}) {
   const uid = String(userId || "").trim();
   if (!uid) return;
-  clearUserMetricsCaches(uid);
   const { scheduleMetricsRebuildForUser, kickMetricsRebuildNow } = require("./metrics-rebuild-service");
   scheduleMetricsRebuildForUser(uid, {
     hintDates: opts.hintDates || [],
