@@ -5568,21 +5568,21 @@ let analysisRouteHomeParent = null;
 let communityTradeRecordsRouteParent = null;
 
 const PRIVATE_TRADE_TABLE_HEAD_HTML = `
-  <th>日期</th>
-  <th>名称</th>
-  <th>交易方向</th>
-  <th>价格</th>
-  <th>数量</th>
-  <th>发生金额</th>
-  <th>股票账户</th>
+  <th class="trade-col-date">日期</th>
+  <th class="trade-col-name">名称</th>
+  <th class="trade-col-type">交易方向</th>
+  <th class="trade-col-price num">价格</th>
+  <th class="trade-col-qty num">数量</th>
+  <th class="trade-col-amt num">发生金额</th>
+  <th class="trade-col-account">股票账户</th>
 `;
 
 const PUBLIC_TRADE_TABLE_HEAD_HTML = `
-  <th>日期</th>
-  <th>名称</th>
-  <th>交易方向</th>
-  <th>价格</th>
-  <th class="num stock-record-amt-th">
+  <th class="trade-col-date">日期</th>
+  <th class="trade-col-name">名称</th>
+  <th class="trade-col-type">交易方向</th>
+  <th class="trade-col-price num">价格</th>
+  <th class="trade-col-amt num stock-record-amt-th">
     <span class="stock-record-amt-th-inner">
       金额
       <span class="stock-rank-help-wrap stock-record-amt-help-wrap">
@@ -5591,7 +5591,7 @@ const PUBLIC_TRADE_TABLE_HEAD_HTML = `
       </span>
     </span>
   </th>
-  <th>股票账户</th>
+  <th class="trade-col-account">股票账户</th>
 `;
 
 function isCommunityPublicTradeTableActive() {
@@ -5738,11 +5738,13 @@ async function openCommunityProfileAnalysisTab() {
 }
 
 function syncCommunityTradeRecordsTableHead(publicMode) {
-  const headRow = tradeTableBody?.closest("table")?.querySelector("thead tr");
+  const table = tradeTableBody?.closest("table");
+  const headRow = table?.querySelector("thead tr");
   if (!headRow) {
     return;
   }
   headRow.innerHTML = publicMode ? PUBLIC_TRADE_TABLE_HEAD_HTML : PRIVATE_TRADE_TABLE_HEAD_HTML;
+  table?.classList.toggle("trade-table--ledger-6", publicMode);
 }
 
 function mountCommunityTradeRecordsPane() {
@@ -7544,22 +7546,22 @@ function buildTradeRecordRowHtml(trade, ctx) {
   if (ctx.mode === "publicCommunity") {
     const share = publicTradeAmountShare(trade);
     const shareStr = share != null && Number.isFinite(share) ? formatPercent(share) : "—";
-    amountCells = `<td class="num">${shareStr}</td>`;
+    amountCells = `<td class="trade-col-amt num">${shareStr}</td>`;
   } else {
     amountCells = `
-          <td class="num">${formatNumber(trade.quantity, 0)}</td>
-          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
+          <td class="trade-col-qty num">${formatNumber(trade.quantity, 0)}</td>
+          <td class="trade-col-amt num ${trade.side === "buy" ? "down" : "up"}">${
             trade.side === "buy" ? "-" : "+"
           }${formatNumber(trade.amount, 2)}</td>`;
   }
   return `
         <tr class="trade-row${clickableClass}" data-record-id="${id}">
-          <td>${trade.date.replace(/-/g, "/")}</td>
+          <td class="trade-col-date">${trade.date.replace(/-/g, "/")}</td>
           <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
-          <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
-          <td class="num">${formatNumber(trade.price, 2)}</td>
+          <td class="trade-col-type type-cell">${tradeDirectionCellLabel(trade)}</td>
+          <td class="trade-col-price num">${formatNumber(trade.price, 2)}</td>
           ${amountCells}
-          <td class="trade-account-cell">${accLabel}</td>
+          <td class="trade-col-account trade-account-cell">${accLabel}</td>
         </tr>
         ${tradeRecordNoteSubrowHtml(trade.note, ctx.colspan, { "data-record-id": trade.id }, noteOpts)}`;
 }

@@ -42,6 +42,10 @@
       var(--ledger-trade-col-price) + var(--ledger-trade-col-qty) + var(--ledger-trade-col-amt) +
       var(--ledger-trade-col-account)
   );
+  --ledger-trade-pub-min-width: calc(
+    var(--ledger-trade-col-date) + var(--ledger-trade-col-name) + var(--ledger-trade-col-type) +
+      var(--ledger-trade-col-price) + var(--ledger-trade-col-amt) + var(--ledger-trade-col-account)
+  );
   --ledger-cash-min-width: calc(
     var(--ledger-cash-col-date) + var(--ledger-cash-col-account) + var(--ledger-cash-col-type) +
       var(--ledger-cash-col-amt)
@@ -1427,9 +1431,16 @@ h2 {
 
 .trade-table,
 .trade-table--cash {
-  width: max(100%, var(--ledger-trade-min-width));
   border-collapse: collapse;
   table-layout: fixed;
+}
+
+.trade-table:not(.trade-table--cash):not(.trade-table--ledger-6) {
+  width: max(100%, var(--ledger-trade-min-width));
+}
+
+.trade-table.trade-table--ledger-6 {
+  width: max(100%, var(--ledger-trade-pub-min-width));
 }
 
 .trade-table--cash {
@@ -1500,40 +1511,41 @@ h2 {
   font-weight: 500;
 }
 
-/* 交易记录：日期 | 名称 | 方向 | 价格 | 数量 | 金额 | 账户 */
-.trade-table:not(.trade-table--cash) th:nth-child(1),
-.trade-table:not(.trade-table--cash) td:nth-child(1) {
+/* 交易记录：列宽/对齐按语义类名（私人 7 列 / 公开 6 列共用） */
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-date {
   width: var(--ledger-trade-col-date);
+  text-align: left;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(2),
-.trade-table:not(.trade-table--cash) td:nth-child(2) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-name {
   width: var(--ledger-trade-col-name);
+  text-align: left;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(3),
-.trade-table:not(.trade-table--cash) td:nth-child(3) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-type {
   width: var(--ledger-trade-col-type);
+  text-align: left;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(4),
-.trade-table:not(.trade-table--cash) td:nth-child(4) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-price {
   width: var(--ledger-trade-col-price);
+  text-align: right;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(5),
-.trade-table:not(.trade-table--cash) td:nth-child(5) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-qty {
   width: var(--ledger-trade-col-qty);
+  text-align: right;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(6),
-.trade-table:not(.trade-table--cash) td:nth-child(6) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-amt {
   width: var(--ledger-trade-col-amt);
+  text-align: right;
 }
 
-.trade-table:not(.trade-table--cash) th:nth-child(7),
-.trade-table:not(.trade-table--cash) td:nth-child(7) {
+.trade-table:not(.trade-table--cash) :is(th, td).trade-col-account,
+.trade-table:not(.trade-table--cash) :is(th, td).trade-account-cell {
   width: var(--ledger-trade-col-account);
+  text-align: left;
 }
 
 /* 资金记录：日期 | 账户 | 操作类型 | 金额 */
@@ -1555,18 +1567,6 @@ h2 {
 .trade-table--cash th:nth-child(4),
 .trade-table--cash td:nth-child(4) {
   width: var(--ledger-cash-col-amt);
-}
-
-.trade-table thead th:nth-child(4),
-.trade-table thead th:nth-child(5),
-.trade-table thead th:nth-child(6) {
-  text-align: right;
-}
-
-.trade-table td:nth-child(4),
-.trade-table td:nth-child(5),
-.trade-table td:nth-child(6) {
-  text-align: right;
 }
 
 .trade-record-note-wrap {
@@ -2954,7 +2954,7 @@ body.auth-mode {
   display: block;
 }
 
-.trade-table .trade-col-name,
+.trade-table :is(th, td)[class*="trade-col-"],
 .trade-table .trade-account-cell {
   box-sizing: border-box;
 }
