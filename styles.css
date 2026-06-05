@@ -2942,14 +2942,16 @@ body.auth-mode {
   display: block;
 }
 
-/* 他人主页交易列表：名称列宽约 40% */
-/* 名称列约为原 40% 宽度时的视觉宽度（原 max 40% → 16%） */
-.public-profile-trade-table .pub-trade-col-name {
-  width: 16%;
-  max-width: 16%;
-  box-sizing: border-box;
-  word-break: break-word;
-  white-space: normal;
+.community-profile-tab-panel[data-profile-panel="trade"] .route-pane--community-trade {
+  display: block;
+}
+
+.route-pane--community-trade {
+  padding: 0;
+}
+
+.route-pane--community-trade.active {
+  display: block;
 }
 
 .trade-table .trade-col-name,
@@ -2957,15 +2959,7 @@ body.auth-mode {
   box-sizing: border-box;
 }
 
-.public-profile-trade-table .pub-trade-amt-th-inner {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  width: 100%;
-}
-
-.public-profile-trade-table .pub-trade-amt-help-wrap {
+.trade-table .stock-record-amt-help-wrap {
   position: relative;
   display: inline-flex;
   align-items: center;

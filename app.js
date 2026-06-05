@@ -3526,14 +3526,17 @@ function bindEvents() {
           p.classList.toggle("is-active", p.getAttribute("data-profile-panel") === sub);
         });
         if (sub === "analysis" && state.lastPublicProfileDetail) {
+          unmountCommunityTradeRecordsPane();
           void openCommunityProfileAnalysisTab();
         } else {
           unmountCommunityAnalysisRoutePane();
         }
         if (sub === "earning" && state.communityProfileUserId) {
+          unmountCommunityTradeRecordsPane();
           void loadPublicEarningTabData(state.communityProfileUserId);
         }
         if (sub === "trade" && state.communityProfileUserId) {
+          unmountCommunityAnalysisRoutePane();
           void loadCommunityPublicTrades(state.communityProfileUserId);
         }
       }
@@ -4099,6 +4102,9 @@ function bindEvents() {
   closeCapitalDialogBtn?.addEventListener("click", () => capitalDialog?.close());
 
   tradeTableBody?.addEventListener("click", (event) => {
+    if (isCommunityPublicTradeTableActive()) {
+      return;
+    }
     const row = event.target.closest("tr[data-record-id]");
     if (!row) {
       return;
@@ -4308,7 +4314,7 @@ function bindAnalysisStockRankHelpOnce() {
       btn.closest(".stock-record-body") ||
       btn.closest(".stock-record-table--pub") ||
       btn.closest(".community-feed-card") ||
-      btn.closest(".public-profile-trade-table");
+      btn.closest(".route-pane--community-trade");
     if (!host) {
       return;
     }
@@ -4339,7 +4345,7 @@ function bindAnalysisStockRankHelpOnce() {
     document.querySelectorAll(".community-feed-card").forEach((host) => {
       closeStockRankHelpInHost(host);
     });
-    document.querySelectorAll(".public-profile-trade-table").forEach((host) => {
+    document.querySelectorAll(".route-pane--community-trade").forEach((host) => {
       closeStockRankHelpInHost(host);
     });
   });
@@ -5559,6 +5565,40 @@ function bindPublicProfileStageSelect() {}
 function syncPublicProfileStageRow() {}
 
 let analysisRouteHomeParent = null;
+let communityTradeRecordsRouteParent = null;
+
+const PRIVATE_TRADE_TABLE_HEAD_HTML = `
+  <th>日期</th>
+  <th>名称</th>
+  <th>交易方向</th>
+  <th>价格</th>
+  <th>数量</th>
+  <th>发生金额</th>
+  <th>股票账户</th>
+`;
+
+const PUBLIC_TRADE_TABLE_HEAD_HTML = `
+  <th>日期</th>
+  <th>名称</th>
+  <th>交易方向</th>
+  <th>价格</th>
+  <th class="num stock-record-amt-th">
+    <span class="stock-record-amt-th-inner">
+      金额
+      <span class="stock-rank-help-wrap stock-record-amt-help-wrap">
+        <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
+        <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div>
+      </span>
+    </span>
+  </th>
+  <th>股票账户</th>
+`;
+
+function isCommunityPublicTradeTableActive() {
+  return (
+    state.route === "community-profile" && (state.communityProfileTab || "earning") === "trade"
+  );
+}
 
 function analysisMetricsUiActive() {
   return (
@@ -5697,34 +5737,68 @@ async function openCommunityProfileAnalysisTab() {
   await loadPublicAnalysisTabData(tid);
 }
 
-function getPublicProfileTradeSectionHtml() {
-  return `
-    <article class="panel community-profile-trade-panel">
-      <div class="trade-table-wrap">
-        <table class="trade-table public-profile-trade-table">
-          <thead>
-            <tr>
-              <th>日期</th>
-              <th class="pub-trade-col-name">名称</th>
-              <th>交易方向</th>
-              <th>价格</th>
-              <th class="num pub-trade-amt-th">
-                <span class="pub-trade-amt-th-inner">
-                  金额
-                  <span class="stock-rank-help-wrap pub-trade-amt-help-wrap">
-                    <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
-                    <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div>
-                  </span>
-                </span>
-              </th>
-              <th>股票账户</th>
-            </tr>
-          </thead>
-          <tbody id="pubTradeTableBody"></tbody>
-        </table>
-      </div>
-    </article>
-  `;
+function syncCommunityTradeRecordsTableHead(publicMode) {
+  const headRow = tradeTableBody?.closest("table")?.querySelector("thead tr");
+  if (!headRow) {
+    return;
+  }
+  headRow.innerHTML = publicMode ? PUBLIC_TRADE_TABLE_HEAD_HTML : PRIVATE_TRADE_TABLE_HEAD_HTML;
+}
+
+function mountCommunityTradeRecordsPane() {
+  const mount = document.querySelector('[data-profile-panel="trade"]');
+  const pane = document.getElementById("route-trade-records");
+  if (!mount || !pane) {
+    return;
+  }
+  if (!communityTradeRecordsRouteParent) {
+    communityTradeRecordsRouteParent = pane.parentElement;
+  }
+  mount.querySelectorAll(".community-profile-trade-loading").forEach((el) => el.remove());
+  if (!mount.contains(pane)) {
+    mount.appendChild(pane);
+  }
+  pane.classList.add("route-pane--community-trade");
+  const subHead = pane.querySelector(".panel-head.mine-sub-head");
+  if (subHead) {
+    subHead.style.display = "none";
+  }
+  const filterRow = pane.querySelector(".trade-filter-row");
+  if (filterRow) {
+    filterRow.style.display = "none";
+  }
+  syncCommunityTradeRecordsTableHead(true);
+}
+
+function setPublicTradePanelLoading(loading) {
+  const mount = document.querySelector('[data-profile-panel="trade"]');
+  if (!mount || !loading) {
+    return;
+  }
+  if (mount.querySelector("#route-trade-records")) {
+    return;
+  }
+  mount.innerHTML = `<p class="empty community-profile-trade-loading">加载中…</p>`;
+}
+
+function unmountCommunityTradeRecordsPane() {
+  const pane = document.getElementById("route-trade-records");
+  if (!pane || !communityTradeRecordsRouteParent) {
+    return;
+  }
+  if (pane.parentElement !== communityTradeRecordsRouteParent) {
+    communityTradeRecordsRouteParent.appendChild(pane);
+  }
+  pane.classList.remove("route-pane--community-trade");
+  const subHead = pane.querySelector(".panel-head.mine-sub-head");
+  if (subHead) {
+    subHead.style.display = "";
+  }
+  const filterRow = pane.querySelector(".trade-filter-row");
+  if (filterRow) {
+    filterRow.style.display = "";
+  }
+  syncCommunityTradeRecordsTableHead(false);
 }
 
 function renderCommunityProfilePageHtml(d) {
@@ -5733,53 +5807,8 @@ function renderCommunityProfilePageHtml(d) {
   return `
     <div class="community-profile-tab-panel ${tab === "earning" ? "is-active" : ""}" data-profile-panel="earning">${earningInner}</div>
     <div class="community-profile-tab-panel ${tab === "analysis" ? "is-active" : ""}" data-profile-panel="analysis"></div>
-    <div class="community-profile-tab-panel ${tab === "trade" ? "is-active" : ""}" data-profile-panel="trade">${getPublicProfileTradeSectionHtml()}</div>
+    <div class="community-profile-tab-panel ${tab === "trade" ? "is-active" : ""}" data-profile-panel="trade"></div>
   `;
-}
-
-function renderPublicTradeTable() {
-  const tb = document.getElementById("pubTradeTableBody");
-  if (!tb) {
-    return;
-  }
-  const noteColspan = 6;
-  const list = Array.isArray(state.communityPublicTrades) ? [...state.communityPublicTrades].sort(sortTradeDesc) : [];
-  if (!list.length && !communityPublicTradesPager.loaded) {
-    tb.innerHTML = `
-      <tr>
-        <td colspan="${noteColspan}"><p class="empty">${communityPublicTradesPager.loading ? "加载中…" : "暂无交易数据"}</p></td>
-      </tr>
-    `;
-    return;
-  }
-  if (!list.length) {
-    tb.innerHTML = `
-      <tr>
-        <td colspan="${noteColspan}"><p class="empty">暂无交易记录</p></td>
-      </tr>
-    `;
-    return;
-  }
-  const rowsHtml = list
-    .map((trade) => {
-      const share = publicTradeAmountShare(trade);
-      const shareStr = share != null && Number.isFinite(share) ? formatPercent(share) : "—";
-      const id = escapeHtml(String(trade.id));
-      return `
-        <tr class="trade-row trade-row--clickable" data-record-id="${id}">
-          <td>${trade.date.replace(/-/g, "/")}</td>
-          <td class="pub-trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
-          <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
-          <td class="num">${formatNumber(trade.price, 2)}</td>
-          <td class="num">${shareStr}</td>
-          <td class="trade-account-cell">${formatTradeAccountCellHtml(trade, null)}</td>
-        </tr>
-        ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}
-      `;
-    })
-    .join("");
-  const loadingFooter = communityPublicTradesPager.loading ? tradeListLoadingRowHtml(noteColspan) : "";
-  tb.innerHTML = rowsHtml + loadingFooter;
 }
 
 async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
@@ -5798,12 +5827,12 @@ async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
     state.communityPublicTrades = [];
   }
   if (communityPublicTradesPager.loading || (!communityPublicTradesPager.hasMore && communityPublicTradesPager.loaded)) {
-    renderPublicTradeTable();
+    renderTradeTable();
     return;
   }
   const gen = communityPublicTradesPager.gen;
   communityPublicTradesPager.loading = true;
-  renderPublicTradeTable();
+  renderTradeTable();
   try {
     const qs = publicTradesListQuery("", "all", communityPublicTradesPager.offset);
     const base = getApiBaseForFetch();
@@ -5842,7 +5871,7 @@ async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
     if (gen === communityPublicTradesPager.gen) {
       communityPublicTradesPager.loading = false;
       if (state.route === "community-profile" && state.communityProfileTab === "trade") {
-        renderPublicTradeTable();
+        renderTradeTable();
       }
     }
   }
@@ -5866,6 +5895,8 @@ async function maybeLoadMoreCommunityPublicTradesPage() {
 let lastCommunityDataKey = "";
 
 async function loadCommunityPublicTrades(targetId) {
+  setPublicTradePanelLoading(true);
+  mountCommunityTradeRecordsPane();
   await loadCommunityPublicTradesPage({ targetId, reset: true });
 }
 
@@ -6118,6 +6149,7 @@ function renderRoute() {
     state.route !== "community-profile"
   ) {
     unmountCommunityAnalysisRoutePane();
+    unmountCommunityTradeRecordsPane();
   }
   if (appHeaderTitle) {
     if (state.route === "trade-search") {
@@ -7408,18 +7440,20 @@ function openEditCashTransferDialog(rawId) {
 }
 
 /** 交易/资金/个股记录：备注在数据行下方展示（无备注则不占行）。 */
-function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}) {
+function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}, opts = {}) {
   const text = String(note || "").trim();
   if (!text) {
     return "";
   }
+  const clickable = opts.clickable !== false;
+  const clickableClass = clickable ? " trade-row--clickable" : "";
   const attrs = Object.entries(rowAttrs)
     .filter(([, v]) => v != null && String(v).trim() !== "")
     .map(([k, v]) => `${k}="${escapeHtml(String(v))}"`)
     .join(" ");
   const attrStr = attrs ? ` ${attrs}` : "";
   return `
-    <tr class="trade-note-subrow trade-row--clickable"${attrStr}>
+    <tr class="trade-note-subrow${clickableClass}"${attrStr}>
       <td colspan="${colspan}">
         <div class="trade-record-note-wrap">
           <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${escapeHtml(text)}</span></p>
@@ -7434,7 +7468,8 @@ function clearHoldingsTradePaneDomIfHiddenRoute() {
     state.route === "trade" ||
     state.route === "trade-search" ||
     state.route === "trade-records" ||
-    state.route === "trade-cash"
+    state.route === "trade-cash" ||
+    state.route === "community-profile"
   ) {
     return;
   }
@@ -7497,8 +7532,80 @@ function renderCashTransferTable() {
   cashTransferTableBody.innerHTML = html;
 }
 
+function buildTradeRecordRowHtml(trade, ctx) {
+  const id = escapeHtml(String(trade.id));
+  const clickableClass = ctx.clickable ? " trade-row--clickable" : "";
+  const noteOpts = ctx.clickable ? {} : { clickable: false };
+  const accLabel =
+    ctx.mode === "publicCommunity"
+      ? formatTradeAccountCellHtml(trade, ctx.publicDetail)
+      : escapeHtml(getAccountById(trade.accountId).name || trade.accountId || "default");
+  let amountCells;
+  if (ctx.mode === "publicCommunity") {
+    const share = publicTradeAmountShare(trade);
+    const shareStr = share != null && Number.isFinite(share) ? formatPercent(share) : "—";
+    amountCells = `<td class="num">${shareStr}</td>`;
+  } else {
+    amountCells = `
+          <td class="num">${formatNumber(trade.quantity, 0)}</td>
+          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
+            trade.side === "buy" ? "-" : "+"
+          }${formatNumber(trade.amount, 2)}</td>`;
+  }
+  return `
+        <tr class="trade-row${clickableClass}" data-record-id="${id}">
+          <td>${trade.date.replace(/-/g, "/")}</td>
+          <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
+          <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
+          <td class="num">${formatNumber(trade.price, 2)}</td>
+          ${amountCells}
+          <td class="trade-account-cell">${accLabel}</td>
+        </tr>
+        ${tradeRecordNoteSubrowHtml(trade.note, ctx.colspan, { "data-record-id": trade.id }, noteOpts)}`;
+}
+
 function renderTradeTable() {
-  if (state.route === "community-profile" || state.route === "stock-record") {
+  if (state.route === "stock-record") {
+    return;
+  }
+  if (isCommunityPublicTradeTableActive()) {
+    if (!tradeTableBody) {
+      return;
+    }
+    const noteColspan = 6;
+    const list = Array.isArray(state.communityPublicTrades)
+      ? [...state.communityPublicTrades].sort(sortTradeDesc)
+      : [];
+    if (!list.length && !communityPublicTradesPager.loaded) {
+      tradeTableBody.innerHTML = `
+      <tr>
+        <td colspan="${noteColspan}"><p class="empty">${communityPublicTradesPager.loading ? "加载中…" : "暂无交易数据"}</p></td>
+      </tr>
+    `;
+      return;
+    }
+    if (!list.length) {
+      tradeTableBody.innerHTML = `
+      <tr>
+        <td colspan="${noteColspan}"><p class="empty">暂无交易记录</p></td>
+      </tr>
+    `;
+      return;
+    }
+    const ctx = {
+      mode: "publicCommunity",
+      colspan: noteColspan,
+      clickable: false,
+      publicDetail: state.lastPublicProfileDetail,
+    };
+    let html = list.map((trade) => buildTradeRecordRowHtml(trade, ctx)).join("");
+    if (communityPublicTradesPager.loading) {
+      html += tradeListLoadingRowHtml(noteColspan);
+    }
+    tradeTableBody.innerHTML = html;
+    return;
+  }
+  if (state.route === "community-profile") {
     return;
   }
   if (state.route !== "trade-records" && state.route !== "trade-cash") {
@@ -7536,27 +7643,8 @@ function renderTradeTable() {
     return;
   }
   const sorted = [...trades].sort(sortTradeDesc);
-  let html = sorted
-    .map((trade) => {
-      const acc = getAccountById(trade.accountId);
-      const accLabel = escapeHtml(acc.name || trade.accountId || "default");
-      const id = escapeHtml(String(trade.id));
-      return `
-        <tr class="trade-row trade-row--clickable" data-record-id="${id}">
-          <td>${trade.date.replace(/-/g, "/")}</td>
-          <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
-          <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
-          <td class="num">${formatNumber(trade.price, 2)}</td>
-          <td class="num">${formatNumber(trade.quantity, 0)}</td>
-          <td class="num ${trade.side === "buy" ? "down" : "up"}">${
-            trade.side === "buy" ? "-" : "+"
-          }${formatNumber(trade.amount, 2)}</td>
-          <td class="trade-account-cell">${accLabel}</td>
-        </tr>
-        ${tradeRecordNoteSubrowHtml(trade.note, 7, { "data-record-id": trade.id })}
-      `;
-    })
-    .join("");
+  const ctx = { mode: "private", colspan: 7, clickable: true, publicDetail: null };
+  let html = sorted.map((trade) => buildTradeRecordRowHtml(trade, ctx)).join("");
   if (tradeListPager.loading) {
     html += tradeListLoadingRowHtml(7);
   }
