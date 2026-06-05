@@ -5399,11 +5399,27 @@ function publicEarningBundleCacheKey(targetId) {
   return `pub-earn::${String(targetId || "").trim()}::all::${METRICS_HOME_BUNDLE_STAGES}`;
 }
 
-function formatBundleRateOnlyHtml(rateStr) {
-  const text = bundleFmtText(rateStr);
-  const rate = parseBundlePercent(rateStr);
-  const cls = Number.isFinite(rate) ? twrColorClass(rate) : "";
-  return `<span class="profit-rate-inline profit-rate-only ${cls}">${escapeHtml(text)}</span>`;
+function paintCommunityReturnTile(valueEl, rateStr) {
+  if (!valueEl) {
+    return;
+  }
+  const tile = valueEl.closest(".community-card-return-tile");
+  const tone = communityCardReturnTileTone(rateStr);
+  valueEl.textContent = bundleFmtText(rateStr);
+  valueEl.className = "community-card-return-value";
+  if (tile) {
+    tile.className = `community-card-return-tile community-card-return-tile--${tone}`;
+  }
+}
+
+function buildCommunityProfileReturnsShellHtml() {
+  const tiles = PUBLIC_EARNING_STAGE_DEFS.map(
+    (s) => `<div class="community-card-return-tile community-card-return-tile--flat" data-pub-tile="${escapeHtml(s.key)}">
+    <span class="community-card-return-label">${escapeHtml(s.label)}</span>
+    <span class="community-card-return-value" data-pub-stage="${escapeHtml(s.key)}">--</span>
+  </div>`,
+  ).join("");
+  return `<div class="community-card-returns community-profile-returns" id="pubReturnsGrid">${tiles}</div>`;
 }
 
 function getCommunityEarningPanelHtml() {
@@ -5412,15 +5428,7 @@ function getCommunityEarningPanelHtml() {
       <div class="overview-head overview-head--public-earn">
         <span id="pubQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
       </div>
-      <div class="profit-row" id="pubReturnsGrid">
-        ${PUBLIC_EARNING_STAGE_DEFS.map(
-          (s) => `
-        <div class="profit-block">
-          <p class="profit-label">${escapeHtml(s.label)}</p>
-          <p class="pub-stage-rate profit-main" data-pub-stage="${escapeHtml(s.key)}">--</p>
-        </div>`,
-        ).join("")}
-      </div>
+      ${buildCommunityProfileReturnsShellHtml()}
       <div id="pubOverviewGrid" class="overview-grid"></div>
     </article>
     <article class="stock-card">
@@ -8229,9 +8237,7 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
     for (const def of PUBLIC_EARNING_STAGE_DEFS) {
       const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
       if (el) {
-        const row = stages[def.key];
-        el.innerHTML = formatBundleRateOnlyHtml(row?.rate);
-        el.className = `pub-stage-rate profit-main ${bundleSignedClass(row?.rate)}`;
+        paintCommunityReturnTile(el, stages[def.key]?.rate);
       }
     }
     const grid = document.getElementById("pubOverviewGrid");

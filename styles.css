@@ -411,14 +411,6 @@ body {
   font-size: 12px;
 }
 
-/* 他人主页总览：仅展示收益率时与原先主金额同字号 */
-.community-profile-overview-min .profit-main .profit-rate-inline.profit-rate-only {
-  margin-left: 0;
-  font-size: inherit;
-  font-weight: inherit;
-  letter-spacing: inherit;
-}
-
 .profit-amt {
   font-weight: inherit;
 }
@@ -2701,6 +2693,13 @@ body.auth-mode {
 
 .community-card-return-tile--flat .community-card-return-value {
   color: var(--muted);
+}
+
+.community-profile-overview-min .community-profile-returns {
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+  margin-bottom: 0;
+  padding: 12px 14px 14px;
 }
 
 .community-positions {
