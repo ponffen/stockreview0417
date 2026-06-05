@@ -4,7 +4,7 @@
 
 ### Overview
 
-stockreview0417 is a Chinese stock portfolio review web app (持仓收益). It is a full-stack Node.js/Express application with a vanilla JS SPA frontend. The server runs on port 3030 by default.
+stockreview0417 is a Chinese stock portfolio review web app (组合分析). It is a full-stack Node.js/Express application with a vanilla JS SPA frontend. The server runs on port 3030 by default.
 
 ### Prerequisites
 

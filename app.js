@@ -73,7 +73,7 @@ const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 /** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
 const INITIAL_SETTINGS_SYNC_DEFER_MS = 4000;
-/** 持仓收益首页 home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
+/** 组合分析-持仓 Tab home-bundle 一次拉回今日 + 月/年/总收益，切换阶段仅本地换展示 */
 const METRICS_HOME_BUNDLE_STAGES = "today,mtd,ytd,inception";
 const homeBundleInflightByKey = new Map();
 
@@ -2144,7 +2144,7 @@ function invalidateHomeBundleInflight(accountId) {
   }
 }
 
-/** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages（仅持仓收益首页拉取） */
+/** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages（仅组合分析-持仓 Tab 拉取） */
 async function fetchHomeBundleMetrics(aid, opts = {}) {
   if (!opts.allowOffEarning && !isEarningHomeRoute()) {
     return null;
@@ -6091,13 +6091,13 @@ function renderRoute() {
     if (state.route === "trade-search") {
       appHeaderTitle.textContent = "搜索股票";
     } else if (state.route === "community-profile") {
-      appHeaderTitle.textContent = "持仓收益";
+      appHeaderTitle.textContent = "组合分析";
     } else if (isMineRoute(state.route)) {
       appHeaderTitle.textContent = "我的";
     } else if (state.appModule === "community") {
       appHeaderTitle.textContent = "社区广场";
     } else {
-      appHeaderTitle.textContent = "持仓收益";
+      appHeaderTitle.textContent = "组合分析";
     }
   }
   const secondaryToplessRoutes = new Set([
