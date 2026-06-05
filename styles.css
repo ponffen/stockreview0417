@@ -2703,10 +2703,13 @@ body.auth-mode {
   margin-top: 0;
 }
 
+.community-profile-overview-min .overview-head--public-earn {
+  justify-content: flex-end;
+}
+
 .community-profile-overview-min .community-returns-bar--profile {
-  border-top: 1px solid var(--line);
   margin-bottom: 0;
-  padding: 12px 14px 14px;
+  padding: 12px 14px;
 }
 
 .community-positions {
