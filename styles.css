@@ -3211,19 +3211,18 @@ body.auth-mode {
 }
 
 .community-feed-card__stock-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   margin-top: 14px;
 }
 
 .community-feed-card__stock-identity {
+  grid-column: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  flex: 1;
   min-width: 0;
 }
 
@@ -3239,7 +3238,8 @@ body.auth-mode {
 }
 
 .community-feed-side-pill {
-  flex-shrink: 0;
+  grid-column: 3;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   justify-content: center;
