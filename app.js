@@ -4998,6 +4998,20 @@ function communityTop3WeightHtml(weight) {
   return `<span class="community-top3-pct">${escapeHtml(text)}</span>`;
 }
 
+function buildCommunityStockIdentityHtml({ marketTag, symbol, name, variant = "feed" }) {
+  const code = escapeHtml(formatSymbolForDisplay(symbol || ""));
+  const tag = escapeHtml(marketTag || "OT");
+  const tagLower = String(marketTag || "ot").toLowerCase();
+  const stockName = escapeHtml(getDisplayName(symbol, name));
+  const variantClass =
+    variant === "top3" ? "community-stock-identity--top3" : "community-stock-identity--feed";
+  return `<div class="community-stock-identity ${variantClass}">
+    <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
+    <strong class="community-stock-identity__name">${stockName}</strong>
+    <span class="community-stock-identity__code">${code}</span>
+  </div>`;
+}
+
 function buildTop3ListHtml(topPositions) {
   const top = (topPositions || []).slice(0, 3);
   if (!top.length) {
@@ -5006,19 +5020,15 @@ function buildTop3ListHtml(topPositions) {
   const rows = top
     .map((p, i) => {
       const right = communityTop3WeightHtml(p.weight);
-      const code = escapeHtml(formatSymbolForDisplay(p.symbol || p.displayCode || ""));
-      const tag = escapeHtml(p.marketTag || "OT");
-      const tagLower = String(p.marketTag || "ot").toLowerCase();
-      const stockName = escapeHtml(getDisplayName(p.symbol, p.name));
+      const identity = buildCommunityStockIdentityHtml({
+        marketTag: p.marketTag,
+        symbol: p.symbol || p.displayCode || "",
+        name: p.name,
+        variant: "top3",
+      });
       return `<div class="community-top3-row">
         <span class="community-top3-rank">${i + 1}</span>
-        <div class="community-top3-mid">
-          <strong>${stockName}</strong>
-          <div class="community-top3-stock-sub">
-            <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
-            <span class="community-top3-code">${code}</span>
-          </div>
-        </div>
+        <div class="community-top3-mid">${identity}</div>
         <div class="community-top3-val">${right}</div>
       </div>`;
     })
@@ -5074,9 +5084,6 @@ function feedRowHtml(t) {
   const sideLabel = t.side === "sell" ? "卖出" : "买入";
   const uid = escapeHtml(t.userId);
   const symEsc = escapeHtml(String(t.symbol || "").trim());
-  const tag = escapeHtml(t.marketTag || "OT");
-  const tagLower = String(t.marketTag || "ot").toLowerCase();
-  const code = escapeHtml(formatSymbolForDisplay(t.symbol || t.displayCode || ""));
   const priceStr =
     t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
   const shareRaw = t.amount_share_ratio ?? t.amountShareOfCurrentTotalMv;
@@ -5084,7 +5091,12 @@ function feedRowHtml(t) {
   const shareStr =
     shareRaw != null && Number.isFinite(shareNum) ? formatPercent(shareNum) : "—";
   const dateDisplay = formatCommunityFeedTradeDate(t.date);
-  const stockName = escapeHtml(getDisplayName(t.symbol, t.name));
+  const stockIdentity = buildCommunityStockIdentityHtml({
+    marketTag: t.marketTag,
+    symbol: t.symbol || t.displayCode || "",
+    name: t.name,
+    variant: "feed",
+  });
   const noteBlock = t.note
     ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(t.note)}</span></p>`
     : "";
@@ -5102,11 +5114,7 @@ function feedRowHtml(t) {
           </div>
         </div>
         <div class="community-feed-card__stock-row">
-          <div class="community-feed-card__stock-identity">
-            <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
-            <strong class="community-feed-stock-name">${stockName}</strong>
-            <span class="community-feed-stock-code">${code}</span>
-          </div>
+          ${stockIdentity}
           <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
         </div>
         <div class="community-feed-card__metrics">

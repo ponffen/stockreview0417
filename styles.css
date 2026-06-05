@@ -3065,22 +3065,45 @@ body.auth-mode {
   min-width: 0;
 }
 
-.community-top3-mid strong {
-  display: block;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.community-top3-stock-sub {
+.community-stock-identity {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
-  margin-top: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
-.community-top3-code {
-  font-size: 12px;
+.community-stock-identity__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.community-stock-identity__code {
+  flex-shrink: 0;
   color: var(--muted);
+}
+
+.community-stock-identity--feed .community-stock-identity__name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.community-stock-identity--feed .community-stock-identity__code {
+  font-size: 14px;
+}
+
+.community-stock-identity--top3 .community-stock-identity__name {
+  font-size: 15px;
+}
+
+.community-stock-identity--top3 .community-stock-identity__code {
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -3163,26 +3186,6 @@ body.auth-mode {
   justify-content: space-between;
   gap: 12px;
   margin-top: 14px;
-}
-
-.community-feed-card__stock-identity {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.community-feed-card__stock-identity .community-feed-stock-name {
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.community-feed-card__stock-identity .community-feed-stock-code {
-  font-size: 14px;
-  color: var(--muted);
 }
 
 .community-feed-side-pill {
