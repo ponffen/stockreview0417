@@ -236,7 +236,7 @@ const state = {
   /** 查看他人主页时临时覆盖总览展示币种（与对方 selectedAccountId 一致） */
   _overviewBookCurrencyOverride: null,
   lastPublicProfileDetail: null,
-  communityPublicTradesPack: null,
+  communityPublicTrades: [],
   publicEarningBundleUi: {
     ready: false,
     loading: false,
@@ -251,7 +251,7 @@ const state = {
     bundle: null,
     meta: null,
   },
-  /** 个股记录页：true 时用 communityPublicTradesPack 展示对方成交 */
+  /** 个股记录页：true 时走公开 metrics / 分页 trades API */
   stockRecordFromPublicProfile: false,
   /** 进入「搜索股票」页面前的 route，用于返回 */
   tradeSearchReturnRoute: "trade",
@@ -327,6 +327,14 @@ const stockRecordTradesPager = {
   loaded: false,
   symbol: "",
   accountId: "all",
+};
+const communityPublicTradesPager = {
+  gen: 0,
+  offset: 0,
+  hasMore: true,
+  loading: false,
+  loaded: false,
+  targetId: "",
 };
 let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
@@ -1129,6 +1137,10 @@ function getAccountById(accountId) {
 
 function formatTradeAccountCellHtml(trade, publicDetail) {
   const id = String(trade?.accountId || DEFAULT_ACCOUNT.id || "default").trim() || "default";
+  const tradeAccountName = String(trade?.accountName || "").trim();
+  if (tradeAccountName) {
+    return escapeHtml(tradeAccountName);
+  }
   if (publicDetail?.publicAccountNames && typeof publicDetail.publicAccountNames === "object") {
     const nm = publicDetail.publicAccountNames[id];
     const label = nm != null && String(nm).trim() ? String(nm) : id;
@@ -2342,9 +2354,36 @@ function stockRecordTradesListQuery(symbol, accountId, offset) {
   return params.toString();
 }
 
+function publicTradesListQuery(symbol, accountId, offset) {
+  const params = new URLSearchParams({
+    limit: String(TRADE_LIST_PAGE_SIZE),
+    offset: String(offset),
+  });
+  const sym = symbol ? normalizeSymbol(symbol) : "";
+  if (sym) {
+    params.set("symbol", sym);
+  }
+  const aid = resolveValidAccountFilter(accountId);
+  if (aid && aid !== "all") {
+    params.set("account_id", aid);
+  }
+  return params.toString();
+}
+
+function resetCommunityPublicTradesPager() {
+  communityPublicTradesPager.gen += 1;
+  communityPublicTradesPager.offset = 0;
+  communityPublicTradesPager.hasMore = true;
+  communityPublicTradesPager.loading = false;
+  communityPublicTradesPager.loaded = false;
+  communityPublicTradesPager.targetId = "";
+}
+
 async function loadStockRecordTradesPage({ reset = false } = {}) {
   const symKey = normalizeSymbol(state.activeRecordSymbol);
-  if (!symKey || !apiReady || !sessionPhone || state.stockRecordFromPublicProfile) {
+  const isPublic = state.stockRecordFromPublicProfile;
+  const publicTargetId = isPublic ? stockRecordPublicTargetId() : "";
+  if (!symKey || !apiReady || !sessionPhone || (isPublic && !publicTargetId)) {
     state.stockRecordTrades = [];
     state.stockRecordTradesLoading = false;
     return;
@@ -2374,8 +2413,13 @@ async function loadStockRecordTradesPage({ reset = false } = {}) {
     await renderStockRecordPage(symKey);
   }
   try {
-    const qs = stockRecordTradesListQuery(symKey, aid, stockRecordTradesPager.offset);
-    const res = await apiFetch(`${API_BASE}/trades?${qs}`, { cache: "no-store", timeoutMs: 25_000 });
+    const qs = isPublic
+      ? publicTradesListQuery(symKey, aid, stockRecordTradesPager.offset)
+      : stockRecordTradesListQuery(symKey, aid, stockRecordTradesPager.offset);
+    const url = isPublic
+      ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}/trades?${qs}`
+      : `${API_BASE}/trades?${qs}`;
+    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 25_000 });
     const body = await res.json().catch(() => ({}));
     if (gen !== stockRecordTradesPager.gen || state.route !== "stock-record") {
       return;
@@ -2939,57 +2983,30 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     return;
   }
   const pageGen = ++stockRecordPageLoadGen;
+  const isPublic = state.stockRecordFromPublicProfile;
+  const publicTargetId = isPublic ? stockRecordPublicTargetId() : "";
+  const bundleAccountId = isPublic ? "all" : accountId;
   setStockRecordPageLoading(true);
   state.stockRecordBundle = null;
   resetStockRecordChartCache();
   resetStockRecordChartPagination();
   state.stockRecordChartRange = "30";
   try {
-    if (!state.stockRecordFromPublicProfile) {
-      const bundle = await fetchStockRecordBundleMetrics(key, accountId, "", {
-        range: state.stockRecordChartRange,
-      });
-      if (pageGen !== stockRecordPageLoadGen) {
-        return;
-      }
-      state.stockRecordBundle = bundle;
-      if (bundle) {
-        applyStockRecordBundleDefaults(bundle);
-        ingestStockRecordChartPoints(bundle, state.stockRecordChartRange);
-        applyStockRecordChartPaginationFromBundle(bundle);
-        applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(bundle).length);
-      }
-      if (pageGen !== stockRecordPageLoadGen) {
-        return;
-      }
-      if (state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
-        return;
-      }
-      setStockRecordPageLoading(false);
-      await renderStockRecordPage(key);
-      await loadStockRecordTradesPage({ reset: true });
-      if (pageGen !== stockRecordPageLoadGen) {
-        return;
-      }
-    } else {
-      const targetId = String(
-        state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "",
-      ).trim();
-      const bundle = targetId
-        ? await fetchStockRecordBundleMetrics(key, "all", targetId, {
+    const bundle =
+      !isPublic || publicTargetId
+        ? await fetchStockRecordBundleMetrics(key, bundleAccountId, publicTargetId, {
             range: state.stockRecordChartRange,
           })
         : null;
-      if (pageGen !== stockRecordPageLoadGen) {
-        return;
-      }
-      state.stockRecordBundle = bundle;
-      if (bundle) {
-        applyStockRecordBundleDefaults(bundle);
-        ingestStockRecordChartPoints(bundle, state.stockRecordChartRange);
-        applyStockRecordChartPaginationFromBundle(bundle);
-        applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(bundle).length);
-      }
+    if (pageGen !== stockRecordPageLoadGen) {
+      return;
+    }
+    state.stockRecordBundle = bundle;
+    if (bundle) {
+      applyStockRecordBundleDefaults(bundle);
+      ingestStockRecordChartPoints(bundle, state.stockRecordChartRange);
+      applyStockRecordChartPaginationFromBundle(bundle);
+      applyStockRecordChartFitAll(stockRecordChartPointsFromBundle(bundle).length);
     }
     if (!state.stockRecordBundle) {
       await ensureSymbolData(key);
@@ -3002,6 +3019,10 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     }
     setStockRecordPageLoading(false);
     await renderStockRecordPage(key);
+    await loadStockRecordTradesPage({ reset: true });
+    if (pageGen !== stockRecordPageLoadGen) {
+      return;
+    }
     window.setTimeout(() => {
       if (
         pageGen === stockRecordPageLoadGen &&
@@ -3023,13 +3044,6 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
 }
 
 function stockRecordTradesForScope(activeAccountId, usePub, detail) {
-  if (usePub) {
-    const list = Array.isArray(state.communityPublicTradesPack?.rows) ? state.communityPublicTradesPack.rows : [];
-    if (activeAccountId === "all") {
-      return list;
-    }
-    return list.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === activeAccountId);
-  }
   const list = Array.isArray(state.stockRecordTrades) ? state.stockRecordTrades : [];
   if (activeAccountId === "all") {
     return list;
@@ -3091,6 +3105,8 @@ function ensureTradeListScrollListener() {
         void maybeLoadMoreCashListPage();
       } else if (state.route === "stock-record") {
         void maybeLoadMoreStockRecordTradesPage();
+      } else if (state.route === "community-profile" && state.communityProfileTab === "trade") {
+        void maybeLoadMoreCommunityPublicTradesPage();
       }
     },
     { passive: true },
@@ -3120,7 +3136,6 @@ function ensureStockRecordScrollListener() {
 async function maybeLoadMoreStockRecordTradesPage() {
   if (
     state.route !== "stock-record" ||
-    state.stockRecordFromPublicProfile ||
     state.stockRecordPageLoading ||
     !stockRecordTradesPager.hasMore ||
     stockRecordTradesPager.loading
@@ -4890,7 +4905,8 @@ function openCommunityProfile(userId) {
   state.stockSortKey = "weight";
   state.stockSortOrder = "desc";
   state.lastPublicProfileDetail = null;
-  state.communityPublicTradesPack = null;
+  state.communityPublicTrades = [];
+  resetCommunityPublicTradesPager();
   state.publicEarningBundleUi = {
     ready: false,
     loading: false,
@@ -5061,7 +5077,7 @@ function feedRowHtml(t) {
               <span>金额</span>
               <span class="stock-rank-help-wrap community-feed-amt-help-wrap">
                 <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
-                <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占全账户总资产比例</div>
+                <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div>
               </span>
             </span>
             <span class="community-feed-metric-value">${escapeHtml(shareStr)}</span>
@@ -5243,26 +5259,16 @@ function formatPublicProfileRateOnlyHtml(rate) {
   return `<span class="profit-rate-inline profit-rate-only ${rateCls}">${rateText}</span>`;
 }
 
-/** 他人主页个股记录：成交额占对方最近一日总市值比 */
-function communityPublicTradesReady() {
-  return Array.isArray(state.communityPublicTradesPack?.rows);
-}
-
 function useCommunityPublicStockRecord() {
   return !!(state.stockRecordFromPublicProfile && state.communityProfileUserId);
 }
 
-function publicTradeAmountShareOfLatestMv(trade, detail) {
-  const pack = state.communityPublicTradesPack;
-  const mv = Number(pack?.latestMarketValueCny ?? detail?.publicLatestMarketValueCny);
-  const a = Math.abs(Number(trade.amountCnyRaw) || 0);
-  if (!Number.isFinite(mv) || mv < 1e-9) {
-    return null;
+function publicTradeAmountShare(trade) {
+  const stored = trade.amount_share_ratio ?? trade.amountShareRatio;
+  if (stored != null && Number.isFinite(Number(stored))) {
+    return Number(stored);
   }
-  if (!Number.isFinite(a)) {
-    return null;
-  }
-  return a / mv;
+  return null;
 }
 
 /** 他人主页个股表：排除已无持仓（含 A 股股数四舍五入为 0、浮点残差）的行 */
@@ -5279,7 +5285,7 @@ function isPublicProfileActiveHoldingRow(row) {
 
 /** 与首页总览一致：用对方脱敏后的 trades + 资金/资产口径，在当前行情下重算（与本人「全部账户」视图对齐）。 */
 function withPublicTradesContext(d, fn) {
-  const pubRows = state.communityPublicTradesPack?.rows;
+  const pubRows = state.communityPublicTrades;
   if (!Array.isArray(pubRows) || !pubRows.length) {
     return fn();
   }
@@ -5299,7 +5305,7 @@ function withPublicTradesContext(d, fn) {
 }
 
 async function withPublicTradesContextAsync(d, asyncFn) {
-  const pubRows = state.communityPublicTradesPack?.rows;
+  const pubRows = state.communityPublicTrades;
   if (!Array.isArray(pubRows) || !pubRows.length || typeof asyncFn !== "function") {
     return;
   }
@@ -5684,10 +5690,11 @@ function getPublicProfileTradeSectionHtml() {
                   金额
                   <span class="stock-rank-help-wrap pub-trade-amt-help-wrap">
                     <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
-                    <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div>
+                    <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div>
                   </span>
                 </span>
               </th>
+              <th>股票账户</th>
             </tr>
           </thead>
           <tbody id="pubTradeTableBody"></tbody>
@@ -5712,84 +5719,131 @@ function renderPublicTradeTable() {
   if (!tb) {
     return;
   }
-  const pack = state.communityPublicTradesPack;
-  if (!pack?.rows?.length) {
+  const noteColspan = 6;
+  const list = Array.isArray(state.communityPublicTrades) ? [...state.communityPublicTrades].sort(sortTradeDesc) : [];
+  if (!list.length && !communityPublicTradesPager.loaded) {
     tb.innerHTML = `
       <tr>
-        <td colspan="5"><p class="empty">${pack ? "暂无交易记录" : "暂无交易数据"}</p></td>
+        <td colspan="${noteColspan}"><p class="empty">${communityPublicTradesPager.loading ? "加载中…" : "暂无交易数据"}</p></td>
       </tr>
     `;
     return;
   }
-  const list = [...pack.rows].sort(sortTradeDesc);
   if (!list.length) {
     tb.innerHTML = `
       <tr>
-        <td colspan="5"><p class="empty">暂无交易记录</p></td>
+        <td colspan="${noteColspan}"><p class="empty">暂无交易记录</p></td>
       </tr>
     `;
     return;
   }
-  tb.innerHTML = list
+  const rowsHtml = list
     .map((trade) => {
-      const share = publicTradeAmountShareOfLatestMv(trade, null);
-      const shareStr =
-        share != null && Number.isFinite(share) ? formatPercent(share) : "—";
+      const share = publicTradeAmountShare(trade);
+      const shareStr = share != null && Number.isFinite(share) ? formatPercent(share) : "—";
+      const id = escapeHtml(String(trade.id));
       return `
-        <tr class="trade-row">
+        <tr class="trade-row trade-row--clickable" data-record-id="${id}">
           <td>${trade.date.replace(/-/g, "/")}</td>
           <td class="pub-trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
           <td class="type-cell">${tradeDirectionCellLabel(trade)}</td>
           <td class="num">${formatNumber(trade.price, 2)}</td>
           <td class="num">${shareStr}</td>
+          <td class="trade-account-cell">${formatTradeAccountCellHtml(trade, null)}</td>
         </tr>
+        ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}
       `;
     })
     .join("");
+  const loadingFooter = communityPublicTradesPager.loading ? tradeListLoadingRowHtml(noteColspan) : "";
+  tb.innerHTML = rowsHtml + loadingFooter;
+}
+
+async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
+  const uid = String(targetId || state.communityProfileUserId || "").trim();
+  if (!uid || !apiReady || !sessionPhone) {
+    state.communityPublicTrades = [];
+    return;
+  }
+  if (state.route !== "community-profile" || state.communityProfileTab !== "trade") {
+    return;
+  }
+  ensureTradeListScrollListener();
+  if (reset || communityPublicTradesPager.targetId !== uid) {
+    resetCommunityPublicTradesPager();
+    communityPublicTradesPager.targetId = uid;
+    state.communityPublicTrades = [];
+  }
+  if (communityPublicTradesPager.loading || (!communityPublicTradesPager.hasMore && communityPublicTradesPager.loaded)) {
+    renderPublicTradeTable();
+    return;
+  }
+  const gen = communityPublicTradesPager.gen;
+  communityPublicTradesPager.loading = true;
+  renderPublicTradeTable();
+  try {
+    const qs = publicTradesListQuery("", "all", communityPublicTradesPager.offset);
+    const base = getApiBaseForFetch();
+    const res = await apiFetch(`${base}/public/${encodeURIComponent(uid)}/trades?${qs}`, {
+      cache: "no-store",
+      timeoutMs: 25_000,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (gen !== communityPublicTradesPager.gen || state.route !== "community-profile") {
+      return;
+    }
+    if (!res.ok || body?.ok !== true || !Array.isArray(body.data)) {
+      communityPublicTradesPager.hasMore = false;
+      return;
+    }
+    const rows = body.data.map(normalizeTrade);
+    const seen = new Set(state.communityPublicTrades.map((t) => String(t.id)));
+    for (const row of rows) {
+      const id = String(row.id);
+      if (!seen.has(id)) {
+        state.communityPublicTrades.push(row);
+        seen.add(id);
+      }
+    }
+    const pagination = body.pagination || {};
+    communityPublicTradesPager.offset =
+      Number(pagination.offset ?? communityPublicTradesPager.offset) + rows.length;
+    communityPublicTradesPager.hasMore = pagination.hasMore === true;
+    communityPublicTradesPager.loaded = true;
+    await hydrateSymbolNameMap(rows.map((row) => row?.symbol));
+  } catch {
+    if (gen === communityPublicTradesPager.gen) {
+      communityPublicTradesPager.hasMore = false;
+    }
+  } finally {
+    if (gen === communityPublicTradesPager.gen) {
+      communityPublicTradesPager.loading = false;
+      if (state.route === "community-profile" && state.communityProfileTab === "trade") {
+        renderPublicTradeTable();
+      }
+    }
+  }
+}
+
+async function maybeLoadMoreCommunityPublicTradesPage() {
+  if (
+    state.route !== "community-profile" ||
+    state.communityProfileTab !== "trade" ||
+    !communityPublicTradesPager.hasMore ||
+    communityPublicTradesPager.loading
+  ) {
+    return;
+  }
+  if (!isNearDocumentBottom()) {
+    return;
+  }
+  await loadCommunityPublicTradesPage({ targetId: state.communityProfileUserId });
 }
 
 let lastCommunityDataKey = "";
 
 async function loadCommunityPublicTrades(targetId) {
-  const uid = String(targetId || state.communityProfileUserId || "").trim();
-  if (!uid || !apiReady) {
-    return;
-  }
-  const tb = document.getElementById("pubTradeTableBody");
-  if (state.communityPublicTradesPack?.rows) {
-    renderPublicTradeTable();
-    return;
-  }
-  if (tb) {
-    tb.innerHTML = `
-      <tr>
-        <td colspan="5"><p class="empty">加载中…</p></td>
-      </tr>
-    `;
-  }
-  try {
-    const base = getApiBaseForFetch();
-    const r = await apiFetch(`${base}/public/${encodeURIComponent(uid)}/trades`, {
-      cache: "no-store",
-      timeoutMs: 25_000,
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j?.ok) {
-      state.communityPublicTradesPack = null;
-      if (tb) {
-        tb.innerHTML = `<tr><td colspan="5"><p class="empty">${escapeHtml(j?.error || "加载失败")}</p></td></tr>`;
-      }
-      return;
-    }
-    state.communityPublicTradesPack = j.data;
-    await hydrateSymbolNameMap((j.data?.rows || []).map((row) => row?.symbol));
-    renderPublicTradeTable();
-  } catch {
-    state.communityPublicTradesPack = null;
-    if (tb) {
-      tb.innerHTML = `<tr><td colspan="5"><p class="empty">网络错误</p></td></tr>`;
-    }
-  }
+  await loadCommunityPublicTradesPage({ targetId, reset: true });
 }
 
 async function loadCommunityProfileDetail() {
@@ -5812,7 +5866,8 @@ async function loadCommunityProfileDetail() {
     bundle: null,
     meta: null,
   };
-  state.communityPublicTradesPack = null;
+  state.communityPublicTrades = [];
+  resetCommunityPublicTradesPager();
   state.publicAnalysisBundleUi = {
     ready: false,
     loading: false,
@@ -10476,7 +10531,6 @@ async function openStockRecordDialog(symbol, opts = {}) {
     const uid = publicOwnerUserId || String(state.communityProfileUserId || "").trim();
     if (uid) {
       state.communityProfileUserId = uid;
-      await loadCommunityPublicTrades(uid);
     }
   }
   state.stockRecordFromPublicProfile = fromPublicProfile;
@@ -10491,7 +10545,7 @@ async function openStockRecordDialog(symbol, opts = {}) {
   resetStockRecordChartPagination();
   state.stockRecordTrades = [];
   resetStockRecordTradesPager();
-  state.stockRecordTradesLoading = !state.stockRecordFromPublicProfile;
+  state.stockRecordTradesLoading = true;
 
   state.route = "stock-record";
   renderRoute();
@@ -10580,7 +10634,7 @@ async function renderStockRecordPage(symbol) {
   }
   if (headRow) {
     headRow.innerHTML = usePub
-      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div></span></span></th><th>股票账户</th>`
+      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div></span></span></th><th>股票账户</th>`
       : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th>";
   }
 
@@ -10595,7 +10649,7 @@ async function renderStockRecordPage(symbol) {
         <td>${formatNumber(trade.price, 2)}</td>`;
       const accCell = `<td class="trade-account-cell">${formatTradeAccountCellHtml(trade, usePub ? detail : null)}</td>`;
       if (usePub) {
-        const share = publicTradeAmountShareOfLatestMv(trade, detail);
+        const share = publicTradeAmountShare(trade);
         const shareCell =
           share != null && Number.isFinite(share) ? formatPercent(share) : "—";
         return `${rowCore}
@@ -10666,10 +10720,7 @@ async function ensureSymbolData(symbol) {
   }
   const normalizedSymbol = normalizeSymbol(symbol);
   const legacyAlias = getLegacyUsAlias(normalizedSymbol);
-  const sourceTrades =
-    useCommunityPublicStockRecord() && communityPublicTradesReady()
-      ? state.communityPublicTradesPack.rows
-      : state.stockRecordTrades;
+  const sourceTrades = state.stockRecordTrades;
   const latestTradeDate = sourceTrades
     .filter((trade) => normalizeSymbol(trade?.symbol) === normalizedSymbol)
     .reduce((acc, trade) => {
@@ -10802,6 +10853,11 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
   if (!canvas) {
     return;
   }
+  const isPubChart = useCommunityPublicStockRecord();
+  const fmtShares = (value) => formatNumber(value, isPubChart ? 4 : 0);
+  const fmtMarket = (value) => formatNumber(value, isPubChart ? 4 : 2);
+  const fmtClose = (value) => formatNumber(value, 3);
+  const fmtProfit = (value) => (isPubChart ? formatNumber(value, 4) : formatSignedMoney(value, 2));
   const { visible, totalCount } = stockRecordVisibleSlice(points);
   if (!visible.length) {
     clearStockRecordChart();
@@ -10875,9 +10931,7 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
       return;
     }
     const fmt =
-      s.key === "shares"
-        ? (value) => formatNumber(value, 0)
-        : (value) => formatNumber(value, s.key === "close" ? 3 : 2);
+      s.key === "shares" ? fmtShares : s.key === "close" ? fmtClose : s.key === "marketValue" ? fmtMarket : fmtMarket;
     drawSeriesExtrema(ctx, payload, mapped, fmt);
   });
   drawAxisLabels(ctx, payload, {
@@ -10886,22 +10940,28 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     xLabel: "",
     valueFormatter: (value, axis, key) => {
       if (key === "shares") {
-        return formatNumber(value, 0);
+        return fmtShares(value);
       }
       if (key === "close") {
-        return formatNumber(value, 3);
+        return fmtClose(value);
       }
-      return formatNumber(value, 2);
+      if (key === "marketValue") {
+        return fmtMarket(value);
+      }
+      return fmtMarket(value);
     },
   });
   drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
     if (key === "shares") {
-      return formatNumber(value, 0);
+      return fmtShares(value);
     }
     if (key === "close") {
-      return formatNumber(value, 3);
+      return fmtClose(value);
     }
-    return formatNumber(value, 2);
+    if (key === "marketValue") {
+      return fmtMarket(value);
+    }
+    return fmtMarket(value);
   });
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
@@ -10910,12 +10970,15 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     chartNavTotal: () => totalCount,
     valueFormatter: (value, key, axis) => {
       if (key === "shares") {
-        return formatNumber(value, 0);
+        return fmtShares(value);
       }
       if (key === "close") {
-        return formatNumber(value, 3);
+        return fmtClose(value);
       }
-      return formatNumber(value, 2);
+      if (key === "marketValue") {
+        return fmtMarket(value);
+      }
+      return fmtMarket(value);
     },
   });
 
@@ -10950,23 +11013,21 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
       drawSeries(pctx, s.values, profitPayload.mapX, profitPayload.mapY, s.color || "#6366f1");
     });
     if (profitPayload.seriesMap?.totalProfit?.values?.length) {
-      drawSeriesExtrema(pctx, profitPayload, profitPayload.seriesMap.totalProfit, (value) =>
-        formatSignedMoney(value, 2),
-      );
+      drawSeriesExtrema(pctx, profitPayload, profitPayload.seriesMap.totalProfit, fmtProfit);
     }
     drawAxisLabels(pctx, profitPayload, {
       leftLabel: "",
       rightLabel: "",
       xLabel: "",
-      valueFormatter: (value) => formatSignedMoney(value, 2),
+      valueFormatter: fmtProfit,
     });
-    drawCrosshairOverlay(pctx, profitPayload, profitCanvas.id, (value) => formatSignedMoney(value, 2));
+    drawCrosshairOverlay(pctx, profitPayload, profitCanvas.id, fmtProfit);
     bindInteractiveChart(profitCanvas, stockRecordProfitTooltip, () => profitPayload, {
       mode: "stock-profit",
       onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
       onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
       chartNavTotal: () => totalCount,
-      valueFormatter: (value) => formatSignedMoney(value, 2),
+      valueFormatter: fmtProfit,
     });
   }
 
