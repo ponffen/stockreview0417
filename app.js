@@ -6245,6 +6245,289 @@ function buildOverviewKpiGridInnerHtml(entries) {
   return cells;
 }
 
+function clearCanvasChart(canvas) {
+  if (!canvas || typeof canvas.getContext !== "function") {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function setOverviewProfitKpisDash() {
+  if (!todayProfitMain || !monthProfitMain) {
+    return;
+  }
+  todayProfitMain.textContent = "–";
+  todayProfitMain.className = "profit-main";
+  monthProfitMain.textContent = "–";
+  monthProfitMain.className = "profit-main";
+}
+
+function setOverviewAssetsGridDash() {
+  if (!overviewGrid) {
+    return;
+  }
+  const dash = "–";
+  overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+    buildOverviewKpiEntries({
+      totalAssets: dash,
+      marketValue: dash,
+      cash: dash,
+      stockRatio: dash,
+      cashRatio: dash,
+      principal: dash,
+    }),
+  );
+}
+
+function paintOverviewStockTableLoading(message = "数据加载中…") {
+  if (!stockTableBody) {
+    return;
+  }
+  stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
+}
+
+let metricsRebuildPollTimer = null;
+
+function stopMetricsRebuildPoll() {
+  if (metricsRebuildPollTimer) {
+    clearInterval(metricsRebuildPollTimer);
+    metricsRebuildPollTimer = null;
+  }
+}
+
+function applyMetricsRebuildStatusUi(rebuilding) {
+  if (!quoteTime) {
+    return;
+  }
+  if (rebuilding) {
+    quoteTime.textContent = "历史指标重算中，请稍候…";
+    quoteTime.classList.add("is-rebuilding");
+    quoteTime.setAttribute("title", "成交或资金记录已变更，正在更新日终快照");
+    return;
+  }
+  quoteTime.classList.remove("is-rebuilding");
+  if (state.quoteTime) {
+    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
+    quoteTime.textContent = timeText;
+    quoteTime.setAttribute(
+      "title",
+      state.marketDataDelayed
+        ? "行情或指标延迟，数字为最近一次成功计算结果"
+        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
+    );
+  }
+}
+
+function scheduleMetricsRebuildUiRefresh() {
+  state.metricsRebuilding = true;
+  applyMetricsRebuildStatusUi(true);
+  stopMetricsRebuildPoll();
+  if (!apiReady || !isEarningHomeRoute()) {
+    return;
+  }
+  const aid = resolveValidAccountFilter(state.selectedAccountId) || "all";
+  let polls = 0;
+  const maxPolls = 120;
+  metricsRebuildPollTimer = setInterval(() => {
+    polls += 1;
+    if (!apiReady || polls > maxPolls || !isEarningHomeRoute()) {
+      if (polls > maxPolls || !isEarningHomeRoute()) {
+        stopMetricsRebuildPoll();
+        if (polls > maxPolls) {
+          state.metricsRebuilding = false;
+          applyMetricsRebuildStatusUi(false);
+        }
+      }
+      return;
+    }
+    void (async () => {
+      try {
+        const bundle = await fetchHomeBundleMetrics(aid, { stages: METRICS_HOME_BUNDLE_STAGES });
+        if (bundle?.meta?.rebuilding) {
+          state.metricsRebuilding = true;
+          applyMetricsRebuildStatusUi(true);
+          return;
+        }
+        stopMetricsRebuildPoll();
+        state.metricsRebuilding = false;
+        invalidateOverviewMetricsUi();
+        await refreshOverviewProfitRowFromSnapshots();
+      } catch {
+        /* keep polling */
+      }
+    })();
+  }, 5000);
+}
+
+function applyOverviewMetricsMeta(meta) {
+  if (!meta || typeof meta !== "object") {
+    return;
+  }
+  if (meta.quoteTime) {
+    state.quoteTime = String(meta.quoteTime);
+  }
+  state.marketDataDelayed = !!meta.delayed;
+  state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
+  if (meta.rebuilding) {
+    state.metricsRebuilding = true;
+    applyMetricsRebuildStatusUi(true);
+    if (!metricsRebuildPollTimer) {
+      scheduleMetricsRebuildUiRefresh();
+    }
+    return;
+  }
+  state.metricsRebuilding = false;
+  if (!metricsRebuildPollTimer) {
+    applyMetricsRebuildStatusUi(false);
+  }
+}
+
+function bundleFmtText(val, fallback = "–") {
+  const s = String(val ?? "").trim();
+  return s || fallback;
+}
+
+function parseBundleSignedAmount(text) {
+  let t = String(text ?? "").trim().replace(/,/g, "");
+  if (!t || t === "–" || t === "—") {
+    return NaN;
+  }
+  t = t.replace(/^¥\s*/, "");
+  const neg = t.startsWith("-") || t.startsWith("−");
+  const n = parseFloat(t.replace(/^[+−-]/, ""));
+  if (!Number.isFinite(n)) {
+    return NaN;
+  }
+  return neg ? -n : n;
+}
+
+function parseBundlePercentChart(text) {
+  const r = parseBundlePercent(text);
+  return Number.isFinite(r) ? r * 100 : 0;
+}
+
+function bundleSignedClass(text) {
+  const t = String(text ?? "").trim();
+  if (t.startsWith("+")) {
+    return "up";
+  }
+  if (t.startsWith("-") || t.startsWith("−")) {
+    return "down";
+  }
+  return "";
+}
+
+function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpts) {
+  let stageKey = metricsStageFromHome();
+  let opts = {};
+  if (typeof stageKeyOrOpts === "string") {
+    stageKey = stageKeyOrOpts;
+  } else if (stageKeyOrOpts && typeof stageKeyOrOpts === "object") {
+    opts = stageKeyOrOpts;
+    if (opts.stageKey) {
+      stageKey = opts.stageKey;
+    }
+  }
+
+  if (opts.mode === "public") {
+    if (!returns?.stages || !assets || !holdings) {
+      return false;
+    }
+    const stages = returns.stages;
+    for (const def of PUBLIC_EARNING_STAGE_DEFS) {
+      const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
+      if (el) {
+        paintCommunityReturnTile(el, stages[def.key]?.rate);
+      }
+    }
+    const grid = document.getElementById("pubOverviewGrid");
+    if (grid) {
+      grid.innerHTML = buildOverviewKpiGridInnerHtml(
+        buildOverviewKpiEntries({
+          stockRatio: bundleFmtText(assets.stockRatio),
+          cashRatio: bundleFmtText(assets.cashRatio),
+          ratiosOnly: true,
+        }),
+      );
+    }
+    const holdRows = holdings.rows || [];
+    for (const row of holdRows) {
+      const label = String(row.name || "").trim();
+      if (label) {
+        upsertNameMapEntry(row.symbol, label);
+      }
+    }
+    mountPublicCommunityStockTableHead();
+    paintStockTableFromMetricsRows(holdRows, getPublicStockTableCtx());
+    applyPublicEarningMetaToUi(state.publicEarningBundleUi?.meta);
+    return true;
+  }
+
+  if (!returns?.stages?.today || !returns?.stages?.[stageKey] || !assets || !holdings) {
+    return false;
+  }
+  const today = returns.stages.today;
+  const stage = returns.stages[stageKey];
+  if (todayProfitMain && monthProfitMain) {
+    todayProfitMain.innerHTML = metricHeadlineHtml(today.profit, today.rate);
+    todayProfitMain.className = `profit-main ${bundleSignedClass(today.profit)}`;
+    monthProfitMain.innerHTML = metricHeadlineHtml(stage.profit, stage.rate);
+    monthProfitMain.className = `profit-main ${bundleSignedClass(stage.profit)}`;
+  }
+  if (overviewGrid) {
+    overviewGrid.innerHTML = buildOverviewKpiGridInnerHtml(
+      buildOverviewKpiEntries({
+        totalAssets: bundleFmtText(assets.totalAssets),
+        marketValue: bundleFmtText(assets.marketValue),
+        cash: bundleFmtText(assets.cash),
+        stockRatio: bundleFmtText(assets.stockRatio),
+        cashRatio: bundleFmtText(assets.cashRatio),
+        principal: bundleFmtText(assets.principal),
+      }),
+    );
+  }
+  const holdRows = holdings.rows || [];
+  for (const row of holdRows) {
+    const label = String(row.name || "").trim();
+    if (label) {
+      upsertNameMapEntry(row.symbol, label);
+    }
+  }
+  paintOverviewStockTableFromMetricsRows(holdRows);
+  applyOverviewMetricsMeta(state.overviewMetricsUi?.meta);
+  if (quoteTime) {
+    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
+    quoteTime.textContent = timeText;
+    quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
+    quoteTime.setAttribute(
+      "title",
+      state.marketDataDelayed
+        ? "行情或指标延迟，数字为最近一次成功计算结果"
+        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
+    );
+  }
+  return true;
+}
+
+function setAnalysisSummariesDash() {
+  if (analysisRateSummary) {
+    analysisRateSummary.textContent =
+      state.benchmark === "none" ? "我的收益率 –" : "我的 – / 基准 – / 对比 –";
+  }
+  if (analysisProfitSummary) {
+    analysisProfitSummary.textContent = "累计收益 –";
+  }
+}
+
+function clearAnalysisChartsToEmpty() {
+  clearCanvasChart(analysisRateChart);
+  clearCanvasChart(analysisProfitChart);
+  clearCanvasChart(analysisAssetChart);
+}
 
 function renderOverviewAndStockTable() {
   if (!isEarningHomeRoute()) {
@@ -7507,6 +7790,43 @@ function overviewReturnsHasAllHomeStages(ret) {
   if (!ret?.stages) return false;
   return METRICS_HOME_BUNDLE_STAGE_KEYS.every((k) => ret.stages[k]);
 }
+function resolvePerformancePresetKeyFromStateLike(like) {
+  const arm = String(like?.analysisRangeMode ?? "preset");
+  if (arm === "custom") {
+    return null;
+  }
+  if (arm === "all") {
+    return "inception";
+  }
+  if (arm !== "preset") {
+    return null;
+  }
+  if (like?.analysisPreset === "mtd") {
+    return "mtd";
+  }
+  if (like?.analysisPreset === "ytd") {
+    return "ytd";
+  }
+  if (Number(like?.analysisPanOffset || 0) !== 0) {
+    return null;
+  }
+  const rd = Number(like?.rangeDays);
+  if (rd === 7) {
+    return "last_7d";
+  }
+  if (rd === 30) {
+    return "last_30d";
+  }
+  if (rd === 90) {
+    return "last_90d";
+  }
+  return null;
+}
+
+function resolvePerformancePresetKeyFromAnalysisState() {
+  return resolvePerformancePresetKeyFromStateLike(state);
+}
+
 function metricsStageFromAnalysis() {
   const preset = resolvePerformancePresetKeyFromAnalysisState();
   if (preset) return preset;
@@ -9626,6 +9946,52 @@ function buildBenchmarkSeries(selectedPoints) {
     date: point.date,
     rate: len > 1 ? (fallbackRate * index) / (len - 1) : fallbackRate,
   }));
+}
+
+function drawAnalysisMwrRatePlaceholder(canvas, message) {
+  const target = canvas || analysisRateChart;
+  if (!target) {
+    return {
+      seriesList: [],
+      xMin: 2,
+      xMax: 400,
+      yMin: 20,
+      yMax: 200,
+      yAxisMode: "left",
+      leftRange: { min: 0, max: 1, range: 1 },
+      rightRange: { min: 0, max: 1, range: 1 },
+      mapX: () => 0,
+      mapY: () => 0,
+      pickNearestByX() {
+        return { index: 0, x: 0, points: [] };
+      },
+    };
+  }
+  const ctx = target.getContext("2d");
+  const width = target.width;
+  const height = target.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#8f99a9";
+  ctx.font = "15px system-ui,sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const msg = String(message || "");
+  ctx.fillText(msg, width / 2, height / 2);
+  return {
+    seriesList: [],
+    xMin: 2,
+    xMax: width - 2,
+    yMin: 20,
+    yMax: height - 36,
+    yAxisMode: "left",
+    leftRange: { min: 0, max: 1, range: 1 },
+    rightRange: { min: 0, max: 1, range: 1 },
+    mapX: () => 0,
+    mapY: () => 0,
+    pickNearestByX() {
+      return { index: 0, x: width / 2, points: [] };
+    },
+  };
 }
 
 function drawLineChart(mySeries, benchmarkSeries, canvas) {
