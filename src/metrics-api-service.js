@@ -888,23 +888,6 @@ async function probeMetricsHomeBundleDb(userId, accountScope) {
   };
 }
 
-async function buildMetricsReturnsFromContext(ctx, stagesRaw) {
-  const { userId, scope, settings, live, um } = ctx;
-  const { stages } = await computeReturnStages(ctx, stagesRaw);
-  return {
-    meta: metaEnvelope(userId, scope, settings, live, um),
-    stages: formatReturnStagesApi(stages, ctx),
-  };
-}
-
-function buildMetricsAssetsFromContext(ctx) {
-  const { userId, scope, settings, live, um } = ctx;
-  return {
-    meta: metaEnvelope(userId, scope, settings, live, um),
-    ...buildAssetsApi(ctx),
-  };
-}
-
 async function buildMetricsHoldingsFromContext(ctx, overviewStagesInternal) {
   const { userId, scope, settings, live, home } = ctx;
   const trades = await getTrades(userId);
@@ -921,16 +904,6 @@ async function buildMetricsHoldingsFromContext(ctx, overviewStagesInternal) {
   return { rows };
 }
 
-
-async function getMetricsReturns(userId, accountScope, stagesRaw) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildMetricsReturnsFromContext(ctx, stagesRaw);
-}
-
-async function getMetricsAssets(userId, accountScope) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildMetricsAssetsFromContext(ctx);
-}
 
 async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {}) {
   const { stages } = await computeReturnStages(ctx, stagesRaw);
@@ -1328,37 +1301,6 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
   return value;
 }
 
-async function getSeriesDailyProfit(userId, accountScope, stage) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildSeriesDailyProfitFromContext(ctx, stage);
-}
-
-async function getSeriesDailyTwr(userId, accountScope, stage) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildSeriesDailyTwrFromContext(ctx, stage);
-}
-
-async function getSeriesDailyAsset(userId, accountScope, stage, metric) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  return buildSeriesDailyAssetFromContext(ctx, stage, null, null, metric);
-}
-
-async function getHoldings(userId, accountScope) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  const returns = await buildMetricsReturnsFromContext(ctx, "today,mtd,ytd,inception");
-  return buildMetricsHoldingsFromContext(ctx, returns.stages);
-}
-
-async function getStockRank(userId, accountScope, stage) {
-  const ctx = await loadMetricsScopeContext(userId, accountScope);
-  const st = String(stage || "mtd").trim() || "mtd";
-  const { stages } = await computeReturnStages(ctx, st);
-  const stageRow = stages[st] || { profitCny: 0 };
-  return buildStockRankFromContext(ctx, st, {
-    accountProfitCny: Number(stageRow.profitCny) || 0,
-  });
-}
-
 async function getBenchmarkSeries(userId, symbol, stage) {
   const sym = String(symbol || "").trim();
   if (!BENCHMARK_SYMBOLS.has(sym)) {
@@ -1451,8 +1393,6 @@ module.exports = {
   METRICS_RULE_VERSION,
   BENCHMARK_SYMBOLS,
   homeUiStageToApi,
-  getMetricsReturns,
-  getMetricsAssets,
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
   getMetricsPublicAnalysisBundle,
@@ -1460,11 +1400,6 @@ module.exports = {
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,
-  getSeriesDailyProfit,
-  getSeriesDailyTwr,
-  getSeriesDailyAsset,
-  getHoldings,
-  getStockRank,
   getBenchmarkSeries,
   todayPointForReturns,
   todayPointForAssets,

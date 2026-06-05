@@ -2,7 +2,7 @@
 /**
  * 将「源手机号」在库里的 per-user 数据划给「目标手机号」对应用户。
  * - 对源有数据的表：先删目标同表行，再把源行 user_id 改为目标（避免主键冲突）。
- * - 若源有成交：会清空目标在 symbol_daily_pnl / analysis_daily_snapshot / daily_returns
+ * - 若源有成交：会清空目标在 symbol_daily_pnl / analysis_daily_snapshot
  *   下的行（与旧成交不一致，需按目标号重跑 backfill）。
  *
  * 用法:
@@ -19,7 +19,6 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "app.d
 const TABLES_REWRITABLE = [
   "trades",
   "accounts",
-  "daily_returns",
   "symbol_daily_pnl",
   "analysis_daily_snapshot",
   "app_settings",
@@ -72,7 +71,7 @@ function main() {
   console.log("迁移前 源行数:", counts(srcId));
   console.log("迁移前 目标行数:", counts(destId));
 
-  const DERIVED_RECOMPUTE = ["symbol_daily_pnl", "analysis_daily_snapshot", "daily_returns"];
+  const DERIVED_RECOMPUTE = ["symbol_daily_pnl", "analysis_daily_snapshot"];
 
   const tx = db.transaction(() => {
     const srcTradeN = Number(

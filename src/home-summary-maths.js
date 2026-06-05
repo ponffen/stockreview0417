@@ -200,71 +200,10 @@ function lastAnalysisDailyRowOnOrBefore(rows, frozenThrough) {
   return best;
 }
 
-/**
- * @param {Array<{date:string,marketValue:number,externalFlowCny?:number,external_flow_cny?:number}>} rowsAllAll
- * @param {string} frozenThrough YYYY-MM-DD
- * @param {string} firstTradeDate 总收益起点：首笔交易日
- */
-function computeAccountHomeSummaryFromSnapshots(rowsAllAll, frozenThrough, firstTradeDate, asOfToday) {
-  const F = String(frozenThrough).slice(0, 10);
-  // Use the caller-supplied today date so MTD/YTD boundaries reflect the current
-  // month/year rather than the frozen date (important for cleared accounts).
-  const today = asOfToday ? String(asOfToday).slice(0, 10) : F;
-  const ms = monthStartKeyShanghai(today);
-  const ys = yearStartKeyShanghai(today);
-  const ft = String(firstTradeDate || F).slice(0, 10);
-  const rows = rowsAllAll
-    .map((r) => ({
-      date: String(r.date || "").slice(0, 10),
-      marketValue: Number(r.marketValue ?? r.market_value ?? 0),
-      totalAssets:
-        Number(r.totalAssets ?? r.total_assets ?? 0) ||
-        Number(r.marketValue ?? r.market_value ?? 0) ||
-        0,
-      externalFlowCny: Number(r.externalFlowCny ?? r.external_flow_cny ?? 0) || 0,
-      principal: Number(r.principal ?? 0) || 0,
-    }))
-    .filter((r) => r.date && r.date <= F)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const lastMv = rows.length ? Number(rows[rows.length - 1].totalAssets) || 0 : 0;
-  const month = metricsForWindow(rows, ms, F);
-  const ytd = metricsForWindow(rows, ys, F);
-  const total = metricsForWindow(rows, ft, F);
-  return {
-    frozenThrough: F,
-    firstTradeDate: ft,
-    lastMarketValueCny: lastMv,
-    monthProfitCny: month.profitCny,
-    monthRateTwr: month.rateTwr,
-    monthRateMwr: month.rateMwr,
-    ytdProfitCny: ytd.profitCny,
-    ytdRateTwr: ytd.rateTwr,
-    ytdRateMwr: ytd.rateMwr,
-    totalProfitCny: total.profitCny,
-    totalRateTwr: total.rateTwr,
-    totalRateMwr: total.rateMwr,
-  };
-}
-
-function symbolRatesFromPnlPoints(ptsSorted) {
-  if (!ptsSorted || ptsSorted.length < 2) {
-    return { rateTwr: 0, rateMwr: null };
-  }
-  const last = ptsSorted[ptsSorted.length - 1];
-  const endVal = Number(last.value) || 0;
-  const endDate = String(last.date).slice(0, 10);
-  return {
-    rateTwr: rebaseRateSeriesByFirstDay(computeModeSeries(ptsSorted, "twr")).at(-1)?.rate ?? 0,
-    rateMwr: symbolMwrFromValueFlowPoints(ptsSorted.slice(0, -1), endDate, endVal),
-  };
-}
-
 module.exports = {
   monthStartKeyShanghai,
   yearStartKeyShanghai,
   lastAnalysisDailyRowOnOrBefore,
-  computeAccountHomeSummaryFromSnapshots,
-  symbolRatesFromPnlPoints,
   buildProfitSeries,
   rebaseRateSeriesByFirstDay,
   computeTimeWeightedSeries,

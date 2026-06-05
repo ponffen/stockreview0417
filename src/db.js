@@ -316,18 +316,6 @@ const DDL = [
     PRIMARY KEY (user_id, id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_accounts_created_at ON accounts (created_at ASC)`,
-  `CREATE TABLE IF NOT EXISTS daily_returns (
-    user_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    date TEXT NOT NULL,
-    profit DOUBLE PRECISION NOT NULL DEFAULT 0,
-    return_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
-    total_asset DOUBLE PRECISION,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL,
-    PRIMARY KEY (user_id, account_id, date)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_daily_returns_date ON daily_returns (date ASC)`,
   `CREATE TABLE IF NOT EXISTS symbol_daily_pnl (
     user_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -1222,122 +1210,6 @@ async function replaceAccountsFromList(accounts, userId) {
   }
 }
 
-async function getDailyReturns(query = {}, userId = null) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return [];
-  }
-  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
-  const from = query.from != null && String(query.from).trim() ? String(query.from).trim() : "";
-  const to = query.to != null && String(query.to).trim() ? String(query.to).trim() : "";
-  const allHistory = query.allHistory === true || query.allHistory === 1;
-  const limitN = Number(query.limit);
-  const offsetN = Number(query.offset);
-  const limit = Number.isFinite(limitN) ? Math.min(50000, Math.max(0, Math.floor(limitN))) : 0;
-  const offset = Number.isFinite(offsetN) ? Math.max(0, Math.floor(offsetN)) : 0;
-  const defaultCapDays = Math.min(5000, Math.max(60, Number(process.env.DAILY_RETURNS_DEFAULT_CAP_DAYS) || 800));
-
-  const mapRows = (rows) => rows.map(rowToDailyReturn);
-
-  if (accountId || from || to) {
-    const fromBound = from || "1970-01-01";
-    const toBound = to || "9999-12-31";
-    let sql = `SELECT account_id, date, profit, return_rate, total_asset, created_at
-     FROM daily_returns
-     WHERE user_id = $1
-       AND ($2 = '' OR account_id = $2)
-       AND date >= $3 AND date <= $4
-     ORDER BY date ASC`;
-    const params = [uid, accountId, fromBound, toBound];
-    if (limit > 0) {
-      sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-      params.push(limit, offset);
-    }
-    const { rows } = await q(sql, params);
-    return mapRows(rows);
-  }
-
-  if (allHistory) {
-    let sql =
-      "SELECT account_id, date, profit, return_rate, total_asset, created_at FROM daily_returns WHERE user_id = $1 ORDER BY account_id ASC, date ASC";
-    const params = [uid];
-    if (limit > 0) {
-      sql += ` LIMIT $2 OFFSET $3`;
-      params.push(limit, offset);
-    }
-    const { rows } = await q(sql, params);
-    return mapRows(rows);
-  }
-
-  const today = toDateKey(new Date());
-  const minD = addCalendarDays(today, -defaultCapDays);
-  let sql = `SELECT account_id, date, profit, return_rate, total_asset, created_at
-     FROM daily_returns
-     WHERE user_id = $1 AND date >= $2
-     ORDER BY account_id ASC, date ASC`;
-  const params = [uid, minD];
-  if (limit > 0) {
-    sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-  }
-  const { rows } = await q(sql, params);
-  return mapRows(rows);
-}
-
-async function upsertDailyReturn(input, userId) {
-  const uid = String(userId || "").trim();
-  const safe = normalizeDailyReturn(input);
-  const updatedAt = nowMs();
-  await q(
-    `INSERT INTO daily_returns (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-     ON CONFLICT (user_id, account_id, date) DO UPDATE SET
-       profit = EXCLUDED.profit, return_rate = EXCLUDED.return_rate, total_asset = EXCLUDED.total_asset, updated_at = EXCLUDED.updated_at`,
-    [uid, safe.accountId, safe.date, safe.profit, safe.returnRate, safe.totalAsset, safe.createdAt, updatedAt]
-  );
-  return safe;
-}
-
-async function importDailyReturns(rows, mode = "append", userId = null) {
-  const uid = String(userId || (await getCliUserId())).trim();
-  const list = Array.isArray(rows) ? rows.map(normalizeDailyReturn) : [];
-  const p = await initPool();
-  const client = await p.connect();
-  const updatedAt = nowMs();
-  try {
-    await client.query("BEGIN");
-    if (mode === "replace") {
-      await client.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
-    }
-    for (const safe of list) {
-      await client.query(
-        `INSERT INTO daily_returns (user_id, account_id, date, profit, return_rate, total_asset, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (user_id, account_id, date) DO UPDATE SET
-           profit = EXCLUDED.profit, return_rate = EXCLUDED.return_rate, total_asset = EXCLUDED.total_asset, updated_at = EXCLUDED.updated_at`,
-        [uid, safe.accountId, safe.date, safe.profit, safe.returnRate, safe.totalAsset, safe.createdAt, updatedAt]
-      );
-    }
-    await client.query("COMMIT");
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
-  return getDailyReturns({ allHistory: true }, uid);
-}
-
-async function deleteDailyReturn(accountId, date, userId) {
-  const uid = String(userId || "").trim();
-  const { rowCount } = await q("DELETE FROM daily_returns WHERE user_id = $1 AND account_id = $2 AND date = $3", [
-    uid,
-    String(accountId || ""),
-    String(date || ""),
-  ]);
-  return rowCount > 0;
-}
-
 async function getSettings(userId) {
   const uid = String(userId || "").trim();
   const settings = { ...DEFAULT_SETTINGS };
@@ -1398,19 +1270,13 @@ async function getState(userId, opts = {}) {
     return {
       ...base,
       trades: [],
-      dailyReturns: [],
       cashTransfers: [],
     };
   }
-  const [trades, dailyReturns, cashTransfers] = await Promise.all([
-    getTrades(uid),
-    getDailyReturns({ allHistory: true }, uid),
-    getCashTransfers(uid),
-  ]);
+  const [trades, cashTransfers] = await Promise.all([getTrades(uid), getCashTransfers(uid)]);
   return {
     ...base,
     trades,
-    dailyReturns,
     cashTransfers,
   };
 }
@@ -1428,24 +1294,6 @@ function resolveBookCurrencyForAccountScope(settings, accountScope) {
     return c;
   }
   return "CNY";
-}
-
-/** 供 HTTP：单 scope 的账户 KPI 展示态（analysis_daily_snapshot v3 冻结日行）。 */
-async function buildAccountKpiSurfaceForScope(userId, accountScope = "all") {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return null;
-  }
-  const sc = String(accountScope || "all").trim() || "all";
-  const settings = await getSettings(uid);
-  const { account: row } = await getHomeSummaryForUser(uid, sc);
-  if (!row) {
-    return null;
-  }
-  const { buildAccountKpiSurfacePayload } = require("./account-kpi-surface");
-  const book = resolveBookCurrencyForAccountScope(settings, sc);
-  const algo = String(settings?.algoMode || "twr").toLowerCase() === "mwr" ? "mwr" : "twr";
-  return buildAccountKpiSurfacePayload(row, book, algo, sc !== "all");
 }
 
 let metricsOpsSchemaPromise = null;
@@ -1501,9 +1349,9 @@ async function getUserMetricsMeta(userId, opts = {}) {
   };
 }
 
-/** cron / 首次写入前：home_summary + metrics 运维表幂等建表（勿放在首屏 bootstrap）。 */
+/** cron / 首次写入前：metrics 运维表幂等建表（勿放在首屏 bootstrap）。 */
 async function ensureAppDerivedTables() {
-  await Promise.all([ensureHomeSummaryTables(), ensureMetricsOpsTables()]);
+  await ensureMetricsOpsTables();
 }
 
 async function upsertUserMetricsMeta(userId, patch = {}) {
@@ -1994,118 +1842,6 @@ async function getAnalysisDailySnapshots(query = {}, userId = null) {
   }));
 }
 
-async function upsertAnalysisDailySnapshot(input, userId = null) {
-  const uid = String(userId || (await getCliUserId())).trim();
-  const r = input || {};
-  const now = nowMs();
-  const row = {
-    user_id: uid,
-    account_id: String(r.accountId || r.account_id || "default").trim() || "default",
-    date: toDateKey(r.date),
-    profit_cny: validNumber(r.profitCny, r.profit_cny, 0),
-    tw_r_daily: validNumber(r.twRDaily, r.tw_r_daily, 0),
-    tw_r_cumulative: validNumber(r.twRCumulative, r.tw_r_cumulative, 0),
-    external_flow_cny: validNumber(r.externalFlowCny, r.external_flow_cny, 0),
-    external_flow_native: validNumber(r.externalFlowNative, r.external_flow_native, 0),
-    total_profit: validNumber(r.totalProfit, r.total_profit, 0),
-    principal: 0,
-    market_value: validNumber(r.marketValue, r.market_value, 0),
-    total_assets: validNumber(r.totalAssets, r.total_assets, 0),
-    cash_cny: validNumber(r.cash, r.cash_cny, 0),
-    cash_ratio: validNumber(r.cashRatio, r.cash_ratio, 0),
-    fx_hkd_cny: r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
-    fx_usd_cny: r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
-    created_at: validNumber(r.createdAt, r.created_at, now),
-    updated_at: now,
-  };
-  await q(
-    `INSERT INTO analysis_daily_snapshot (
-       user_id, account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
-       total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-     ON CONFLICT (user_id, account_id, date) DO UPDATE SET
-       profit_cny = EXCLUDED.profit_cny, tw_r_daily = EXCLUDED.tw_r_daily, tw_r_cumulative = EXCLUDED.tw_r_cumulative,
-       external_flow_cny = EXCLUDED.external_flow_cny, external_flow_native = EXCLUDED.external_flow_native,
-       total_profit = EXCLUDED.total_profit, principal = EXCLUDED.principal, market_value = EXCLUDED.market_value,
-       total_assets = EXCLUDED.total_assets, cash_cny = EXCLUDED.cash_cny, cash_ratio = EXCLUDED.cash_ratio,
-       fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
-    [
-      row.user_id,
-      row.account_id,
-      row.date,
-      row.profit_cny,
-      row.tw_r_daily,
-      row.tw_r_cumulative,
-      row.external_flow_cny,
-      row.external_flow_native,
-      row.total_profit,
-      row.principal,
-      row.market_value,
-      row.total_assets,
-      row.cash_cny,
-      row.cash_ratio,
-      row.fx_hkd_cny,
-      row.fx_usd_cny,
-      row.created_at,
-      row.updated_at,
-    ]
-  );
-  return row;
-}
-
-async function upsertAnalysisDailySnapshotBatch(rows, userId = null) {
-  const uid = String(userId || (await getCliUserId())).trim();
-  const list = Array.isArray(rows) ? rows : [];
-  const now = nowMs();
-  const p = await initPool();
-  const client = await p.connect();
-  try {
-    await client.query("BEGIN");
-    for (const raw of list) {
-      const r = raw || {};
-      await client.query(
-        `INSERT INTO analysis_daily_snapshot (
-           user_id, account_id, date, profit_cny, tw_r_daily, tw_r_cumulative, external_flow_cny, external_flow_native,
-           total_profit, principal, market_value, total_assets, cash_cny, cash_ratio, fx_hkd_cny, fx_usd_cny, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-         ON CONFLICT (user_id, account_id, date) DO UPDATE SET
-           profit_cny = EXCLUDED.profit_cny, tw_r_daily = EXCLUDED.tw_r_daily, tw_r_cumulative = EXCLUDED.tw_r_cumulative,
-           external_flow_cny = EXCLUDED.external_flow_cny, external_flow_native = EXCLUDED.external_flow_native,
-           total_profit = EXCLUDED.total_profit, principal = EXCLUDED.principal, market_value = EXCLUDED.market_value,
-           total_assets = EXCLUDED.total_assets, cash_cny = EXCLUDED.cash_cny, cash_ratio = EXCLUDED.cash_ratio,
-           fx_hkd_cny = EXCLUDED.fx_hkd_cny, fx_usd_cny = EXCLUDED.fx_usd_cny, updated_at = EXCLUDED.updated_at`,
-        [
-          uid,
-          String(r.accountId || r.account_id || "default").trim() || "default",
-          toDateKey(r.date),
-          validNumber(r.profitCny, r.profit_cny, 0),
-          validNumber(r.twRDaily, r.tw_r_daily, 0),
-          validNumber(r.twRCumulative, r.tw_r_cumulative, 0),
-          validNumber(r.externalFlowCny, r.external_flow_cny, 0),
-          validNumber(r.externalFlowNative, r.external_flow_native, 0),
-          validNumber(r.totalProfit, r.total_profit, 0),
-          0,
-          validNumber(r.marketValue, r.market_value, 0),
-          validNumber(r.totalAssets, r.total_assets, 0),
-          validNumber(r.cash, r.cash_cny, 0),
-          validNumber(r.cashRatio, r.cash_ratio, 0),
-          r.fxHkdCny != null || r.fx_hkd_cny != null ? validNumber(r.fxHkdCny, r.fx_hkd_cny) : null,
-          r.fxUsdCny != null || r.fx_usd_cny != null ? validNumber(r.fxUsdCny, r.fx_usd_cny) : null,
-          validNumber(r.createdAt, r.created_at, now),
-          now,
-        ]
-      );
-    }
-    await client.query("COMMIT");
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
-  return list.length;
-}
-
 async function deleteAllSymbolDailyPnl(userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   await q("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
@@ -2114,212 +1850,6 @@ async function deleteAllSymbolDailyPnl(userId = null) {
 async function deleteAllAnalysisDailySnapshot(userId = null) {
   const uid = String(userId || (await getCliUserId())).trim();
   await q("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
-}
-
-let homeSummarySchemaPromise = null;
-
-/** 首页「截止到昨日日终」汇总表（幂等建表）。 */
-async function ensureHomeSummaryTables() {
-  if (homeSummarySchemaPromise) {
-    return homeSummarySchemaPromise;
-  }
-  homeSummarySchemaPromise = (async () => {
-    await Promise.all([
-      q(
-        `CREATE TABLE IF NOT EXISTS account_home_summary (
-        user_id TEXT NOT NULL,
-        account_scope TEXT NOT NULL,
-        frozen_through TEXT NOT NULL,
-        first_trade_date TEXT,
-        last_market_value_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
-        month_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
-        month_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        month_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        ytd_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
-        ytd_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        ytd_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        source_version TEXT NOT NULL DEFAULT '',
-        computed_at BIGINT NOT NULL,
-        PRIMARY KEY (user_id, account_scope)
-      )`
-      ).catch(() => {}),
-      q(
-        `CREATE TABLE IF NOT EXISTS symbol_home_summary (
-        user_id TEXT NOT NULL,
-        account_scope TEXT NOT NULL,
-        symbol TEXT NOT NULL,
-        frozen_through TEXT NOT NULL,
-        first_trade_date TEXT,
-        month_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
-        ytd_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_profit_native DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        total_rate_mwr DOUBLE PRECISION NOT NULL DEFAULT 0,
-        currency TEXT NOT NULL DEFAULT 'CNY',
-        source_version TEXT NOT NULL DEFAULT '',
-        computed_at BIGINT NOT NULL,
-        PRIMARY KEY (user_id, account_scope, symbol)
-      )`
-      ).catch(() => {}),
-    ]);
-    for (const ddl of [
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_total_assets_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_market_value_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_cash_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_principal_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_fx_usd_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-      `ALTER TABLE account_home_summary ADD COLUMN IF NOT EXISTS eod_fx_hkd_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
-    ]) {
-      await q(ddl).catch(() => {});
-    }
-  })();
-  return homeSummarySchemaPromise;
-}
-
-async function deleteSymbolHomeSummaryForScope(userId, accountScope = "all") {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return;
-  }
-  const sc = String(accountScope || "all").trim() || "all";
-  await q("DELETE FROM symbol_home_summary WHERE user_id = $1 AND account_scope = $2", [uid, sc]);
-}
-
-async function deleteHomeSummaryForUser(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return;
-  }
-  await q("DELETE FROM account_home_summary WHERE user_id = $1", [uid]);
-  await q("DELETE FROM symbol_home_summary WHERE user_id = $1", [uid]);
-}
-
-async function upsertAccountHomeSummaryRow(input, userId = null) {
-  const uid = String(userId || (await getCliUserId())).trim();
-  const r = input || {};
-  const now = validNumber(r.computedAt, r.computed_at, nowMs());
-  await ensureHomeSummaryTables();
-  await q(
-    `INSERT INTO account_home_summary (
-       user_id, account_scope, frozen_through, first_trade_date, last_market_value_cny,
-       month_profit_cny, month_rate_twr, month_rate_mwr,
-       ytd_profit_cny, ytd_rate_twr, ytd_rate_mwr,
-       total_profit_cny, total_rate_twr, total_rate_mwr,
-       eod_total_assets_cny, eod_market_value_cny, eod_cash_cny, eod_cash_ratio, eod_principal_cny,
-       eod_fx_usd_cny, eod_fx_hkd_cny,
-       source_version, computed_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
-     ON CONFLICT (user_id, account_scope) DO UPDATE SET
-       frozen_through = EXCLUDED.frozen_through,
-       first_trade_date = EXCLUDED.first_trade_date,
-       last_market_value_cny = EXCLUDED.last_market_value_cny,
-       month_profit_cny = EXCLUDED.month_profit_cny,
-       month_rate_twr = EXCLUDED.month_rate_twr,
-       month_rate_mwr = EXCLUDED.month_rate_mwr,
-       ytd_profit_cny = EXCLUDED.ytd_profit_cny,
-       ytd_rate_twr = EXCLUDED.ytd_rate_twr,
-       ytd_rate_mwr = EXCLUDED.ytd_rate_mwr,
-       total_profit_cny = EXCLUDED.total_profit_cny,
-       total_rate_twr = EXCLUDED.total_rate_twr,
-       total_rate_mwr = EXCLUDED.total_rate_mwr,
-       eod_total_assets_cny = EXCLUDED.eod_total_assets_cny,
-       eod_market_value_cny = EXCLUDED.eod_market_value_cny,
-       eod_cash_cny = EXCLUDED.eod_cash_cny,
-       eod_cash_ratio = EXCLUDED.eod_cash_ratio,
-       eod_principal_cny = EXCLUDED.eod_principal_cny,
-       eod_fx_usd_cny = EXCLUDED.eod_fx_usd_cny,
-       eod_fx_hkd_cny = EXCLUDED.eod_fx_hkd_cny,
-       source_version = EXCLUDED.source_version,
-       computed_at = EXCLUDED.computed_at`,
-    [
-      uid,
-      String(r.accountScope || r.account_scope || "all").trim() || "all",
-      toDateKey(r.frozenThrough || r.frozen_through),
-      r.firstTradeDate != null || r.first_trade_date != null ? String(r.firstTradeDate || r.first_trade_date).slice(0, 10) : null,
-      validNumber(r.lastMarketValueCny, r.last_market_value_cny, 0),
-      validNumber(r.monthProfitCny, r.month_profit_cny, 0),
-      validNumber(r.monthRateTwr, r.month_rate_twr, 0),
-      validNumber(r.monthRateMwr, r.month_rate_mwr, 0),
-      validNumber(r.ytdProfitCny, r.ytd_profit_cny, 0),
-      validNumber(r.ytdRateTwr, r.ytd_rate_twr, 0),
-      validNumber(r.ytdRateMwr, r.ytd_rate_mwr, 0),
-      validNumber(r.totalProfitCny, r.total_profit_cny, 0),
-      validNumber(r.totalRateTwr, r.total_rate_twr, 0),
-      validNumber(r.totalRateMwr, r.total_rate_mwr, 0),
-      validNumber(r.eodTotalAssetsCny, r.eod_total_assets_cny, 0),
-      validNumber(r.eodMarketValueCny, r.eod_market_value_cny, 0),
-      validNumber(r.eodCashCny, r.eod_cash_cny, 0),
-      validNumber(r.eodCashRatio, r.eod_cash_ratio, 0),
-      validNumber(r.eodPrincipalCny, r.eod_principal_cny, 0),
-      validNumber(r.eodFxUsdCny, r.eod_fx_usd_cny, 0),
-      validNumber(r.eodFxHkdCny, r.eod_fx_hkd_cny, 0),
-      String(r.sourceVersion || r.source_version || "").slice(0, 64),
-      now,
-    ]
-  );
-}
-
-async function upsertSymbolHomeSummaryBatch(rows, userId = null, accountScope = "all") {
-  const uid = String(userId || (await getCliUserId())).trim();
-  const list = Array.isArray(rows) ? rows : [];
-  const sc = String(accountScope || "all").trim() || "all";
-  if (!uid || !list.length) {
-    return 0;
-  }
-  await ensureHomeSummaryTables();
-  const p = await initPool();
-  const c = await p.connect();
-  try {
-    await c.query("BEGIN");
-    for (const raw of list) {
-      const r = raw || {};
-      const now = validNumber(r.computedAt, r.computed_at, nowMs());
-      await c.query(
-        `INSERT INTO symbol_home_summary (
-           user_id, account_scope, symbol, frozen_through, first_trade_date,
-           month_profit_native, ytd_profit_native, total_profit_native,
-           total_rate_twr, total_rate_mwr, currency, source_version, computed_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         ON CONFLICT (user_id, account_scope, symbol) DO UPDATE SET
-           frozen_through = EXCLUDED.frozen_through,
-           first_trade_date = EXCLUDED.first_trade_date,
-           month_profit_native = EXCLUDED.month_profit_native,
-           ytd_profit_native = EXCLUDED.ytd_profit_native,
-           total_profit_native = EXCLUDED.total_profit_native,
-           total_rate_twr = EXCLUDED.total_rate_twr,
-           total_rate_mwr = EXCLUDED.total_rate_mwr,
-           currency = EXCLUDED.currency,
-           source_version = EXCLUDED.source_version,
-           computed_at = EXCLUDED.computed_at`,
-        [
-          uid,
-          sc,
-          normalizeSymbol(String(r.symbol || "").trim()),
-          toDateKey(r.frozenThrough || r.frozen_through),
-          r.firstTradeDate != null || r.first_trade_date != null ? String(r.firstTradeDate || r.first_trade_date).slice(0, 10) : null,
-          validNumber(r.monthProfitNative, r.month_profit_native, 0),
-          validNumber(r.ytdProfitNative, r.ytd_profit_native, 0),
-          validNumber(r.totalProfitNative, r.total_profit_native, 0),
-          validNumber(r.totalRateTwr, r.total_rate_twr, 0),
-          validNumber(r.totalRateMwr, r.total_rate_mwr, 0),
-          String(r.currency || "CNY").toUpperCase().slice(0, 3) || "CNY",
-          String(r.sourceVersion || r.source_version || "").slice(0, 64),
-          now,
-        ]
-      );
-    }
-    await c.query("COMMIT");
-  } catch (e) {
-    await c.query("ROLLBACK");
-    throw e;
-  } finally {
-    c.release();
-  }
-  return list.length;
 }
 
 async function getHomeSummaryForUser(userId, accountScope = "all") {
@@ -2528,9 +2058,6 @@ async function deleteAllDataForUser(userId) {
     await c.query("DELETE FROM cash_transfers WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM analysis_daily_snapshot WHERE user_id = $1", [uid]);
-    await c.query("DELETE FROM account_home_summary WHERE user_id = $1", [uid]);
-    await c.query("DELETE FROM symbol_home_summary WHERE user_id = $1", [uid]);
-    await c.query("DELETE FROM daily_returns WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM app_settings WHERE user_id = $1", [uid]);
     await c.query("DELETE FROM accounts WHERE user_id = $1", [uid]);
     await c.query("COMMIT");
@@ -2923,6 +2450,9 @@ async function ensurePerformanceSchemaV2() {
   }
   perfSchemaV2Promise = (async () => {
     await q(`DROP TABLE IF EXISTS performance_series_cache`).catch(() => {});
+    await q(`DROP TABLE IF EXISTS account_home_summary`).catch(() => {});
+    await q(`DROP TABLE IF EXISTS symbol_home_summary`).catch(() => {});
+    await q(`DROP TABLE IF EXISTS daily_returns`).catch(() => {});
     await q(
       `ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS day_trade_flow_native DOUBLE PRECISION NOT NULL DEFAULT 0`
     ).catch(() => {});
@@ -3421,10 +2951,6 @@ module.exports = {
   deleteCashTransferById,
   getAccounts,
   replaceAccountsFromList,
-  getDailyReturns,
-  upsertDailyReturn,
-  importDailyReturns,
-  deleteDailyReturn,
   getSettings,
   setSettings,
   getState,
@@ -3436,7 +2962,6 @@ module.exports = {
   getSymbolDailyEodRowsAtDate,
   insertCronJobRun,
   listCronJobRuns,
-  buildAccountKpiSurfaceForScope,
   getSymbolDailyPnl,
   getSymbolDailyPnlChartSeries,
   getSymbolDailyPnlChartSeriesPage,
@@ -3446,17 +2971,10 @@ module.exports = {
   getSymbolDailyPnlRowOnOrBefore,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
-  upsertAnalysisDailySnapshot,
-  upsertAnalysisDailySnapshotBatch,
   deleteAllSymbolDailyPnl,
   deleteAllAnalysisDailySnapshot,
-  ensureHomeSummaryTables,
   ensureMetricsOpsTables,
   ensureAppDerivedTables,
-  deleteHomeSummaryForUser,
-  deleteSymbolHomeSummaryForScope,
-  upsertAccountHomeSummaryRow,
-  upsertSymbolHomeSummaryBatch,
   getHomeSummaryForUser,
   fetchHomeBundleFrozenPack,
   resolveBookCurrencyForAccountScope,

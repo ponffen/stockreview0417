@@ -725,10 +725,6 @@ const {
   getCashTransferByIdForUser,
   deleteCashTransferById,
   getAccounts,
-  getDailyReturns,
-  upsertDailyReturn,
-  importDailyReturns,
-  deleteDailyReturn,
   getSettings,
   setSettings,
   getState,
@@ -737,7 +733,6 @@ const {
   getSymbolDailyPnl,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
-  upsertAnalysisDailySnapshot,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestAnalysisSnapshotDate,
@@ -760,34 +755,8 @@ const {
   removeCommunityFollow,
   isCommunityFollowing,
   pingDatabase,
-  getHomeSummaryForUser,
-  ensureHomeSummaryTables,
-  buildAccountKpiSurfaceForScope,
 } = require("./src/db");
 const { runDailyFreeze, resolveFrozenDate, freezeUserToDate } = require("./src/eod-freeze-service");
-
-/** 合并短时间内的多次失效触发，避免 rebuild 占满 Neon 连接导致全站 API pending */
-const homeSummaryRebuildTimers = new Map();
-const HOME_SUMMARY_REBUILD_DEBOUNCE_MS = Math.max(
-  300,
-  Math.min(300_000, Number(process.env.HOME_SUMMARY_REBUILD_DEBOUNCE_MS) || 12_000)
-);
-
-function scheduleRebuildHomeSummaryForUser(userId) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return;
-  }
-  const prev = homeSummaryRebuildTimers.get(uid);
-  if (prev) {
-    clearTimeout(prev);
-  }
-  const t = setTimeout(() => {
-    homeSummaryRebuildTimers.delete(uid);
-    freezeUserToDate(uid, null, { force: false, syncDailyClose: false }).catch(() => {});
-  }, HOME_SUMMARY_REBUILD_DEBOUNCE_MS);
-  homeSummaryRebuildTimers.set(uid, t);
-}
 
 const {
   maskPhone,
@@ -809,20 +778,12 @@ const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
 const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
 const {
-  getMetricsReturns,
-  getMetricsAssets,
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
   getMetricsPublicAnalysisBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   getMetricsPublicStockRecordBundle,
-  getSeriesDailyProfit,
-  getSeriesDailyTwr,
-  getSeriesDailyAsset,
-  getHoldings,
-  getStockRank,
-  getBenchmarkSeries,
 } = require("./src/metrics-api-service");
 
 function sendMetricsJson(res, data) {
@@ -1572,96 +1533,6 @@ app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/metrics/returns", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, await getMetricsReturns(req.userId, accountScope, req.query.stages));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "metrics returns failed" });
-  }
-});
-
-app.get("/api/metrics/assets", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, await getMetricsAssets(req.userId, accountScope));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "metrics assets failed" });
-  }
-});
-
-app.get("/api/series/daily-profit", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getSeriesDailyProfit(req.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "daily profit series failed" });
-  }
-});
-
-app.get("/api/series/daily-twr", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getSeriesDailyTwr(req.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "daily twr series failed" });
-  }
-});
-
-app.get("/api/series/daily-asset", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
-    sendMetricsJson(res, await getSeriesDailyAsset(req.userId, accountScope, stage, metric));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "daily asset series failed" });
-  }
-});
-
-// Deprecated stub — kept so old frontend doesn't hit 404→apiReady:false.
-// New frontend uses /api/settings + /api/metrics/assets + /api/holdings instead.
-app.get("/api/home/bootstrap", requireAuth, async (req, res) => {
-  try {
-    const data = await getSettings(req.userId);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, data: { ...data, accounts: data.accounts || [], dataVersion: 0, rebuilding: false, frozenThrough: null } });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "bootstrap failed" });
-  }
-});
-
-app.get("/api/holdings", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, await getHoldings(req.userId, accountScope));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "holdings failed" });
-  }
-});
-
-app.get("/api/analysis/stock-rank", requireAuth, async (req, res) => {
-  try {
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getStockRank(req.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "stock rank failed" });
-  }
-});
-
-app.get("/api/series/benchmark", requireAuth, async (req, res) => {
-  try {
-    const symbol = String(req.query.symbol || "").trim();
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getBenchmarkSeries(req.userId, symbol, stage));
-  } catch (error) {
-    res.status(400).json({ ok: false, error: error?.message || "benchmark series failed" });
-  }
-});
-
 async function handlePublicAnalysisBundle(req, res) {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
@@ -1724,78 +1595,6 @@ async function handlePublicHomeBundle(req, res) {
 
 app.get("/api/public/:targetId/home-bundle", requireAuth, handlePublicHomeBundle);
 app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, handlePublicHomeBundle);
-
-app.get("/api/public/:targetId/metrics/returns", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    sendMetricsJson(res, await getMetricsReturns(gate.userId, accountScope, req.query.stages));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "public metrics returns failed" });
-  }
-});
-
-app.get("/api/public/:targetId/series/daily-twr", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getSeriesDailyTwr(gate.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "public daily twr failed" });
-  }
-});
-
-app.get("/api/public/:targetId/series/daily-profit", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getSeriesDailyProfit(gate.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "public daily profit failed" });
-  }
-});
-
-app.get("/api/public/:targetId/series/daily-asset", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    const metric = String(req.query.metric || "total_assets").trim() || "total_assets";
-    sendMetricsJson(res, await getSeriesDailyAsset(gate.userId, accountScope, stage, metric));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "public daily asset failed" });
-  }
-});
-
-app.get("/api/public/:targetId/analysis/stock-rank", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getStockRank(gate.userId, accountScope, stage));
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "public stock rank failed" });
-  }
-});
-
-app.get("/api/public/:targetId/series/benchmark", requireAuth, async (req, res) => {
-  try {
-    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
-    if (!gate.ok) { res.status(gate.status).json({ ok: false, error: gate.error }); return; }
-    const symbol = String(req.query.symbol || "").trim();
-    const stage = String(req.query.stage || "mtd").trim() || "mtd";
-    sendMetricsJson(res, await getBenchmarkSeries(gate.userId, symbol, stage));
-  } catch (error) {
-    res.status(400).json({ ok: false, error: error?.message || "public benchmark failed" });
-  }
-});
 
 app.get("/api/ops/cron-runs", requireAuth, async (req, res) => {
   try {
@@ -1975,74 +1774,6 @@ app.patch("/api/settings", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/accounts", requireAuth, async (req, res) => {
-  res.json({ ok: true, data: await getAccounts(req.userId) });
-});
-
-app.get("/api/symbol-daily", requireAuth, async (req, res) => {
-  try {
-    const data = await getSymbolDailyPnl(
-      {
-        accountId: req.query.accountId,
-        from: req.query.from,
-        to: req.query.to,
-      },
-      req.userId
-    );
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "symbol daily failed" });
-  }
-});
-
-app.post("/api/symbol-daily/batch", requireAuth, async (req, res) => {
-  try {
-    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    await upsertSymbolDailyPnlBatch(rows, req.userId);
-    res.json({ ok: true, count: rows.length });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "symbol daily batch failed" });
-  }
-});
-
-app.get("/api/analysis-daily", requireAuth, async (req, res) => {
-  try {
-    const accountId = req.query.accountId != null ? String(req.query.accountId).trim() : "";
-    const from = req.query.from != null && String(req.query.from).trim() ? String(req.query.from).trim() : "1970-01-01";
-    const to = req.query.to != null && String(req.query.to).trim() ? String(req.query.to).trim() : "9999-12-31";
-    const cacheKey = `u:${req.userId}:analysis:account=${accountId || "*"}:from=${from}:to=${to}`;
-    const cached = cacheGetWithTtl(analysisDailyMemoryCache, cacheKey, ANALYSIS_DAILY_CACHE_TTL_MS);
-    if (cached) {
-      res.setHeader("Cache-Control", "no-store");
-      res.json({ ok: true, data: cached, cached: true });
-      return;
-    }
-    const data = await getAnalysisDailySnapshots(
-      {
-        accountId,
-        from,
-        to,
-      },
-      req.userId
-    );
-    cacheSet(analysisDailyMemoryCache, cacheKey, data);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "analysis daily failed" });
-  }
-});
-
-app.post("/api/analysis-daily", requireAuth, async (req, res) => {
-  try {
-    const row = await upsertAnalysisDailySnapshot(req.body || {}, req.userId);
-    clearUserScopedCache(analysisDailyMemoryCache, req.userId);
-    res.json({ ok: true, data: row });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "analysis daily upsert failed" });
-  }
-});
-
 app.all("/api/cron/freeze-eod", async (req, res) => {
   const sessionUser = readUserIdFromRequest(req);
   if (!sessionUser && !isCronAuthorized(req)) {
@@ -2186,41 +1917,6 @@ app.get("/api/snapshot/symbol-daily", requireAuth, async (req, res) => {
     res.json({ ok: true, data: rows });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "snapshot symbol daily failed" });
-  }
-});
-
-app.get("/api/snapshot/home-summary", requireAuth, async (req, res) => {
-  try {
-    await ensureHomeSummaryTables();
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const raw = await getHomeSummaryForUser(req.userId, accountScope);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      ok: true,
-      data: {
-        accountScope,
-        account: raw.account,
-        symbols: raw.symbols,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "snapshot home summary failed" });
-  }
-});
-
-app.get("/api/surface/account-kpis", requireAuth, async (req, res) => {
-  try {
-    await ensureHomeSummaryTables();
-    const accountScope = String(req.query.accountScope || "all").trim() || "all";
-    const surface = await buildAccountKpiSurfaceForScope(req.userId, accountScope);
-    res.setHeader("Cache-Control", "no-store");
-    if (!surface) {
-      res.json({ ok: true, data: null, accountScope });
-      return;
-    }
-    res.json({ ok: true, data: surface, accountScope });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "account kpis surface failed" });
   }
 });
 
@@ -2482,67 +2178,6 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
     res.json({ ok: true, ...payload });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "realtime patch failed" });
-  }
-});
-
-app.get("/api/daily-returns", requireAuth, async (req, res) => {
-  try {
-    const { accountId, from, to } = req.query || {};
-    const full =
-      req.query.full != null &&
-      (String(req.query.full).trim() === "1" || String(req.query.full).trim().toLowerCase() === "true");
-    const limit = req.query.limit != null ? String(req.query.limit) : "";
-    const offset = req.query.offset != null ? String(req.query.offset) : "";
-    const data = await getDailyReturns(
-      {
-        accountId: accountId != null ? String(accountId) : "",
-        from: from != null ? String(from) : "",
-        to: to != null ? String(to) : "",
-        allHistory: full,
-        limit,
-        offset,
-      },
-      req.userId
-    );
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "list daily returns failed" });
-  }
-});
-
-app.post("/api/daily-returns", requireAuth, async (req, res) => {
-  try {
-    const row = await upsertDailyReturn(req.body || {}, req.userId);
-    res.json({ ok: true, data: row });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "save daily return failed" });
-  }
-});
-
-app.post("/api/daily-returns/import", requireAuth, async (req, res) => {
-  try {
-    const payload = req.body || {};
-    const mode = payload.mode === "replace" ? "replace" : "append";
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    const data = await importDailyReturns(rows, mode, req.userId);
-    res.json({ ok: true, count: data.length, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "import daily returns failed" });
-  }
-});
-
-app.delete("/api/daily-returns", requireAuth, async (req, res) => {
-  try {
-    const accountId = req.query.accountId != null ? String(req.query.accountId) : "";
-    const date = req.query.date != null ? String(req.query.date) : "";
-    if (!accountId || !date) {
-      res.status(400).json({ ok: false, error: "accountId and date are required" });
-      return;
-    }
-    const deleted = await deleteDailyReturn(accountId, date, req.userId);
-    res.json({ ok: true, deleted });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "delete daily return failed" });
   }
 });
 

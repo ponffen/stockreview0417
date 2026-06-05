@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 全量重算：从首笔成交日至昨日 freeze + home_summary。
+ * 全量重算：从首笔成交日至昨日 freeze（metrics v3）。
  * 用法: DATABASE_URL=... node scripts/rebuild-all-metrics.js
  */
 require("dotenv").config();
