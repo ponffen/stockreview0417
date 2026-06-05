@@ -758,6 +758,25 @@ async function enrichLeaderboardPayloadWithTencent(payload) {
   await enrichCardsTopPositionsWithTencent(payload.entries);
 }
 
+async function enrichLeaderboardPayloadWithViewer(payload, viewerId) {
+  const vid = String(viewerId || "").trim();
+  if (!vid || !payload || !Array.isArray(payload.entries) || !payload.entries.length) {
+    return payload;
+  }
+  const followeeIds = new Set(await listCommunityFolloweeIds(vid));
+  for (const card of payload.entries) {
+    const tid = String(card.userId || "").trim();
+    if (!tid) {
+      continue;
+    }
+    const following = followeeIds.has(tid);
+    const followsMe = await isCommunityFollowing(tid, vid);
+    card.following = following;
+    card.mutual = Boolean(following && followsMe);
+  }
+  return payload;
+}
+
 module.exports = {
   maskPhone,
   displayNameForUser,
@@ -772,6 +791,7 @@ module.exports = {
   enrichFeedRowsWithTencent,
   enrichCardsTopPositionsWithTencent,
   enrichLeaderboardPayloadWithTencent,
+  enrichLeaderboardPayloadWithViewer,
   enrichPublicProfileDetailWithTencent,
   enrichPublicTradesWithTencent,
   NORMALIZATION_VERSION,

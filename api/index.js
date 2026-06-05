@@ -1182,6 +1182,7 @@ module.exports = async function handler(req, res) {
         enrichFeedRowsWithTencent,
         enrichCardsTopPositionsWithTencent,
         enrichLeaderboardPayloadWithTencent,
+        enrichLeaderboardPayloadWithViewer,
         getPublicProfileDetail,
         enrichPublicProfileDetailWithTencent,
         displayNameForUser,
@@ -1212,6 +1213,7 @@ module.exports = async function handler(req, res) {
 
       if (req.method === "GET" && pathOnly === "/api/community/leaderboard") {
         const data = await getLeaderboard();
+        await enrichLeaderboardPayloadWithViewer(data, userId);
         await enrichLeaderboardPayloadWithTencent(data);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));

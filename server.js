@@ -769,6 +769,7 @@ const {
   enrichFeedRowsWithTencent,
   enrichCardsTopPositionsWithTencent,
   enrichLeaderboardPayloadWithTencent,
+  enrichLeaderboardPayloadWithViewer,
   enrichPublicProfileDetailWithTencent,
 } = require("./src/community-service");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
@@ -1158,9 +1159,10 @@ app.patch("/api/me/community-profile", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/community/leaderboard", requireAuth, async (_req, res) => {
+app.get("/api/community/leaderboard", requireAuth, async (req, res) => {
   try {
     const data = await getLeaderboard();
+    await enrichLeaderboardPayloadWithViewer(data, req.userId);
     await enrichLeaderboardPayloadWithTencent(data);
     res.json({ ok: true, data });
   } catch (error) {
