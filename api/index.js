@@ -345,10 +345,11 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "missing symbol" }));
         return;
       }
-      const { getMetricsStockRecordBundle } = require("../src/metrics-api-service");
-      const data = await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
-        publicLayout: isPublicStockRecordBundle,
-        ...(() => {
+      const {
+        getMetricsStockRecordBundle,
+        getMetricsPublicStockRecordBundle,
+      } = require("../src/metrics-api-service");
+      const chartOpts = (() => {
           const range = String(getSearchParam(req, "range") || "").trim().toLowerCase();
           if (["7", "30", "90", "mtd", "ytd", "all"].includes(range)) {
             return { chartRange: range };
@@ -356,8 +357,10 @@ module.exports = async function handler(req, res) {
           const limit = Math.max(1, Math.min(200, parseInt(String(getSearchParam(req, "limit") || "30"), 10) || 30));
           const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
           return { pointsLimit: limit, pointsOffset: offset };
-        })(),
-      });
+        })();
+      const data = isPublicStockRecordBundle
+        ? await getMetricsPublicStockRecordBundle(gate.userId, accountScope, symbol, chartOpts)
+        : await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, chartOpts);
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v8-stock-record-bundle" } }));
       return;
@@ -413,7 +416,7 @@ module.exports = async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store");
     try {
       const { readUserIdFromRequest } = require("../src/auth-session");
-      const { getPublicTrades, enrichPublicTradesWithTencent } = require("../src/community-service");
+      const { getPublicTradesPage, enrichPublicTradesWithTencent } = require("../src/community-service");
       const viewerId = readUserIdFromRequest(req);
       if (!viewerId) {
         res.statusCode = 401;
@@ -421,7 +424,16 @@ module.exports = async function handler(req, res) {
         return;
       }
       const targetId = String(publicTradesMatch[1] || "").trim();
-      const data = await getPublicTrades(viewerId, targetId);
+      const symbol = String(getSearchParam(req, "symbol") || "").trim();
+      const accountId = String(getSearchParam(req, "account_id") || "").trim();
+      const limit = getSearchParam(req, "limit");
+      const offset = getSearchParam(req, "offset");
+      const data = await getPublicTradesPage(viewerId, targetId, {
+        symbol: symbol || undefined,
+        accountId: accountId || undefined,
+        limit,
+        offset,
+      });
       if (data.error === "unauthorized") {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "未登录" }));
@@ -434,7 +446,15 @@ module.exports = async function handler(req, res) {
       }
       await enrichPublicTradesWithTencent(data);
       res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, data, direct: true, build: "v8-public-trades" }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          data: data.data,
+          pagination: data.pagination,
+          direct: true,
+          build: "v8-public-trades",
+        }),
+      );
       return;
     } catch (error) {
       console.error("[api/index.js] direct public trades error:", error);

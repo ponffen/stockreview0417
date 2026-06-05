@@ -1427,6 +1427,7 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
 
 const { redactPublicHomeBundle } = require("./metrics/public-home-bundle-redact");
 const { redactPublicAnalysisBundle } = require("./metrics/public-analysis-bundle-redact");
+const { redactPublicStockRecordBundle } = require("./metrics/public-stock-record-bundle-redact");
 
 async function getMetricsPublicHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
   const full = await getMetricsHomeBundle(userId, accountScope, stagesRaw, opts);
@@ -1441,6 +1442,11 @@ async function getMetricsPublicAnalysisBundle(userId, accountScope, stage, bench
   return redactPublicAnalysisBundle(full);
 }
 
+async function getMetricsPublicStockRecordBundle(userId, accountScope, symbol, opts = {}) {
+  const full = await getMetricsStockRecordBundle(userId, accountScope, symbol, opts);
+  return redactPublicStockRecordBundle(full);
+}
+
 module.exports = {
   METRICS_RULE_VERSION,
   BENCHMARK_SYMBOLS,
@@ -1450,6 +1456,7 @@ module.exports = {
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
   getMetricsPublicAnalysisBundle,
+  getMetricsPublicStockRecordBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
   probeMetricsHomeBundleDb,

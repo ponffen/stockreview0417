@@ -17,8 +17,11 @@ const {
   selectAnalysisSnapshotsForPublicMetrics,
   getSettings,
   getAccounts,
+  getTradesPage,
+  getTradesPageForSymbol,
 } = require("./db");
 const { fetchTencentQuoteMetaForSymbols } = require("./tencent-quote-meta");
+const { redactPublicTradeRow } = require("./metrics/public-trades-redact");
 
 const NORMALIZATION_VERSION = 1;
 /** 排行缓存：过长会导致 TOP3 等与个人页（按人民币市值）脱节；1h 折中 */
@@ -528,35 +531,62 @@ async function getPublicAnalysisUiPrefs(viewerId, targetId) {
   };
 }
 
-async function getPublicTrades(viewerId, targetId) {
+function accountNameMapForUser(accounts) {
+  const map = {};
+  for (const acc of accounts || []) {
+    const id = String(acc?.id || "").trim();
+    if (!id) {
+      continue;
+    }
+    map[id] = String(acc?.name || id).trim() || id;
+  }
+  return map;
+}
+
+function parsePublicTradesPageOpts(raw = {}) {
+  const limit = Math.min(100, Math.max(1, Number(raw.limit) || 10));
+  const offset = Math.max(0, Number(raw.offset) || 0);
+  const accountId =
+    String(raw.account_id ?? raw.accountId ?? "all").trim() || "all";
+  const symbolRaw = String(raw.symbol ?? "").trim();
+  const symbol = symbolRaw ? normalizeSymbol(symbolRaw) : "";
+  return { limit, offset, accountId, symbol };
+}
+
+async function getPublicTradesPage(viewerId, targetId, opts = {}) {
   const gate = await assertPublicCommunityTarget(viewerId, targetId);
   if (gate.error) {
     return { error: gate.error };
   }
   const tid = gate.userId;
-  const trades = (await getTrades(tid)).filter((t) => t.type === "trade");
-  const rows = trades.map((t) => ({
-    id: t.id,
-    date: t.date,
-    symbol: t.symbol,
-    name: t.name,
-    side: t.side,
-    price: t.price,
-    quantity: t.quantity,
-    amount: t.amount,
-    accountId: t.accountId,
-    amount_share_ratio: t.amountShareRatio,
-  }));
-  return { rows };
+  const { limit, offset, accountId, symbol } = parsePublicTradesPageOpts(opts);
+  const accounts = await getAccounts(tid);
+  const accountNameById = accountNameMapForUser(accounts);
+  const pageOpts = { limit, offset, accountId };
+  const page = symbol
+    ? await getTradesPageForSymbol(tid, symbol, pageOpts)
+    : await getTradesPage(tid, pageOpts);
+  const data = (page.data || [])
+    .filter((t) => String(t.type || "trade") === "trade")
+    .map((t) => redactPublicTradeRow(t, accountNameById));
+  return {
+    data,
+    pagination: page.pagination,
+  };
 }
 
 async function enrichPublicTradesWithTencent(payload) {
-  if (!payload || !Array.isArray(payload.rows)) {
+  const list = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.rows)
+      ? payload.rows
+      : [];
+  if (!list.length) {
     return;
   }
   const syms = [];
   const seen = new Set();
-  for (const t of payload.rows) {
+  for (const t of list) {
     const s = String(t.symbol || "").trim();
     if (s && !seen.has(s)) {
       seen.add(s);
@@ -567,7 +597,7 @@ async function enrichPublicTradesWithTencent(payload) {
     return;
   }
   const meta = await fetchTencentQuoteMetaForSymbols(syms);
-  for (const t of payload.rows) {
+  for (const t of list) {
     const m = meta.get(t.symbol);
     if (m?.name) {
       t.name = m.name;
@@ -684,7 +714,7 @@ module.exports = {
   getLeaderboard,
   buildUserCard,
   getPublicProfileDetail,
-  getPublicTrades,
+  getPublicTradesPage,
   getPublicAnalysisUiPrefs,
   getFollowingCards,
   getFeedTrades,
