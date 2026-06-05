@@ -4942,14 +4942,39 @@ function communityFollowButtonHtml(card) {
   return `<button type="button" class="${followCls}" data-user-id="${uid}">${escapeHtml(fo)}</button>`;
 }
 
-function formatCommunityCardRateHtml(rateStr) {
+const COMMUNITY_CARD_RETURN_DEFS = [
+  { key: "today", label: "今日收益", rateKey: "todayTwr" },
+  { key: "mtd", label: "本月收益", rateKey: "mtdTwr" },
+  { key: "ytd", label: "本年收益", rateKey: "ytdTwr" },
+  { key: "inception", label: "累计收益", rateKey: "totalTwr" },
+];
+
+function communityCardReturnTileTone(rateStr) {
   const text = bundleFmtText(rateStr);
   if (!text || text === "—") {
-    return "<strong>—</strong>";
+    return "flat";
   }
   const rate = parseBundlePercent(rateStr);
-  const cls = Number.isFinite(rate) ? twrColorClass(rate) : "";
-  return `<strong class="${cls}">${escapeHtml(text)}</strong>`;
+  if (!Number.isFinite(rate) || rate === 0) {
+    return "flat";
+  }
+  return rate > 0 ? "up" : "down";
+}
+
+function buildCommunityCardReturnTileHtml(label, rateStr) {
+  const tone = communityCardReturnTileTone(rateStr);
+  const text = bundleFmtText(rateStr);
+  return `<div class="community-card-return-tile community-card-return-tile--${tone}">
+    <span class="community-card-return-label">${escapeHtml(label)}</span>
+    <span class="community-card-return-value">${escapeHtml(text)}</span>
+  </div>`;
+}
+
+function buildCommunityCardReturnsHtml(card) {
+  const tiles = COMMUNITY_CARD_RETURN_DEFS.map((def) =>
+    buildCommunityCardReturnTileHtml(def.label, card[def.rateKey]),
+  ).join("");
+  return `<div class="community-card-returns">${tiles}</div>`;
 }
 
 function communityTop3WeightHtml(weight) {
@@ -5020,24 +5045,7 @@ function buildCommunityCardInner(card, opts = {}) {
       </div>
       ${followHtml ? `<div class="community-card__header-follow">${followHtml}</div>` : ""}
     </div>
-    <div class="community-metrics">
-      <div class="community-metric-cell">
-        <span class="community-metric-label">今日</span>
-        ${formatCommunityCardRateHtml(card.todayTwr)}
-      </div>
-      <div class="community-metric-cell">
-        <span class="community-metric-label">本月</span>
-        ${formatCommunityCardRateHtml(card.mtdTwr)}
-      </div>
-      <div class="community-metric-cell">
-        <span class="community-metric-label">本年</span>
-        ${formatCommunityCardRateHtml(card.ytdTwr)}
-      </div>
-      <div class="community-metric-cell">
-        <span class="community-metric-label">累计</span>
-        ${formatCommunityCardRateHtml(card.totalTwr)}
-      </div>
-    </div>
+    ${buildCommunityCardReturnsHtml(card)}
     ${top3}
   `;
 }

@@ -2645,48 +2645,61 @@ body.auth-mode {
   color: #fff;
 }
 
-.community-metrics {
+.community-card-returns {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px 6px;
+  gap: 8px;
   padding-bottom: 14px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--line);
 }
 
-.community-metric-cell {
+.community-card-return-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  text-align: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
+  padding: 10px 4px;
+  border-radius: 10px;
+  text-align: center;
 }
 
-.community-metric-label {
+.community-card-return-tile--up {
+  background: rgba(244, 90, 104, 0.1);
+}
+
+.community-card-return-tile--down {
+  background: rgba(14, 188, 159, 0.1);
+}
+
+.community-card-return-tile--flat {
+  background: var(--surface-muted);
+}
+
+.community-card-return-label {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.2;
 }
 
-.community-metrics strong {
-  display: block;
-  margin: 0;
+.community-card-return-value {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
-.community-metrics strong.up {
+.community-card-return-tile--up .community-card-return-value {
   color: var(--up);
 }
 
-.community-metrics strong.down {
+.community-card-return-tile--down .community-card-return-value {
   color: var(--down);
 }
 
-.community-metrics strong:not(.up):not(.down) {
+.community-card-return-tile--flat .community-card-return-value {
   color: var(--muted);
 }
 
