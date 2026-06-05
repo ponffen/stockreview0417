@@ -578,14 +578,13 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // --------- 直连：/api/state 与社区 API（与同上 auth，避免 Express 落到 SPA）---------
+  // --------- 直连：社区 API（与同上 auth，避免 Express 落到 SPA）---------
   const communityProfileMatch =
     pathOnly.match(/^\/api\/community\/users\/([^/]+)\/profile$/) || null;
   const communityFollowMatch = pathOnly.match(/^\/api\/community\/follow\/([^/]+)$/) || null;
   const isStateOrCommunityDirect =
     (req.method === "GET" &&
-      (pathOnly === "/api/state" ||
-        pathOnly === "/api/community/feed" ||
+      (pathOnly === "/api/community/feed" ||
         pathOnly === "/api/community/following" ||
         pathOnly === "/api/community/leaderboard")) ||
     (req.method === "GET" && communityProfileMatch) ||
@@ -1168,10 +1167,9 @@ module.exports = async function handler(req, res) {
         return;
       }
 
-      console.log("[api/index.js] direct-handle state/community path=%s method=%s", pathOnly, req.method);
+      console.log("[api/index.js] direct-handle community path=%s method=%s", pathOnly, req.method);
 
       const {
-        getState,
         updateUserCommunityProfile,
         setCommunityFollow,
         removeCommunityFollow,
@@ -1196,13 +1194,6 @@ module.exports = async function handler(req, res) {
           req.on("end", () => resolve(data));
           req.on("error", reject);
         });
-
-      if (req.method === "GET" && pathOnly === "/api/state") {
-        const data = await getState(userId);
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data }));
-        return;
-      }
 
       if (req.method === "GET" && pathOnly === "/api/community/feed") {
         const rows = await getFeedTrades(userId);

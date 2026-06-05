@@ -1887,41 +1887,16 @@ function cycleSortOrder(current) {
   return "default";
 }
 
-async function fetchStaticSiteState() {
-  try {
-    const response = await fetch("/site-state.json", { cache: "no-store" });
-    if (!response.ok) {
-      return null;
-    }
-    const data = await response.json();
-    if (data && typeof data === "object" && Array.isArray(data.trades)) {
-      return data;
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
-}
-
 async function hydrateState() {
   let parsed = null;
   let remoteParsed = null;
-  let staticParsed = null;
   const boot = await fetchApiStateBootstrap();
   apiReady = boot.apiReady;
-  const bootstrapKind = boot.bootstrapKind || "none";
   if (apiReady) {
     remoteParsed = boot.data;
   }
-  // Only use the baked-in snapshot on static hosts (GitHub Pages). When the API is up,
-  if (!apiReady) {
-    staticParsed = await fetchStaticSiteState();
-  }
-  // 服务端可用时：以 /api/settings 为准。
   if (remoteParsed && typeof remoteParsed === "object") {
     parsed = remoteParsed;
-  } else if (staticParsed && Array.isArray(staticParsed.trades) && staticParsed.trades.length) {
-    parsed = staticParsed;
   }
   if (parsed && typeof parsed === "object") {
     state.route = parsed.route ?? state.route;

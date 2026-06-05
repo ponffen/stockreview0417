@@ -5,5 +5,4 @@ neon-database.url
 node_modules/
 api/public/
 data/*
-!data/site-state.json
 npm-debug.log*

@@ -727,7 +727,6 @@ const {
   getAccounts,
   getSettings,
   setSettings,
-  getState,
   insertCronJobRun,
   listCronJobRuns,
   getSymbolDailyPnl,
@@ -1608,12 +1607,6 @@ app.get("/api/ops/cron-runs", requireAuth, async (req, res) => {
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "cron runs failed" });
   }
-});
-
-app.get("/api/state", requireAuth, async (req, res) => {
-  const liteRaw = req.query.lite != null ? String(req.query.lite) : "";
-  const lite = liteRaw === "1" || liteRaw.toLowerCase() === "true";
-  res.json({ ok: true, data: await getState(req.userId, { lite }) });
 });
 
 function parseLedgerListQuery(req) {

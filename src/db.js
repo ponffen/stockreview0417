@@ -1263,24 +1263,6 @@ async function setSettings(partial, userId) {
   return getSettings(uid);
 }
 
-async function getState(userId, opts = {}) {
-  const uid = String(userId || "").trim();
-  const base = await getSettings(uid);
-  if (opts.lite === true) {
-    return {
-      ...base,
-      trades: [],
-      cashTransfers: [],
-    };
-  }
-  const [trades, cashTransfers] = await Promise.all([getTrades(uid), getCashTransfers(uid)]);
-  return {
-    ...base,
-    trades,
-    cashTransfers,
-  };
-}
-
 /** 账户级 KPI 展示账本：全部=CNY；单账户=该账户 settings 记账币种。 */
 function resolveBookCurrencyForAccountScope(settings, accountScope) {
   const sc = String(accountScope || "all").trim() || "all";
@@ -2925,7 +2907,6 @@ module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
   runSchemaDdl,
-  /** 与 `initPool` 建表语句一致；供 `scripts/migrate-sqlite-to-postgres.js` 等离线工具复用 */
   schemaDdl: DDL,
   SEED_USER_PHONE,
   normalizeSymbol,
@@ -2953,7 +2934,6 @@ module.exports = {
   replaceAccountsFromList,
   getSettings,
   setSettings,
-  getState,
   getUserMetricsMeta,
   upsertUserMetricsMeta,
   upsertAccountMetricsMeta,
