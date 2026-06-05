@@ -2037,8 +2037,7 @@ h2 {
   background: var(--bg);
 }
 
-.stock-record-head-main,
-.stock-record-subhead,
+.stock-record-summary-panel,
 .stock-record-chart-section,
 .stock-record-chart-block,
 .stock-record-trades-section {
@@ -2047,22 +2046,27 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
+.stock-record-summary-panel {
+  border-top: none;
+}
+
 .stock-record-head-main {
   padding: 12px 14px;
-  border-top: none;
   border-bottom: 1px solid var(--line);
 }
 
 .stock-record-subhead {
-  padding: 12px 14px;
+  padding: 12px 14px 10px;
   margin-top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   overflow: visible;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+}
+
+.stock-record-range-row {
+  padding: 0 14px 12px;
 }
 
 .stock-record-chart-section,
