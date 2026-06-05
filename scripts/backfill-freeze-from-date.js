@@ -29,10 +29,10 @@ async function main() {
     const t0 = Date.now();
     try {
       await pool.query(
-        "DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date >= $2::date",
+        "DELETE FROM analysis_daily_snapshot WHERE user_id = $1 AND date >= $2",
         [uid, fromDate],
       );
-      await pool.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date >= $2::date", [
+      await pool.query("DELETE FROM symbol_daily_pnl WHERE user_id = $1 AND date >= $2", [
         uid,
         fromDate,
       ]);
