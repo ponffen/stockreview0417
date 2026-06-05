@@ -3212,25 +3212,30 @@ body.auth-mode {
 
 .community-feed-card__stock-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-top: 14px;
 }
 
-.community-feed-card__stock-main {
-  min-width: 0;
+.community-feed-card__stock-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
 }
 
-.community-feed-card__stock-main .community-feed-stock-name {
+.community-feed-card__stock-identity .community-feed-stock-name {
   font-size: 17px;
   font-weight: 700;
   line-height: 1.25;
 }
 
-.community-feed-card__stock-main .community-feed-stock-sub {
-  margin-top: 6px;
+.community-feed-card__stock-identity .community-feed-stock-code {
+  font-size: 14px;
+  color: var(--muted);
 }
 
 .community-feed-side-pill {
@@ -3267,11 +3272,11 @@ body.auth-mode {
 .community-feed-metric {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-width: 0;
-  padding: 0 6px;
-  text-align: center;
+  padding: 0 12px;
+  text-align: left;
 }
 
 .community-feed-metric + .community-feed-metric {
@@ -3294,14 +3299,6 @@ body.auth-mode {
   font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
-}
-
-.community-feed-metric-value--share.up {
-  color: var(--up);
-}
-
-.community-feed-metric-value--share.down {
-  color: var(--down);
 }
 
 .community-feed-side-text {

@@ -5025,8 +5025,6 @@ function feedRowHtml(t) {
   const shareNum = Number(shareRaw);
   const shareStr =
     shareRaw != null && Number.isFinite(shareNum) ? formatPercent(shareNum) : "—";
-  const shareCls =
-    shareRaw != null && Number.isFinite(shareNum) ? (shareNum > 0 ? "up" : shareNum < 0 ? "down" : "") : "";
   const dateDisplay = formatCommunityFeedTradeDate(t.date);
   const stockName = escapeHtml(getDisplayName(t.symbol, t.name));
   const noteBlock = t.note
@@ -5046,12 +5044,10 @@ function feedRowHtml(t) {
           </div>
         </div>
         <div class="community-feed-card__stock-row">
-          <div class="community-feed-card__stock-main">
+          <div class="community-feed-card__stock-identity">
+            <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
             <strong class="community-feed-stock-name">${stockName}</strong>
-            <div class="community-feed-stock-sub">
-              <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
-              <span class="community-feed-stock-code">${code}</span>
-            </div>
+            <span class="community-feed-stock-code">${code}</span>
           </div>
           <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
         </div>
@@ -5068,7 +5064,7 @@ function feedRowHtml(t) {
                 <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占全账户总资产比例</div>
               </span>
             </span>
-            <span class="community-feed-metric-value community-feed-metric-value--share ${shareCls}">${escapeHtml(shareStr)}</span>
+            <span class="community-feed-metric-value">${escapeHtml(shareStr)}</span>
           </div>
           <div class="community-feed-metric">
             <span class="community-feed-metric-label">交易日期</span>
