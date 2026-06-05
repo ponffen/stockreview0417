@@ -3152,11 +3152,11 @@ body.auth-mode {
 }
 
 .community-feed-card {
-  background: linear-gradient(180deg, #fafbfd 0%, #fff 40%);
+  background: #fff;
   border-radius: 14px;
   border: 1px solid var(--line);
   margin: 0 12px 14px;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 4%);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 4%);
   overflow: hidden;
 }
 
@@ -3169,16 +3169,139 @@ body.auth-mode {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
-  padding-bottom: 10px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
-.community-feed-user-name {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--blue);
+.community-feed-card__user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+.community-feed-user-icon {
+  flex-shrink: 0;
+  color: #9aa3b2;
+}
+
+.community-feed-user-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.community-feed-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.community-feed-card__action-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--blue);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.community-feed-card__stock-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.community-feed-card__stock-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.community-feed-card__stock-main .community-feed-stock-name {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.community-feed-card__stock-main .community-feed-stock-sub {
+  margin-top: 6px;
+}
+
+.community-feed-side-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.community-feed-side-pill--buy {
+  color: #e5484d;
+  background: rgb(229 72 77 / 12%);
+}
+
+.community-feed-side-pill--sell {
+  color: var(--down);
+  background: rgb(46 125 74 / 12%);
+}
+
+.community-feed-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+  padding: 10px 0;
+  background: #f3f4f6;
+  border-radius: 10px;
+}
+
+.community-feed-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 6px;
+  text-align: center;
+}
+
+.community-feed-metric + .community-feed-metric {
+  border-left: 1px solid rgb(0 0 0 / 6%);
+}
+
+.community-feed-metric-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.community-feed-metric-label--with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.community-feed-metric-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.community-feed-metric-value--share.up {
+  color: var(--up);
+}
+
+.community-feed-metric-value--share.down {
+  color: var(--down);
 }
 
 .community-feed-side-text {
@@ -3245,12 +3368,6 @@ body.auth-mode {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
-}
-
-.community-feed-card__stock-main .community-feed-stock-name {
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1.25;
 }
 
 .community-feed-card__body .community-feed-stock-name {

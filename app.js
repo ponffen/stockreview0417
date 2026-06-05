@@ -5003,57 +5003,76 @@ function wrapInteractiveCommunityCard(card, opts = {}) {
   </article>`;
 }
 
+function formatCommunityFeedTradeDate(dateStr) {
+  const d = String(dateStr || "").slice(0, 10);
+  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[2]}-${m[3]}` : "—";
+}
+
+const COMMUNITY_FEED_USER_ICON_SVG = `<svg class="community-feed-user-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" fill="currentColor"/><path fill="currentColor" d="M4 20c0-4 3.6-6 8-6s8 2 8 6v1H4v-1z"/></svg>`;
+
 function feedRowHtml(t) {
   const side = t.side === "sell" ? "sell" : "buy";
   const sideLabel = t.side === "sell" ? "卖出" : "买入";
   const uid = escapeHtml(t.userId);
+  const symEsc = escapeHtml(String(t.symbol || "").trim());
   const tag = escapeHtml(t.marketTag || "OT");
   const tagLower = String(t.marketTag || "ot").toLowerCase();
   const code = escapeHtml(formatSymbolForDisplay(t.symbol || t.displayCode || ""));
   const priceStr =
     t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
-  const share = t.amountShareOfCurrentTotalMv;
+  const shareRaw = t.amount_share_ratio ?? t.amountShareOfCurrentTotalMv;
+  const shareNum = Number(shareRaw);
   const shareStr =
-    share != null && Number.isFinite(Number(share)) ? formatPercent(Number(share)) : "—";
-  const dateDisplay = String(t.date || "—").replace(/-/g, "\u2013");
+    shareRaw != null && Number.isFinite(shareNum) ? formatPercent(shareNum) : "—";
+  const shareCls =
+    shareRaw != null && Number.isFinite(shareNum) ? (shareNum > 0 ? "up" : shareNum < 0 ? "down" : "") : "";
+  const dateDisplay = formatCommunityFeedTradeDate(t.date);
   const stockName = escapeHtml(getDisplayName(t.symbol, t.name));
   const noteBlock = t.note
     ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(t.note)}</span></p>`
     : "";
   return `
-    <article class="community-feed-card community-card--interactive" data-community-profile-card data-community-user="${uid}">
+    <article class="community-feed-card">
       <div class="community-feed-card__inner">
         <div class="community-feed-card__head">
-          <span class="community-feed-user-name">${escapeHtml(t.displayName)}</span>
-          <span class="community-feed-side-text community-feed-side-${side}">${sideLabel}</span>
+          <div class="community-feed-card__user">
+            ${COMMUNITY_FEED_USER_ICON_SVG}
+            <span class="community-feed-user-name">${escapeHtml(t.displayName)}</span>
+          </div>
+          <div class="community-feed-card__actions">
+            <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>
+            <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-portfolio-analysis data-community-user="${uid}">组合分析</a>
+          </div>
         </div>
-        <div class="community-feed-card__body">
-          <div class="community-feed-card__col community-feed-card__col--stock">
+        <div class="community-feed-card__stock-row">
+          <div class="community-feed-card__stock-main">
             <strong class="community-feed-stock-name">${stockName}</strong>
             <div class="community-feed-stock-sub">
               <span class="community-market-tag community-market-tag--${tagLower}">${tag}</span>
               <span class="community-feed-stock-code">${code}</span>
             </div>
           </div>
-          <div class="community-feed-card__col community-feed-card__col--detail">
-            <div class="community-feed-kv">
-              <span class="community-feed-kv-label">交易价格</span>
-              <span class="community-feed-kv-value">${escapeHtml(priceStr)}</span>
-            </div>
-            <div class="community-feed-kv">
-              <span class="community-feed-kv-label community-feed-kv-label--with-help">
-                <span>金额</span>
-                <span class="stock-rank-help-wrap community-feed-amt-help-wrap">
-                  <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
-                  <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总市值比例</div>
-                </span>
+          <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
+        </div>
+        <div class="community-feed-card__metrics">
+          <div class="community-feed-metric">
+            <span class="community-feed-metric-label">交易价格</span>
+            <span class="community-feed-metric-value">${escapeHtml(priceStr)}</span>
+          </div>
+          <div class="community-feed-metric">
+            <span class="community-feed-metric-label community-feed-metric-label--with-help">
+              <span>金额</span>
+              <span class="stock-rank-help-wrap community-feed-amt-help-wrap">
+                <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
+                <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占全账户总资产比例</div>
               </span>
-              <span class="community-feed-kv-value">${escapeHtml(shareStr)}</span>
-            </div>
-            <div class="community-feed-kv">
-              <span class="community-feed-kv-label">交易日期</span>
-              <span class="community-feed-kv-value">${escapeHtml(dateDisplay)}</span>
-            </div>
+            </span>
+            <span class="community-feed-metric-value community-feed-metric-value--share ${shareCls}">${escapeHtml(shareStr)}</span>
+          </div>
+          <div class="community-feed-metric">
+            <span class="community-feed-metric-label">交易日期</span>
+            <span class="community-feed-metric-value">${escapeHtml(dateDisplay)}</span>
           </div>
         </div>
         ${noteBlock}
@@ -5061,6 +5080,7 @@ function feedRowHtml(t) {
     </article>
   `;
 }
+
 
 async function toggleFollowCommunity(userId, btnEl) {
   const uid = String(userId || "").trim();
@@ -10455,8 +10475,13 @@ async function openStockRecordDialog(symbol, opts = {}) {
     return;
   }
   const fromPublicProfile = opts.fromPublicProfile === true;
-  if (fromPublicProfile && state.communityProfileUserId) {
-    await loadCommunityPublicTrades(state.communityProfileUserId);
+  const publicOwnerUserId = String(opts.publicOwnerUserId || "").trim();
+  if (fromPublicProfile) {
+    const uid = publicOwnerUserId || String(state.communityProfileUserId || "").trim();
+    if (uid) {
+      state.communityProfileUserId = uid;
+      await loadCommunityPublicTrades(uid);
+    }
   }
   state.stockRecordFromPublicProfile = fromPublicProfile;
   state.activeRecordSymbol = symKey;

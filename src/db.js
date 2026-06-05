@@ -35,7 +35,6 @@ const {
   addCalendarDays,
 } = require("./db-pure");
 const { toDateKey: shanghaiCalendarDateKey } = require("../scripts/lib/market-fetch");
-const { computeTradeAmountShareRatio } = require("./trade-amount-share-ratio");
 
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
@@ -733,7 +732,7 @@ async function getTrades(userId) {
     return [];
   }
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
      FROM trades WHERE user_id = $1
      ORDER BY trade_date ASC, created_at ASC`,
     [uid]
@@ -762,7 +761,7 @@ async function getTradesForSymbol(userId, symbol, opts = {}) {
   const params = [uid, sym];
   const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
      FROM trades WHERE user_id = $1 AND symbol = $2${accountClause}
      ORDER BY trade_date DESC, created_at DESC`,
     params
@@ -788,7 +787,7 @@ async function getTradesPageForSymbol(userId, symbol, opts = {}) {
   const total = Number(countRows[0]?.n) || 0;
   const dataParams = [...params, limit, offset];
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
      FROM trades WHERE ${where}
      ORDER BY trade_date DESC, created_at DESC
      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
@@ -823,7 +822,7 @@ async function getTradesPage(userId, opts = {}) {
   const total = Number(countRows[0]?.n) || 0;
   const dataParams = [...params, limit, offset];
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
      FROM trades WHERE ${where}
      ORDER BY trade_date DESC, created_at DESC
      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
@@ -841,71 +840,19 @@ async function getTradesPage(userId, opts = {}) {
   };
 }
 
-async function selectAnalysisSnapshotAllAccountOnOrBefore(userId, asOfDate) {
-  const uid = String(userId || "").trim();
-  const asOf = String(asOfDate || "").slice(0, 10);
-  if (!uid || !asOf) {
-    return null;
-  }
-  const { rows } = await q(
-    `SELECT date, total_assets, fx_hkd_cny, fx_usd_cny
-     FROM analysis_daily_snapshot
-     WHERE user_id = $1 AND account_id = 'all' AND date <= $2
-     ORDER BY date DESC
-     LIMIT 1`,
-    [uid, asOf]
-  );
-  const row = rows[0];
-  if (!row) {
-    return null;
-  }
-  return {
-    date: String(row.date || "").slice(0, 10),
-    totalAssets: Number(row.total_assets),
-    fxHkdCny: row.fx_hkd_cny == null ? null : Number(row.fx_hkd_cny),
-    fxUsdCny: row.fx_usd_cny == null ? null : Number(row.fx_usd_cny),
-  };
-}
-
-async function resolveAmountShareRatioForTrade(userId, trade) {
-  const safe = normalizeTrade(trade);
-  if (safe.type !== "trade") {
-    return null;
-  }
-  const asOf = String(safe.date || "").slice(0, 10);
-  if (!asOf) {
-    return null;
-  }
-  const snap = await selectAnalysisSnapshotAllAccountOnOrBefore(userId, asOf);
-  if (!snap) {
-    return null;
-  }
-  return computeTradeAmountShareRatio({
-    amount: safe.amount,
-    symbol: safe.symbol,
-    totalAssetsCny: snap.totalAssets,
-    fxUsdCny: snap.fxUsdCny,
-    fxHkdCny: snap.fxHkdCny,
-  });
-}
-
 async function upsertTrade(trade, userId) {
-  const safe = normalizeTrade(trade);
-  const amountShareRatio =
-    safe.type === "trade" ? await resolveAmountShareRatioForTrade(userId, safe) : null;
-  const row = tradeToRow({ ...safe, amountShareRatio }, userId);
+  const row = tradeToRow(trade, userId);
   if (!row.user_id) {
     throw new Error("userId required");
   }
   await q(
     `INSERT INTO trades (
-      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     ON CONFLICT (id) DO UPDATE SET
       user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
       name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
-      amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-      amount_share_ratio = EXCLUDED.amount_share_ratio`,
+      amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
     [
       row.id,
       row.user_id,
@@ -921,9 +868,9 @@ async function upsertTrade(trade, userId) {
       row.note,
       row.created_at,
       row.updated_at,
-      row.amount_share_ratio,
     ]
   );
+  // Reset clearing flags so the next cron re-evaluates this user/account
   const tradeNow = nowMs();
   await q(
     `UPDATE user_metrics_meta SET is_cleared = FALSE, updated_at = $2 WHERE user_id = $1`,
@@ -935,7 +882,7 @@ async function upsertTrade(trade, userId) {
      ON CONFLICT (user_id, account_id) DO UPDATE SET is_cleared = FALSE, updated_at = EXCLUDED.updated_at`,
     [row.user_id, row.account_id, tradeNow]
   ).catch(() => {});
-  return normalizeTrade({ ...safe, id: row.id, amountShareRatio });
+  return normalizeTrade({ ...trade, id: row.id });
 }
 
 async function importTrades(trades, mode = "append", userId = null) {
@@ -949,19 +896,15 @@ async function importTrades(trades, mode = "append", userId = null) {
       await client.query("DELETE FROM trades WHERE user_id = $1", [uid]);
     }
     for (const trade of list) {
-      const safe = normalizeTrade(trade);
-      const amountShareRatio =
-        safe.type === "trade" ? await resolveAmountShareRatioForTrade(uid, safe) : null;
-      const row = tradeToRow({ ...safe, amountShareRatio }, uid);
+      const row = tradeToRow(trade, uid);
       await client.query(
         `INSERT INTO trades (
-          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         ON CONFLICT (id) DO UPDATE SET
           user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
           name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
-          amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-          amount_share_ratio = EXCLUDED.amount_share_ratio`,
+          amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at`,
         [
           row.id,
           row.user_id,
@@ -977,7 +920,6 @@ async function importTrades(trades, mode = "append", userId = null) {
           row.note,
           row.created_at,
           row.updated_at,
-          row.amount_share_ratio,
         ]
       );
     }
@@ -2437,7 +2379,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       [uid],
     );
     const tradesRes = await cq(
-      `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+      `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at
        FROM trades WHERE user_id = $1 ORDER BY trade_date ASC, created_at ASC`,
       [uid],
     );
@@ -3052,7 +2994,6 @@ async function ensurePerformanceSchemaV2() {
     await q(
       `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0`
     ).catch(() => {});
-    await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS amount_share_ratio DOUBLE PRECISION`).catch(() => {});
 
     const { rows } = await q(
       `SELECT 1 FROM information_schema.columns
@@ -3494,20 +3435,6 @@ async function runSchemaDdl(sql) {
   await q(sql);
 }
 
-async function listTradesForAmountShareBackfill() {
-  const { rows } = await q(
-    `SELECT id, user_id, symbol, amount, trade_date
-     FROM trades
-     WHERE type = 'trade'
-     ORDER BY user_id ASC, trade_date ASC, created_at ASC`
-  );
-  return rows;
-}
-
-async function setTradeAmountShareRatio(tradeId, ratio) {
-  await q(`UPDATE trades SET amount_share_ratio = $2 WHERE id = $1`, [tradeId, ratio]);
-}
-
 module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
@@ -3610,8 +3537,6 @@ module.exports = {
   getCommunityLeaderboardCache,
   setCommunityLeaderboardCache,
   selectAnalysisSnapshotsFrom,
-  selectAnalysisSnapshotAllAccountOnOrBefore,
-  resolveAmountShareRatioForTrade,
   selectAnalysisSnapshotsForPublicMetrics,
   getLatestAnalysisSnapshotDate,
   selectLatestSymbolDailyDate,
@@ -3619,8 +3544,6 @@ module.exports = {
   resolveMetricsSnapshotDate,
   selectTopSymbolDailyByDate,
   getCommunityFeedTradesRecent,
-  listTradesForAmountShareBackfill,
-  setTradeAmountShareRatio,
   listPublicCommunityUserIds,
   listAllUserIds,
   selectSymbolDailyPositionsOnDate,

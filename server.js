@@ -795,7 +795,7 @@ const {
   displayNameForUser,
   getLeaderboard,
   getPublicProfileDetail,
-  getPublicTradesPage,
+  getPublicTrades,
   enrichPublicTradesWithTencent,
   getFollowingCards,
   getFeedTrades,
@@ -817,7 +817,6 @@ const {
   getMetricsPublicAnalysisBundle,
   getMetricsAnalysisBundle,
   getMetricsStockRecordBundle,
-  getMetricsPublicStockRecordBundle,
   getSeriesDailyProfit,
   getSeriesDailyTwr,
   getSeriesDailyAsset,
@@ -1251,14 +1250,7 @@ app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) 
 app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
-    const symbol = req.query.symbol != null ? String(req.query.symbol).trim() : "";
-    const accountId = req.query.account_id != null ? String(req.query.account_id).trim() : "";
-    const data = await getPublicTradesPage(req.userId, targetId, {
-      symbol: symbol || undefined,
-      accountId: accountId || undefined,
-      limit: req.query.limit,
-      offset: req.query.offset,
-    });
+    const data = await getPublicTrades(req.userId, targetId);
     if (data.error === "unauthorized") {
       res.status(401).json({ ok: false, error: "未登录" });
       return;
@@ -1269,7 +1261,7 @@ app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
     }
     res.set("Cache-Control", "no-store");
     await enrichPublicTradesWithTencent(data);
-    res.json({ ok: true, data: data.data, pagination: data.pagination });
+    res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public trades failed" });
   }
@@ -1728,7 +1720,8 @@ app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async 
     }
     sendMetricsJson(
       res,
-      await getMetricsPublicStockRecordBundle(gate.userId, accountScope, symbol, {
+      await getMetricsStockRecordBundle(gate.userId, accountScope, symbol, {
+        publicLayout: true,
         ...stockRecordChartQueryFromQuery(req.query),
       }),
     );
