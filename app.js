@@ -4946,7 +4946,7 @@ const COMMUNITY_CARD_RETURN_DEFS = [
   { key: "today", label: "今日收益", rateKey: "todayTwr" },
   { key: "mtd", label: "本月收益", rateKey: "mtdTwr" },
   { key: "ytd", label: "本年收益", rateKey: "ytdTwr" },
-  { key: "inception", label: "累计收益", rateKey: "totalTwr" },
+  { key: "inception", label: "总收益", rateKey: "totalTwr" },
 ];
 
 function communityCardReturnTileTone(rateStr) {
