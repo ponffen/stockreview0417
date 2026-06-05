@@ -5383,6 +5383,9 @@ function getCommunityEarningPanelHtml() {
         </table>
       </div>
     </article>
+    <p class="community-profile-earning-disclaimer" role="note">
+      组合公开页面金额数据均已归一化处理，持仓占比、收益率与真实情况一致。
+    </p>
   `;
 }
 
@@ -5624,12 +5627,26 @@ function mountCommunityAnalysisRoutePane() {
   if (!analysisRouteHomeParent) {
     analysisRouteHomeParent = pane.parentElement;
   }
-  mount.appendChild(pane);
+  mount.querySelectorAll(".community-profile-analysis-loading").forEach((el) => el.remove());
+  if (!mount.contains(pane)) {
+    mount.appendChild(pane);
+  }
   pane.classList.add("route-pane--community-analysis");
   const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
   if (accWrap) {
     accWrap.style.display = "none";
   }
+}
+
+function setPublicAnalysisPanelLoading(loading) {
+  const mount = document.querySelector('[data-profile-panel="analysis"]');
+  if (!mount || !loading) {
+    return;
+  }
+  if (mount.querySelector("#route-analysis")) {
+    return;
+  }
+  mount.innerHTML = `<p class="empty community-profile-analysis-loading">加载中…</p>`;
 }
 
 function unmountCommunityAnalysisRoutePane() {
@@ -5652,18 +5669,24 @@ async function loadPublicAnalysisTabData(targetId) {
   if (!tid) {
     return;
   }
-  mountCommunityAnalysisRoutePane();
-  renderControls();
-  const bundle = await fetchPublicAnalysisBundleMetrics(tid);
-  if (!bundle) {
-    clearAnalysisChartsToEmpty();
-    if (analysisStockRankBody) {
-      analysisStockRankBody.innerHTML = `<p class="empty">加载失败</p>`;
+  showRouteLoading("加载中…");
+  setPublicAnalysisPanelLoading(true);
+  try {
+    mountCommunityAnalysisRoutePane();
+    renderControls();
+    const bundle = await fetchPublicAnalysisBundleMetrics(tid);
+    if (!bundle) {
+      clearAnalysisChartsToEmpty();
+      if (analysisStockRankBody) {
+        analysisStockRankBody.innerHTML = `<p class="empty">加载失败</p>`;
+      }
+      return;
     }
-    return;
+    const renderRequestId = ++analysisRenderRequestSeq;
+    await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
+  } finally {
+    hideRouteLoading();
   }
-  const renderRequestId = ++analysisRenderRequestSeq;
-  await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
 }
 
 async function openCommunityProfileAnalysisTab() {
@@ -9408,6 +9431,9 @@ function repaintAnalysisAssetChartFromCache() {
   }
   cachedAnalysisMetricsCharts.payloads.asset = drawAssetChart(
     trimMetricsSeriesPoints(cachedAnalysisAssetChartRows),
+    undefined,
+    undefined,
+    { normalizedAmounts: cachedAnalysisMetricsCharts.isPublicView === true },
   );
   bindInteractiveChart(analysisAssetChart, analysisAssetTooltip, () => cachedAnalysisMetricsCharts.payloads.asset, {
     mode: "analysis",
@@ -9569,7 +9595,9 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
         },
       },
     );
-    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows);
+    c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows, undefined, undefined, {
+      normalizedAmounts: c.isPublicView === true,
+    });
   };
 
   cachedAnalysisMetricsCharts = {

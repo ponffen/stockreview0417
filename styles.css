@@ -2953,6 +2953,13 @@ body.auth-mode {
   line-height: 1.45;
 }
 
+.community-profile-earning-disclaimer {
+  margin: 12px 14px 16px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .community-profile-subtabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
