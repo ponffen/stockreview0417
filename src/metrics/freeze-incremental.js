@@ -219,6 +219,75 @@ async function loadAnalysisRow(client, uid, accountId, dateKey) {
   return mapAnalysisDbRow(rows[0]);
 }
 
+function mapSymbolDbRow(row) {
+  if (!row) return null;
+  return {
+    stageMtdProfit: Number(row.stage_mtd_profit),
+    stageMtdRateTwr: Number(row.stage_mtd_rate_twr),
+    stageYtdProfit: Number(row.stage_ytd_profit),
+    stageYtdRateTwr: Number(row.stage_ytd_rate_twr),
+    stageInceptionProfit: Number(row.stage_inception_profit),
+    stageInceptionRateTwr: Number(row.stage_inception_rate_twr),
+    stageLast7dProfit: Number(row.stage_last_7d_profit),
+    stageLast7dRateTwr: Number(row.stage_last_7d_rate_twr),
+    stageLast30dProfit: Number(row.stage_last_30d_profit),
+    stageLast30dRateTwr: Number(row.stage_last_30d_rate_twr),
+    stageLast90dProfit: Number(row.stage_last_90d_profit),
+    stageLast90dRateTwr: Number(row.stage_last_90d_rate_twr),
+  };
+}
+
+async function loadSymbolRow(client, uid, accountId, sym, dateKey) {
+  const { rows } = await client.query(
+    `SELECT stage_mtd_profit, stage_mtd_rate_twr, stage_ytd_profit, stage_ytd_rate_twr,
+            stage_inception_profit, stage_inception_rate_twr,
+            stage_last_7d_profit, stage_last_7d_rate_twr,
+            stage_last_30d_profit, stage_last_30d_rate_twr,
+            stage_last_90d_profit, stage_last_90d_rate_twr
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date = $4`,
+    [uid, accountId, normalizeSymbol(sym), dateKey],
+  );
+  return mapSymbolDbRow(rows[0]);
+}
+
+async function loadSymbolProfitByDate(client, uid, accountId, sym, fromD, toD) {
+  const { rows } = await client.query(
+    `SELECT date::text AS d, daily_profit FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date >= $4 AND date <= $5
+     ORDER BY date`,
+    [uid, accountId, normalizeSymbol(sym), fromD, toD],
+  );
+  const map = new Map();
+  for (const r of rows) {
+    map.set(String(r.d).slice(0, 10), Number(r.daily_profit) || 0);
+  }
+  return map;
+}
+
+async function loadSymbolFlowPts(client, uid, accountId, sym, fromD, toD) {
+  const { rows } = await client.query(
+    `SELECT date::text AS d, eod_shares, eod_price, day_trade_flow_native
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date >= $4 AND date <= $5
+     ORDER BY date`,
+    [uid, accountId, normalizeSymbol(sym), fromD, toD],
+  );
+  const pts = [];
+  for (const r of rows) {
+    const d = String(r.d).slice(0, 10);
+    const sh = Number(r.eod_shares) || 0;
+    const px = Number(r.eod_price);
+    if (!d || !(sh > 0) || !(px > 0)) continue;
+    pts.push({
+      date: d,
+      value: sh * px,
+      flow: Number(r.day_trade_flow_native) || 0,
+    });
+  }
+  return pts;
+}
+
 function hydrateStageAcc(stageAcc, yesterday, prevDateKey, dk) {
   if (!yesterday) return;
   stageAcc.mtd.profit = Number(yesterday.stageMtdProfit) || 0;
@@ -440,6 +509,7 @@ async function freezeSymbolOneDay({
   fxUsdMap,
   fxHkdMap,
   symbolMem,
+  client,
 }) {
   const kl = klineBySym.get(sym);
   if (!kl?.length) return null;
@@ -489,20 +559,35 @@ async function freezeSymbolOneDay({
   const denom = qBod * prevPx + Math.max(dayFlow, 0);
   const rDay = denom > 0 ? pnl / denom : 0;
 
-  const stageAcc = new StageAccumulator();
   const prevD = previousSessionDate(dk);
-  if (symbolMem?.lastRow && prevD) {
-    hydrateStageAcc(stageAcc, symbolMem.lastRow, prevD, dk);
-    if (symbolMem.profitByDate) {
-      for (const [d, p] of symbolMem.profitByDate) {
-        stageAcc.profitByDate.set(d, p);
+  let yesterday = symbolMem?.lastRow || null;
+  let profitByDate = symbolMem?.profitByDate || null;
+  let flowPts = symbolMem?.flowPts ? [...symbolMem.flowPts] : [];
+
+  if (!yesterday && prevD && client && uid) {
+    yesterday = await loadSymbolRow(client, uid, accountId, sym, prevD);
+    if (yesterday) {
+      if (!profitByDate) {
+        const fromP = addCalendarDaysForProfit(dk, -89);
+        profitByDate = await loadSymbolProfitByDate(client, uid, accountId, sym, fromP, prevD);
+      }
+      if (!flowPts.length) {
+        const fromFlow = addCalendarDaysForProfit(dk, -89);
+        flowPts = await loadSymbolFlowPts(client, uid, accountId, sym, fromFlow, prevD);
       }
     }
   }
+
+  const stageAcc = new StageAccumulator();
+  if (yesterday && prevD) {
+    const profitMap = profitByDate || new Map();
+    for (const [d, p] of profitMap) {
+      stageAcc.profitByDate.set(d, p);
+    }
+    hydrateStageAcc(stageAcc, yesterday, prevD, dk);
+  }
   stageAcc.onDay(dk, pnl, rDay);
   const snap = stageAcc.snapshotTwr();
-
-  const flowPts = symbolMem?.flowPts ? [...symbolMem.flowPts] : [];
   if (Math.abs(qty) > 1e-6 && closeD > 0) {
     const existing = flowPts.find((p) => p.date === dk);
     const pt = { date: dk, value: qty * closeD, flow: dayFlow };
@@ -556,8 +641,8 @@ async function freezeSymbolOneDay({
     stageLast90dRateMwr: mwrRate,
   };
 
-  const profitByDate = symbolMem?.profitByDate || new Map();
-  profitByDate.set(dk, pnl);
+  const profitByDateOut = profitByDate || new Map();
+  profitByDateOut.set(dk, pnl);
 
   return {
     row,
@@ -577,7 +662,7 @@ async function freezeSymbolOneDay({
       stageLast90dProfit: row.stageLast90dProfit,
       stageLast90dRateTwr: row.stageLast90dRateTwr,
     },
-    profitByDate,
+    profitByDate: profitByDateOut,
   };
 }
 
@@ -761,6 +846,7 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
             fxUsdMap,
             fxHkdMap,
             symbolMem: symbolMem.get(memKey),
+            client,
           });
           if (!symResult) continue;
           symbolMem.set(memKey, symResult);
