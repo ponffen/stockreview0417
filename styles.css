@@ -16,6 +16,7 @@
   --blue: #4f83f1;
   --up: #f45a68;
   --down: #0ebc9f;
+  --metric-value-size: clamp(18px, 5vw, 20px);
   /* 交易记录列宽（ch） */
   --ledger-trade-col-date: 10ch;
   --ledger-trade-col-name: 11ch;
@@ -451,7 +452,7 @@ body {
 .kpi-value {
   margin: 0;
   color: #565f70;
-  font-size: clamp(18px, 5vw, 20px);
+  font-size: var(--metric-value-size);
   line-height: 1;
   white-space: nowrap;
   overflow-wrap: normal;
@@ -2637,16 +2638,16 @@ body.auth-mode {
   color: #fff;
 }
 
-.community-card-returns {
+.community-returns-bar {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  padding-bottom: 14px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--line);
+  gap: 1px;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
-.community-card-return-tile {
+.community-returns-seg {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2654,50 +2655,54 @@ body.auth-mode {
   gap: 6px;
   min-width: 0;
   padding: 10px 4px;
-  border-radius: 10px;
   text-align: center;
 }
 
-.community-card-return-tile--up {
+.community-returns-seg--up {
   background: rgba(244, 90, 104, 0.1);
 }
 
-.community-card-return-tile--down {
+.community-returns-seg--down {
   background: rgba(14, 188, 159, 0.1);
 }
 
-.community-card-return-tile--flat {
+.community-returns-seg--flat {
   background: var(--surface-muted);
 }
 
-.community-card-return-label {
+.community-returns-seg__label {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.2;
 }
 
-.community-card-return-value {
-  font-size: 14px;
+.community-returns-seg__value {
+  font-size: var(--metric-value-size);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.community-card-return-tile--up .community-card-return-value {
+.community-returns-seg--up .community-returns-seg__value {
   color: var(--up);
 }
 
-.community-card-return-tile--down .community-card-return-value {
+.community-returns-seg--down .community-returns-seg__value {
   color: var(--down);
 }
 
-.community-card-return-tile--flat .community-card-return-value {
+.community-returns-seg--flat .community-returns-seg__value {
   color: var(--muted);
 }
 
-.community-profile-overview-min .community-profile-returns {
+.community-card .community-returns-bar {
+  padding-bottom: 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.community-profile-overview-min .community-returns-bar--profile {
   border-top: 1px solid var(--line);
-  border-bottom: none;
   margin-bottom: 0;
   padding: 12px 14px 14px;
 }

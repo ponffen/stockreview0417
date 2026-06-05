@@ -4795,15 +4795,15 @@ function communityFollowButtonHtml(card) {
   return `<button type="button" class="${followCls}" data-user-id="${uid}">${escapeHtml(fo)}</button>`;
 }
 
-const COMMUNITY_CARD_RETURN_DEFS = [
-  { key: "today", label: "今日收益", rateKey: "todayTwr" },
-  { key: "mtd", label: "本月收益", rateKey: "mtdTwr" },
-  { key: "ytd", label: "本年收益", rateKey: "ytdTwr" },
-  { key: "inception", label: "总收益", rateKey: "totalTwr" },
+const COMMUNITY_RETURNS_STAGE_DEFS = [
+  { key: "today", label: "今日收益", cardRateKey: "todayTwr" },
+  { key: "mtd", label: "本月收益", cardRateKey: "mtdTwr" },
+  { key: "ytd", label: "本年收益", cardRateKey: "ytdTwr" },
+  { key: "inception", label: "总收益", cardRateKey: "totalTwr" },
 ];
 
-function communityCardReturnTileTone(rateStr) {
-  const text = bundleFmtText(rateStr);
+function communityReturnsSegmentTone(rateStr) {
+  const text = formatCommunityReturnsRateText(rateStr);
   if (!text || text === "—") {
     return "flat";
   }
@@ -4814,20 +4814,68 @@ function communityCardReturnTileTone(rateStr) {
   return rate > 0 ? "up" : "down";
 }
 
-function buildCommunityCardReturnTileHtml(label, rateStr) {
-  const tone = communityCardReturnTileTone(rateStr);
-  const text = bundleFmtText(rateStr);
-  return `<div class="community-card-return-tile community-card-return-tile--${tone}">
-    <span class="community-card-return-label">${escapeHtml(label)}</span>
-    <span class="community-card-return-value">${escapeHtml(text)}</span>
+function formatCommunityReturnsRateText(rateStr) {
+  return bundleFmtText(rateStr);
+}
+
+function buildCommunityReturnsSegmentHtml({ label, rate, stageKey }) {
+  const tone = communityReturnsSegmentTone(rate);
+  const text = formatCommunityReturnsRateText(rate);
+  const stageAttr = stageKey ? ` data-returns-stage="${escapeHtml(stageKey)}"` : "";
+  return `<div class="community-returns-seg community-returns-seg--${tone}"${stageAttr}>
+    <span class="community-returns-seg__label">${escapeHtml(label)}</span>
+    <span class="community-returns-seg__value">${escapeHtml(text)}</span>
   </div>`;
 }
 
+function buildCommunityReturnsBarHtml(segments, opts = {}) {
+  const { barId = "", barClass = "" } = opts;
+  const idAttr = barId ? ` id="${escapeHtml(barId)}"` : "";
+  const classAttr = barClass ? ` ${barClass}` : "";
+  const tiles = segments
+    .map((seg) =>
+      buildCommunityReturnsSegmentHtml({
+        label: seg.label,
+        rate: seg.rate,
+        stageKey: seg.stageKey,
+      }),
+    )
+    .join("");
+  return `<div class="community-returns-bar${classAttr}"${idAttr}>${tiles}</div>`;
+}
+
 function buildCommunityCardReturnsHtml(card) {
-  const tiles = COMMUNITY_CARD_RETURN_DEFS.map((def) =>
-    buildCommunityCardReturnTileHtml(def.label, card[def.rateKey]),
-  ).join("");
-  return `<div class="community-card-returns">${tiles}</div>`;
+  return buildCommunityReturnsBarHtml(
+    COMMUNITY_RETURNS_STAGE_DEFS.map((def) => ({
+      label: def.label,
+      rate: card[def.cardRateKey],
+      stageKey: def.key,
+    })),
+  );
+}
+
+function paintCommunityReturnsSegment(segmentEl, rateStr) {
+  if (!segmentEl) {
+    return;
+  }
+  const tone = communityReturnsSegmentTone(rateStr);
+  const valueEl = segmentEl.querySelector(".community-returns-seg__value");
+  if (valueEl) {
+    valueEl.textContent = formatCommunityReturnsRateText(rateStr);
+  }
+  segmentEl.className = `community-returns-seg community-returns-seg--${tone}`;
+}
+
+function paintCommunityReturnsBar(barEl, stages) {
+  if (!barEl || !stages) {
+    return;
+  }
+  for (const def of COMMUNITY_RETURNS_STAGE_DEFS) {
+    const segmentEl = barEl.querySelector(`[data-returns-stage="${def.key}"]`);
+    if (segmentEl) {
+      paintCommunityReturnsSegment(segmentEl, stages[def.key]?.rate);
+    }
+  }
 }
 
 function communityTop3WeightHtml(weight) {
@@ -5241,38 +5289,19 @@ function stockTableVisibleColIndices(ctx) {
 function stockTableVisibleColCount(ctx) {
   return stockTableVisibleColIndices(ctx).length;
 }
-const PUBLIC_EARNING_STAGE_DEFS = [
-  { key: "today", label: "今日收益" },
-  { key: "mtd", label: "本月收益" },
-  { key: "ytd", label: "本年收益" },
-  { key: "inception", label: "总收益" },
-];
-
 function publicEarningBundleCacheKey(targetId) {
   return `pub-earn::${String(targetId || "").trim()}::all::${METRICS_HOME_BUNDLE_STAGES}`;
 }
 
-function paintCommunityReturnTile(valueEl, rateStr) {
-  if (!valueEl) {
-    return;
-  }
-  const tile = valueEl.closest(".community-card-return-tile");
-  const tone = communityCardReturnTileTone(rateStr);
-  valueEl.textContent = bundleFmtText(rateStr);
-  valueEl.className = "community-card-return-value";
-  if (tile) {
-    tile.className = `community-card-return-tile community-card-return-tile--${tone}`;
-  }
-}
-
 function buildCommunityProfileReturnsShellHtml() {
-  const tiles = PUBLIC_EARNING_STAGE_DEFS.map(
-    (s) => `<div class="community-card-return-tile community-card-return-tile--flat" data-pub-tile="${escapeHtml(s.key)}">
-    <span class="community-card-return-label">${escapeHtml(s.label)}</span>
-    <span class="community-card-return-value" data-pub-stage="${escapeHtml(s.key)}">--</span>
-  </div>`,
-  ).join("");
-  return `<div class="community-card-returns community-profile-returns" id="pubReturnsGrid">${tiles}</div>`;
+  return buildCommunityReturnsBarHtml(
+    COMMUNITY_RETURNS_STAGE_DEFS.map((def) => ({
+      label: def.label,
+      rate: null,
+      stageKey: def.key,
+    })),
+    { barId: "pubReturnsGrid", barClass: "community-returns-bar--profile" },
+  );
 }
 
 function getCommunityEarningPanelHtml() {
@@ -6412,13 +6441,7 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
     if (!returns?.stages || !assets || !holdings) {
       return false;
     }
-    const stages = returns.stages;
-    for (const def of PUBLIC_EARNING_STAGE_DEFS) {
-      const el = document.querySelector(`[data-pub-stage="${def.key}"]`);
-      if (el) {
-        paintCommunityReturnTile(el, stages[def.key]?.rate);
-      }
-    }
+    paintCommunityReturnsBar(document.getElementById("pubReturnsGrid"), returns.stages);
     const grid = document.getElementById("pubOverviewGrid");
     if (grid) {
       grid.innerHTML = buildOverviewKpiGridInnerHtml(
