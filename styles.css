@@ -2643,7 +2643,6 @@ body.auth-mode {
   grid-template-columns: repeat(4, 1fr);
   gap: 1px;
   background: #fff;
-  border-radius: 12px;
   overflow: hidden;
 }
 
@@ -2696,9 +2695,12 @@ body.auth-mode {
 }
 
 .community-card .community-returns-bar {
-  padding-bottom: 14px;
-  margin-bottom: 4px;
+  margin-bottom: 0;
   border-bottom: 1px solid var(--line);
+}
+
+.community-card .community-top3 {
+  margin-top: 0;
 }
 
 .community-profile-overview-min .community-returns-bar--profile {
