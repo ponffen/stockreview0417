@@ -2705,11 +2705,14 @@ body.auth-mode {
 
 .community-profile-overview-min .overview-head--public-earn {
   justify-content: flex-end;
+  height: auto;
+  min-height: 0;
+  padding: 8px 14px 0;
 }
 
 .community-profile-overview-min .community-returns-bar--profile {
   margin-bottom: 0;
-  padding: 12px 14px;
+  padding: 12px 14px 12px;
 }
 
 .community-positions {
