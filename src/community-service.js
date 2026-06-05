@@ -4,6 +4,7 @@
 
 const {
   getTrades,
+  getCashTransfers,
   getUserCommunityRow,
   selectAnalysisSnapshotsForPublicMetrics,
   selectLatestSymbolDailyDate,
@@ -25,6 +26,9 @@ const {
 } = require("./db");
 const { fetchTencentQuoteMetaForSymbols } = require("./tencent-quote-meta");
 const { redactPublicTradeRow } = require("./metrics/public-trades-redact");
+const { getMetricsPublicHomeBundle } = require("./metrics-api-service");
+
+const HOME_BUNDLE_CARD_STAGES = "today,mtd,ytd,inception";
 
 const NORMALIZATION_VERSION = 1;
 /** 排行缓存：过长会导致 TOP3 等与个人页（按人民币市值）脱节；1h 折中 */
@@ -349,37 +353,80 @@ async function buildTopPositions(userId, factor) {
   }));
 }
 
+function parseBundleRateRatio(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  let t = String(value).trim().replace(/%/g, "");
+  if (!t || t === "–" || t === "—") {
+    return null;
+  }
+  const neg = t.startsWith("-") || t.startsWith("−");
+  const n = parseFloat(t.replace(/^[+−-]/, ""));
+  if (!Number.isFinite(n)) {
+    return null;
+  }
+  const ratio = n / 100;
+  return neg ? -ratio : ratio;
+}
+
+async function userHasCommunityLedgerActivity(userId) {
+  const [trades, cashTransfers] = await Promise.all([getTrades(userId), getCashTransfers(userId)]);
+  const hasTrade = trades.some((t) => String(t.type || "trade") === "trade");
+  const hasCash = Array.isArray(cashTransfers) && cashTransfers.length > 0;
+  return hasTrade || hasCash;
+}
+
+function topPositionsFromPublicHomeBundle(bundle) {
+  const rows = Array.isArray(bundle?.holdings?.rows) ? bundle.holdings.rows : [];
+  return rows.slice(0, 3).map((row) => {
+    const sym = String(row?.symbol || "").trim();
+    const meta = displayStockMeta(sym);
+    return {
+      symbol: sym,
+      name: String(row?.name || sym).trim() || sym,
+      weight: row?.weight ?? null,
+      displayCode: String(row?.stockCode || meta.displayCode || "").trim() || meta.displayCode,
+      marketTag: String(row?.marketTag || meta.marketTag || "OT").trim() || meta.marketTag,
+    };
+  });
+}
+
 async function buildUserCard(targetId, viewerId, options = {}) {
-  const { applyScale = true, allowHidden = false } = options;
+  const { allowHidden = false } = options;
   const row = await getUserCommunityRow(targetId);
   if (!row || (!allowHidden && !Number(row.community_public))) {
     return null;
   }
-  const norm = await getNormalizationMeta(targetId);
-  if (!norm) {
+  if (!(await userHasCommunityLedgerActivity(targetId))) {
     return null;
   }
-  const trades = await getTrades(targetId);
-  if (!trades.some((t) => t.type === "trade")) {
+  let bundle;
+  try {
+    bundle = await getMetricsPublicHomeBundle(targetId, "all", HOME_BUNDLE_CARD_STAGES);
+  } catch {
     return null;
   }
-  const m = await metricsFromSnapshots(targetId);
-  const factor = applyScale ? norm.factor : 1;
-  const topPositions = await buildTopPositions(targetId, factor);
+  const stages = bundle?.returns?.stages;
+  if (!stages || typeof stages !== "object") {
+    return null;
+  }
   const vid = String(viewerId || "").trim();
   const following = vid ? await isCommunityFollowing(vid, targetId) : false;
   const followsMe = vid ? await isCommunityFollowing(targetId, vid) : false;
   return {
     userId: targetId,
     displayName: displayNameForUser(row),
-    todayTwr: m.today,
-    mtdTwr: m.mtd,
-    ytdTwr: m.ytd,
-    totalTwr: m.total,
-    topPositions,
+    todayTwr: stages.today?.rate ?? null,
+    mtdTwr: stages.mtd?.rate ?? null,
+    ytdTwr: stages.ytd?.rate ?? null,
+    totalTwr: stages.inception?.rate ?? null,
+    topPositions: topPositionsFromPublicHomeBundle(bundle),
     following,
     mutual: Boolean(following && followsMe),
-    normalizationVersion: norm.normalizationVersion,
   };
 }
 
@@ -387,14 +434,15 @@ async function buildLeaderboardPayload() {
   const ids = await listPublicCommunityUserIds();
   const entries = [];
   for (const id of ids) {
-    const card = await buildUserCard(id, null, { applyScale: true });
+    const card = await buildUserCard(id, null);
     if (!card) {
       continue;
     }
-    const ytdSort = card.ytdTwr != null ? card.ytdTwr : card.totalTwr != null ? card.totalTwr : -1e9;
+    const ytdSort = parseBundleRateRatio(card.ytdTwr);
+    const sortKey = ytdSort != null ? ytdSort : -1e9;
     entries.push({
       ...card,
-      _sort: ytdSort,
+      _sort: sortKey,
     });
   }
   entries.sort((a, b) => {
@@ -407,7 +455,7 @@ async function buildLeaderboardPayload() {
     delete e._sort;
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     entries: entries.slice(0, 10),
     updatedAt: Date.now(),
   };
@@ -419,7 +467,7 @@ async function getLeaderboard() {
   if (cached && now - Number(cached.updated_at) < CACHE_TTL_MS) {
     try {
       const p = JSON.parse(cached.payload);
-      if (p && Number(p.schemaVersion) === 2) {
+      if (p && Number(p.schemaVersion) === 3) {
         return p;
       }
     } catch {
@@ -620,7 +668,7 @@ async function getFollowingCards(viewerId) {
   const ids = await listCommunityFolloweeIds(vid);
   const out = [];
   for (const tid of ids) {
-    const card = await buildUserCard(tid, vid, { applyScale: true });
+    const card = await buildUserCard(tid, vid);
     if (card) {
       out.push(card);
     }

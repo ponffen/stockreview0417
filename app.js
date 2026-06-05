@@ -4942,6 +4942,37 @@ function communityFollowButtonHtml(card) {
   return `<button type="button" class="${followCls}" data-user-id="${uid}">${escapeHtml(fo)}</button>`;
 }
 
+function formatCommunityCardRateHtml(rateStr) {
+  const text = bundleFmtText(rateStr);
+  if (!text || text === "—") {
+    return "<strong>—</strong>";
+  }
+  const rate = parseBundlePercent(rateStr);
+  const cls = Number.isFinite(rate) ? twrColorClass(rate) : "";
+  return `<strong class="${cls}">${escapeHtml(text)}</strong>`;
+}
+
+function communityTop3WeightHtml(weight) {
+  if (weight == null || weight === "") {
+    return "—";
+  }
+  if (typeof weight === "number" && Number.isFinite(weight)) {
+    return `<span class="community-top3-pct">${(weight * 100).toFixed(1)}%</span>`;
+  }
+  const text = String(weight).trim();
+  if (!text || text === "—") {
+    return "—";
+  }
+  if (text.includes("%")) {
+    return `<span class="community-top3-pct">${escapeHtml(text)}</span>`;
+  }
+  const ratio = parseBundlePercent(text);
+  if (Number.isFinite(ratio)) {
+    return `<span class="community-top3-pct">${(ratio * 100).toFixed(1)}%</span>`;
+  }
+  return `<span class="community-top3-pct">${escapeHtml(text)}</span>`;
+}
+
 function buildTop3ListHtml(topPositions) {
   const top = (topPositions || []).slice(0, 3);
   if (!top.length) {
@@ -4949,10 +4980,7 @@ function buildTop3ListHtml(topPositions) {
   }
   const rows = top
     .map((p, i) => {
-      const w = Number(p.weight);
-      const right = Number.isFinite(w)
-        ? `<span class="community-top3-pct">${(w * 100).toFixed(1)}%</span>`
-        : "—";
+      const right = communityTop3WeightHtml(p.weight);
       const code = escapeHtml(formatSymbolForDisplay(p.symbol || p.displayCode || ""));
       const tag = escapeHtml(p.marketTag || "OT");
       const tagLower = String(p.marketTag || "ot").toLowerCase();
@@ -4995,19 +5023,19 @@ function buildCommunityCardInner(card, opts = {}) {
     <div class="community-metrics">
       <div class="community-metric-cell">
         <span class="community-metric-label">今日</span>
-        ${formatTwrSignedHtml(card.todayTwr)}
+        ${formatCommunityCardRateHtml(card.todayTwr)}
       </div>
       <div class="community-metric-cell">
         <span class="community-metric-label">本月</span>
-        ${formatTwrSignedHtml(card.mtdTwr)}
+        ${formatCommunityCardRateHtml(card.mtdTwr)}
       </div>
       <div class="community-metric-cell">
         <span class="community-metric-label">本年</span>
-        ${formatTwrSignedHtml(card.ytdTwr)}
+        ${formatCommunityCardRateHtml(card.ytdTwr)}
       </div>
       <div class="community-metric-cell">
         <span class="community-metric-label">累计</span>
-        ${formatTwrSignedHtml(card.totalTwr)}
+        ${formatCommunityCardRateHtml(card.totalTwr)}
       </div>
     </div>
     ${top3}
