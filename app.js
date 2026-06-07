@@ -5398,7 +5398,7 @@ function getPrivateStockTableCtx() {
     table: stockTableBody?.closest("table.stock-table") || null,
     visibleColIndices: null,
     showTradeLink: true,
-    opProbeText: "记录  交易",
+    opProbeText: "分析  交易",
     layoutCacheKey: overviewStockTableLayoutCacheKey,
     widthCache: overviewStockColWidthCache,
   };
@@ -5411,7 +5411,7 @@ function getPublicStockTableCtx() {
     table: tbody?.closest("table.stock-table") || null,
     visibleColIndices: PUBLIC_EARNING_VISIBLE_COL_INDICES,
     showTradeLink: false,
-    opProbeText: "记录",
+    opProbeText: "分析",
     layoutCacheKey: (rows) =>
       `${publicEarningBundleCacheKey(state.communityProfileUserId)}::${overviewStockTableLayoutCacheKey(rows).split("::").slice(1).join("::")}`,
     widthCache: publicEarningColWidthCache,
@@ -8278,7 +8278,7 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
     case 13:
       return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
     case 14:
-      return "记录  交易";
+      return "分析  交易";
     default:
       return "";
   }
@@ -8317,7 +8317,7 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
   const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
   const qty = bundleFmtText(row.quantity);
   const symEsc = escapeHtml(sym);
-  const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">记录</a>`;
+  const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">分析</a>`;
   const tradeLink = ctx.showTradeLink
     ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}">交易</a>`
     : "";
