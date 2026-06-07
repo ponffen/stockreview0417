@@ -1561,8 +1561,13 @@ function mapSymbolDailyPnlChartRow(row) {
         ? null
         : Number(row.eod_market_value_native),
     positionWeight: row.position_weight == null ? null : Number(row.position_weight),
+    stageMtdProfit: row.stage_mtd_profit == null ? null : Number(row.stage_mtd_profit),
+    stageYtdProfit: row.stage_ytd_profit == null ? null : Number(row.stage_ytd_profit),
     stageInceptionProfit:
       row.stage_inception_profit == null ? null : Number(row.stage_inception_profit),
+    stageLast7dProfit: row.stage_last_7d_profit == null ? null : Number(row.stage_last_7d_profit),
+    stageLast30dProfit: row.stage_last_30d_profit == null ? null : Number(row.stage_last_30d_profit),
+    stageLast90dProfit: row.stage_last_90d_profit == null ? null : Number(row.stage_last_90d_profit),
     currency: row.currency,
     bookCurrency: row.book_currency,
     dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
@@ -1586,7 +1591,9 @@ async function getSymbolDailyPnlChartSeriesPage(query = {}, userId = null) {
   const limit = Math.max(1, Math.min(200, Math.floor(Number(query.limit) || 30)));
   const { rows } = await q(
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            stage_inception_profit, currency, book_currency, day_close_price
+            stage_mtd_profit, stage_ytd_profit, stage_inception_profit,
+            stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            currency, book_currency, day_close_price
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1615,7 +1622,9 @@ async function getSymbolDailyPnlChartSeriesDateRange(query = {}, userId = null) 
   }
   const { rows } = await q(
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            stage_inception_profit, currency, book_currency, day_close_price
+            stage_mtd_profit, stage_ytd_profit, stage_inception_profit,
+            stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            currency, book_currency, day_close_price
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1675,7 +1684,7 @@ async function hasSymbolDailyPnlBeforeDate(query = {}, userId = null) {
   return rows.length > 0;
 }
 
-/** Live 日 totalProfit：取 asOf 及之前最近一行 stage_inception_profit。 */
+/** Live 日 stage profit：取 asOf 及之前最近一行 symbol_daily_pnl（含 stage_*_profit）。 */
 async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -1690,7 +1699,9 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
   }
   const { rows } = await q(
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            stage_inception_profit, currency, book_currency, day_close_price
+            stage_mtd_profit, stage_ytd_profit, stage_inception_profit,
+            stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            currency, book_currency, day_close_price
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)

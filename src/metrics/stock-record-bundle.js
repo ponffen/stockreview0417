@@ -1,5 +1,5 @@
 /**
- * 个股交易记录页 bundle：headline + charts.points（格式化字符串，limit/offset 分页）。
+ * 个股分析页 bundle：headline + charts.points（格式化字符串，按区间全量返回）。
  */
 const {
   getTrades,
@@ -7,10 +7,7 @@ const {
   getAccounts,
   getUserMetricsMeta,
   getSymbolDailyCloseRange,
-  getSymbolDailyPnlChartSeriesPage,
   getSymbolDailyPnlChartSeriesDateRange,
-  getEarliestSymbolDailyPnlDate,
-  hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   getSymbolNameMap,
   formatSymbolForDisplay,
@@ -28,69 +25,40 @@ const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } 
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
-const { monthStartKeyShanghai, yearStartKeyShanghai } = require("./stages");
+const { resolveStageRange } = require("./stages");
+const {
+  stockRecordRangeChipToStage,
+  stageProfitFromSymbolPnlRow,
+  firstTradeDateFromTrades,
+} = require("./stage-chart-common");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 
 const POSITION_EPS = 1e-6;
-const DEFAULT_CHART_PAGE_LIMIT = 30;
-const MAX_CHART_PAGE_LIMIT = 200;
 
 const VALID_CHART_RANGES = new Set(["7", "30", "90", "mtd", "ytd", "all"]);
 
-function parseChartPaginationOpts(opts = {}) {
-  const limit = Math.max(
-    1,
-    Math.min(MAX_CHART_PAGE_LIMIT, Math.floor(Number(opts.pointsLimit ?? opts.limit) || DEFAULT_CHART_PAGE_LIMIT)),
-  );
-  const offset = Math.max(0, Math.floor(Number(opts.pointsOffset ?? opts.offset) || 0));
-  return { limit, offset };
-}
-
 function parseChartRangePreset(opts = {}) {
   const raw = String(opts.chartRange ?? opts.range ?? "").trim().toLowerCase();
-  return VALID_CHART_RANGES.has(raw) ? raw : null;
+  if (VALID_CHART_RANGES.has(raw)) {
+    return raw;
+  }
+  return "30";
 }
 
 function parseStockRecordChartRequest(opts = {}) {
-  const range = parseChartRangePreset(opts);
-  const { limit, offset } = parseChartPaginationOpts(opts);
   return {
-    range,
-    limit,
-    offset,
-    useRangeInitial: range != null,
+    range: parseChartRangePreset(opts),
   };
 }
 
-function chartRangeFromPreset(preset, endDate) {
-  const end = String(endDate || "").slice(0, 10);
-  if (!end || !preset) {
-    return null;
-  }
-  if (preset === "mtd") {
-    return monthStartKeyShanghai(end);
-  }
-  if (preset === "ytd") {
-    return yearStartKeyShanghai(end);
-  }
-  if (preset === "all") {
-    return null;
-  }
-  const days = Number(preset);
-  if (Number.isFinite(days) && days > 0) {
-    return addCalendarDays(end, -days);
-  }
-  return null;
-}
-
-function chartRangeMetaFromPoints(preset, points, endDate) {
+function chartRangeMetaFromPoints(preset, stageKey, points, endDate, fromDate) {
   const list = Array.isArray(points) ? points : [];
   const dates = list.map((p) => String(p.date || "").slice(0, 10)).filter(Boolean).sort();
-  const fromDate = chartRangeFromPreset(preset, endDate) || dates[0] || null;
   return {
     preset,
-    fromDate,
+    stage: stageKey,
+    fromDate: fromDate || dates[0] || null,
     returned: list.length,
     oldestDate: dates[0] || null,
     newestDate: dates.length ? dates[dates.length - 1] : null,
@@ -256,7 +224,8 @@ function buildChartPointsForPage({
   ccy,
   endDate,
   includeLive,
-  frozenInceptionProfit,
+  stageKey,
+  frozenStageProfit,
 }) {
   if (!pnlRows.length && !includeLive) {
     return [];
@@ -287,14 +256,14 @@ function buildChartPointsForPage({
       pnl.positionWeight != null && Number.isFinite(Number(pnl.positionWeight))
         ? Number(pnl.positionWeight)
         : 0;
-    const totalProfitNat = Number(pnl.stageInceptionProfit);
+    const profitNat = stageProfitFromSymbolPnlRow(pnl, stageKey);
     raw.push({
       date: dk,
       close,
       shares,
       mvNat,
       weight,
-      totalProfitNat: Number.isFinite(totalProfitNat) ? totalProfitNat : 0,
+      profitNat: Number.isFinite(profitNat) ? profitNat : 0,
     });
   }
 
@@ -312,15 +281,15 @@ function buildChartPointsForPage({
           : 1;
     const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
     const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
-    const frozenProfit = Number.isFinite(Number(frozenInceptionProfit)) ? Number(frozenInceptionProfit) : 0;
-    const totalProfitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
+    const frozenProfit = Number.isFinite(Number(frozenStageProfit)) ? Number(frozenStageProfit) : 0;
+    const profitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
     const row = {
       date: liveDate,
       close: current > 0 ? current : raw.length ? raw[raw.length - 1].close : 0,
       shares: liveQty,
       mvNat,
       weight,
-      totalProfitNat,
+      profitNat,
     };
     const hit = raw.findIndex((p) => p.date === liveDate);
     if (hit >= 0) {
@@ -337,7 +306,7 @@ function buildChartPointsForPage({
     shares: formatShares(p.shares),
     marketValueNative: fmtPlainAmount(p.mvNat),
     weight: fmtPercentRatio(p.weight),
-    totalProfit: fmtPlainSignedAmount(p.totalProfitNat),
+    profit: fmtPlainSignedAmount(p.profitNat),
   }));
 }
 
@@ -360,7 +329,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const uid = String(userId || "").trim();
   const sym = normalizeSymbol(symbol);
   const scope = String(accountScope || "all").trim() || "all";
-  const { range, limit, offset, useRangeInitial } = parseStockRecordChartRequest(chartOpts);
+  const { range } = parseStockRecordChartRequest(chartOpts);
   if (!uid || !sym) {
     throw new Error("missing user or symbol");
   }
@@ -380,54 +349,28 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   }
 
   const frozenThrough = String(live.frozenThrough || um?.frozenThrough || "").slice(0, 10);
-  const endDate = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : frozenThrough;
+  const endDate = live.tradingDay
+    ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10)
+    : frozenThrough;
   const accountIdForPnl = scope === "all" ? "all" : scope;
-  const includeLive = offset === 0;
   const pnlQueryBase = { accountId: accountIdForPnl, symbol: sym };
 
-  let pnlRows = [];
-  let paginationLimit = limit;
-  let paginationOffset = offset;
-  let hasMore = false;
-  let rangePreset = null;
+  const rangePreset = range;
+  const stageKey = stockRecordRangeChipToStage(rangePreset);
+  const firstTrade = firstTradeDateFromTrades(symbolTrades, endDate);
+  const sessionAsOf = endDate || liveDateKeyShanghai();
+  const { start: from } = resolveStageRange(stageKey, sessionAsOf, firstTrade);
 
-  if (useRangeInitial) {
-    rangePreset = range;
-    if (range === "all") {
-      const earliest = await getEarliestSymbolDailyPnlDate(pnlQueryBase, uid);
-      const from = earliest || endDate || "1970-01-01";
-      pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
-        { ...pnlQueryBase, from, to: endDate || "9999-12-31" },
-        uid,
-      );
-      paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
-      paginationOffset = 0;
-      hasMore = false;
-    } else {
-      const from = chartRangeFromPreset(range, endDate);
-      pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
-        { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
-        uid,
-      );
-      paginationLimit = DEFAULT_CHART_PAGE_LIMIT;
-      paginationOffset = 0;
-      hasMore = from ? await hasSymbolDailyPnlBeforeDate({ ...pnlQueryBase, before: from }, uid) : false;
-    }
-  } else {
-    const pnlPageDesc = await getSymbolDailyPnlChartSeriesPage(
-      { ...pnlQueryBase, to: endDate || "9999-12-31", offset, limit },
-      uid,
-    );
-    pnlRows = [...pnlPageDesc].reverse();
-    paginationLimit = limit;
-    paginationOffset = offset;
-    hasMore = pnlPageDesc.length === limit;
-  }
+  const pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
+    { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
+    uid,
+  );
 
   const pageRange = pageCloseDateRange(pnlRows, endDate);
   const headlineCloseFrom = addCalendarDays(endDate || frozenThrough || "1970-01-01", -90);
 
   const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
+  const includeLive = true;
 
   const [pageCloseRows, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
     pageRange
@@ -445,8 +388,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
 
   const pageCloseLookup = closeLookupFromRows(pageCloseRows);
   const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);
-  const frozenInceptionProfit =
-    frozenProfitRow?.stageInceptionProfit != null ? Number(frozenProfitRow.stageInceptionProfit) : 0;
+  const frozenStageProfit = frozenProfitRow ? stageProfitFromSymbolPnlRow(frozenProfitRow, stageKey) : 0;
 
   const points = buildChartPointsForPage({
     pnlRows,
@@ -456,7 +398,8 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     ccy,
     endDate,
     includeLive,
-    frozenInceptionProfit,
+    stageKey,
+    frozenStageProfit,
   });
 
   const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
@@ -480,6 +423,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       dataVersion: Number(um?.dataVersion) || 0,
       rebuilding: !!um?.rebuilding,
       quoteTime: headlineQuote.quoteTime ?? null,
+      stage: stageKey,
     },
     headline: {
       name: displayName,
@@ -492,13 +436,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     },
     charts: {
       points,
-      range: rangePreset ? chartRangeMetaFromPoints(rangePreset, points, endDate) : null,
-      pagination: {
-        limit: paginationLimit,
-        offset: paginationOffset,
-        returned: points.length,
-        hasMore,
-      },
+      range: chartRangeMetaFromPoints(rangePreset, stageKey, points, endDate, from),
       defaults: {
         showClose: true,
         showShares: true,
@@ -512,7 +450,6 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
 
 module.exports = {
   buildStockRecordBundlePayload,
-  parseChartPaginationOpts,
   parseStockRecordChartRequest,
-  DEFAULT_CHART_PAGE_LIMIT,
+  stockRecordRangeChipToStage,
 };

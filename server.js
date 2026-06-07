@@ -1478,18 +1478,12 @@ function metricsAccountIdFromQuery(query) {
   return String(query?.account_id || query?.accountScope || "all").trim() || "all";
 }
 
-function stockRecordChartPaginationFromQuery(query) {
-  const limit = Math.max(1, Math.min(200, parseInt(String(query?.limit ?? "30"), 10) || 30));
-  const offset = Math.max(0, parseInt(String(query?.offset ?? "0"), 10) || 0);
-  return { pointsLimit: limit, pointsOffset: offset };
-}
-
 function stockRecordChartQueryFromQuery(query) {
-  const range = String(query?.range || "").trim().toLowerCase();
+  const range = String(query?.range || query?.chartRange || "30").trim().toLowerCase();
   if (["7", "30", "90", "mtd", "ytd", "all"].includes(range)) {
     return { chartRange: range };
   }
-  return stockRecordChartPaginationFromQuery(query);
+  return { chartRange: "30" };
 }
 
 app.get("/api/metrics/home-bundle", requireAuth, async (req, res) => {

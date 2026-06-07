@@ -356,13 +356,13 @@ module.exports = async function handler(req, res) {
         getMetricsPublicStockRecordBundle,
       } = require("../src/metrics-api-service");
       const chartOpts = (() => {
-          const range = String(getSearchParam(req, "range") || "").trim().toLowerCase();
+          const range = String(getSearchParam(req, "range") || getSearchParam(req, "chartRange") || "30")
+            .trim()
+            .toLowerCase();
           if (["7", "30", "90", "mtd", "ytd", "all"].includes(range)) {
             return { chartRange: range };
           }
-          const limit = Math.max(1, Math.min(200, parseInt(String(getSearchParam(req, "limit") || "30"), 10) || 30));
-          const offset = Math.max(0, parseInt(String(getSearchParam(req, "offset") || "0"), 10) || 0);
-          return { pointsLimit: limit, pointsOffset: offset };
+          return { chartRange: "30" };
         })();
       const data = isPublicStockRecordBundle
         ? await getMetricsPublicStockRecordBundle(gate.userId, accountScope, symbol, chartOpts)

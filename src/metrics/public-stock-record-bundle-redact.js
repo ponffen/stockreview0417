@@ -10,16 +10,17 @@ function redactChartPoints(points) {
   if (!list.length) {
     return [];
   }
+  const withProfit = list.map((p) => ({ ...p, profit: p.profit ?? p.totalProfit }));
   const shares = normalizeMetricTimeSeries(list, "shares");
   const marketValue = normalizeMetricTimeSeries(list, "marketValueNative");
-  const totalProfit = normalizeMetricTimeSeries(list, "totalProfit");
+  const profitSeries = normalizeMetricTimeSeries(withProfit, "profit");
   return list.map((p, i) => ({
     date: p.date,
     close: p.close,
     shares: shares[i]?.shares,
     marketValueNative: marketValue[i]?.marketValueNative,
     weight: p.weight,
-    totalProfit: totalProfit[i]?.totalProfit,
+    profit: profitSeries[i]?.profit,
   }));
 }
 
