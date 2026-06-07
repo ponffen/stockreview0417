@@ -425,7 +425,10 @@ const changePasswordForm = document.getElementById("changePasswordForm");
 const closeChangePasswordBtn = document.getElementById("closeChangePasswordBtn");
 const changePwError = document.getElementById("changePwError");
 const benchmarkSelect = document.getElementById("benchmark");
-const rangeChips = [...document.querySelectorAll(".range-chip")];
+function analysisRangeChips() {
+  const pane = document.getElementById("route-analysis");
+  return pane ? [...pane.querySelectorAll(".range-chip[data-range]")] : [];
+}
 const customRangeRow = document.getElementById("customRangeRow");
 const customRangeStartInput = document.getElementById("customRangeStart");
 const customRangeEndInput = document.getElementById("customRangeEnd");
@@ -3665,43 +3668,45 @@ function bindEvents() {
     });
   });
 
-  rangeChips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      const value = chip.dataset.range;
-      if (value === "custom") {
-        state.analysisRangeMode = "custom";
-        state.analysisPreset = null;
-        state.customRangeDraftStart = state.customRangeStart;
-        state.customRangeDraftEnd = state.customRangeEnd;
-      } else if (value === "all") {
-        state.analysisRangeMode = "all";
-        state.analysisPreset = null;
-        resetAnalysisChartViewport();
-      } else if (value === "mtd") {
-        state.analysisRangeMode = "preset";
-        state.analysisPreset = "mtd";
-        resetAnalysisChartViewport();
+  document.getElementById("route-analysis")?.addEventListener("click", (event) => {
+    const chip = event.target.closest(".range-chip[data-range]");
+    if (!chip || !event.currentTarget.contains(chip)) {
+      return;
+    }
+    const value = chip.dataset.range;
+    if (value === "custom") {
+      state.analysisRangeMode = "custom";
+      state.analysisPreset = null;
+      state.customRangeDraftStart = state.customRangeStart;
+      state.customRangeDraftEnd = state.customRangeEnd;
+    } else if (value === "all") {
+      state.analysisRangeMode = "all";
+      state.analysisPreset = null;
+      resetAnalysisChartViewport();
+    } else if (value === "mtd") {
+      state.analysisRangeMode = "preset";
+      state.analysisPreset = "mtd";
+      resetAnalysisChartViewport();
+    } else {
+      state.analysisRangeMode = "preset";
+      const n = Number(value);
+      if (n === 365) {
+        state.analysisPreset = "ytd";
+        state.rangeDays = 365;
       } else {
-        state.analysisRangeMode = "preset";
-        const n = Number(value);
-        if (n === 365) {
-          state.analysisPreset = "ytd";
-          state.rangeDays = 365;
-        } else {
-          state.analysisPreset = null;
-          state.rangeDays = n;
-        }
-        resetAnalysisChartViewport();
+        state.analysisPreset = null;
+        state.rangeDays = n;
       }
-      persistState();
-      if (analysisMetricsUiActive()) {
-        state.publicAnalysisBundleUi.ready = false;
-        void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
-      } else {
-        void renderAnalysis({ blockLoading: state.route === "analysis" });
-      }
-      renderControls();
-    });
+      resetAnalysisChartViewport();
+    }
+    persistState();
+    if (analysisMetricsUiActive()) {
+      state.publicAnalysisBundleUi.ready = false;
+      void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
+    } else {
+      void renderAnalysis({ blockLoading: state.route === "analysis" });
+    }
+    renderControls();
   });
 
   const syncCustomRangeDraftFromInputs = () => {
@@ -4531,7 +4536,7 @@ function renderControls() {
   if (stageRangeSelect) {
     stageRangeSelect.value = state.stageRange;
   }
-  rangeChips.forEach((chip) => {
+  analysisRangeChips().forEach((chip) => {
     const value = chip.dataset.range;
     let active = false;
     if (value === "custom") {
@@ -5590,9 +5595,9 @@ function communityAnalysisTargetId() {
 
 function publicAnalysisBundleCacheKey(targetId) {
   const tid = String(targetId || "").trim();
-  const stage = metricsStageFromAnalysis();
+  const q = buildAnalysisBundleQueryParams(state, { account_id: "all" });
   const bench = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
-  return `pub-analysis::${tid}::all::${stage}::${bench}`;
+  return `pub-analysis::${tid}::${q.stage}::${q.from || ""}::${q.to || ""}::${bench}`;
 }
 
 async function fetchPublicAnalysisBundleMetrics(targetId) {
@@ -5600,7 +5605,6 @@ async function fetchPublicAnalysisBundleMetrics(targetId) {
   if (!tid || !apiReady) {
     return null;
   }
-  const stage = metricsStageFromAnalysis();
   const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
   const key = publicAnalysisBundleCacheKey(tid);
   if (state.publicAnalysisBundleUi.ready && state.publicAnalysisBundleUi.key === key && state.publicAnalysisBundleUi.bundle) {
@@ -5611,7 +5615,7 @@ async function fetchPublicAnalysisBundleMetrics(targetId) {
   }
   state.publicAnalysisBundleUi.loading = true;
   try {
-    const params = { account_id: "all", stage };
+    const params = buildAnalysisBundleQueryParams(state, { account_id: "all" });
     if (benchSym) {
       params.symbol = benchSym;
     }
@@ -7838,25 +7842,23 @@ function overviewReturnsHasAllHomeStages(ret) {
   if (!ret?.stages) return false;
   return METRICS_HOME_BUNDLE_STAGE_KEYS.every((k) => ret.stages[k]);
 }
-function resolvePerformancePresetKeyFromStateLike(like) {
+/** 分析区间 state → API stage；与 renderControls 高亮规则一致，不受图表 pan 影响。 */
+function resolveAnalysisStageFromStateLike(like = state) {
   const arm = String(like?.analysisRangeMode ?? "preset");
   if (arm === "custom") {
-    return null;
+    return "custom";
   }
   if (arm === "all") {
     return "inception";
   }
   if (arm !== "preset") {
-    return null;
+    return "last_30d";
   }
   if (like?.analysisPreset === "mtd") {
     return "mtd";
   }
   if (like?.analysisPreset === "ytd") {
     return "ytd";
-  }
-  if (Number(like?.analysisPanOffset || 0) !== 0) {
-    return null;
   }
   const rd = Number(like?.rangeDays);
   if (rd === 7) {
@@ -7868,18 +7870,27 @@ function resolvePerformancePresetKeyFromStateLike(like) {
   if (rd === 90) {
     return "last_90d";
   }
-  return null;
-}
-
-function resolvePerformancePresetKeyFromAnalysisState() {
-  return resolvePerformancePresetKeyFromStateLike(state);
+  return "last_30d";
 }
 
 function metricsStageFromAnalysis() {
-  const preset = resolvePerformancePresetKeyFromAnalysisState();
-  if (preset) return preset;
-  if (state.analysisRangeMode === "all") return "inception";
-  return "mtd";
+  return resolveAnalysisStageFromStateLike(state);
+}
+
+function buildAnalysisBundleQueryParams(like = state, extra = {}) {
+  const stage = resolveAnalysisStageFromStateLike(like);
+  const params = { ...extra, stage };
+  if (stage === "custom") {
+    const from = String(like?.customRangeStart || "").slice(0, 10);
+    const to = String(like?.customRangeEnd || "").slice(0, 10);
+    if (from) {
+      params.from = from;
+    }
+    if (to) {
+      params.to = to;
+    }
+  }
+  return params;
 }
 const ANALYSIS_CHART_DEFAULT_WINDOW = 30;
 const ANALYSIS_CHART_MIN_WINDOW = 7;
@@ -8513,12 +8524,11 @@ async function refreshAnalysisMetricsView(opts = {}) {
 
 async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "", opts = {}) {
   const isPublicView = !!String(publicTargetId || "").trim();
-  const stage = metricsStageFromAnalysis();
   const aid = isPublicView ? "all" : state.selectedAccountId === "all" ? "all" : state.selectedAccountId;
   const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
   let bundle = opts.bundle || null;
   if (!bundle) {
-    const bundleParams = { account_id: aid, stage };
+    const bundleParams = buildAnalysisBundleQueryParams(state, { account_id: aid });
     if (benchSym) {
       bundleParams.symbol = benchSym;
     }
@@ -8672,6 +8682,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     analysisEodAccountCaption.hidden = true;
   }
   bindAnalysisMetricsChartsInteractive();
+  renderControls();
   return true;
 }
 

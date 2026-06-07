@@ -303,10 +303,16 @@ module.exports = async function handler(req, res) {
         "all";
       const stage = String(getSearchParam(req, "stage") || "mtd").trim() || "mtd";
       const symbol = String(getSearchParam(req, "symbol") || "").trim();
+      const customFrom = String(getSearchParam(req, "from") || "").slice(0, 10);
+      const customTo = String(getSearchParam(req, "to") || "").slice(0, 10);
+      const rangeOpts = {
+        customFrom: customFrom || undefined,
+        customTo: customTo || undefined,
+      };
       const { getMetricsAnalysisBundle, getMetricsPublicAnalysisBundle } = require("../src/metrics-api-service");
       const data = isPublicAnalysisBundle
-        ? await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol)
-        : await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol);
+        ? await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol, rangeOpts)
+        : await getMetricsAnalysisBundle(gate.userId, accountScope, stage, symbol, rangeOpts);
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, data: { ...data, direct: true, build: "v9-analysis-bundle-stock-rank" } }));
       return;

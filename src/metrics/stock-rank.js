@@ -105,6 +105,7 @@ async function buildStockRankPayload({
   publicLayout = false,
   accountProfitCny = null,
   scopeCtx = null,
+  customRange = null,
 }) {
   const scope = String(accountScope || "all").trim() || "all";
   const asOf = liveDateKeyShanghai();
@@ -115,7 +116,7 @@ async function buildStockRankPayload({
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
   const firstTrade =
     scopeTrades.length > 0 ? [...scopeTrades].sort(sortTradeAsc)[0].date : asOf;
-  const { start: a, end: b } = resolveStageRange(stage, asOf, firstTrade);
+  const { start: a, end: b } = resolveStageRange(stage, asOf, firstTrade, customRange);
   const periodEnd = live.tradingDay && live.liveDate ? live.liveDate : b;
   const pnlFrom = firstTrade && firstTrade < a ? firstTrade : a;
   const accountIdForPnl = scope === "all" ? "" : scope;

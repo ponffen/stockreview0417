@@ -172,11 +172,18 @@ function fxFromCtx(ctx) {
   };
 }
 
-async function computeReturnStages(ctx, stagesRaw) {
+function customStageRangeFromOpts(opts = {}) {
+  const from = String(opts.customFrom || "").slice(0, 10);
+  const to = String(opts.customTo || "").slice(0, 10);
+  return from && to ? { from, to } : null;
+}
+
+async function computeReturnStages(ctx, stagesRaw, customRange = null) {
   const { userId, scope, settings, live, home } = ctx;
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
   const frozen = frozenMetricsFromHomeAccount(home.account);
-  const want = parseStagesParam(stagesRaw);
+  const raw = String(stagesRaw ?? "").trim();
+  const want = raw === "custom" ? ["custom"] : parseStagesParam(stagesRaw);
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const stagesNeedingRows = stageKeysNeedingSnapshotRows(want, live, mwrMode);
   let firstTrade =
@@ -190,7 +197,7 @@ async function computeReturnStages(ctx, stagesRaw) {
     const rangeAsOf = liveDateKeyShanghai();
     let minStart = rangeAsOf;
     for (const key of stagesNeedingRows) {
-      const { start } = resolveStageRange(key, rangeAsOf, firstTrade);
+      const { start } = resolveStageRange(key, rangeAsOf, firstTrade, customRange);
       if (start < minStart) {
         minStart = start;
       }
@@ -201,7 +208,16 @@ async function computeReturnStages(ctx, stagesRaw) {
   const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
   const stages = {};
   for (const key of want) {
-    stages[key] = stageProfitFromFrozenAndLive(key, frozen, live, firstTrade, rowsAsc, asOf, scopeCtx);
+    stages[key] = stageProfitFromFrozenAndLive(
+      key,
+      frozen,
+      live,
+      firstTrade,
+      rowsAsc,
+      asOf,
+      scopeCtx,
+      customRange,
+    );
   }
   return { stages, mwrMode, rowsAsc, firstTrade };
 }
@@ -363,14 +379,23 @@ async function loadSnapshotRowsAsc(userId, scope, from, to) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeDate, rowsAsc, asOf, scopeCtx = null) {
+function stageProfitFromFrozenAndLive(
+  stageKey,
+  frozenMetrics,
+  live,
+  firstTradeDate,
+  rowsAsc,
+  asOf,
+  scopeCtx = null,
+  customRange = null,
+) {
   const tradingSession = liveDateKeyShanghai();
   const frozenDate = String(live.frozenThrough || asOf).slice(0, 10);
   const liveDate = live.tradingDay
     ? String(live.liveDate || tradingSession).slice(0, 10)
     : frozenDate;
   const rangeAsOf = tradingSession;
-  const { start } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
+  const { start } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate, customRange);
   const freshPeriod =
     stageUsesFrozenCumulativeFields(stageKey) && isFreshStagePeriod(start, frozenDate);
   const todayP = Number(live.todayProfitCny);
@@ -397,14 +422,14 @@ function stageProfitFromFrozenAndLive(stageKey, frozenMetrics, live, firstTradeD
       rateTwr = frozenMetrics.totalRateTwr;
       rateMwr = frozenMetrics.totalRateMwr;
     } else if (stageKey !== "today") {
-      const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
+      const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate, customRange);
       const m = metricsForWindow(rowsAsc, start, end);
       frozenProfit = m.profitCny;
       rateTwr = m.rateTwr;
       rateMwr = m.rateMwr;
     }
   } else if (stageKey !== "today" && !stageUsesFrozenCumulativeFields(stageKey)) {
-    const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate);
+    const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate, customRange);
     const m = metricsForWindow(rowsAsc, start, end);
     frozenProfit = m.profitCny;
     rateTwr = m.rateTwr;
@@ -982,7 +1007,7 @@ function firstTradeDateFromTrades(trades, fallback) {
   return [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
 }
 
-async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
+async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc, customRange = null) {
   const { userId, scope, settings, live, um, home } = ctx;
   const { fxU, fxH, book } = fxFromCtx(ctx);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
@@ -990,20 +1015,40 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
   const tradeList = trades || (await getTrades(userId));
   const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
   const st = String(stage || "mtd").trim() || "mtd";
-  const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade);
+  const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade, customRange);
   const rows = rowsAsc || (await loadSnapshotRowsAsc(userId, scope, start, end));
-  const points = rows
-    .filter((r) => r.date >= start && r.date <= end)
-    .map((r) => ({
+  const filtered = rows.filter((r) => r.date >= start && r.date <= end);
+  let points;
+  if (st === "custom") {
+    let cum = 0;
+    points = filtered.map((r) => {
+      cum += Number(r.dailyProfit) || 0;
+      return {
+        date: r.date,
+        profit: formatSignedProfitForScope(cum, scope, book, fxU, fxH),
+      };
+    });
+  } else {
+    points = filtered.map((r) => ({
       date: r.date,
       profit: formatSignedProfitForScope(stageProfitCnyFromSnapshotRow(r, st), scope, book, fxU, fxH),
     }));
+  }
   const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
   if (live.tradingDay) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
     if (liveDate >= start && liveDate <= end) {
       const frozen = frozenMetricsFromHomeAccount(home?.account);
-      const { profitCny } = stageProfitFromFrozenAndLive(st, frozen, live, firstTrade, rows, asOf, scopeCtx);
+      const { profitCny } = stageProfitFromFrozenAndLive(
+        st,
+        frozen,
+        live,
+        firstTrade,
+        rows,
+        asOf,
+        scopeCtx,
+        customRange,
+      );
       const row = {
         date: liveDate,
         profit: formatSignedProfitForScope(profitCny, scope, book, fxU, fxH),
@@ -1020,7 +1065,7 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc) {
   return { meta: metaEnvelope(userId, scope, settings, live, um), stage: st, points };
 }
 
-async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload) {
+async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload, customRange = null) {
   const { userId, scope, settings, live, um, home } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
@@ -1028,23 +1073,41 @@ async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload
   const tradeList = trades || (await getTrades(userId));
   const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
   const sessionAsOf = liveDateKeyShanghai();
-  const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade);
+  const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade, customRange);
   const rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
-  const rateFromRow = (r) =>
-    mwrMode ? stageRateMwrFromSnapshotRow(r, st) : stageRateTwrFromSnapshotRow(r, st);
-  const points = rows
-    .filter((r) => r.date >= start && r.date <= end)
-    .map((r) => ({
+  const filtered = rows.filter((r) => r.date >= start && r.date <= end);
+  let points;
+  if (st === "custom") {
+    let rate = 0;
+    points = filtered.map((r) => {
+      const d = Number(r.dailyRateTwr) || 0;
+      rate = chainTwrRate(rate, d);
+      return { date: r.date, rate: fmtSignedPercentRatio(rate) };
+    });
+  } else {
+    const rateFromRow = (r) =>
+      mwrMode ? stageRateMwrFromSnapshotRow(r, st) : stageRateTwrFromSnapshotRow(r, st);
+    points = filtered.map((r) => ({
       date: r.date,
       rate: fmtSignedPercentRatio(rateFromRow(r)),
     }));
+  }
   const { fxU, fxH, book } = fxFromCtx(ctx);
   const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
   if (live.tradingDay) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
     if (liveDate >= start && liveDate <= end) {
       const frozen = frozenMetricsFromHomeAccount(home?.account);
-      const { rateTwr, rateMwr } = stageProfitFromFrozenAndLive(st, frozen, live, firstTrade, rows, asOf, scopeCtx);
+      const { rateTwr, rateMwr } = stageProfitFromFrozenAndLive(
+        st,
+        frozen,
+        live,
+        firstTrade,
+        rows,
+        asOf,
+        scopeCtx,
+        customRange,
+      );
       const rateVal = mwrMode ? rateMwr : rateTwr;
       const row = {
         date: liveDate,
@@ -1115,6 +1178,7 @@ async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
     publicLayout: rankOpts.publicLayout === true,
     accountProfitCny: rankOpts.accountProfitCny,
     scopeCtx: { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH },
+    customRange: rankOpts.customRange || null,
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
@@ -1136,17 +1200,17 @@ function mergeSeriesLivePoint(points, liveRow, valueKey) {
 }
 
 /** 分析页 series：六条曲线同级，点为已格式化字符串 */
-async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload) {
+async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, customRange = null) {
   const { live, scope } = ctx;
   const { fxU, fxH, book } = fxFromCtx(ctx);
   const st = String(stage || "mtd").trim() || "mtd";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const firstTrade = firstTradeDateFromTrades(trades, asOf);
-  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const { start, end } = resolveStageRange(st, asOf, firstTrade, customRange);
   const rows = rowsAscPreload || [];
 
-  const profitRes = await buildSeriesDailyProfitFromContext(ctx, st, trades, rows);
-  const twrRes = await buildSeriesDailyTwrFromContext(ctx, st, trades, rows);
+  const profitRes = await buildSeriesDailyProfitFromContext(ctx, st, trades, rows, customRange);
+  const twrRes = await buildSeriesDailyTwrFromContext(ctx, st, trades, rows, customRange);
 
   const totalAssets = [];
   const marketValue = [];
@@ -1205,12 +1269,13 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const { userId, scope } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
+  const customRange = customStageRangeFromOpts(bundleOpts);
   const trades = await getTrades(userId);
   const asOf = ctx.live.frozenThrough || liveDateKeyShanghai();
   const firstTrade = firstTradeDateFromTrades(trades, asOf);
-  const { start, end } = resolveStageRange(st, asOf, firstTrade);
+  const { start, end } = resolveStageRange(st, asOf, firstTrade, customRange);
   const rowsAsc = await loadSnapshotRowsAsc(userId, scope, start, end);
-  const { stages } = await computeReturnStages(ctx, st);
+  const { stages } = await computeReturnStages(ctx, st, customRange);
   const stageRow = stages[st] || { profitCny: 0, rateTwr: 0, rateMwr: 0 };
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const rateVal = mwrMode ? stageRow.rateMwr : stageRow.rateTwr;
@@ -1218,10 +1283,11 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const rankOpts = {
     publicLayout: bundleOpts.publicRankLayout === true,
     accountProfitCny: Number(stageRow.profitCny) || 0,
+    customRange,
   };
 
   const [series, stockRank] = await Promise.all([
-    buildAnalysisSeriesBundle(ctx, st, trades, rowsAsc),
+    buildAnalysisSeriesBundle(ctx, st, trades, rowsAsc, customRange),
     buildStockRankFromContext(ctx, st, rankOpts),
   ]);
 
@@ -1256,8 +1322,11 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
   const scope = String(accountScope || "all").trim() || "all";
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
+  const customRange = customStageRangeFromOpts(opts);
+  const customKey =
+    st === "custom" && customRange ? `|${customRange.from}|${customRange.to}` : "";
   const pubRank = opts.publicRankLayout === true ? "pub" : "priv";
-  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}|${pubRank}|sr2`;
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${st}|${sym}|${pubRank}|sr2${customKey}`;
   const now = Date.now();
   if (!opts.diag && ANALYSIS_BUNDLE_CACHE_MS > 0) {
     const hit = analysisBundleCache.get(cacheKey);
@@ -1266,7 +1335,11 @@ async function getMetricsAnalysisBundle(userId, accountScope, stage, benchmarkSy
     }
   }
   const diag = opts.diag ? {} : null;
-  const bundleOpts = { publicRankLayout: opts.publicRankLayout === true };
+  const bundleOpts = {
+    publicRankLayout: opts.publicRankLayout === true,
+    customFrom: opts.customFrom,
+    customTo: opts.customTo,
+  };
   const buildFull = async () => {
     const ctx = await loadMetricsScopeContextForHome(userId, scope, diag);
     return assembleAnalysisBundleFromContext(ctx, st, sym, diag, {}, bundleOpts);

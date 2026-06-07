@@ -1506,9 +1506,14 @@ app.get("/api/metrics/analysis-bundle", requireAuth, async (req, res) => {
     const accountScope = metricsAccountIdFromQuery(req.query);
     const stage = String(req.query.stage || "mtd").trim() || "mtd";
     const symbol = String(req.query.symbol || "").trim();
+    const customFrom = String(req.query.from || "").slice(0, 10);
+    const customTo = String(req.query.to || "").slice(0, 10);
     sendMetricsJson(
       res,
-      await getMetricsAnalysisBundle(req.userId, accountScope, stage, symbol),
+      await getMetricsAnalysisBundle(req.userId, accountScope, stage, symbol, {
+        customFrom: customFrom || undefined,
+        customTo: customTo || undefined,
+      }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "analysis-bundle failed" });
@@ -1544,9 +1549,14 @@ async function handlePublicAnalysisBundle(req, res) {
     const accountScope = metricsAccountIdFromQuery(req.query);
     const stage = String(req.query.stage || "mtd").trim() || "mtd";
     const symbol = String(req.query.symbol || "").trim();
+    const customFrom = String(req.query.from || "").slice(0, 10);
+    const customTo = String(req.query.to || "").slice(0, 10);
     sendMetricsJson(
       res,
-      await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol),
+      await getMetricsPublicAnalysisBundle(gate.userId, accountScope, stage, symbol, {
+        customFrom: customFrom || undefined,
+        customTo: customTo || undefined,
+      }),
     );
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public analysis-bundle failed" });

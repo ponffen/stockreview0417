@@ -38,9 +38,17 @@ function windowNaturalDays(asOf, len) {
   return { start, end };
 }
 
-function resolveStageRange(stage, asOf, firstDataDate) {
+function resolveStageRange(stage, asOf, firstDataDate, customRange = null) {
   const key = String(stage || "").trim();
   const R = String(asOf).slice(0, 10);
+  if (key === "custom") {
+    const from = String(customRange?.from || "").slice(0, 10);
+    const to = String(customRange?.to || "").slice(0, 10);
+    if (from && to) {
+      return from <= to ? { start: from, end: to } : { start: to, end: from };
+    }
+    return { start: R, end: R };
+  }
   if (key === "today") {
     return { start: R, end: R };
   }
