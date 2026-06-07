@@ -19,15 +19,15 @@
       aria-live="polite"
       aria-busy="true"
     >
-      <div class="app-boot-loading-inner">
+      <div class="app-loading-pill">
         <span class="app-boot-spinner" aria-hidden="true"></span>
-        <span>加载中…</span>
+        <span class="app-loading-pill__text">加载中…</span>
       </div>
     </div>
     <div id="appRouteLoading" class="app-route-loading hidden" role="status" aria-live="polite" aria-busy="false">
-      <div class="app-route-loading-inner">
+      <div class="app-loading-pill">
         <span class="app-boot-spinner" aria-hidden="true"></span>
-        <span id="appRouteLoadingText">数据正在加载中</span>
+        <span id="appRouteLoadingText" class="app-loading-pill__text">数据正在加载中</span>
       </div>
     </div>
 
@@ -797,8 +797,12 @@
           </div>
         </div>
         <div id="stockRecordLoading" class="stock-record-page-loading hidden" role="status" aria-live="polite" aria-busy="false">
-          <span class="app-boot-spinner" aria-hidden="true"></span>
-          <span>加载中…</span>
+          <div class="app-loading-block app-loading-block--page">
+            <span class="app-loading-pill">
+              <span class="app-boot-spinner" aria-hidden="true"></span>
+              <span class="app-loading-pill__text">加载中…</span>
+            </span>
+          </div>
         </div>
         <div id="stockRecordBody" class="stock-record-body">
           <div class="stock-record-summary-panel">
@@ -841,9 +845,11 @@
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
           <div id="stockRecordChartsPanel" class="stock-record-charts-panel">
-            <div id="stockRecordChartsLoading" class="stock-record-charts-loading hidden" role="status" aria-live="polite" aria-busy="false">
-              <span class="app-boot-spinner" aria-hidden="true"></span>
-              <span>图表加载中…</span>
+            <div id="stockRecordChartsLoading" class="stock-record-charts-loading app-loading-block hidden" role="status" aria-live="polite" aria-busy="false">
+              <span class="app-loading-pill">
+                <span class="app-boot-spinner" aria-hidden="true"></span>
+                <span class="app-loading-pill__text">加载中…</span>
+              </span>
             </div>
 
           <div class="stock-record-chart-section">

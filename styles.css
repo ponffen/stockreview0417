@@ -101,15 +101,6 @@ body {
   pointer-events: none;
 }
 
-.app-boot-loading-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  color: var(--muted);
-  font-size: 15px;
-}
-
 .app-boot-spinner {
   width: 28px;
   height: 28px;
@@ -117,6 +108,33 @@ body {
   border-top-color: var(--blue);
   border-radius: 50%;
   animation: app-boot-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+.app-loading-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid var(--line);
+  color: #5d687a;
+  font-size: 14px;
+  box-shadow: 0 6px 24px rgb(16 24 40 / 12%);
+}
+
+.app-loading-pill--sm {
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  box-shadow: none;
+}
+
+.app-loading-spinner--sm {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
 }
 
 .app-route-loading {
@@ -130,17 +148,36 @@ body {
   pointer-events: none;
 }
 
-.app-route-loading-inner {
-  display: inline-flex;
+.app-loading-block-host {
+  position: relative;
+}
+
+.app-loading-block {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 94%);
-  border: 1px solid var(--line);
-  color: #5d687a;
-  font-size: 14px;
-  box-shadow: 0 6px 24px rgb(16 24 40 / 12%);
+  justify-content: center;
+  background: rgb(245 247 250 / 45%);
+  pointer-events: none;
+}
+
+.app-loading-block--page {
+  position: relative;
+  inset: auto;
+  min-height: 52vh;
+  background: transparent;
+}
+
+.app-loading-table-cell {
+  padding: 28px 12px !important;
+  text-align: center;
+  border-bottom: none;
+}
+
+.app-loading-table-row td {
+  border-bottom: none;
 }
 
 @keyframes app-boot-spin {
@@ -1398,21 +1435,6 @@ h2 {
   border-bottom: none;
 }
 
-.trade-list-loading {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.trade-list-spinner {
-  width: 22px;
-  height: 22px;
-  border-width: 2px;
-}
-
 /* 交易 / 资金 / 个股记录表：内容宽 < 容器时 100% 等比铺满；内容宽 > 容器时保持 ch 最小宽并横向滚动 */
 .trade-table-wrap,
 .stock-record-table-wrap {
@@ -1742,18 +1764,15 @@ h2 {
   max-height: 92vh;
 }
 
-.stock-record-page-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  min-height: 52vh;
-  color: var(--muted);
-  font-size: 15px;
+.stock-record-page-loading.hidden {
+  display: none;
 }
 
-.stock-record-page-loading.hidden {
+.stock-record-charts-panel {
+  position: relative;
+}
+
+.stock-record-charts-loading.hidden {
   display: none;
 }
 
@@ -3545,6 +3564,10 @@ body.auth-mode {
 
 .trade-stock-search-loading,
 .trade-stock-search-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 14px;
   font-size: 14px;
   color: var(--muted);

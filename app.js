@@ -542,6 +542,58 @@ function hideRouteLoading() {
   appRouteLoading.setAttribute("aria-busy", "false");
 }
 
+function buildAppLoadingPillHtml(message = "加载中…", opts = {}) {
+  const sm = opts.size === "sm";
+  const pillCls = sm ? "app-loading-pill app-loading-pill--sm" : "app-loading-pill";
+  const spinCls = sm ? "app-boot-spinner app-loading-spinner--sm" : "app-boot-spinner";
+  return `<span class="${pillCls}" role="status" aria-live="polite"><span class="${spinCls}" aria-hidden="true"></span><span class="app-loading-pill__text">${escapeHtml(message)}</span></span>`;
+}
+
+function buildAppLoadingBlockHtml(message = "加载中…", opts = {}) {
+  const pageMod = opts.page ? " app-loading-block--page" : "";
+  return `<div class="app-loading-block${pageMod}" role="status" aria-live="polite" aria-busy="true">${buildAppLoadingPillHtml(message)}</div>`;
+}
+
+function buildAppLoadingTableRowHtml(colspan, message = "数据加载中…") {
+  return `<tr class="app-loading-table-row trade-list-loading-row" aria-busy="true"><td colspan="${colspan}" class="app-loading-table-cell">${buildAppLoadingPillHtml(message, { size: "sm" })}</td></tr>`;
+}
+
+const routeAnalysisPane = () => document.getElementById("route-analysis");
+let analysisBlockLoadingCount = 0;
+
+function showAnalysisBlockLoading(message = "数据正在加载中") {
+  const pane = routeAnalysisPane();
+  if (!pane) {
+    return;
+  }
+  analysisBlockLoadingCount += 1;
+  pane.classList.add("app-loading-block-host");
+  let block = pane.querySelector(":scope > .app-loading-block");
+  if (!block) {
+    pane.insertAdjacentHTML("beforeend", buildAppLoadingBlockHtml(message));
+    return;
+  }
+  const textEl = block.querySelector(".app-loading-pill__text");
+  if (textEl) {
+    textEl.textContent = message;
+  }
+  block.classList.remove("hidden");
+  block.setAttribute("aria-busy", "true");
+}
+
+function hideAnalysisBlockLoading() {
+  const pane = routeAnalysisPane();
+  if (!pane) {
+    return;
+  }
+  analysisBlockLoadingCount = Math.max(0, analysisBlockLoadingCount - 1);
+  if (analysisBlockLoadingCount > 0) {
+    return;
+  }
+  pane.querySelector(":scope > .app-loading-block")?.remove();
+  pane.classList.remove("app-loading-block-host");
+}
+
 async function refreshSessionFromServer() {
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/auth/me`, {
@@ -2937,16 +2989,7 @@ function ledgerListQuery(accountId, offset) {
 }
 
 function tradeListLoadingRowHtml(colspan) {
-  return `
-    <tr class="trade-list-loading-row" aria-busy="true">
-      <td colspan="${colspan}">
-        <div class="trade-list-loading">
-          <span class="app-boot-spinner trade-list-spinner" aria-hidden="true"></span>
-          <span>加载中…</span>
-        </div>
-      </td>
-    </tr>
-  `;
+  return buildAppLoadingTableRowHtml(colspan, "加载中…");
 }
 
 function isNearDocumentBottom(thresholdPx = 140) {
@@ -3519,9 +3562,9 @@ function bindEvents() {
     persistState();
     if (analysisMetricsUiActive()) {
       state.publicAnalysisBundleUi.ready = false;
-      void refreshAnalysisMetricsView({ showLoading: false });
+      void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
     } else {
-      void renderAnalysis();
+      void renderAnalysis({ blockLoading: state.route === "analysis" });
     }
     void refreshMarketData();
   });
@@ -3653,9 +3696,9 @@ function bindEvents() {
       persistState();
       if (analysisMetricsUiActive()) {
         state.publicAnalysisBundleUi.ready = false;
-        void refreshAnalysisMetricsView({ showLoading: false });
+        void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
       } else {
-        void renderAnalysis();
+        void renderAnalysis({ blockLoading: state.route === "analysis" });
       }
       renderControls();
     });
@@ -3701,9 +3744,9 @@ function bindEvents() {
     renderControls();
     if (analysisMetricsUiActive()) {
       state.publicAnalysisBundleUi.ready = false;
-      void refreshAnalysisMetricsView({ showLoading: false });
+      void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
     } else {
-      void renderAnalysis();
+      void renderAnalysis({ blockLoading: state.route === "analysis" });
     }
   });
 
@@ -3715,9 +3758,9 @@ function bindEvents() {
       return;
     }
     if (analysisMetricsUiActive()) {
-      void refreshAnalysisMetricsView({ showLoading: false });
+      void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
     } else {
-      void renderAnalysis();
+      void renderAnalysis({ blockLoading: state.route === "analysis" });
     }
   });
 
@@ -4344,7 +4387,7 @@ async function runTradeSearchSuggestQuery(raw) {
   tradeSearchSuggestController = new AbortController();
   const c = tradeSearchSuggestController;
   const base = getApiBaseForFetch();
-  tradeStockSearchResults.innerHTML = `<li class="trade-stock-search-loading" role="option">搜索中…</li>`;
+  tradeStockSearchResults.innerHTML = `<li class="trade-stock-search-loading" role="option">${buildAppLoadingPillHtml("搜索中…", { size: "sm" })}</li>`;
   tradeStockSearchResults.hidden = false;
   try {
     const res = await apiFetch(
@@ -5081,7 +5124,6 @@ async function loadCommunityFeed() {
     return;
   }
   showRouteLoading("数据正在加载中");
-  communityFeedList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/feed`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
@@ -5112,7 +5154,6 @@ async function loadCommunityFollowing() {
     return;
   }
   showRouteLoading("数据正在加载中");
-  communityFollowingList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/following`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
@@ -5143,7 +5184,6 @@ async function loadCommunityLeaderboard() {
     return;
   }
   showRouteLoading("数据正在加载中");
-  communityLeaderboardList.innerHTML = `<p class="empty">加载中…</p>`;
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/community/leaderboard`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
@@ -5477,7 +5517,7 @@ async function loadPublicEarningTabData(targetId) {
   const pubColCount = PUBLIC_EARNING_VISIBLE_COL_INDICES.length;
   const tbody = document.getElementById("pubStockTableBody");
   if (tbody) {
-    tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">数据加载中…</p></td></tr>`;
+    tbody.innerHTML = buildAppLoadingTableRowHtml(pubColCount, "数据加载中…");
   }
   const bundle = await fetchPublicHomeBundleMetrics(targetId);
   if (!bundle) {
@@ -5601,7 +5641,7 @@ function mountCommunityAnalysisRoutePane() {
   if (!analysisRouteHomeParent) {
     analysisRouteHomeParent = pane.parentElement;
   }
-  mount.querySelectorAll(".community-profile-analysis-loading").forEach((el) => el.remove());
+  mount.querySelector(".app-loading-block")?.remove();
   if (!mount.contains(pane)) {
     mount.appendChild(pane);
   }
@@ -5620,7 +5660,7 @@ function setPublicAnalysisPanelLoading(loading) {
   if (mount.querySelector("#route-analysis")) {
     return;
   }
-  mount.innerHTML = `<p class="empty community-profile-analysis-loading">加载中…</p>`;
+  mount.innerHTML = buildAppLoadingBlockHtml("加载中…", { page: true });
 }
 
 function unmountCommunityAnalysisRoutePane() {
@@ -5643,8 +5683,13 @@ async function loadPublicAnalysisTabData(targetId) {
   if (!tid) {
     return;
   }
-  showRouteLoading("加载中…");
-  setPublicAnalysisPanelLoading(true);
+  const analysisMounted = Boolean(document.querySelector('[data-profile-panel="analysis"] #route-analysis'));
+  if (analysisMounted) {
+    showAnalysisBlockLoading("加载中…");
+  } else {
+    showRouteLoading("加载中…");
+    setPublicAnalysisPanelLoading(true);
+  }
   try {
     mountCommunityAnalysisRoutePane();
     renderControls();
@@ -5659,7 +5704,11 @@ async function loadPublicAnalysisTabData(targetId) {
     const renderRequestId = ++analysisRenderRequestSeq;
     await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
   } finally {
-    hideRouteLoading();
+    if (analysisMounted) {
+      hideAnalysisBlockLoading();
+    } else {
+      hideRouteLoading();
+    }
   }
 }
 
@@ -5690,7 +5739,7 @@ function mountCommunityTradeRecordsPane() {
   if (!communityTradeRecordsRouteParent) {
     communityTradeRecordsRouteParent = pane.parentElement;
   }
-  mount.querySelectorAll(".community-profile-trade-loading").forEach((el) => el.remove());
+  mount.querySelector(".app-loading-block")?.remove();
   if (!mount.contains(pane)) {
     mount.appendChild(pane);
   }
@@ -5714,7 +5763,7 @@ function setPublicTradePanelLoading(loading) {
   if (mount.querySelector("#route-trade-records")) {
     return;
   }
-  mount.innerHTML = `<p class="empty community-profile-trade-loading">加载中…</p>`;
+  mount.innerHTML = buildAppLoadingBlockHtml("加载中…", { page: true });
 }
 
 function unmountCommunityTradeRecordsPane() {
@@ -5842,7 +5891,6 @@ async function loadCommunityProfileDetail() {
   }
   showRouteLoading("数据正在加载中");
   const uid = state.communityProfileUserId;
-  communityProfileBody.innerHTML = `<p class="empty">加载中…</p>`;
   if (communityProfileFollowSlot) {
     communityProfileFollowSlot.innerHTML = "";
   }
@@ -6291,7 +6339,7 @@ function paintOverviewStockTableLoading(message = "数据加载中…") {
   if (!stockTableBody) {
     return;
   }
-  stockTableBody.innerHTML = `<tr><td colspan="15"><p class="empty">${escapeHtml(message)}</p></td></tr>`;
+  stockTableBody.innerHTML = buildAppLoadingTableRowHtml(15, message);
 }
 
 let metricsRebuildPollTimer = null;
@@ -7495,9 +7543,11 @@ function renderTradeTable() {
       ? [...state.communityPublicTrades].sort(sortTradeDesc)
       : [];
     if (!list.length && !communityPublicTradesPager.loaded) {
-      tradeTableBody.innerHTML = `
+      tradeTableBody.innerHTML = communityPublicTradesPager.loading
+        ? buildAppLoadingTableRowHtml(noteColspan, "加载中…")
+        : `
       <tr>
-        <td colspan="${noteColspan}"><p class="empty">${communityPublicTradesPager.loading ? "加载中…" : "暂无交易数据"}</p></td>
+        <td colspan="${noteColspan}"><p class="empty">暂无交易数据</p></td>
       </tr>
     `;
       return;
@@ -8455,7 +8505,9 @@ async function refreshAnalysisMetricsView(opts = {}) {
     return;
   }
   if (state.route === "analysis") {
-    await renderAnalysis(opts);
+    const blockLoading = opts.blockLoading === true;
+    const showLoading = opts.showLoading !== false || blockLoading;
+    await renderAnalysis({ showLoading, blockLoading });
   }
 }
 
@@ -8701,10 +8753,15 @@ async function renderAnalysis(options = {}) {
     return;
   }
   const showLoading = options.showLoading !== false;
+  const blockLoading = options.blockLoading === true;
   if (showLoading) {
     cachedAnalysisAssetChartRows = null;
     cachedAnalysisMetricsCharts = null;
-    showRouteLoading("数据正在加载中");
+    if (blockLoading) {
+      showAnalysisBlockLoading("数据正在加载中");
+    } else {
+      showRouteLoading("数据正在加载中");
+    }
   }
   try {
     const renderRequestId = ++analysisRenderRequestSeq;
@@ -8729,7 +8786,11 @@ async function renderAnalysis(options = {}) {
     }
   } finally {
     if (showLoading) {
-      hideRouteLoading();
+      if (blockLoading) {
+        hideAnalysisBlockLoading();
+      } else {
+        hideRouteLoading();
+      }
     }
   }
 }
