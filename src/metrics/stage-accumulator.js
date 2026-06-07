@@ -104,6 +104,53 @@ class StageAccumulator {
   }
 }
 
+/** 从昨日快照行恢复 stage 状态；mtd/ytd 仅在行日期与目标日同月/同年时继承。 */
+function hydrateStageAccFromRow(stageAcc, row, targetDateKey) {
+  if (!row) return;
+  const dk = String(targetDateKey || "").slice(0, 10);
+  const rowDate = String(row.date || dk).slice(0, 10);
+  if (!rowDate) return;
+
+  stageAcc.curMonth = monthStartKeyShanghai(rowDate);
+  stageAcc.curYear = yearStartKeyShanghai(rowDate);
+
+  stageAcc.inception.profit = Number(row.stageInceptionProfit) || 0;
+  stageAcc.inception.rate = Number(row.stageInceptionRateTwr) || 0;
+  stageAcc.last7.profit = Number(row.stageLast7dProfit) || 0;
+  stageAcc.last7.rate = Number(row.stageLast7dRateTwr) || 0;
+  stageAcc.last30.profit = Number(row.stageLast30dProfit) || 0;
+  stageAcc.last30.rate = Number(row.stageLast30dRateTwr) || 0;
+  stageAcc.last90.profit = Number(row.stageLast90dProfit) || 0;
+  stageAcc.last90.rate = Number(row.stageLast90dRateTwr) || 0;
+
+  const rowMonth = monthStartKeyShanghai(rowDate);
+  const rowYear = yearStartKeyShanghai(rowDate);
+  if (rowMonth === monthStartKeyShanghai(dk)) {
+    stageAcc.mtd.profit = Number(row.stageMtdProfit) || 0;
+    stageAcc.mtd.rate = Number(row.stageMtdRateTwr) || 0;
+  }
+  if (rowYear === yearStartKeyShanghai(dk)) {
+    stageAcc.ytd.profit = Number(row.stageYtdProfit) || 0;
+    stageAcc.ytd.rate = Number(row.stageYtdRateTwr) || 0;
+  }
+}
+
+/** 空仓/无成交日：用 0 收益推进日历，确保 mtd/ytd/滑窗在跨月跨年间隙正确重置。 */
+function advanceStageAccSessionGap(stageAcc, lastRowDate, targetDateKey) {
+  const last = String(lastRowDate || "").slice(0, 10);
+  const target = String(targetDateKey || "").slice(0, 10);
+  if (!last || !target || last >= target) return;
+
+  const { enumerateFreezeSessionDates, previousSessionDate } = require("./freeze-calendar");
+  const gapEnd = previousSessionDate(target);
+  if (!gapEnd || gapEnd <= last) return;
+
+  const gapStart = addCalendarDays(last, 1);
+  for (const d of enumerateFreezeSessionDates(gapStart, gapEnd)) {
+    stageAcc.onDay(d, 0, 0);
+  }
+}
+
 function windowStartForStage(stageKey, asOf, firstTrade) {
   const R = String(asOf).slice(0, 10);
   if (stageKey === "mtd") {
@@ -132,4 +179,6 @@ module.exports = {
   StageAccumulator,
   chainTwrRate,
   windowStartForStage,
+  hydrateStageAccFromRow,
+  advanceStageAccSessionGap,
 };

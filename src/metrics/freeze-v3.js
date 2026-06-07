@@ -371,6 +371,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
     const hasActivity =
       dayTrades.length > 0 || Math.abs(qBod) > 1e-6 || Math.abs(qEod) > 1e-6;
     if (!hasActivity) {
+      stageAcc.onDay(day, 0, 0);
       continue;
     }
 
