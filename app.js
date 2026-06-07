@@ -466,6 +466,7 @@ const stockRecordListBody = document.getElementById("stockRecordListBody");
 const stockRecordLoading = document.getElementById("stockRecordLoading");
 const stockRecordBody = document.getElementById("stockRecordBody");
 const stockRecordChartsLoading = document.getElementById("stockRecordChartsLoading");
+const analysisChartsLoading = document.getElementById("analysisChartsLoading");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
 const accountManageDialog = document.getElementById("accountManageDialog");
@@ -561,21 +562,14 @@ function buildAppLoadingTableRowHtml(colspan, message = "数据加载中…") {
   return `<tr class="app-loading-table-row trade-list-loading-row" aria-busy="true"><td colspan="${colspan}" class="app-loading-table-cell">${buildAppLoadingPillHtml(message, { size: "sm" })}</td></tr>`;
 }
 
-const routeAnalysisPane = () => document.getElementById("route-analysis");
 let analysisBlockLoadingCount = 0;
 
 function showAnalysisBlockLoading(message = "数据正在加载中") {
-  const pane = routeAnalysisPane();
-  if (!pane) {
+  const block = analysisChartsLoading;
+  if (!block) {
     return;
   }
   analysisBlockLoadingCount += 1;
-  pane.classList.add("app-loading-block-host");
-  let block = pane.querySelector(":scope > .app-loading-block");
-  if (!block) {
-    pane.insertAdjacentHTML("beforeend", buildAppLoadingBlockHtml(message));
-    return;
-  }
   const textEl = block.querySelector(".app-loading-pill__text");
   if (textEl) {
     textEl.textContent = message;
@@ -585,16 +579,16 @@ function showAnalysisBlockLoading(message = "数据正在加载中") {
 }
 
 function hideAnalysisBlockLoading() {
-  const pane = routeAnalysisPane();
-  if (!pane) {
+  const block = analysisChartsLoading;
+  if (!block) {
     return;
   }
   analysisBlockLoadingCount = Math.max(0, analysisBlockLoadingCount - 1);
   if (analysisBlockLoadingCount > 0) {
     return;
   }
-  pane.querySelector(":scope > .app-loading-block")?.remove();
-  pane.classList.remove("app-loading-block-host");
+  block.classList.add("hidden");
+  block.setAttribute("aria-busy", "false");
 }
 
 async function refreshSessionFromServer() {

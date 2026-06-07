@@ -1776,6 +1776,14 @@ h2 {
   display: none;
 }
 
+.analysis-charts-panel {
+  position: relative;
+}
+
+.analysis-charts-loading.hidden {
+  display: none;
+}
+
 .stock-record-body.hidden {
   display: none;
 }

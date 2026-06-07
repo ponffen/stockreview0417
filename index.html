@@ -247,46 +247,61 @@
           </div>
         </article>
 
-        <article class="panel">
-          <div class="panel-head">
-            <h2>收益率走势</h2>
-            <span id="analysisRateSummary" class="caption"></span>
+        <div id="analysisChartsPanel" class="analysis-charts-panel">
+          <div
+            id="analysisChartsLoading"
+            class="analysis-charts-loading app-loading-block hidden"
+            role="status"
+            aria-live="polite"
+            aria-busy="false"
+          >
+            <span class="app-loading-pill">
+              <span class="app-boot-spinner" aria-hidden="true"></span>
+              <span class="app-loading-pill__text">数据正在加载中</span>
+            </span>
           </div>
-          <div class="chart-wrap">
-            <canvas id="analysisRateChart" width="700" height="320"></canvas>
-            <div id="analysisRateTooltip" class="chart-tooltip"></div>
-          </div>
-        </article>
 
-        <article class="panel">
-          <div class="panel-head">
-            <h2>收益走势</h2>
-            <span id="analysisProfitSummary" class="caption"></span>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="analysisProfitChart" width="700" height="320"></canvas>
-            <div id="analysisProfitTooltip" class="chart-tooltip"></div>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <h2>资产结构走势</h2>
-            <div class="asset-mode-wrap">
-              <label for="assetCurveMode" class="caption">显示</label>
-              <select id="assetCurveMode" class="asset-mode-select">
-                <option value="total_assets">总资产</option>
-                <option value="market">总市值</option>
-                <option value="cash">现金</option>
-                <option value="cash_ratio">现金占比</option>
-              </select>
+          <article class="panel">
+            <div class="panel-head">
+              <h2>收益率走势</h2>
+              <span id="analysisRateSummary" class="caption"></span>
             </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="analysisAssetChart" width="700" height="320"></canvas>
-            <div id="analysisAssetTooltip" class="chart-tooltip"></div>
-          </div>
-        </article>
+            <div class="chart-wrap">
+              <canvas id="analysisRateChart" width="700" height="320"></canvas>
+              <div id="analysisRateTooltip" class="chart-tooltip"></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>收益走势</h2>
+              <span id="analysisProfitSummary" class="caption"></span>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="analysisProfitChart" width="700" height="320"></canvas>
+              <div id="analysisProfitTooltip" class="chart-tooltip"></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <h2>资产结构走势</h2>
+              <div class="asset-mode-wrap">
+                <label for="assetCurveMode" class="caption">显示</label>
+                <select id="assetCurveMode" class="asset-mode-select">
+                  <option value="total_assets">总资产</option>
+                  <option value="market">总市值</option>
+                  <option value="cash">现金</option>
+                  <option value="cash_ratio">现金占比</option>
+                </select>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="analysisAssetChart" width="700" height="320"></canvas>
+              <div id="analysisAssetTooltip" class="chart-tooltip"></div>
+            </div>
+          </article>
+        </div>
 
         <article class="panel analysis-stock-rank-panel">
           <div class="panel-head">
