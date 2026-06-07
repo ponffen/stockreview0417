@@ -2464,7 +2464,6 @@ async function refreshStockRecordChartsOnly(symKey) {
     return;
   }
   const range = state.stockRecordChartRange || "30";
-  resetStockRecordChartViewport();
   const accountId = state.stockRecordFromPublicProfile ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
   const publicTargetId = stockRecordPublicTargetId();
   setStockRecordChartPointsLoading(true);
@@ -2482,6 +2481,7 @@ async function refreshStockRecordChartsOnly(symKey) {
       return;
     }
     state.stockRecordBundle.charts = partial.charts;
+    fitStockRecordChartViewportFromBundle(state.stockRecordBundle);
     syncStockRecordRangeChipUi();
     drawStockRecordCharts(key, stockRecordTradesForActiveSymbol(key));
   } catch (error) {
@@ -2551,7 +2551,6 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   setStockRecordPageLoading(true);
   state.stockRecordBundle = null;
   state.stockRecordChartRange = "30";
-  resetStockRecordChartViewport();
   try {
     const bundle =
       !isPublic || publicTargetId
@@ -2565,6 +2564,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     state.stockRecordBundle = bundle;
     if (bundle) {
       applyStockRecordBundleDefaults(bundle);
+      fitStockRecordChartViewportFromBundle(bundle);
     }
     if (!state.stockRecordBundle) {
       await ensureSymbolData(key);
@@ -3277,7 +3277,6 @@ function bindEvents() {
     }
     state.stockRecordChartRange = nextRange;
     syncStockRecordRangeChipUi();
-    resetStockRecordChartViewport();
     void refreshStockRecordChartsOnly(state.activeRecordSymbol);
   });
   stockSortButtons.forEach((button) => {
@@ -3312,11 +3311,9 @@ function bindEvents() {
     } else if (value === "all") {
       state.analysisRangeMode = "all";
       state.analysisPreset = null;
-      resetAnalysisChartViewport();
     } else if (value === "mtd") {
       state.analysisRangeMode = "preset";
       state.analysisPreset = "mtd";
-      resetAnalysisChartViewport();
     } else {
       state.analysisRangeMode = "preset";
       const n = Number(value);
@@ -3327,7 +3324,6 @@ function bindEvents() {
         state.analysisPreset = null;
         state.rangeDays = n;
       }
-      resetAnalysisChartViewport();
     }
     persistState();
     if (analysisMetricsUiActive()) {
@@ -3374,7 +3370,6 @@ function bindEvents() {
     state.customRangeDraftEnd = end;
     state.analysisRangeMode = "custom";
     state.analysisPreset = null;
-    resetAnalysisChartViewport();
     persistState();
     renderControls();
     if (analysisMetricsUiActive()) {
@@ -5336,7 +5331,7 @@ async function loadPublicAnalysisTabData(targetId) {
       return;
     }
     const renderRequestId = ++analysisRenderRequestSeq;
-    await paintAnalysisFromMetricsApi(renderRequestId, tid, { resetViewport: true, bundle });
+    await paintAnalysisFromMetricsApi(renderRequestId, tid, { fitViewport: true, bundle });
   } finally {
     if (analysisMounted) {
       hideAnalysisBlockLoading();
@@ -7530,14 +7525,45 @@ function isStockRecordChartMode(mode) {
   return mode === "stock" || mode === "stock-profit" || mode === "stock-weight";
 }
 
-function resetAnalysisChartViewport() {
-  state.analysisChartWindow = ANALYSIS_CHART_DEFAULT_WINDOW;
-  state.analysisPanOffset = 0;
+/** 区间切换 / 进页：一屏展示当前序列全部点（仍可 pinch 放大，最小 7 点）。 */
+function fitChartViewportToSeries(totalCount, viewport) {
+  const n = Math.max(0, Number(totalCount) || 0);
+  const fitWindow = n > 0 ? Math.max(ANALYSIS_CHART_MIN_WINDOW, n) : ANALYSIS_CHART_DEFAULT_WINDOW;
+  viewport.setWindow(fitWindow);
+  viewport.setOffset(0);
 }
 
-function resetStockRecordChartViewport() {
-  state.stockRecordWindow = ANALYSIS_CHART_DEFAULT_WINDOW;
-  state.stockRecordOffset = 0;
+function fitAnalysisChartViewportToSeries(totalCount) {
+  fitChartViewportToSeries(totalCount, {
+    setWindow: (windowSize) => {
+      state.analysisChartWindow = windowSize;
+    },
+    setOffset: (offset) => {
+      state.analysisPanOffset = offset;
+    },
+  });
+}
+
+function fitStockRecordChartViewportFromBundle(bundle) {
+  fitChartViewportToSeries(stockRecordChartPointsFromBundle(bundle).length, {
+    setWindow: (windowSize) => {
+      state.stockRecordWindow = windowSize;
+    },
+    setOffset: (offset) => {
+      state.stockRecordOffset = offset;
+    },
+  });
+}
+
+function analysisMetricsChartSeriesPointCount(bundle, isPublicView = false) {
+  const series = bundle?.series || {};
+  const fullTwrPts = series.stageRate || series.dailyTwr || [];
+  const fullProfitPts = series.stageProfit || series.dailyProfit || [];
+  const fullBenchPts = bundle?.benchmark?.points || [];
+  const fullAssetRows = analysisAssetChartRowsFromSeries(series, {
+    normalizedAmounts: isPublicView,
+  });
+  return Math.max(fullTwrPts.length, fullProfitPts.length, fullBenchPts.length, fullAssetRows.length, 0);
 }
 
 /** 在已缓存的全量序列上裁切可见窗口（最新在右，offset 越大越早） */
@@ -8195,8 +8221,8 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
   const retPack = bundle?.returns;
   if (renderRequestId !== analysisRenderRequestSeq) return false;
   if (!fullTwrPts.length && !fullProfitPts.length) return false;
-  if (opts.resetViewport) {
-    resetAnalysisChartViewport();
+  if (opts.fitViewport) {
+    fitAnalysisChartViewportToSeries(analysisMetricsChartSeriesPointCount(bundle, isPublicView));
   }
   const metaAlgo = String(bundle?.meta?.algoMode || "").trim();
   const useMwrUi = isPublicView
@@ -8431,7 +8457,7 @@ async function renderAnalysis(options = {}) {
     clearAnalysisChartsToEmpty();
     if (apiReady) {
       const metricsPainted = await paintAnalysisFromMetricsApi(renderRequestId, "", {
-        resetViewport: showLoading,
+        fitViewport: showLoading || blockLoading,
       });
       if (metricsPainted && renderRequestId === analysisRenderRequestSeq) {
         return;
@@ -8532,7 +8558,6 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.previousRoute = state.route;
   state.stockRecordChartRange = "30";
   state.stockRecordBundle = null;
-  resetStockRecordChartViewport();
   state.stockRecordTrades = [];
   resetStockRecordTradesPager();
   state.stockRecordTradesLoading = true;
