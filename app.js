@@ -8252,7 +8252,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
       ? `${formatNumber(value, 2)}%`
       : isPublicView
         ? formatNumber(value, 4)
-        : formatNumber(analysisSnapshotMoneyFromCny(value), 2);
+        : formatNumber(value, 2);
   const profitValueFormatter = (v) => formatNumber(v, isPublicView ? 4 : 2);
 
   const rebuildVisibleAnalysisSeries = () => {
@@ -9828,10 +9828,6 @@ function drawSingleLineChart(canvas, series, color) {
   return drawDualLineChart(canvas, series, null, color, null);
 }
 
-function analysisSnapshotMoneyFromCny(cnyVal) {
-  return amountBookFromCny(Number(cnyVal) || 0, getOverviewBookCurrency());
-}
-
 const ASSET_CHART_Y_MIN_FACTOR = 0.95;
 const ASSET_CHART_Y_MAX_FACTOR = 1.05;
 
@@ -9839,7 +9835,7 @@ function drawAssetChart(assetSeries, canvas, trendMode, chartOpts = {}) {
   const targetCanvas = canvas || analysisAssetChart;
   const mode = trendMode != null ? trendMode : state.capitalTrendMode;
   const normalizedAmounts = chartOpts.normalizedAmounts === true;
-  const fmtMoney = (v) => formatNumber(analysisSnapshotMoneyFromCny(v), 2);
+  const fmtMoney = (v) => formatNumber(v, 2);
   const fmtIndex = (v) => formatNumber(v, 4);
   const fmtAmount = normalizedAmounts ? fmtIndex : fmtMoney;
   const cfg =
