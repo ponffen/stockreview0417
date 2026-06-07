@@ -1159,7 +1159,7 @@ async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, met
       }
       const display =
         m === "cash_ratio"
-          ? fmtPercentRatio(valueCny / 100)
+          ? fmtPercentRatio(valueCny)
           : formatMoneyAssetForScope(valueCny, scope, book, fxU, fxH);
       return { date: r.date, value: valueCny, valueDisplay: display };
     });
@@ -1224,7 +1224,6 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
     const mvCny = Number(r.marketValue) || 0;
     const cashCny = Number(r.cash) || 0;
     const ratioRaw = Number(r.cashRatio) || 0;
-    const ratio = ratioRaw <= 1 && ratioRaw >= 0 ? ratioRaw : ratioRaw / 100;
     totalAssets.push({
       date: r.date,
       totalAssets: formatPlainAssetForScope(taCny, scope, book, fxU, fxH),
@@ -1239,7 +1238,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
     });
     cashRatio.push({
       date: r.date,
-      cashRatio: fmtPercentRatio(ratio),
+      cashRatio: fmtPercentRatio(ratioRaw),
     });
   }
 
