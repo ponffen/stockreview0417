@@ -601,8 +601,6 @@ module.exports = async function handler(req, res) {
     req.method === "POST" && pathOnly === "/api/admin/create-symbol-name-map";
   const isUpsertSymbolNameMapDirect =
     req.method === "POST" && pathOnly === "/api/admin/upsert-symbol-name-map";
-  const isSymbolNameMapDirect =
-    req.method === "GET" && pathOnly === "/api/symbol-name-map";
   const isSnapshotWatermarkDirect = req.method === "GET" && pathOnly === "/api/snapshot/watermark";
   const isSnapshotAccountDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/account-daily";
   const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
@@ -624,7 +622,7 @@ module.exports = async function handler(req, res) {
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
   const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
 
-  if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect || isSymbolNameMapDirect) {
+  if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     try {
@@ -635,7 +633,7 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
-      const { createSymbolNameMapTableNow, getSymbolNameMap, normalizeSymbol } = require("../src/db");
+      const { createSymbolNameMapTableNow } = require("../src/db");
       if (isCreateSymbolNameMapDirect) {
         const created = await createSymbolNameMapTableNow();
         res.statusCode = 200;
@@ -662,17 +660,6 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: true, count }));
         return;
       }
-      const raw = req.query?.symbols != null ? String(req.query.symbols) : "";
-      const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
-      if (!symbols.length) {
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: {} }));
-        return;
-      }
-      const data = await getSymbolNameMap(symbols);
-      res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, data }));
-      return;
     } catch (error) {
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));

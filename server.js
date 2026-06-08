@@ -1432,26 +1432,6 @@ app.get("/api/stock/name", async (req, res) => {
   }
 });
 
-app.get("/api/symbol-name-map", requireAuth, async (req, res) => {
-  try {
-    const raw = req.query.symbols != null ? String(req.query.symbols) : "";
-    const symbols = [...new Set(raw.split(",").map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
-    if (symbols.length > 600) {
-      res.status(400).json({ ok: false, error: "too many symbols" });
-      return;
-    }
-    if (!symbols.length) {
-      res.json({ ok: true, data: {} });
-      return;
-    }
-    const data = await getSymbolNameMap(symbols);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, data });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "symbol name map failed" });
-  }
-});
-
 app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => {
   try {
     const created = await createSymbolNameMapTableNow();

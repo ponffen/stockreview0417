@@ -267,8 +267,6 @@ let cachedAnalysisAssetChartRows = null;
 let cachedAnalysisMetricsCharts = null;
 let pendingSettingsSyncPayload = null;
 let pendingSettingsSyncTimer = null;
-const symbolNameFetchedAt = new Map();
-const symbolNameHydrateInFlight = new Map();
 const symbolNameSyncedAt = new Map();
 const SYMBOL_NAME_UPSERT_DEBOUNCE_MS = 800;
 const symbolNamePendingUpsertBySymbol = new Map();
@@ -832,14 +830,6 @@ async function startAppAfterAuth(options = {}) {
   if (isEarningHomeRoute() && apiReady) {
     await refreshOverviewProfitRowFromSnapshots();
   }
-  // 首屏先渲染：外链可能长久 pending，Previously 在此 await 会卡住「加载中…」遮罩
-  void hydrateSymbolNameMap(
-    state.route === "earning" || state.route === "analysis"
-      ? collectSymbolsForMarket()
-      : normalizeSymbolList(state.trades.map((trade) => trade.symbol))
-  ).then(() => {
-    renderAll();
-  });
   renderAll();
   if (state.route !== "earning") {
     void refreshMarketData({ skipFinalRender: true }).finally(() => {
@@ -1469,18 +1459,6 @@ function getKlineBySymbol(symbol) {
   return state.klineMap[normalized] || (legacyAlias ? state.klineMap[legacyAlias] : null) || [];
 }
 
-function normalizeSymbolList(input) {
-  return [...new Set((input || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
-}
-
-function markSymbolNameFetched(symbol) {
-  const normalized = normalizeSymbol(symbol);
-  if (!normalized) {
-    return;
-  }
-  symbolNameFetchedAt.set(normalized, Date.now());
-}
-
 function upsertNameMapEntry(symbol, name) {
   const normalized = normalizeSymbol(symbol);
   const label = String(name || "").trim();
@@ -1491,63 +1469,6 @@ function upsertNameMapEntry(symbol, name) {
   const legacyAlias = getLegacyUsAlias(normalized);
   if (legacyAlias) {
     state.nameMap[legacyAlias] = label;
-  }
-  markSymbolNameFetched(normalized);
-}
-
-async function hydrateSymbolNameMap(symbols, options = {}) {
-  if (!apiReady) {
-    return;
-  }
-  const force = options.force === true;
-  const uniq = normalizeSymbolList(symbols);
-  if (!uniq.length) {
-    return;
-  }
-  const now = Date.now();
-  const pending = force
-    ? uniq
-    : uniq.filter((symbol) => {
-        if (state.nameMap[symbol]) {
-          return false;
-        }
-        const lastTs = Number(symbolNameFetchedAt.get(symbol) || 0);
-        return !lastTs || now - lastTs > SYMBOL_NAME_MAP_TTL_MS;
-      });
-  if (!pending.length) {
-    return;
-  }
-  const key = pending.slice().sort().join(",");
-  const inFlight = symbolNameHydrateInFlight.get(key);
-  if (inFlight) {
-    await inFlight;
-    return;
-  }
-  const task = (async () => {
-    try {
-      const response = await apiFetch(
-        `${getApiBaseForFetch()}/symbol-name-map?symbols=${encodeURIComponent(pending.join(","))}`,
-        { cache: "no-store", timeoutMs: 10_000 }
-      );
-      const payload = await response.json().catch(() => ({}));
-      const map = payload?.ok && payload.data && typeof payload.data === "object" ? payload.data : {};
-      for (const symbol of pending) {
-        const name = String(map[symbol] || "").trim();
-        if (name) {
-          upsertNameMapEntry(symbol, name);
-        } else {
-          markSymbolNameFetched(symbol);
-        }
-      }
-    } catch {
-      // ignore network failures; next cycle retries
-    }
-  })();
-  symbolNameHydrateInFlight.set(key, task);
-  try {
-    await task;
-  } finally {
-    symbolNameHydrateInFlight.delete(key);
   }
 }
 
@@ -4766,7 +4687,6 @@ async function loadCommunityFeed() {
       communityFeedList.innerHTML = `<p class="empty">暂无已关注用户的交易动态，可在「排行」或他人主页关注用户后查看</p>`;
       return;
     }
-    await hydrateSymbolNameMap(rows.map((row) => row.symbol));
     communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");
   } catch {
     communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
@@ -4796,7 +4716,6 @@ async function loadCommunityFollowing() {
       communityFollowingList.innerHTML = `<p class="empty">还没有关注任何人</p>`;
       return;
     }
-    await hydrateSymbolNameMap(cards.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityFollowingList.innerHTML = cards.map((c) => wrapInteractiveCommunityCard(c)).join("");
   } catch {
     communityFollowingList.innerHTML = `<p class="empty">网络错误</p>`;
@@ -4826,7 +4745,6 @@ async function loadCommunityLeaderboard() {
       communityLeaderboardList.innerHTML = `<p class="empty">暂无排行（需公开社区、满足归一条件并有交易）</p>`;
       return;
     }
-    await hydrateSymbolNameMap(entries.flatMap((card) => (card?.topPositions || []).map((p) => p?.symbol)));
     communityLeaderboardList.innerHTML = entries
       .map((c, idx) =>
         wrapInteractiveCommunityCard(c, { showRank: idx + 1 }),
@@ -5476,7 +5394,6 @@ async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
       Number(pagination.offset ?? communityPublicTradesPager.offset) + rows.length;
     communityPublicTradesPager.hasMore = pagination.hasMore === true;
     communityPublicTradesPager.loaded = true;
-    await hydrateSymbolNameMap(rows.map((row) => row?.symbol));
   } catch {
     if (gen === communityPublicTradesPager.gen) {
       communityPublicTradesPager.hasMore = false;
@@ -8515,12 +8432,7 @@ async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
   const trade = tradeSource.find((t) => normalizeSymbol(t.symbol) === symKey);
   const quote = getQuoteBySymbol(symKey);
   const positionName = (trade && trade.name) || (quote && quote.name) || "";
-  let name = getDisplayName(symKey, positionName);
-  const mkt = inferMarket(symKey);
-  if (apiReady && (mkt === "A股" || mkt === "港股") && !hasCnNameLabel(name)) {
-    await hydrateSymbolNameMap([symKey], { force: true });
-    name = getDisplayName(symKey, positionName);
-  }
+  const name = getDisplayName(symKey, positionName);
   const prefill = { symbol: symKey, name: String(name).trim() || symKey };
   if (accountSource === "stock-record") {
     if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
@@ -10664,8 +10576,6 @@ async function refreshMarketData(opts = {}) {
 
   try {
     const symbols = collectSymbolsForMarket();
-    const klineSymbols = collectKlineSymbolsForMarket();
-    void hydrateSymbolNameMap([...symbols, ...klineSymbols]);
     if (!symbols.length) {
       state.marketLoading = false;
       if (!skipFinalRender && state.route !== "analysis") {
