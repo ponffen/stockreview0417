@@ -13,6 +13,9 @@ const copies = [
   ["app.js", "app.js"],
   ["styles.css", "styles.css"],
   ["quote-smoke-test.html", "quote-smoke-test.html"],
+  ["public/favicon.ico", "favicon.ico"],
+  ["public/icon.png", "icon.png"],
+  ["public/icon.png", "public/icon.png"],
 ];
 
 fs.mkdirSync(destDir, { recursive: true });
@@ -36,6 +39,7 @@ for (const [srcRel, destName] of copies) {
     fs.writeFileSync(dest, html);
     continue;
   }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
 }
 

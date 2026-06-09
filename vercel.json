@@ -55,6 +55,8 @@
     { "source": "/api/assets", "destination": "/api/assets" },
     { "source": "/api/assets/", "destination": "/api/assets" },
     { "source": "/favicon.ico", "destination": "/api/assets?file=favicon.ico" },
+    { "source": "/public/icon.png", "destination": "/api/assets?file=public/icon.png" },
+    { "source": "/icon.png", "destination": "/api/assets?file=icon.png" },
     { "source": "/styles.css", "destination": "/api/assets?file=styles.css" },
     { "source": "/app.js", "destination": "/api/assets?file=app.js" },
     { "source": "/quote-smoke-test.html", "destination": "/api/assets?file=quote-smoke-test.html" },

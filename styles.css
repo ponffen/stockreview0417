@@ -2398,23 +2398,77 @@ body.auth-mode {
 .auth-gate {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 24px 16px;
+  padding: 20px 16px 24px;
+  overflow-y: auto;
+}
+
+.auth-screen {
+  width: min(100%, 380px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .auth-card {
-  width: min(100%, 380px);
+  width: 100%;
   background: var(--panel);
   border-radius: 14px;
   padding: 22px 18px;
   box-shadow: 0 8px 28px rgb(0 0 0 / 8%);
 }
 
-.auth-title {
-  margin: 0 0 18px;
-  font-size: 20px;
+.product-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
   text-align: center;
+}
+
+.product-brand__icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  object-fit: contain;
+}
+
+.product-brand__name {
+  margin: 12px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.product-brand__intro {
+  margin-top: 16px;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  text-align: left;
+  max-height: min(42vh, 280px);
+  overflow-y: auto;
+}
+
+.product-brand__intro p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.product-brand__intro p:last-child {
+  margin-bottom: 0;
+}
+
+.product-brand--mine .product-brand__intro {
+  max-height: none;
+  overflow: visible;
 }
 
 .auth-form .form-row {

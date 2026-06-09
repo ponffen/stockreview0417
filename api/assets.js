@@ -10,6 +10,8 @@ const ASSET_META = {
   "app.js": "application/javascript; charset=utf-8",
   "quote-smoke-test.html": "text/html; charset=utf-8",
   "favicon.ico": "image/x-icon",
+  "icon.png": "image/png",
+  "public/icon.png": "image/png",
 };
 
 function parseRequestedFile(reqUrl) {
@@ -24,6 +26,7 @@ function parseRequestedFile(reqUrl) {
 function resolveAssetPath(fileName) {
   const candidates = [
     path.join(__dirname, "public", fileName),
+    path.join(__dirname, "..", "public", fileName),
     path.join(__dirname, "..", fileName),
   ];
   for (const p of candidates) {
