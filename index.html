@@ -275,7 +275,10 @@
           <article class="panel">
             <div class="panel-head">
               <h2>收益率走势</h2>
-              <span id="analysisRateSummary" class="caption"></span>
+              <span class="chart-latest-pill">
+                <span class="chart-latest-label">最新</span>
+                <span id="analysisRateLatest" class="chart-latest-value">–</span>
+              </span>
             </div>
             <div class="chart-wrap">
               <canvas id="analysisRateChart" width="700" height="320"></canvas>
@@ -286,7 +289,10 @@
           <article class="panel">
             <div class="panel-head">
               <h2>收益走势</h2>
-              <span id="analysisProfitSummary" class="caption"></span>
+              <span class="chart-latest-pill">
+                <span class="chart-latest-label">最新</span>
+                <span id="analysisProfitLatest" class="chart-latest-value">–</span>
+              </span>
             </div>
             <div class="chart-wrap">
               <canvas id="analysisProfitChart" width="700" height="320"></canvas>
@@ -296,9 +302,8 @@
 
           <article class="panel">
             <div class="panel-head">
-              <h2>资产结构走势</h2>
-              <div class="asset-mode-wrap">
-                <label for="assetCurveMode" class="caption">显示</label>
+              <div class="panel-head-title-row">
+                <h2>资产结构走势</h2>
                 <select id="assetCurveMode" class="asset-mode-select">
                   <option value="total_assets">总资产</option>
                   <option value="market">总市值</option>
@@ -306,6 +311,10 @@
                   <option value="cash_ratio">现金占比</option>
                 </select>
               </div>
+              <span class="chart-latest-pill">
+                <span class="chart-latest-label">最新</span>
+                <span id="analysisAssetLatest" class="chart-latest-value">–</span>
+              </span>
             </div>
             <div class="chart-wrap">
               <canvas id="analysisAssetChart" width="700" height="320"></canvas>

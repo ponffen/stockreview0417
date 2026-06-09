@@ -359,8 +359,9 @@ const stockCurrencyToggle = document.getElementById("stockCurrencyToggle");
 const stockSortButtons = [...document.querySelectorAll(".th-sort-btn")];
 const accountForm = document.getElementById("accountForm");
 const accountTableBody = document.getElementById("accountTableBody");
-const analysisRateSummary = document.getElementById("analysisRateSummary");
-const analysisProfitSummary = document.getElementById("analysisProfitSummary");
+const analysisRateLatest = document.getElementById("analysisRateLatest");
+const analysisProfitLatest = document.getElementById("analysisProfitLatest");
+const analysisAssetLatest = document.getElementById("analysisAssetLatest");
 const analysisEodAccountCaption = document.getElementById("analysisEodAccountCaption");
 const analysisRateChart = document.getElementById("analysisRateChart");
 const analysisProfitChart = document.getElementById("analysisProfitChart");
@@ -6015,14 +6016,94 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
   return true;
 }
 
+function setAnalysisChartLatestValue(el, text, tone = "") {
+  if (!el) {
+    return;
+  }
+  el.textContent = text != null && String(text).trim() !== "" ? String(text) : "–";
+  el.classList.remove("chart-latest-value--up", "chart-latest-value--down");
+  if (tone === "up") {
+    el.classList.add("chart-latest-value--up");
+  } else if (tone === "down") {
+    el.classList.add("chart-latest-value--down");
+  }
+}
+
+function formatAnalysisLatestSignedNumber(value, fraction = 2) {
+  const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const sign = safe > 0 ? "+" : safe < 0 ? "-" : "";
+  return `${sign}${formatNumber(Math.abs(safe), fraction)}`;
+}
+
+function analysisLatestValueTone(value, neutral = false) {
+  if (neutral || value == null || !Number.isFinite(Number(value))) {
+    return "";
+  }
+  const n = Number(value);
+  if (n > 0) {
+    return "up";
+  }
+  if (n < 0) {
+    return "down";
+  }
+  return "";
+}
+
+function updateAnalysisChartLatestSummaries() {
+  const c = cachedAnalysisMetricsCharts;
+  if (!c) {
+    setAnalysisChartLatestValue(analysisRateLatest, "–");
+    setAnalysisChartLatestValue(analysisProfitLatest, "–");
+    setAnalysisChartLatestValue(analysisAssetLatest, "–");
+    return;
+  }
+  if (c.useMwrUi) {
+    setAnalysisChartLatestValue(analysisRateLatest, "–");
+  } else {
+    const lastRate = c.mySeries?.at(-1)?.rate;
+    setAnalysisChartLatestValue(
+      analysisRateLatest,
+      lastRate != null && Number.isFinite(Number(lastRate)) ? formatPercent(Number(lastRate)) : "–",
+      analysisLatestValueTone(lastRate),
+    );
+  }
+  const lastProfit = c.profitSeries?.at(-1)?.value;
+  if (lastProfit != null && Number.isFinite(Number(lastProfit))) {
+    const profitText = c.isPublicView
+      ? formatNumber(Number(lastProfit), 4)
+      : formatAnalysisLatestSignedNumber(lastProfit, 2);
+    setAnalysisChartLatestValue(analysisProfitLatest, profitText, analysisLatestValueTone(lastProfit));
+  } else {
+    setAnalysisChartLatestValue(analysisProfitLatest, "–");
+  }
+  const assetKey =
+    state.capitalTrendMode === "market"
+      ? "market"
+      : state.capitalTrendMode === "cash"
+        ? "cash"
+        : state.capitalTrendMode === "cash_ratio"
+          ? "cashRatio"
+          : "totalAssets";
+  const lastAssetRow = cachedAnalysisAssetChartRows?.at(-1);
+  const lastAssetVal = lastAssetRow != null ? Number(lastAssetRow[assetKey]) : null;
+  if (lastAssetVal != null && Number.isFinite(lastAssetVal)) {
+    const assetText =
+      typeof c.assetValueFormatter === "function"
+        ? c.assetValueFormatter(lastAssetVal)
+        : formatNumber(lastAssetVal, 2);
+    const assetNeutral = state.capitalTrendMode === "cash_ratio" || c.isPublicView;
+    setAnalysisChartLatestValue(
+      analysisAssetLatest,
+      assetText,
+      analysisLatestValueTone(lastAssetVal, assetNeutral),
+    );
+  } else {
+    setAnalysisChartLatestValue(analysisAssetLatest, "–");
+  }
+}
+
 function setAnalysisSummariesDash() {
-  if (analysisRateSummary) {
-    analysisRateSummary.textContent =
-      state.benchmark === "none" ? "我的收益率 –" : "我的 – / 基准 – / 对比 –";
-  }
-  if (analysisProfitSummary) {
-    analysisProfitSummary.textContent = "累计收益 –";
-  }
+  updateAnalysisChartLatestSummaries();
 }
 
 function clearAnalysisChartsToEmpty() {
@@ -7974,6 +8055,7 @@ function repaintAnalysisAssetChartFromCache() {
     onRedraw: cachedAnalysisMetricsCharts.redrawChartsOnly,
     valueFormatter: cachedAnalysisMetricsCharts.assetValueFormatter,
   });
+  updateAnalysisChartLatestSummaries();
 }
 
 function bindAnalysisMetricsChartsInteractive() {
@@ -8045,7 +8127,6 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
   const benchPack = bundle?.benchmark;
   const fullBenchPts = benchPack?.points || [];
   const rankPack = bundle?.stockRank;
-  const retPack = bundle?.returns;
   if (renderRequestId !== analysisRenderRequestSeq) return false;
   if (!fullTwrPts.length && !fullProfitPts.length) return false;
   if (opts.fitViewport) {
@@ -8132,6 +8213,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     c.payloads.asset = drawAssetChart(cachedAnalysisAssetChartRows, undefined, undefined, {
       normalizedAmounts: c.isPublicView === true,
     });
+    updateAnalysisChartLatestSummaries();
   };
 
   cachedAnalysisMetricsCharts = {
@@ -8158,26 +8240,6 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     },
   };
   redrawChartsOnly();
-  if (analysisRateSummary) {
-    const lastBenchPt = trimMetricsSeriesPoints(benchPack?.points || []).at(-1);
-    if (useMwrUi) {
-      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(retPack?.rate)}`;
-    } else if (state.benchmark === "none") {
-      analysisRateSummary.textContent = `我的收益率 ${bundleFmtText(retPack?.rate)}`;
-    } else {
-      const myPct = bundleFmtText(retPack?.rate);
-      const benchPct = bundleFmtText(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
-      const diff =
-        parseBundlePercent(retPack?.rate) -
-        parseBundlePercent(lastBenchPt?.rate ?? lastBenchPt?.rateDisplay);
-      analysisRateSummary.textContent = `我的 ${myPct} / 基准 ${benchPct} / 对比 ${formatPercent(diff)}`;
-    }
-  }
-  if (analysisProfitSummary && retPack) {
-    analysisProfitSummary.textContent = isPublicView
-      ? `相对首日 ${bundleFmtText(retPack.profit)}`
-      : `累计收益 ${bundleFmtText(retPack.profit)}`;
-  }
   paintStockRankFromBundle(rankPack, analysisStockRankBody, {
     publicStockRankLayout: isPublicView,
   });
