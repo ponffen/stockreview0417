@@ -2097,11 +2097,29 @@ h2 {
   color: var(--down, #00a870);
 }
 
+.stock-record-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.stock-record-section-head .stock-record-section-title {
+  margin: 0;
+}
+
 .stock-record-section-title {
   margin: 0 0 8px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+}
+
+.chart-latest-pill--stock-hold {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 4px;
 }
 
 .stock-record-trades-section .stock-record-section-title {

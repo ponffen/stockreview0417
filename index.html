@@ -900,7 +900,15 @@
             </div>
 
           <div class="stock-record-chart-section">
-            <h4 class="stock-record-section-title">持仓市值/股数</h4>
+            <div class="stock-record-section-head">
+              <h4 class="stock-record-section-title">持仓市值/股数</h4>
+              <span class="chart-latest-pill chart-latest-pill--stock-hold">
+                <span class="chart-latest-label">最新股数</span>
+                <span id="stockRecordLatestShares" class="chart-latest-value">–</span>
+                <span class="chart-latest-label">市值</span>
+                <span id="stockRecordLatestMarketValue" class="chart-latest-value">–</span>
+              </span>
+            </div>
             <div class="stock-record-legend stock-record-chart-toggles">
               <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleClose" checked /> 收盘价 <span class="stock-record-toggle-line stock-record-toggle-line--close" aria-hidden="true"></span></label>
               <label class="stock-record-toggle"><input type="checkbox" id="stockRecordToggleShares" checked /> 持仓股数 <span class="stock-record-toggle-line stock-record-toggle-line--shares" aria-hidden="true"></span></label>
@@ -915,7 +923,13 @@
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
           <div class="stock-record-chart-block">
-            <h4 class="stock-record-section-title">持仓收益</h4>
+            <div class="stock-record-section-head">
+              <h4 class="stock-record-section-title">持仓收益</h4>
+              <span class="chart-latest-pill">
+                <span class="chart-latest-label">最新</span>
+                <span id="stockRecordProfitLatest" class="chart-latest-value">–</span>
+              </span>
+            </div>
             <div class="chart-wrap">
               <canvas id="stockRecordProfitChart" width="700" height="320"></canvas>
               <div id="stockRecordProfitTooltip" class="chart-tooltip"></div>
@@ -925,7 +939,13 @@
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
           <div class="stock-record-chart-block">
-            <h4 class="stock-record-section-title">持仓占比</h4>
+            <div class="stock-record-section-head">
+              <h4 class="stock-record-section-title">持仓占比</h4>
+              <span class="chart-latest-pill">
+                <span class="chart-latest-label">最新</span>
+                <span id="stockRecordWeightLatest" class="chart-latest-value">–</span>
+              </span>
+            </div>
             <div class="chart-wrap">
               <canvas id="stockRecordWeightChart" width="700" height="320"></canvas>
               <div id="stockRecordWeightTooltip" class="chart-tooltip"></div>

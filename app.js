@@ -492,6 +492,10 @@ const tradeStockSearchResults = document.getElementById("tradeStockSearchResults
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
 const stockRecordWeightTooltip = document.getElementById("stockRecordWeightTooltip");
 const stockRecordProfitTooltip = document.getElementById("stockRecordProfitTooltip");
+const stockRecordLatestShares = document.getElementById("stockRecordLatestShares");
+const stockRecordLatestMarketValue = document.getElementById("stockRecordLatestMarketValue");
+const stockRecordProfitLatest = document.getElementById("stockRecordProfitLatest");
+const stockRecordWeightLatest = document.getElementById("stockRecordWeightLatest");
 const appRouteLoading = document.getElementById("appRouteLoading");
 const appRouteLoadingText = document.getElementById("appRouteLoadingText");
 
@@ -2241,6 +2245,7 @@ function setStockRecordChartPointsLoading(loading) {
 }
 
 function clearStockRecordChart() {
+  clearStockRecordLatestSummaries();
   for (const canvas of [stockRecordChart, stockRecordProfitChart, stockRecordWeightChart]) {
     if (!canvas) {
       continue;
@@ -6091,12 +6096,7 @@ function updateAnalysisChartLatestSummaries() {
       typeof c.assetValueFormatter === "function"
         ? c.assetValueFormatter(lastAssetVal)
         : formatNumber(lastAssetVal, 2);
-    const assetNeutral = state.capitalTrendMode === "cash_ratio" || c.isPublicView;
-    setAnalysisChartLatestValue(
-      analysisAssetLatest,
-      assetText,
-      analysisLatestValueTone(lastAssetVal, assetNeutral),
-    );
+    setAnalysisChartLatestValue(analysisAssetLatest, assetText, "");
   } else {
     setAnalysisChartLatestValue(analysisAssetLatest, "–");
   }
@@ -6104,6 +6104,59 @@ function updateAnalysisChartLatestSummaries() {
 
 function setAnalysisSummariesDash() {
   updateAnalysisChartLatestSummaries();
+}
+
+function clearStockRecordLatestSummaries() {
+  setAnalysisChartLatestValue(stockRecordLatestShares, "–");
+  setAnalysisChartLatestValue(stockRecordLatestMarketValue, "–");
+  setAnalysisChartLatestValue(stockRecordProfitLatest, "–");
+  setAnalysisChartLatestValue(stockRecordWeightLatest, "–");
+}
+
+function updateStockRecordChartLatestSummaries(visible, isPubChart) {
+  const last = Array.isArray(visible) && visible.length ? visible[visible.length - 1] : null;
+  if (!last) {
+    clearStockRecordLatestSummaries();
+    return;
+  }
+  const fmtShares = (value) => formatNumber(value, isPubChart ? 4 : 0);
+  const fmtMarket = (value) => formatNumber(value, isPubChart ? 4 : 2);
+  const shares = last.shares ?? last.qty;
+  const market =
+    last.marketValueNative != null && Number.isFinite(Number(last.marketValueNative))
+      ? Number(last.marketValueNative)
+      : shares != null && last.price != null && Number.isFinite(Number(shares)) && Number.isFinite(Number(last.price))
+        ? Number(shares) * Number(last.price)
+        : null;
+  if (shares != null && Number.isFinite(Number(shares))) {
+    setAnalysisChartLatestValue(stockRecordLatestShares, fmtShares(shares), "");
+  } else {
+    setAnalysisChartLatestValue(stockRecordLatestShares, "–");
+  }
+  if (market != null && Number.isFinite(Number(market))) {
+    setAnalysisChartLatestValue(stockRecordLatestMarketValue, fmtMarket(market), "");
+  } else {
+    setAnalysisChartLatestValue(stockRecordLatestMarketValue, "–");
+  }
+  const profit = last.profit;
+  if (profit != null && Number.isFinite(Number(profit))) {
+    const profitText = isPubChart
+      ? formatNumber(Number(profit), 4)
+      : formatAnalysisLatestSignedNumber(profit, 2);
+    setAnalysisChartLatestValue(
+      stockRecordProfitLatest,
+      profitText,
+      isPubChart ? "" : analysisLatestValueTone(profit),
+    );
+  } else {
+    setAnalysisChartLatestValue(stockRecordProfitLatest, "–");
+  }
+  const weight = last.weight;
+  if (weight != null && Number.isFinite(Number(weight))) {
+    setAnalysisChartLatestValue(stockRecordWeightLatest, `${formatNumber(Number(weight) * 100, 2)}%`, "");
+  } else {
+    setAnalysisChartLatestValue(stockRecordWeightLatest, "–");
+  }
 }
 
 function clearAnalysisChartsToEmpty() {
@@ -8756,6 +8809,7 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     clearStockRecordChart();
     return;
   }
+  updateStockRecordChartLatestSummaries(visible, isPubChart);
 
   const series = [];
   if (state.stockRecordShowClose) {
@@ -9103,6 +9157,13 @@ function drawStockRecordChartLegacy(symbol, symbolTrades) {
       return formatNumber(value, 2);
     },
   });
+  const legacyVisible = values.map((item) => ({
+    qty: item.qty,
+    price: item.price,
+    shares: item.qty,
+    marketValueNative: Number(item.qty) * Number(item.price),
+  }));
+  updateStockRecordChartLatestSummaries(legacyVisible, useCommunityPublicStockRecord());
 }
 
 function buildSymbolHistoryPoints(symbol, symbolTrades, fallbackPrice = 0) {
