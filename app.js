@@ -156,12 +156,12 @@ const demoTrades = [
 ];
 
 const state = {
-  route: "earning",
-  appModule: "holdings",
+  route: "community-feed",
+  appModule: "community",
   ledgerCounts: null,
   communityProfileUserId: null,
   communityProfileReturnRoute: "community-feed",
-  previousRoute: "earning",
+  previousRoute: "community-feed",
   useDemoData: true,
   algoMode: "twr",
   benchmark: "none",

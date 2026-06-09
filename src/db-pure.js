@@ -3,7 +3,7 @@ const { randomUUID } = require("node:crypto");
 const SEED_USER_PHONE = "18310270720";
 
 const DEFAULT_SETTINGS = {
-  route: "earning",
+  route: "community-feed",
   useDemoData: true,
   algoMode: "twr",
   benchmark: "none",
