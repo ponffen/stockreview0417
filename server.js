@@ -735,8 +735,6 @@ const {
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
   getLatestAnalysisSnapshotDate,
-  getSymbolNameMap,
-  upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,
   getSnapshotWatermark,
@@ -763,15 +761,16 @@ const {
   getLeaderboard,
   getPublicProfileDetail,
   getPublicTradesPage,
-  enrichPublicTradesWithTencent,
   getFollowingCards,
   getFeedTrades,
-  enrichFeedRowsWithTencent,
-  enrichCardsTopPositionsWithTencent,
-  enrichLeaderboardPayloadWithTencent,
+  enrichLeaderboardPayloadWithSymbolNames,
   enrichLeaderboardPayloadWithViewer,
-  enrichPublicProfileDetailWithTencent,
+  enrichTopPositionsOnCards,
 } = require("./src/community-service");
+const {
+  ensureSymbolNameMapOnNewTrade,
+  enrichTradesWithSymbolNames,
+} = require("./src/symbol-name-resolve");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
@@ -1163,7 +1162,7 @@ app.get("/api/community/leaderboard", requireAuth, async (req, res) => {
   try {
     const data = await getLeaderboard();
     await enrichLeaderboardPayloadWithViewer(data, req.userId);
-    await enrichLeaderboardPayloadWithTencent(data);
+    await enrichLeaderboardPayloadWithSymbolNames(data);
     res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "leaderboard failed" });
@@ -1173,7 +1172,7 @@ app.get("/api/community/leaderboard", requireAuth, async (req, res) => {
 app.get("/api/community/following", requireAuth, async (req, res) => {
   try {
     const cards = await getFollowingCards(req.userId);
-    await enrichCardsTopPositionsWithTencent(cards);
+    await enrichTopPositionsOnCards(cards);
     res.json({ ok: true, data: cards });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "following failed" });
@@ -1202,7 +1201,6 @@ app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) 
       return;
     }
     res.set("Cache-Control", "no-store");
-    await enrichPublicProfileDetailWithTencent(detail);
     res.json({ ok: true, data: detail });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "profile failed" });
@@ -1229,7 +1227,6 @@ app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
       return;
     }
     res.set("Cache-Control", "no-store");
-    await enrichPublicTradesWithTencent(data);
     res.json({ ok: true, data: data.data, pagination: data.pagination });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "public trades failed" });
@@ -1355,83 +1352,6 @@ if (PUBLIC_BASE_PATH) {
   );
 }
 
-function eastmoneySuggestQueryInput(normalized) {
-  const n = String(normalized || "").toLowerCase();
-  if (n.startsWith("sz") || n.startsWith("sh")) {
-    return n.slice(2);
-  }
-  if (n.startsWith("hk")) {
-    return n.slice(2).padStart(5, "0");
-  }
-  return "";
-}
-
-function pickEastmoneySuggestRow(normalized, json) {
-  const rows = json?.QuotationCodeTable?.Data;
-  if (!Array.isArray(rows) || !rows.length) {
-    return null;
-  }
-  const n = String(normalized).toLowerCase();
-  if (n.startsWith("hk")) {
-    const hk5 = n.slice(2).padStart(5, "0");
-    return (
-      rows.find(
-        (r) =>
-          String(r.Code).padStart(5, "0") === hk5 &&
-          (r.Classify === "HK" || String(r.QuoteID || "").startsWith("116"))
-      ) ||
-      rows.find((r) => String(r.Code).padStart(5, "0") === hk5) ||
-      null
-    );
-  }
-  if (n.startsWith("sz") || n.startsWith("sh")) {
-    const c6 = n.slice(2);
-    return rows.find((r) => String(r.Code) === c6) || rows[0];
-  }
-  return rows[0];
-}
-
-app.get("/api/stock/name", async (req, res) => {
-  try {
-    const raw = req.query.symbol != null ? String(req.query.symbol) : "";
-    const normalized = normalizeSymbol(raw);
-    if (!normalized) {
-      res.status(400).json({ ok: false, error: "symbol required" });
-      return;
-    }
-    const mapped = await getSymbolNameMap([normalized]);
-    if (mapped?.[normalized]) {
-      res.json({ ok: true, name: mapped[normalized], symbol: normalized });
-      return;
-    }
-    const input = eastmoneySuggestQueryInput(normalized);
-    if (!input) {
-      res.json({ ok: true, name: "", symbol: normalized });
-      return;
-    }
-    const url = `https://searchadapter.eastmoney.com/api/suggest/get?input=${encodeURIComponent(input)}&type=14`;
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; stockreview/1.0)",
-        Referer: "https://www.eastmoney.com/",
-      },
-    });
-    if (!response.ok) {
-      res.json({ ok: true, name: "", symbol: normalized });
-      return;
-    }
-    const json = await response.json();
-    const row = pickEastmoneySuggestRow(normalized, json);
-    const name = String(row?.Name || "").trim();
-    if (name) {
-      void upsertSymbolNameMapBatch([{ symbol: normalized, nameCn: name, source: "eastmoney" }]).catch(() => {});
-    }
-    res.json({ ok: true, name, symbol: normalized });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "name lookup failed" });
-  }
-});
-
 app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => {
   try {
     const created = await createSymbolNameMapTableNow();
@@ -1441,18 +1361,6 @@ app.post("/api/admin/create-symbol-name-map", requireAuth, async (_req, res) => 
     res.status(500).json({ ok: false, error: error.message || "create symbol_name_map failed" });
   }
 });
-
-app.post("/api/admin/upsert-symbol-name-map", requireAuth, async (req, res) => {
-  try {
-    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    const count = await upsertSymbolNameMapBatch(rows);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, count });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "upsert symbol_name_map failed" });
-  }
-});
-
 
 function metricsAccountIdFromQuery(query) {
   return String(query?.account_id || query?.accountScope || "all").trim() || "all";
@@ -1626,16 +1534,20 @@ app.get("/api/trades", requireAuth, async (req, res) => {
     }
     const pageOpts = parseSymbolTradesListQuery(req);
     const { data, pagination } = await getTradesPageForSymbol(req.userId, symbol, pageOpts);
+    await enrichTradesWithSymbolNames(data);
     res.json({ ok: true, data, pagination });
     return;
   }
   const pageOpts = parseLedgerListQuery(req);
   if (pageOpts) {
     const { data, pagination } = await getTradesPage(req.userId, pageOpts);
+    await enrichTradesWithSymbolNames(data);
     res.json({ ok: true, data, pagination });
     return;
   }
-  res.json({ ok: true, data: await getTrades(req.userId) });
+  const data = await getTrades(req.userId);
+  await enrichTradesWithSymbolNames(data);
+  res.json({ ok: true, data });
 });
 
 app.post("/api/trades", requireAuth, async (req, res) => {
@@ -1647,10 +1559,14 @@ app.post("/api/trades", requireAuth, async (req, res) => {
     }
     const prior = trade.id ? await getTradeByIdForUser(trade.id, req.userId) : null;
     const saved = await upsertTrade(trade, req.userId);
+    if (!prior) {
+      await ensureSymbolNameMapOnNewTrade(saved.symbol, saved.name);
+    }
     invalidateDailyCloseAndAnalysisCache(req.userId, {
       hintDates: hintDatesFromTradeMutation(prior, saved),
     });
-    res.json({ ok: true, data: saved });
+    const [enriched] = await enrichTradesWithSymbolNames([saved]);
+    res.json({ ok: true, data: enriched });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "save trade failed" });
   }
@@ -1938,72 +1854,6 @@ app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/realtime/quote", requireAuth, async (req, res) => {
-  try {
-    const symbolsInput = Array.isArray(req.body?.symbols) ? req.body.symbols : sanitizeSymbolList(req.query.symbols);
-    const accountId = req.body?.accountId != null ? String(req.body.accountId) : String(req.query.accountId || "all");
-    const symbols = symbolsInput.length ? [...new Set(symbolsInput.map((s) => normalizeSymbol(s)).filter(Boolean))] : await collectLiveSymbolsForUser(req.userId, accountId);
-    if (!symbols.length) {
-      res.json({ ok: true, quoteMap: {}, quoteTime: "--", missing: [] });
-      return;
-    }
-    const tencentKeyToSymbols = new Map();
-    for (const symbol of symbols) {
-      const key = toTencentQuoteSymbol(symbol);
-      if (!key) {
-        continue;
-      }
-      const list = tencentKeyToSymbols.get(key) || [];
-      list.push(symbol);
-      tencentKeyToSymbols.set(key, list);
-    }
-    const tRes = await fetchTencentQuotePayloadMap([...tencentKeyToSymbols.keys()]);
-    if (!tRes.ok) {
-      res.status(502).json({ ok: false, error: tRes.error || "realtime quote failed" });
-      return;
-    }
-    if (tRes.delayed) {
-      setDelayedHeaders(res, tRes.source || "cache");
-    }
-    const quoteMap = {};
-    const symbolNameRows = [];
-    const missing = [];
-    for (const [key, locals] of tencentKeyToSymbols.entries()) {
-      const payload = tRes.payloadMap.get(String(key).toLowerCase());
-      if (!payload) {
-        missing.push(...locals);
-        continue;
-      }
-      for (const symbol of locals) {
-        const parsed = parseTencentQuoteRecord(symbol, payload);
-        if (parsed) {
-          quoteMap[symbol] = parsed;
-          if (parsed.name) {
-            symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
-          }
-        } else {
-          missing.push(symbol);
-        }
-      }
-    }
-    if (symbolNameRows.length) {
-      void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
-    }
-    const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      ok: true,
-      quoteMap,
-      quoteTime,
-      delayed: !!tRes.delayed,
-      delaySource: tRes.source || "",
-      missing: [...new Set(missing)],
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "realtime quote failed" });
-  }
-});
-
 app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
   try {
     const tRes = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
@@ -2216,151 +2066,6 @@ app.get("/api/quote/tencent", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.type("text/plain; charset=utf-8");
   res.send(text);
-});
-
-/**
- * 行情快照：一次返回 quote + kline + fx，减少前端并发请求与补拉风暴。
- */
-app.post("/api/market/snapshot", requireAuth, async (req, res) => {
-  const quoteSymbolsInput = Array.isArray(req.body?.quoteSymbols) ? req.body.quoteSymbols : [];
-  const klineSymbolsInput = Array.isArray(req.body?.klineSymbols) ? req.body.klineSymbols : [];
-  const includeFx = req.body?.includeFx !== false;
-  const klineLen = req.body?.klineLen != null ? req.body.klineLen : MARKET_KLINE_DEFAULT_LEN;
-
-  const quoteSymbols = [...new Set(quoteSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
-  const klineSymbols = [...new Set(klineSymbolsInput.map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
-  if (quoteSymbols.length > 300 || klineSymbols.length > 300) {
-    res.status(400).json({ ok: false, error: "too many symbols" });
-    return;
-  }
-
-  const delayedSources = new Set();
-  const quoteMap = {};
-  const fxSpot = {};
-  const klineMap = {};
-  const symbolNameRows = [];
-  const missingQuotes = [];
-  const missingKline = [];
-
-  const tencentKeyToSymbols = new Map();
-  for (const symbol of quoteSymbols) {
-    const key = toTencentQuoteSymbol(symbol);
-    if (!key) {
-      missingQuotes.push(symbol);
-      continue;
-    }
-    const list = tencentKeyToSymbols.get(key) || [];
-    list.push(symbol);
-    tencentKeyToSymbols.set(key, list);
-  }
-  const tencentKeys = [...tencentKeyToSymbols.keys()];
-  if (includeFx) {
-    tencentKeys.push("whUSDCNY", "whHKDCNY");
-  }
-
-  if (tencentKeys.length) {
-    const tRes = await fetchTencentQuotePayloadMap(tencentKeys);
-    if (tRes.ok) {
-      if (tRes.delayed) {
-        delayedSources.add(tRes.source || "cache");
-      }
-      for (const [key, symbols] of tencentKeyToSymbols.entries()) {
-        const payload = tRes.payloadMap.get(String(key).toLowerCase());
-        if (!payload) {
-          missingQuotes.push(...symbols);
-          continue;
-        }
-        for (const symbol of symbols) {
-          const parsed = parseTencentQuoteRecord(symbol, payload);
-          if (parsed) {
-            quoteMap[symbol] = parsed;
-            if (parsed.name) {
-              symbolNameRows.push({ symbol, nameCn: parsed.name, source: "tencent" });
-            }
-          } else {
-            missingQuotes.push(symbol);
-          }
-        }
-      }
-      if (includeFx) {
-        const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
-        const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
-        if (usd && Number.isFinite(usd.current) && usd.current > 0) {
-          fxSpot.USD = usd.current;
-        }
-        if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
-          fxSpot.HKD = hkd.current;
-        }
-      }
-    } else {
-      missingQuotes.push(...quoteSymbols);
-      if (includeFx) {
-        delayedSources.add("quote-unavailable");
-      }
-    }
-  }
-
-  if (klineSymbols.length) {
-    const localBySinaSymbol = new Map();
-    for (const symbol of klineSymbols) {
-      const sinaSymbol = toSinaDailyKBatchSymbol(symbol);
-      if (!sinaSymbol) {
-        missingKline.push(symbol);
-        continue;
-      }
-      if (!localBySinaSymbol.has(sinaSymbol)) {
-        localBySinaSymbol.set(sinaSymbol, []);
-      }
-      localBySinaSymbol.get(sinaSymbol).push(symbol);
-    }
-    if (localBySinaSymbol.size) {
-      const kRes = await fetchSinaDailyBatchWithFallback([...localBySinaSymbol.keys()], {
-        len: klineLen,
-        asc: "0",
-      });
-      if (kRes.ok) {
-        if (kRes.delayed) {
-          delayedSources.add(kRes.source || "cache");
-        }
-        for (const [sinaSymbol, locals] of localBySinaSymbol.entries()) {
-          const rows = Array.isArray(kRes.data?.[sinaSymbol]) ? kRes.data[sinaSymbol] : [];
-          if (!rows.length) {
-            missingKline.push(...locals);
-            continue;
-          }
-          for (const symbol of locals) {
-            klineMap[symbol] = rows;
-          }
-        }
-      } else {
-        missingKline.push(...klineSymbols);
-      }
-    }
-  }
-
-  const quoteTime = pickLatestQuoteTime(Object.values(quoteMap).map((item) => item?.time));
-  const delayed = delayedSources.size > 0;
-  const delaySource = [...delayedSources].filter(Boolean).join(",");
-  if (symbolNameRows.length) {
-    void upsertSymbolNameMapBatch(symbolNameRows).catch(() => {});
-  }
-  if (delayed) {
-    setDelayedHeaders(res, delaySource || "cache");
-  }
-  res.setHeader("Cache-Control", "no-store");
-  res.json({
-    ok: true,
-    quoteMap,
-    klineMap,
-    fxSpot,
-    quoteTime,
-    delayed,
-    delaySource,
-    missing: {
-      quotes: [...new Set(missingQuotes)],
-      kline: [...new Set(missingKline)],
-    },
-  });
 });
 
 /**

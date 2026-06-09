@@ -1,6 +1,7 @@
 /**
  * 个股排行：算法 B — 区间指标来自 symbol_daily_pnl 日序列；划段仍用成交。
  */
+const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSymbolDailyPnl,
@@ -191,12 +192,7 @@ async function buildStockRankPayload({
   const accountProfit =
     accountProfitCny != null && Number.isFinite(Number(accountProfitCny)) ? Number(accountProfitCny) : null;
   const rawRows = rows.map((r, i) => {
-    const nameCn = String(nameMap[r.symbol] || "").trim();
-    const tradeName = String(r.tradeName || "").trim();
-    const displayName =
-      nameCn ||
-      (tradeName && tradeName.toLowerCase() !== r.symbol.toLowerCase() ? tradeName : "") ||
-      r.symbol;
+    const displayName = resolveDisplayNameFromMap(r.symbol, nameMap);
     return {
       rank: i + 1,
       symbol: r.symbol,

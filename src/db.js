@@ -2377,6 +2377,20 @@ async function upsertSymbolNameMapBatch(rows = []) {
   return deduped.length;
 }
 
+async function hasSymbolNameMapEntry(symbol) {
+  await ensureSymbolNameMapTable();
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    return false;
+  }
+  const candidates = [...new Set(symbolQueryCandidates(sym))];
+  const { rows } = await q(
+    `SELECT 1 FROM symbol_name_map WHERE symbol = ANY($1::text[]) LIMIT 1`,
+    [candidates]
+  );
+  return (rows || []).length > 0;
+}
+
 async function getSymbolNameMap(symbols = []) {
   await ensureSymbolNameMapTable();
   /** 读路径不跑 gb_ 别名整理：该步骤会扫表 INSERT/DELETE，多 Serverless 实例并发时易锁表，导致 symbol-name-map / home-summary / 行情等大面积 pending。整理仍在 upsertSymbolNameMapBatch 写入时执行。 */
@@ -2975,6 +2989,7 @@ module.exports = {
   getLatestSymbolDailyClose,
   getSymbolDailyCloseBounds,
   getSymbolNameMap,
+  hasSymbolNameMapEntry,
   upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,
   getTradeWindowForDailyClose,

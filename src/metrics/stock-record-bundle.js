@@ -1,6 +1,7 @@
 /**
  * 个股分析页 bundle：headline + charts.points（格式化字符串，按区间全量返回）。
  */
+const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSettings,
@@ -407,7 +408,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const prev = headlineQuote.prevClose;
   const changeAbs = current - prev;
   const changePct = prev > 0 ? changeAbs / prev : 0;
-  const displayName = String(nameMap[sym] || symbolTrades[0]?.name || sym).trim() || sym;
+  const displayName = resolveDisplayNameFromMap(sym, nameMap);
   const sessionDateKey = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : endDate;
   const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current, sessionDateKey);
 

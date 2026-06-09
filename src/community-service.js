@@ -23,8 +23,14 @@ const {
   getAccounts,
   getTradesPage,
   getTradesPageForSymbol,
+  getSymbolNameMap,
 } = require("./db");
-const { fetchTencentQuoteMetaForSymbols } = require("./tencent-quote-meta");
+const {
+  resolveDisplayNameFromMap,
+  enrichRowsWithSymbolNames,
+  enrichTopPositionsOnCards,
+  enrichTradesWithSymbolNames,
+} = require("./symbol-name-resolve");
 const { redactPublicTradeRow } = require("./metrics/public-trades-redact");
 const { getMetricsPublicHomeBundle } = require("./metrics-api-service");
 
@@ -210,14 +216,6 @@ async function metricsFromSnapshots(userId) {
   };
 }
 
-function resolveNameForSymbol(trades, symbolNorm) {
-  const tnorm = String(symbolNorm || "").trim();
-  const hit = [...trades]
-    .filter((t) => String(t.type || "trade") === "trade" && (normalizeSymbol(t.symbol) || "") === tnorm)
-    .sort((a, b) => b.createdAt - a.createdAt)[0];
-  return hit?.name || tnorm;
-}
-
 function bookCurrencyForSymbolNorm(symbolNorm) {
   const m = inferMarket(symbolNorm);
   if (m === "美股") {
@@ -339,10 +337,11 @@ async function buildTopPositions(userId, factor) {
   const denom = scored.reduce((s, x) => s + x.mvCny, 0);
   scored.sort((a, b) => b.mvCny - a.mvCny);
   const top = scored.slice(0, 3);
+  const nameMap = await getSymbolNameMap(top.map((x) => x.symNorm));
 
   return top.map((x) => ({
     symbol: x.symNorm,
-    name: resolveNameForSymbol(trades, x.symNorm),
+    name: resolveDisplayNameFromMap(x.symNorm, nameMap),
     weight: denom > 0 ? x.mvCny / denom : 0,
     quantity: x.rawQty * factor,
     marketValue: x.mvNat * factor,
@@ -620,44 +619,11 @@ async function getPublicTradesPage(viewerId, targetId, opts = {}) {
   const data = (page.data || [])
     .filter((t) => String(t.type || "trade") === "trade")
     .map((t) => redactPublicTradeRow(t, accountNameById));
+  await enrichTradesWithSymbolNames(data);
   return {
     data,
     pagination: page.pagination,
   };
-}
-
-async function enrichPublicTradesWithTencent(payload) {
-  const list = Array.isArray(payload?.data)
-    ? payload.data
-    : Array.isArray(payload?.rows)
-      ? payload.rows
-      : [];
-  if (!list.length) {
-    return;
-  }
-  const syms = [];
-  const seen = new Set();
-  for (const t of list) {
-    const s = String(t.symbol || "").trim();
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      syms.push(s);
-    }
-  }
-  if (!syms.length) {
-    return;
-  }
-  const meta = await fetchTencentQuoteMetaForSymbols(syms);
-  for (const t of list) {
-    const m = meta.get(t.symbol);
-    if (m?.name) {
-      t.name = m.name;
-    }
-  }
-}
-
-async function enrichPublicProfileDetailWithTencent(_detail) {
-  /* identity-only profile; symbol names enriched via trades bundle */
 }
 
 async function getFollowingCards(viewerId) {
@@ -702,60 +668,16 @@ async function getFeedTrades(viewerId) {
       break;
     }
   }
+  await enrichRowsWithSymbolNames(out);
   return out;
 }
 
-async function enrichFeedRowsWithTencent(rows) {
-  if (!Array.isArray(rows) || !rows.length) {
-    return;
-  }
-  const meta = await fetchTencentQuoteMetaForSymbols(rows.map((r) => r.symbol));
-  for (const row of rows) {
-    const m = meta.get(row.symbol);
-    if (!m) {
-      continue;
-    }
-    row.name = m.name;
-    row.marketTag = m.marketTag;
-    if (m.displayCode) {
-      row.displayCode = m.displayCode;
-    }
-  }
-}
-
-async function enrichCardsTopPositionsWithTencent(cards) {
-  if (!Array.isArray(cards) || !cards.length) {
-    return;
-  }
-  const syms = [];
-  for (const c of cards) {
-    for (const p of c.topPositions || []) {
-      if (p.symbol) {
-        syms.push(p.symbol);
-      }
-    }
-  }
-  const meta = await fetchTencentQuoteMetaForSymbols(syms);
-  for (const c of cards) {
-    for (const p of c.topPositions || []) {
-      const m = meta.get(p.symbol);
-      if (!m) {
-        continue;
-      }
-      p.name = m.name;
-      p.marketTag = m.marketTag;
-      if (m.displayCode) {
-        p.displayCode = m.displayCode;
-      }
-    }
-  }
-}
-
-async function enrichLeaderboardPayloadWithTencent(payload) {
+async function enrichLeaderboardPayloadWithSymbolNames(payload) {
   if (!payload || !Array.isArray(payload.entries)) {
-    return;
+    return payload;
   }
-  await enrichCardsTopPositionsWithTencent(payload.entries);
+  await enrichTopPositionsOnCards(payload.entries);
+  return payload;
 }
 
 async function enrichLeaderboardPayloadWithViewer(payload, viewerId) {
@@ -788,11 +710,8 @@ module.exports = {
   getPublicAnalysisUiPrefs,
   getFollowingCards,
   getFeedTrades,
-  enrichFeedRowsWithTencent,
-  enrichCardsTopPositionsWithTencent,
-  enrichLeaderboardPayloadWithTencent,
+  enrichLeaderboardPayloadWithSymbolNames,
   enrichLeaderboardPayloadWithViewer,
-  enrichPublicProfileDetailWithTencent,
-  enrichPublicTradesWithTencent,
+  enrichTopPositionsOnCards,
   NORMALIZATION_VERSION,
 };

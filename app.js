@@ -69,7 +69,6 @@ function readMarketDelayFromResponse(response) {
 const KLINE_DATALEN = 120;
 const DAILY_CLOSE_HYDRATE_WINDOW_DAYS = 240;
 const ANALYSIS_DAILY_REMOTE_CACHE_TTL_MS = 30_000;
-const SYMBOL_NAME_MAP_TTL_MS = 6 * 60 * 60 * 1000;
 const SETTINGS_SYNC_DEBOUNCE_MS = 650;
 /** 首屏 hydrate 后跳过立即 PATCH；用户改设置或延迟到期后再同步 */
 const INITIAL_SETTINGS_SYNC_DEFER_MS = 4000;
@@ -195,7 +194,6 @@ const state = {
   editingCashTransferId: null,
   quoteMap: {},
   klineMap: {},
-  nameMap: {},
   quoteTime: "--",
   marketDataDelayed: false,
   marketDataDelaySource: "",
@@ -267,10 +265,6 @@ let cachedAnalysisAssetChartRows = null;
 let cachedAnalysisMetricsCharts = null;
 let pendingSettingsSyncPayload = null;
 let pendingSettingsSyncTimer = null;
-const symbolNameSyncedAt = new Map();
-const SYMBOL_NAME_UPSERT_DEBOUNCE_MS = 800;
-const symbolNamePendingUpsertBySymbol = new Map();
-let symbolNameUpsertFlushTimer = null;
 /** 与 session 对齐，避免个股页重复拉全量成交/银证 */
 let ledgerBootstrapCompleteForUid = "";
 const TRADE_LIST_PAGE_SIZE = 10;
@@ -1411,34 +1405,10 @@ function fundCnyCumulativeAlongDates(ctf, dateKeys) {
   return m;
 }
 
-function hasCnNameLabel(text) {
-  return /[\u4e00-\u9fff]/.test(String(text || ""));
-}
-
-/** A股/港股：行情里常把代码当名称返回，不能当「已有中文名」；美股等保留英文简称。 */
-function quoteNameForDisplay(symbol, rawName) {
-  const s = String(rawName || "").trim();
-  if (!s) {
-    return "";
-  }
-  const m = inferMarket(normalizeSymbol(symbol));
-  if (m === "A股" || m === "港股") {
-    return hasCnNameLabel(s) ? s : "";
-  }
-  return s;
-}
-
-function getDisplayName(symbol, fallbackName = "") {
-  const normalized = normalizeSymbol(symbol || "");
-  const legacyAlias = getLegacyUsAlias(normalized);
-  const fromMap = (state.nameMap[normalized] || (legacyAlias ? state.nameMap[legacyAlias] : "") || "").trim();
-  const quoteName = quoteNameForDisplay(symbol, getQuoteBySymbol(symbol)?.name);
-  const m = inferMarket(normalized);
-  const fallbackCode = formatSymbolForDisplay(normalized);
-  if (m === "A股" || m === "港股") {
-    return (hasCnNameLabel(fromMap) ? fromMap : "") || quoteName || fallbackName || fallbackCode;
-  }
-  return fromMap || quoteName || fallbackName || fallbackCode;
+/** 展示名由接口从 symbol_name_map 拼好；无则 "-"。 */
+function getDisplayName(_symbol, nameFromApi = "") {
+  const label = String(nameFromApi || "").trim();
+  return label || "-";
 }
 
 function getQuoteBySymbol(symbol) {
@@ -1457,83 +1427,6 @@ function getKlineBySymbol(symbol) {
   }
   const legacyAlias = getLegacyUsAlias(normalized);
   return state.klineMap[normalized] || (legacyAlias ? state.klineMap[legacyAlias] : null) || [];
-}
-
-function upsertNameMapEntry(symbol, name) {
-  const normalized = normalizeSymbol(symbol);
-  const label = String(name || "").trim();
-  if (!normalized || !label) {
-    return;
-  }
-  state.nameMap[normalized] = label;
-  const legacyAlias = getLegacyUsAlias(normalized);
-  if (legacyAlias) {
-    state.nameMap[legacyAlias] = label;
-  }
-}
-
-function flushPendingSymbolNameUpserts() {
-  symbolNameUpsertFlushTimer = null;
-  if (!apiReady) {
-    symbolNamePendingUpsertBySymbol.clear();
-    return;
-  }
-  const rows = [...symbolNamePendingUpsertBySymbol.values()];
-  symbolNamePendingUpsertBySymbol.clear();
-  if (!rows.length) {
-    return;
-  }
-  void apiFetch(`${getApiBaseForFetch()}/admin/upsert-symbol-name-map`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rows }),
-    cache: "no-store",
-    timeoutMs: 12_000,
-  }).catch(() => {});
-}
-
-function queueSymbolNameUpsertRows(rows) {
-  if (!rows.length) {
-    return;
-  }
-  for (const row of rows) {
-    const sym = String(row?.symbol || "").trim();
-    if (sym) {
-      symbolNamePendingUpsertBySymbol.set(sym, row);
-    }
-  }
-  if (!symbolNameUpsertFlushTimer) {
-    symbolNameUpsertFlushTimer = window.setTimeout(flushPendingSymbolNameUpserts, SYMBOL_NAME_UPSERT_DEBOUNCE_MS);
-  }
-}
-
-async function syncSymbolNamesFromQuotes(quoteMap = {}) {
-  if (!apiReady || !quoteMap || typeof quoteMap !== "object") {
-    return;
-  }
-  const now = Date.now();
-  const rows = [];
-  for (const [symbol, quote] of Object.entries(quoteMap)) {
-    const normalized = normalizeSymbol(symbol);
-    if (!normalized) {
-      continue;
-    }
-    const display = quoteNameForDisplay(normalized, quote?.name);
-    if (!display) {
-      continue;
-    }
-    const syncKey = `${normalized}|${display}`;
-    const lastTs = Number(symbolNameSyncedAt.get(syncKey) || 0);
-    if (lastTs && now - lastTs < SYMBOL_NAME_MAP_TTL_MS) {
-      continue;
-    }
-    rows.push({ symbol: normalized, nameCn: display, source: "tencent" });
-    symbolNameSyncedAt.set(syncKey, now);
-  }
-  if (!rows.length) {
-    return;
-  }
-  queueSymbolNameUpsertRows(rows);
 }
 
 function shiftDateKeyByDays(dateKey, deltaDays) {
@@ -6047,12 +5940,6 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
       );
     }
     const holdRows = holdings.rows || [];
-    for (const row of holdRows) {
-      const label = String(row.name || "").trim();
-      if (label) {
-        upsertNameMapEntry(row.symbol, label);
-      }
-    }
     mountPublicCommunityStockTableHead();
     paintStockTableFromMetricsRows(holdRows, getPublicStockTableCtx());
     applyPublicEarningMetaToUi(state.publicEarningBundleUi?.meta);
@@ -6083,12 +5970,6 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
     );
   }
   const holdRows = holdings.rows || [];
-  for (const row of holdRows) {
-    const label = String(row.name || "").trim();
-    if (label) {
-      upsertNameMapEntry(row.symbol, label);
-    }
-  }
   paintOverviewStockTableFromMetricsRows(holdRows);
   applyOverviewMetricsMeta(state.overviewMetricsUi?.meta);
   if (quoteTime) {
@@ -7848,7 +7729,7 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
   switch (col) {
     case 0:
       return [
-        String(row.name || sym).trim(),
+        getDisplayName(sym, row.name),
         `${row.marketTag || "OT"} ${row.stockCode || formatSymbolForDisplay(sym)}`,
       ];
     case 1:
@@ -7924,7 +7805,7 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
   const attr = ` data-stock-col="${col}"`;
   switch (col) {
     case 0:
-      return `<td${attr} class="stock-name"><strong>${escapeHtml(row.name || sym)}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>`;
+      return `<td${attr} class="stock-name"><strong>${escapeHtml(getDisplayName(sym, row.name))}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>`;
     case 1:
       return `<td${attr} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>`;
     case 2:
@@ -8429,11 +8310,12 @@ async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
     state.route === "stock-record" && Array.isArray(state.stockRecordTrades) && state.stockRecordTrades.length
       ? state.stockRecordTrades
       : state.trades;
+  const bundle = state.stockRecordBundle;
+  const headlineName = bundle?.headline?.name;
   const trade = tradeSource.find((t) => normalizeSymbol(t.symbol) === symKey);
-  const quote = getQuoteBySymbol(symKey);
-  const positionName = (trade && trade.name) || (quote && quote.name) || "";
-  const name = getDisplayName(symKey, positionName);
-  const prefill = { symbol: symKey, name: String(name).trim() || symKey };
+  const apiName = String(headlineName || trade?.name || "").trim();
+  const prefillName = apiName && apiName !== "-" ? apiName : symKey;
+  const prefill = { symbol: symKey, name: prefillName };
   if (accountSource === "stock-record") {
     if (state.stockRecordAccountId && state.stockRecordAccountId !== "all") {
       prefill.accountId = resolveValidAccountFilter(state.stockRecordAccountId);
@@ -8523,7 +8405,7 @@ async function renderStockRecordPage(symbol) {
   }
   const bundle = state.stockRecordBundle;
   const headline = bundle?.headline || null;
-  const positionName = headline?.name || position?.name || symbolTrades[0]?.name || symbol;
+  const positionName = headline?.name || "-";
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = headline?.quoteTime ?? "—";
@@ -8616,11 +8498,6 @@ async function ensureSymbolData(symbol) {
         state.quoteMap[legacyAlias] = quoteMap[symbol];
       }
       state.quoteTime = pickLatestQuoteTime([state.quoteTime, quoteMap[symbol].time]);
-      const nm = String(quoteMap[symbol]?.name || "").trim();
-      const display = quoteNameForDisplay(normalizedSymbol, nm);
-      if (display) {
-        upsertNameMapEntry(normalizedSymbol, display);
-      }
     }
   } catch (error) {
     console.error("加载个股实时行情失败", error);
@@ -10601,13 +10478,7 @@ async function refreshMarketData(opts = {}) {
           if (legacyAlias) {
             state.quoteMap[legacyAlias] = quote;
           }
-          const nm = String(quote?.name || "").trim();
-          const display = quoteNameForDisplay(normalized, nm);
-          if (display) {
-            upsertNameMapEntry(normalized, display);
-          }
         });
-        void syncSymbolNamesFromQuotes(quoteMap);
       }
       const latestSnapshotQuoteTime = pickLatestQuoteTime([
         state.quoteTime,

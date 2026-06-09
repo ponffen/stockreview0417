@@ -1,6 +1,7 @@
 /**
  * f 持仓表：symbol_daily_pnl 冻结日行（v3 stage_*）+ computeLiveMetrics（今日/现价）。
  */
+const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
 const {
   normalizeSymbol,
   formatSymbolForDisplay,
@@ -261,10 +262,7 @@ async function buildHoldingsPayload({
       mwrMode,
     });
 
-    const snapName = String(snap?.name || "").trim();
-    const mappedName = String(nameMap[sym] || "").trim();
-    const displayName =
-      mappedName || (snapName && snapName.toLowerCase() !== sym.toLowerCase() ? snapName : "") || sym;
+    const displayName = resolveDisplayNameFromMap(sym, nameMap);
     const lastTr = tradeBySym.get(sym) || {};
     const lastTradePrice = Number(lastTr.lastTradePrice) || 0;
     const regretRate =

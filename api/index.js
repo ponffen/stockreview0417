@@ -422,7 +422,7 @@ module.exports = async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store");
     try {
       const { readUserIdFromRequest } = require("../src/auth-session");
-      const { getPublicTradesPage, enrichPublicTradesWithTencent } = require("../src/community-service");
+      const { getPublicTradesPage } = require("../src/community-service");
       const viewerId = readUserIdFromRequest(req);
       if (!viewerId) {
         res.statusCode = 401;
@@ -450,7 +450,6 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
         return;
       }
-      await enrichPublicTradesWithTencent(data);
       res.statusCode = 200;
       res.end(
         JSON.stringify({
@@ -599,8 +598,6 @@ module.exports = async function handler(req, res) {
 
   const isCreateSymbolNameMapDirect =
     req.method === "POST" && pathOnly === "/api/admin/create-symbol-name-map";
-  const isUpsertSymbolNameMapDirect =
-    req.method === "POST" && pathOnly === "/api/admin/upsert-symbol-name-map";
   const isSnapshotWatermarkDirect = req.method === "GET" && pathOnly === "/api/snapshot/watermark";
   const isSnapshotAccountDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/account-daily";
   const isSnapshotSymbolDailyDirect = req.method === "GET" && pathOnly === "/api/snapshot/symbol-daily";
@@ -622,7 +619,7 @@ module.exports = async function handler(req, res) {
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
   const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
 
-  if (isCreateSymbolNameMapDirect || isUpsertSymbolNameMapDirect) {
+  if (isCreateSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     try {
@@ -634,32 +631,10 @@ module.exports = async function handler(req, res) {
         return;
       }
       const { createSymbolNameMapTableNow } = require("../src/db");
-      if (isCreateSymbolNameMapDirect) {
-        const created = await createSymbolNameMapTableNow();
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, created }));
-        return;
-      }
-      if (isUpsertSymbolNameMapDirect) {
-        const { upsertSymbolNameMapBatch } = require("../src/db");
-        const bodyStr = await new Promise((resolve, reject) => {
-          let data = "";
-          req.on("data", (chunk) => (data += chunk));
-          req.on("end", () => resolve(data));
-          req.on("error", reject);
-        });
-        let body = {};
-        if (bodyStr) {
-          try {
-            body = JSON.parse(bodyStr);
-          } catch (_) {}
-        }
-        const rows = Array.isArray(body?.rows) ? body.rows : [];
-        const count = await upsertSymbolNameMapBatch(rows);
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, count }));
-        return;
-      }
+      const created = await createSymbolNameMapTableNow();
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, created }));
+      return;
     } catch (error) {
       res.statusCode = 500;
       res.end(JSON.stringify({ ok: false, error: error?.message || "symbol name map direct failed" }));
@@ -727,6 +702,10 @@ module.exports = async function handler(req, res) {
         normalizeSymbol: dbNormalizeSymbol,
       } = require("../src/db");
       const { notifyLedgerMutation, hintDatesFromTradeMutation } = require("../src/metrics-invalidate");
+      const {
+        ensureSymbolNameMapOnNewTrade,
+        enrichTradesWithSymbolNames,
+      } = require("../src/symbol-name-resolve");
 
       if (isTradesGetDirect) {
         const symbolRaw = getSearchParam(req, "symbol");
@@ -746,6 +725,7 @@ module.exports = async function handler(req, res) {
             offset,
             accountId,
           });
+          await enrichTradesWithSymbolNames(data);
           res.statusCode = 200;
           res.end(JSON.stringify({ ok: true, data, pagination }));
           return;
@@ -757,11 +737,13 @@ module.exports = async function handler(req, res) {
           const accountIdRaw = String(getSearchParam(req, "accountId") || "all").trim();
           const accountId = accountIdRaw && accountIdRaw !== "all" ? accountIdRaw : null;
           const { data, pagination } = await getTradesPage(userId, { limit, offset, accountId });
+          await enrichTradesWithSymbolNames(data);
           res.statusCode = 200;
           res.end(JSON.stringify({ ok: true, data, pagination }));
           return;
         }
         const data = await getTrades(userId);
+        await enrichTradesWithSymbolNames(data);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;
@@ -777,9 +759,13 @@ module.exports = async function handler(req, res) {
         }
         const prior = trade.id ? await getTradeByIdForUser(trade.id, userId) : null;
         const saved = await upsertTrade(trade, userId);
+        if (!prior) {
+          await ensureSymbolNameMapOnNewTrade(saved.symbol, saved.name);
+        }
         notifyLedgerMutation(userId, { hintDates: hintDatesFromTradeMutation(prior, saved) });
+        const [enriched] = await enrichTradesWithSymbolNames([saved]);
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: saved }));
+        res.end(JSON.stringify({ ok: true, data: enriched }));
         return;
       }
 
@@ -1172,12 +1158,10 @@ module.exports = async function handler(req, res) {
         getLeaderboard,
         getFollowingCards,
         getFeedTrades,
-        enrichFeedRowsWithTencent,
-        enrichCardsTopPositionsWithTencent,
-        enrichLeaderboardPayloadWithTencent,
+        enrichLeaderboardPayloadWithSymbolNames,
         enrichLeaderboardPayloadWithViewer,
+        enrichTopPositionsOnCards,
         getPublicProfileDetail,
-        enrichPublicProfileDetailWithTencent,
         displayNameForUser,
       } = require("../src/community-service");
 
@@ -1198,7 +1182,7 @@ module.exports = async function handler(req, res) {
 
       if (req.method === "GET" && pathOnly === "/api/community/following") {
         const cards = await getFollowingCards(userId);
-        await enrichCardsTopPositionsWithTencent(cards);
+        await enrichTopPositionsOnCards(cards);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: cards }));
         return;
@@ -1207,7 +1191,7 @@ module.exports = async function handler(req, res) {
       if (req.method === "GET" && pathOnly === "/api/community/leaderboard") {
         const data = await getLeaderboard();
         await enrichLeaderboardPayloadWithViewer(data, userId);
-        await enrichLeaderboardPayloadWithTencent(data);
+        await enrichLeaderboardPayloadWithSymbolNames(data);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;
@@ -1226,7 +1210,6 @@ module.exports = async function handler(req, res) {
           res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
           return;
         }
-        await enrichPublicProfileDetailWithTencent(detail);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: detail }));
         return;
