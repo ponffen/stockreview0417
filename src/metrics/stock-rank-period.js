@@ -1,7 +1,36 @@
 /**
- * 个股排行周期指标：与前端 computePositionPeriodMetrics 同口径。
+ * 个股排行周期指标：冻结 stage + 今日 live；划段与天数来自成交。
  */
 const { normalizeSymbol } = require("../db");
+const { fmtPlainSignedAmount } = require("../account-kpi-surface");
+const { liveCnyToBookAmount, isAggregateScope } = require("./account-book-metrics");
+const { isFreshStagePeriod, stageUsesFrozenCumulativeFields } = require("./stages");
+
+function stageProfitFromFrozenRow(row, stageKey) {
+  const st = String(stageKey || "last_30d").trim() || "last_30d";
+  if (!row) {
+    return 0;
+  }
+  if (st === "mtd") {
+    return Number(row.stageMtdProfit ?? 0);
+  }
+  if (st === "ytd") {
+    return Number(row.stageYtdProfit ?? 0);
+  }
+  if (st === "inception") {
+    return Number(row.stageInceptionProfit ?? 0);
+  }
+  if (st === "last_7d") {
+    return Number(row.stageLast7dProfit ?? 0);
+  }
+  if (st === "last_30d") {
+    return Number(row.stageLast30dProfit ?? 0);
+  }
+  if (st === "last_90d") {
+    return Number(row.stageLast90dProfit ?? 0);
+  }
+  return Number(row.stageLast30dProfit ?? row.stageInceptionProfit ?? 0);
+}
 
 function validNumber(...values) {
   for (const v of values) {
@@ -385,6 +414,235 @@ function computePositionProfitInDateRange(symbol, symbolTrades, startKey, endKey
   return endMv - startMv - stageFlowNative;
 }
 
+function todayProfitNativeFromLive(livePosition, ccy, live) {
+  const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
+  const currency = String(ccy || "CNY").toUpperCase();
+  if (currency === "CNY") {
+    return todayProfitCny;
+  }
+  const fx =
+    currency === "USD"
+      ? Number(live?.fxUsdCny) || 0
+      : currency === "HKD"
+        ? Number(live?.fxHkdCny) || 0
+        : 1;
+  return fx > 0 ? todayProfitCny / fx : 0;
+}
+
+function frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough) {
+  const st = String(stageKey || "mtd").trim() || "mtd";
+  if (st === "today") {
+    return 0;
+  }
+  if (stageUsesFrozenCumulativeFields(st) && isFreshStagePeriod(stageStart, frozenThrough)) {
+    return 0;
+  }
+  return stageProfitFromFrozenRow(frozenRow, st);
+}
+
+function profitNativeToBookScalar(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd) {
+  const profitCny = profitNativeToAnalysisCny(profitNative, currency, market, fxUsd, fxHkd);
+  if (isAggregateScope(scope)) {
+    return profitCny;
+  }
+  return liveCnyToBookAmount(profitCny, bookCurrency, fxUsd, fxHkd);
+}
+
+function formatRankProfitDisplay(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd) {
+  const book = profitNativeToBookScalar(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd);
+  return fmtPlainSignedAmount(book);
+}
+
+function tradesInPeriod(symbolTrades, periodStart, periodEnd) {
+  return (symbolTrades || []).filter((t) => {
+    const d = String(t.date).slice(0, 10);
+    return d >= periodStart && d <= periodEnd;
+  });
+}
+
+function hasRebuyAfterClearInPeriod(symbolTrades, periodStart, periodEnd) {
+  let qty = 0;
+  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const dk = String(t.date).slice(0, 10);
+    if (dk < periodStart) {
+      qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
+    }
+  }
+  let clearedOnce = false;
+  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const dk = String(t.date).slice(0, 10);
+    if (dk < periodStart || dk > periodEnd) {
+      continue;
+    }
+    const before = qty;
+    qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
+    if (before > 1e-6 && qty <= 1e-6) {
+      clearedOnce = true;
+    }
+    if (clearedOnce && before <= 1e-6 && qty > 1e-6) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function firstBuyDateInPeriod(symbolTrades, periodStart, periodEnd) {
+  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const dk = String(t.date).slice(0, 10);
+    if (dk < periodStart || dk > periodEnd) {
+      continue;
+    }
+    if (t.side === "buy" && validNumber(t.quantity, 0) > 0) {
+      return dk;
+    }
+  }
+  return null;
+}
+
+/** 单段快捷或逐日划段；多段卖光再买必须完整划段。 */
+function resolveHoldingSegments(symbolTrades, periodStart, periodEnd) {
+  const ps = String(periodStart || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  if (!ps || !pe || ps > pe) {
+    return [];
+  }
+  if (!hasRebuyAfterClearInPeriod(symbolTrades, ps, pe)) {
+    let qty = 0;
+    for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+      const dk = String(t.date).slice(0, 10);
+      if (dk < ps) {
+        qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
+      }
+    }
+    if (qty > 1e-6) {
+      return [{ start: ps, end: pe }];
+    }
+    const firstBuy = firstBuyDateInPeriod(symbolTrades, ps, pe);
+    if (firstBuy) {
+      return [{ start: firstBuy, end: pe }];
+    }
+    return [];
+  }
+  return collectHoldingSegmentsInPeriod(symbolTrades, ps, pe);
+}
+
+function isRankEligible(symbolTrades, segments, periodStart, periodEnd) {
+  if (segments.length > 0) {
+    return true;
+  }
+  return tradesInPeriod(symbolTrades, periodStart, periodEnd).length > 0;
+}
+
+function heldDaysFromSegments(symbolTrades, segments) {
+  let total = 0;
+  for (const seg of segments || []) {
+    total += countHeldDaysInRange(symbolTrades, seg.start, seg.end);
+  }
+  return total;
+}
+
+function sumPnlInSegment(pnlRows, segStart, segEnd, frozenThrough) {
+  const ft = String(frozenThrough || "").slice(0, 10);
+  let sum = 0;
+  for (const r of pnlRows || []) {
+    const d = String(r.date).slice(0, 10);
+    if (d < segStart || d > segEnd) {
+      continue;
+    }
+    if (ft && d > ft) {
+      continue;
+    }
+    sum += Number(r.dayPnlNative) || 0;
+  }
+  return sum;
+}
+
+function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition }) {
+  if (!live?.tradingDay || !livePosition) {
+    return false;
+  }
+  const liveDate = String(live.liveDate || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  if (stageKey !== "today" && liveDate !== pe) {
+    return false;
+  }
+  return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
+}
+
+function computeMainRowProfitNative({
+  stageKey,
+  stageStart,
+  frozenRow,
+  live,
+  livePosition,
+  currency,
+  periodEnd,
+  frozenThrough,
+}) {
+  const frozenProfit = frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough);
+  let todayPart = 0;
+  if (shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })) {
+    todayPart = todayProfitNativeFromLive(livePosition, currency, live);
+  }
+  return frozenProfit + todayPart;
+}
+
+function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition) {
+  if (!live?.tradingDay || !livePosition) {
+    return false;
+  }
+  const liveDate = String(live.liveDate || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  if (seg.end !== liveDate || liveDate !== pe) {
+    return false;
+  }
+  const last = segments[segments.length - 1];
+  if (!last || last.end !== seg.end) {
+    return false;
+  }
+  return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
+}
+
+function segmentProfitNative(seg, segments, pnlRows, frozenThrough, live, livePosition, currency, periodEnd) {
+  let profit = sumPnlInSegment(pnlRows, seg.start, seg.end, frozenThrough);
+  if (segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition)) {
+    profit += todayProfitNativeFromLive(livePosition, currency, live);
+  }
+  return profit;
+}
+
+function pxChangeForInterval(symbolTrades, startKey, endKey, closeLookup) {
+  const endClose = closeLookup.closeOnOrBefore(endKey);
+  if (!(endClose > 0)) {
+    return NaN;
+  }
+  let entryPx = 0;
+  for (const trade of [...(symbolTrades || [])].sort(sortTradeAsc)) {
+    const dk = String(trade.date).slice(0, 10);
+    if (dk < startKey) {
+      continue;
+    }
+    if (dk > endKey) {
+      break;
+    }
+    if (trade.side === "buy" && validNumber(trade.price, 0) > 0) {
+      entryPx = Number(trade.price);
+      break;
+    }
+  }
+  const startPx = entryPx > 1e-9 ? entryPx : closeLookup.closeBefore(startKey);
+  return startPx > 1e-9 ? endClose / startPx - 1 : NaN;
+}
+
+function pxChangeMainRow(symbolTrades, segments, closeLookup) {
+  if (!segments.length) {
+    return NaN;
+  }
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  return pxChangeForInterval(symbolTrades, first.start, last.end, closeLookup);
+}
+
 function computePeriodMetrics({
   symbol,
   symbolTrades,
@@ -422,12 +680,19 @@ function formatHoldingSegmentsLabel({
   periodStart,
   periodEnd,
   pnlRows,
+  closeLookup,
   currency,
   market,
+  scope,
+  bookCurrency,
   fxUsd,
   fxHkd,
+  frozenThrough,
+  live,
+  livePosition,
+  segments: segmentsIn,
 }) {
-  const segments = collectHoldingSegmentsInPeriod(symbolTrades, periodStart, periodEnd);
+  const segments = segmentsIn || resolveHoldingSegments(symbolTrades, periodStart, periodEnd);
   if (!segments.length) {
     return "";
   }
@@ -437,32 +702,41 @@ function formatHoldingSegmentsLabel({
   }
   return segments
     .map((s) => {
-      const m = computePeriodMetricsFromPnl({
+      const heldDays = countHeldDaysInRange(symbolTrades, s.start, s.end);
+      const pxChange = pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
+      const profitNative = segmentProfitNative(
+        s,
+        segments,
         pnlRows,
-        symbolTrades,
-        startKey: s.start,
-        endKey: s.end,
-      });
-      const profitCny = profitNativeToAnalysisCny(m.profitNative, currency, market, fxUsd, fxHkd);
-      const pctStr = formatPercentRatio(m.pxChange);
-      const profitAbs = Math.abs(profitCny).toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-      const profitStr = `${profitCny >= 0 ? "+" : "-"}¥${profitAbs}`;
-      return `${s.start}～${s.end}（${m.heldDays}天，${pctStr}，${profitStr}）`;
+        frozenThrough,
+        live,
+        livePosition,
+        currency,
+        periodEnd,
+      );
+      const pctStr = formatPercentRatio(pxChange);
+      const profitStr = formatRankProfitDisplay(
+        profitNative,
+        currency,
+        market,
+        scope,
+        bookCurrency,
+        fxUsd,
+        fxHkd,
+      );
+      return `${s.start}～${s.end}（${heldDays}天，${pctStr}，${profitStr}）`;
     })
     .join("\n");
 }
 
 function formatHoldingSegmentsLabelPublic({
-  symbol,
   symbolTrades,
   periodStart,
   periodEnd,
   closeLookup,
+  segments: segmentsIn,
 }) {
-  const segments = collectHoldingSegmentsInPeriod(symbolTrades, periodStart, periodEnd);
+  const segments = segmentsIn || resolveHoldingSegments(symbolTrades, periodStart, periodEnd);
   if (!segments.length) {
     return "";
   }
@@ -472,15 +746,10 @@ function formatHoldingSegmentsLabelPublic({
   }
   return segments
     .map((s) => {
-      const m = computePeriodMetrics({
-        symbol,
-        symbolTrades,
-        startKey: s.start,
-        endKey: s.end,
-        closeLookup,
-      });
-      const pctStr = formatPercentRatio(m.pxChange);
-      return `${s.start}～${s.end}（${m.heldDays}天，股价${pctStr}）`;
+      const heldDays = countHeldDaysInRange(symbolTrades, s.start, s.end);
+      const pxChange = pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
+      const pctStr = formatPercentRatio(pxChange);
+      return `${s.start}～${s.end}（${heldDays}天，股价${pctStr}）`;
     })
     .join("\n");
 }
@@ -519,10 +788,17 @@ module.exports = {
   collectHoldingSegmentsInPeriod,
   symbolEodQtyOnOrBefore,
   resolveEffInterval,
+  resolveHoldingSegments,
+  isRankEligible,
+  heldDaysFromSegments,
   buildCloseLookup,
   computePeriodMetrics,
   computePeriodMetricsFromPnl,
+  computeMainRowProfitNative,
   profitNativeToAnalysisCny,
+  profitNativeToBookScalar,
+  pxChangeMainRow,
+  pxChangeForInterval,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
