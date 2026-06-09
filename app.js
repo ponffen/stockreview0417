@@ -158,6 +158,7 @@ const demoTrades = [
 const state = {
   route: "earning",
   appModule: "holdings",
+  ledgerCounts: null,
   communityProfileUserId: null,
   communityProfileReturnRoute: "community-feed",
   previousRoute: "earning",
@@ -819,6 +820,7 @@ async function startAppAfterAuth(options = {}) {
   }
   await hydrateState();
   normalizeModuleHomeOnColdLoad();
+  applyEmptyLedgerCommunityDefault();
   persistState({ skipSettingsSync: true });
   scheduleDeferredInitialSettingsSync();
   if (isEarningHomeRoute() && apiReady) {
@@ -930,6 +932,25 @@ function normalizeModuleHomeOnColdLoad() {
     state.stockRecordBundle = null;
   }
   state.route = "earning";
+}
+
+/** 无成交且无银证转账：每次进入站点默认社区广场首页。 */
+function applyEmptyLedgerCommunityDefault() {
+  if (!sessionPhone || !apiReady) {
+    return;
+  }
+  const counts = state.ledgerCounts;
+  if (!counts || typeof counts !== "object") {
+    return;
+  }
+  const trades = Number(counts.trades) || 0;
+  const cashTransfers = Number(counts.cashTransfers) || 0;
+  if (trades > 0 || cashTransfers > 0) {
+    return;
+  }
+  state.appModule = "community";
+  state.route = "community-feed";
+  state.communityProfileUserId = null;
 }
 
 function resolveValidAccountFilter(accountId) {
@@ -1792,6 +1813,14 @@ async function hydrateState() {
       : [];
     state.tradePanelTab = parsed.tradePanelTab === "cash" ? "cash" : "trades";
     state.appModule = parsed.appModule === "community" ? "community" : "holdings";
+    if (parsed.ledgerCounts && typeof parsed.ledgerCounts === "object") {
+      state.ledgerCounts = {
+        trades: Number(parsed.ledgerCounts.trades) || 0,
+        cashTransfers: Number(parsed.ledgerCounts.cashTransfers) || 0,
+      };
+    } else {
+      state.ledgerCounts = null;
+    }
   }
   // trades + cash-transfers are loaded lazily on trade/analysis routes, not on home page load
   if (!["month", "ytd", "total"].includes(state.stageRange)) {

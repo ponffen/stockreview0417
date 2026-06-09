@@ -1210,6 +1210,34 @@ async function replaceAccountsFromList(accounts, userId) {
   }
 }
 
+async function getUserLedgerCounts(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { trades: 0, cashTransfers: 0 };
+  }
+  const [tradesRes, cashRes] = await Promise.all([
+    q("SELECT COUNT(*)::int AS n FROM trades WHERE user_id = $1", [uid]),
+    q("SELECT COUNT(*)::int AS n FROM cash_transfers WHERE user_id = $1", [uid]),
+  ]);
+  return {
+    trades: Number(tradesRes.rows[0]?.n) || 0,
+    cashTransfers: Number(cashRes.rows[0]?.n) || 0,
+  };
+}
+
+/** 新注册用户默认关注种子用户「西坡」（SEED_USER_PHONE）。 */
+async function ensureDefaultCommunityFollowForUser(followerId) {
+  const follower = String(followerId || "").trim();
+  if (!follower) {
+    return;
+  }
+  const target = await findUserByPhone(SEED_USER_PHONE);
+  if (!target?.id || target.id === follower) {
+    return;
+  }
+  await setCommunityFollow(follower, target.id);
+}
+
 async function getSettings(userId) {
   const uid = String(userId || "").trim();
   const settings = { ...DEFAULT_SETTINGS };
@@ -1232,6 +1260,7 @@ async function getSettings(userId) {
     }
   }
   settings.accounts = await getAccounts(uid);
+  settings.ledgerCounts = await getUserLedgerCounts(uid);
   return settings;
 }
 
@@ -2572,6 +2601,11 @@ async function createRegisteredUser(phone, passwordPlain) {
     [id, p, hashPassword(passwordPlain), now, now]
   );
   await migrateAccountsIfEmptyForUser(id);
+  try {
+    await ensureDefaultCommunityFollowForUser(id);
+  } catch (err) {
+    console.warn("[createRegisteredUser] default community follow failed:", err?.message || err);
+  }
   return { id, phone: p };
 }
 
