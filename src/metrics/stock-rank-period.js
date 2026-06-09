@@ -414,19 +414,32 @@ function computePositionProfitInDateRange(symbol, symbolTrades, startKey, endKey
   return endMv - startMv - stageFlowNative;
 }
 
-function todayProfitNativeFromLive(livePosition, ccy, live) {
-  const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
-  const currency = String(ccy || "CNY").toUpperCase();
-  if (currency === "CNY") {
-    return todayProfitCny;
+function isCnyStock(currency, market) {
+  const ccy = String(currency || "CNY").toUpperCase();
+  return ccy === "CNY" || market === "A股";
+}
+
+function symbolFxEod(currency, fxUsdEod, fxHkdEod) {
+  const ccy = String(currency || "CNY").toUpperCase();
+  if (ccy === "USD") {
+    const fx = Number(fxUsdEod) || 0;
+    return fx > 0 ? fx : 7.2;
   }
-  const fx =
-    currency === "USD"
-      ? Number(live?.fxUsdCny) || 0
-      : currency === "HKD"
-        ? Number(live?.fxHkdCny) || 0
-        : 1;
-  return fx > 0 ? todayProfitCny / fx : 0;
+  if (ccy === "HKD") {
+    const fx = Number(fxHkdEod) || 0;
+    return fx > 0 ? fx : 0.92;
+  }
+  return 1;
+}
+
+/** 与持仓表 holdings-display 一致：冻结本币×EOD 汇率 + todayProfitCny。 */
+function nativeFrozenPlusTodayToCny(frozenNative, todayProfitCny, currency, market, fxUsdEod, fxHkdEod) {
+  const frozen = Number(frozenNative) || 0;
+  const today = Number(todayProfitCny) || 0;
+  if (isCnyStock(currency, market)) {
+    return frozen + today;
+  }
+  return frozen * symbolFxEod(currency, fxUsdEod, fxHkdEod) + today;
 }
 
 function frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough) {
@@ -440,17 +453,15 @@ function frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough)
   return stageProfitFromFrozenRow(frozenRow, st);
 }
 
-function profitNativeToBookScalar(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd) {
-  const profitCny = profitNativeToAnalysisCny(profitNative, currency, market, fxUsd, fxHkd);
+function profitCnyToBookScalar(profitCny, scope, bookCurrency, fxUsdEod, fxHkdEod) {
   if (isAggregateScope(scope)) {
-    return profitCny;
+    return Number(profitCny) || 0;
   }
-  return liveCnyToBookAmount(profitCny, bookCurrency, fxUsd, fxHkd);
+  return liveCnyToBookAmount(profitCny, bookCurrency, fxUsdEod, fxHkdEod);
 }
 
-function formatRankProfitDisplay(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd) {
-  const book = profitNativeToBookScalar(profitNative, currency, market, scope, bookCurrency, fxUsd, fxHkd);
-  return fmtPlainSignedAmount(book);
+function formatRankProfitCnyDisplay(profitCny, scope, bookCurrency, fxUsdEod, fxHkdEod) {
+  return fmtPlainSignedAmount(profitCnyToBookScalar(profitCny, scope, bookCurrency, fxUsdEod, fxHkdEod));
 }
 
 function tradesInPeriod(symbolTrades, periodStart, periodEnd) {
@@ -569,22 +580,24 @@ function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition 
   return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
 }
 
-function computeMainRowProfitNative({
+function computeMainRowProfitCny({
   stageKey,
   stageStart,
   frozenRow,
   live,
   livePosition,
   currency,
+  market,
   periodEnd,
   frozenThrough,
+  fxUsdEod,
+  fxHkdEod,
 }) {
-  const frozenProfit = frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough);
-  let todayPart = 0;
-  if (shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })) {
-    todayPart = todayProfitNativeFromLive(livePosition, currency, live);
-  }
-  return frozenProfit + todayPart;
+  const frozenNative = frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough);
+  const todayCny = shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })
+    ? Number(livePosition?.todayProfitCny) || 0
+    : 0;
+  return nativeFrozenPlusTodayToCny(frozenNative, todayCny, currency, market, fxUsdEod, fxHkdEod);
 }
 
 function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition) {
@@ -603,12 +616,24 @@ function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition) {
   return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
 }
 
-function segmentProfitNative(seg, segments, pnlRows, frozenThrough, live, livePosition, currency, periodEnd) {
-  let profit = sumPnlInSegment(pnlRows, seg.start, seg.end, frozenThrough);
-  if (segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition)) {
-    profit += todayProfitNativeFromLive(livePosition, currency, live);
-  }
-  return profit;
+function segmentProfitCny(
+  seg,
+  segments,
+  pnlRows,
+  frozenThrough,
+  live,
+  livePosition,
+  currency,
+  market,
+  periodEnd,
+  fxUsdEod,
+  fxHkdEod,
+) {
+  const frozenPart = sumPnlInSegment(pnlRows, seg.start, seg.end, frozenThrough);
+  const todayCny = segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition)
+    ? Number(livePosition?.todayProfitCny) || 0
+    : 0;
+  return nativeFrozenPlusTodayToCny(frozenPart, todayCny, currency, market, fxUsdEod, fxHkdEod);
 }
 
 function pxChangeForInterval(symbolTrades, startKey, endKey, closeLookup) {
@@ -704,7 +729,7 @@ function formatHoldingSegmentsLabel({
     .map((s) => {
       const heldDays = countHeldDaysInRange(symbolTrades, s.start, s.end);
       const pxChange = pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
-      const profitNative = segmentProfitNative(
+      const profitCny = segmentProfitCny(
         s,
         segments,
         pnlRows,
@@ -712,18 +737,13 @@ function formatHoldingSegmentsLabel({
         live,
         livePosition,
         currency,
-        periodEnd,
-      );
-      const pctStr = formatPercentRatio(pxChange);
-      const profitStr = formatRankProfitDisplay(
-        profitNative,
-        currency,
         market,
-        scope,
-        bookCurrency,
+        periodEnd,
         fxUsd,
         fxHkd,
       );
+      const pctStr = formatPercentRatio(pxChange);
+      const profitStr = formatRankProfitCnyDisplay(profitCny, scope, bookCurrency, fxUsd, fxHkd);
       return `${s.start}～${s.end}（${heldDays}天，${pctStr}，${profitStr}）`;
     })
     .join("\n");
@@ -794,9 +814,10 @@ module.exports = {
   buildCloseLookup,
   computePeriodMetrics,
   computePeriodMetricsFromPnl,
-  computeMainRowProfitNative,
+  computeMainRowProfitCny,
+  nativeFrozenPlusTodayToCny,
   profitNativeToAnalysisCny,
-  profitNativeToBookScalar,
+  profitCnyToBookScalar,
   pxChangeMainRow,
   pxChangeForInterval,
   formatHoldingSegmentsLabel,

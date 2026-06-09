@@ -21,7 +21,7 @@ const {
   heldDaysFromSegments,
   buildCloseLookup,
   computePeriodMetricsFromPnl,
-  computeMainRowProfitNative,
+  computeMainRowProfitCny,
   profitNativeToAnalysisCny,
   pxChangeMainRow,
   formatHoldingSegmentsLabel,
@@ -222,8 +222,8 @@ async function buildStockRankPayloadV3({
   const stageKey = String(stage || "mtd").trim() || "mtd";
   const asOf = String(live.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
   const frozenThrough = asOf;
-  const fxUsd = Number(live.fxUsdCny) || 7.2;
-  const fxHkd = Number(live.fxHkdCny) || 0.92;
+  const fxUsdEod = Number(scopeCtx?.fxUsdCny) || Number(live.fxUsdCny) || 7.2;
+  const fxHkdEod = Number(scopeCtx?.fxHkdCny) || Number(live.fxHkdCny) || 0.92;
   const bookCurrency = scopeCtx?.bookCurrency ?? "CNY";
   const trades = await getTrades(userId);
   const scopeTrades =
@@ -309,17 +309,19 @@ async function buildStockRankPayloadV3({
       symbolTrades,
     );
 
-    const profitNative = computeMainRowProfitNative({
+    const profitCny = computeMainRowProfitCny({
       stageKey,
       stageStart: periodStart,
       frozenRow,
       live,
       livePosition: livePos,
       currency,
+      market,
       periodEnd,
       frozenThrough,
+      fxUsdEod,
+      fxHkdEod,
     });
-    const profitCny = profitNativeToAnalysisCny(profitNative, currency, market, fxUsd, fxHkd);
     const heldDays = heldDaysFromSegments(symbolTrades, segments);
     const pxChange = segments.length > 0 ? pxChangeMainRow(symbolTrades, segments, closeLookup) : NaN;
 
@@ -343,8 +345,8 @@ async function buildStockRankPayloadV3({
         market,
         scope,
         bookCurrency,
-        fxUsd,
-        fxHkd,
+        fxUsd: fxUsdEod,
+        fxHkd: fxHkdEod,
         frozenThrough,
         live,
         livePosition: livePos,
