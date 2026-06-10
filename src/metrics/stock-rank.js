@@ -1,12 +1,13 @@
 /**
- * 个股排行：冻结 stage_* + 今日 live；划段与天数来自成交。
+ * 个股排行：冻结 stage_* + 今日 live；划段/天数/涨跌来自 symbol_daily_pnl（+ live）。
  */
 const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSymbolDailyPnl,
   getSymbolDailyPnlRowOnOrBefore,
-  getSymbolDailyCloseRange,
+  getMinSymbolDailyPnlDateForAccount,
+  getSymbolEodCarryBeforeDate,
   getSymbolNameMap,
   normalizeSymbol,
 } = require("../db");
@@ -16,14 +17,16 @@ const {
   sortTradeAsc,
   countHeldDaysFromPnl,
   resolveEffInterval,
-  resolveHoldingSegments,
-  isRankEligible,
-  heldDaysFromSegments,
+  resolveHoldingSegmentsFromPnl,
+  appendLivePnlRow,
+  isRankEligibleFromPnl,
+  heldDaysFromSegmentDates,
+  buildCloseLookupFromPnl,
   buildCloseLookup,
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
   profitNativeToAnalysisCny,
-  pxChangeMainRow,
+  pxChangeMainRowFromSegments,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
@@ -128,7 +131,7 @@ async function buildStockRankPayloadLegacy({
   const { start: a, end: b } = resolveStageRange(stage, asOf, firstTrade, customRange);
   const periodEnd = live.tradingDay && live.liveDate ? live.liveDate : b;
   const pnlFrom = firstTrade && firstTrade < a ? firstTrade : a;
-  const accountIdForPnl = scope === "all" ? "" : scope;
+  const accountIdForPnl = scope === "all" ? "all" : scope;
   const allPnlRows = await getSymbolDailyPnl(
     { accountId: accountIdForPnl, from: pnlFrom, to: periodEnd },
     userId,
@@ -225,33 +228,48 @@ async function buildStockRankPayloadV3({
   const fxUsdEod = Number(scopeCtx?.fxUsdCny) || Number(live.fxUsdCny) || 7.2;
   const fxHkdEod = Number(scopeCtx?.fxHkdCny) || Number(live.fxHkdCny) || 0.92;
   const bookCurrency = scopeCtx?.bookCurrency ?? "CNY";
-  const trades = await getTrades(userId);
-  const scopeTrades =
-    scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
-  const firstTrade =
-    scopeTrades.length > 0 ? [...scopeTrades].sort(sortTradeAsc)[0].date : asOf;
-  const { start: periodStart, end: periodEndRaw } = resolveStageRange(stageKey, asOf, firstTrade, null);
+  const accountIdForPnl = scope === "all" ? "all" : scope;
+
+  let firstDataDate = asOf;
+  if (stageKey === "inception") {
+    firstDataDate =
+      (await getMinSymbolDailyPnlDateForAccount({ accountId: accountIdForPnl }, userId)) || asOf;
+  }
+
+  const { start: periodStart, end: periodEndRaw } = resolveStageRange(stageKey, asOf, firstDataDate, null);
   const periodEnd =
     live.tradingDay && live.liveDate ? String(live.liveDate).slice(0, 10) : String(periodEndRaw).slice(0, 10);
 
-  const accountIdForPnl = scope === "all" ? "all" : scope;
   const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
 
-  const symSet = new Set(scopeTrades.map((t) => normalizeSymbol(t.symbol)).filter(Boolean));
-  const candidates = [];
+  const [allPnlRows, carryRows] = await Promise.all([
+    getSymbolDailyPnl({ accountId: accountIdForPnl, from: periodStart, to: periodEnd }, userId),
+    getSymbolEodCarryBeforeDate(userId, accountIdForPnl, periodStart),
+  ]);
+  const pnlBySym = groupPnlRowsBySymbol(allPnlRows);
+  const carryBySym = new Map(
+    (carryRows || []).map((r) => [normalizeSymbol(r.symbol), Number(r.eodShares) || 0]),
+  );
 
+  const symSet = new Set(pnlBySym.keys());
+  for (const p of live.positions || []) {
+    const s = normalizeSymbol(p.symbol);
+    if (s) {
+      symSet.add(s);
+    }
+  }
+
+  const candidates = [];
   for (const sym of symSet) {
-    const symbolTrades = scopeTrades
-      .filter((t) => normalizeSymbol(t.symbol) === sym)
-      .sort(sortTradeAsc);
-    if (!symbolTrades.length) {
+    const pnlRows = symbolPnlForRankScope(pnlBySym, sym, scope);
+    const livePos = liveBySym.get(sym) || null;
+    const pnlWithLive = appendLivePnlRow(pnlRows, livePos, live.liveDate, live.tradingDay, periodEnd);
+    const carryEod = carryBySym.get(sym) || 0;
+    const segments = resolveHoldingSegmentsFromPnl(pnlWithLive, carryEod, periodStart, periodEnd);
+    if (!isRankEligibleFromPnl(pnlWithLive, segments, livePos, periodStart, periodEnd)) {
       continue;
     }
-    const segments = resolveHoldingSegments(symbolTrades, periodStart, periodEnd);
-    if (!isRankEligible(symbolTrades, segments, periodStart, periodEnd)) {
-      continue;
-    }
-    candidates.push({ sym, symbolTrades, segments });
+    candidates.push({ sym, pnlRows: pnlWithLive, segments, livePos });
   }
 
   const frozenRows = await Promise.all(
@@ -263,51 +281,14 @@ async function buildStockRankPayloadV3({
     ),
   );
 
-  const multiSegSyms = candidates.filter((c) => c.segments.length >= 2).map((c) => c.sym);
-  let pnlBySym = new Map();
-  if (multiSegSyms.length > 0) {
-    const allPnlRows = await getSymbolDailyPnl(
-      { accountId: accountIdForPnl, from: periodStart, to: periodEnd },
-      userId,
-    );
-    pnlBySym = groupPnlRowsBySymbol(allPnlRows);
-  }
-
-  const closeBySym = new Map();
-  await Promise.all(
-    candidates.map(async ({ sym, segments }) => {
-      let closeFrom = periodStart;
-      if (segments.length > 0) {
-        const segMin = segments.reduce((min, s) => (s.start < min ? s.start : min), segments[0].start);
-        closeFrom = segMin < periodStart ? segMin : periodStart;
-      }
-      const closeRows = await getSymbolDailyCloseRange(sym, closeFrom, periodEnd);
-      closeBySym.set(sym, closeRows);
-    }),
-  );
-
   const rows = [];
 
   for (let i = 0; i < candidates.length; i += 1) {
-    const { sym, symbolTrades, segments } = candidates[i];
+    const { sym, pnlRows, segments, livePos } = candidates[i];
     const frozenRow = frozenRows[i];
-    const livePos = liveBySym.get(sym) || null;
-    const pnlRows =
-      segments.length >= 2 ? symbolPnlForRankScope(pnlBySym, sym, scope) : [];
-    const currency = inferSymbolCurrency(
-      symbolTrades,
-      frozenRow ? [{ currency: frozenRow.currency }] : pnlRows,
-    );
+    const currency = inferSymbolCurrency([], frozenRow ? [{ currency: frozenRow.currency }] : pnlRows);
     const market = inferMarket(sym);
-    const closeRows = closeBySym.get(sym) || [];
-    const closeLookup = buildCloseLookup(
-      pnlRows,
-      livePos,
-      live.liveDate,
-      live.tradingDay,
-      closeRows,
-      symbolTrades,
-    );
+    const closeLookup = buildCloseLookupFromPnl(pnlRows, livePos, live.liveDate, live.tradingDay);
 
     const profitCny = computeMainRowProfitCny({
       stageKey,
@@ -322,13 +303,13 @@ async function buildStockRankPayloadV3({
       fxUsdEod,
       fxHkdEod,
     });
-    const heldDays = heldDaysFromSegments(symbolTrades, segments);
-    const pxChange = segments.length > 0 ? pxChangeMainRow(symbolTrades, segments, closeLookup) : NaN;
+    const heldDays = heldDaysFromSegmentDates(segments);
+    const pxChange = segments.length > 0 ? pxChangeMainRowFromSegments(segments, closeLookup) : NaN;
 
     let holdIntervalsLabel = "";
     if (publicLayout) {
       holdIntervalsLabel = formatHoldingSegmentsLabelPublic({
-        symbolTrades,
+        symbolTrades: [],
         periodStart,
         periodEnd,
         closeLookup,
@@ -336,7 +317,7 @@ async function buildStockRankPayloadV3({
       });
     } else {
       holdIntervalsLabel = formatHoldingSegmentsLabel({
-        symbolTrades,
+        symbolTrades: [],
         periodStart,
         periodEnd,
         pnlRows,

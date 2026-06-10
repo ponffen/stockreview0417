@@ -1689,6 +1689,45 @@ async function getEarliestSymbolDailyPnlDate(query = {}, userId = null) {
   return minDate ? String(minDate).slice(0, 10) : null;
 }
 
+/** 账户 scope 下 symbol_daily_pnl 最早日期（排行 inception 起点）。 */
+async function getMinSymbolDailyPnlDateForAccount(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "all";
+  const { rows } = await q(
+    `SELECT MIN(date)::text AS min_date
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2`,
+    [uid, accountId || "all"],
+  );
+  const minDate = rows[0]?.min_date;
+  return minDate ? String(minDate).slice(0, 10) : null;
+}
+
+/** 各标的在 beforeDate 之前最近一行 eod_shares（阶段初持仓结转）。 */
+async function getSymbolEodCarryBeforeDate(userId, accountId, beforeDate) {
+  const uid = String(userId || "").trim();
+  const aid = String(accountId || "all").trim() || "all";
+  const before = String(beforeDate || "").slice(0, 10);
+  if (!uid || !before) {
+    return [];
+  }
+  const { rows } = await q(
+    `SELECT DISTINCT ON (symbol) symbol, eod_shares, date
+     FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND date < $3
+     ORDER BY symbol, date DESC`,
+    [uid, aid, before],
+  );
+  return rows.map((r) => ({
+    symbol: String(r.symbol),
+    eodShares: Number(r.eod_shares) || 0,
+    date: String(r.date).slice(0, 10),
+  }));
+}
+
 async function hasSymbolDailyPnlBeforeDate(query = {}, userId = null) {
   const uid = String(userId || "").trim();
   if (!uid) {
@@ -3006,6 +3045,8 @@ module.exports = {
   getSymbolDailyPnlChartSeriesPage,
   getSymbolDailyPnlChartSeriesDateRange,
   getEarliestSymbolDailyPnlDate,
+  getMinSymbolDailyPnlDateForAccount,
+  getSymbolEodCarryBeforeDate,
   hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
   upsertSymbolDailyPnlBatch,

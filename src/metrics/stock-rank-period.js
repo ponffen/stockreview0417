@@ -1,5 +1,5 @@
 /**
- * 个股排行周期指标：冻结 stage + 今日 live；划段与天数来自成交。
+ * 个股排行周期指标：冻结 stage + 今日 live；划段/天数/涨跌来自 symbol_daily_pnl（+ live）。
  */
 const { normalizeSymbol } = require("../db");
 const { fmtPlainSignedAmount } = require("../account-kpi-surface");
@@ -332,47 +332,135 @@ function pxChangeFromPnl(pnlRows, startKey, endKey, symbolTrades) {
   return startPx > 1e-9 ? endClose / startPx - 1 : 0;
 }
 
-function aggregatePnlRowsByDate(rows) {
-  const byDate = new Map();
-  for (const r of rows || []) {
-    const d = String(r.date).slice(0, 10);
-    if (!d) {
-      continue;
-    }
-    const cur = byDate.get(d) || {
-      date: d,
-      symbol: r.symbol,
-      accountId: "all",
-      eodShares: 0,
-      dayPnlNative: 0,
-      dayClosePrice: null,
-      currency: r.currency,
-    };
-    cur.eodShares += Number(r.eodShares) || 0;
-    cur.dayPnlNative += Number(r.dayPnlNative) || 0;
-    const px = Number(r.dayClosePrice);
-    if (Number.isFinite(px) && px > 0) {
-      cur.dayClosePrice = px;
-    }
-    if (r.currency) {
-      cur.currency = r.currency;
-    }
-    byDate.set(d, cur);
-  }
-  return [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
+const POSITION_EPS = 1e-6;
 
 function symbolPnlForRankScope(pnlBySym, sym, accountScope) {
   const list = pnlBySym.get(sym) || [];
   const scope = String(accountScope || "all").trim() || "all";
   if (scope === "all") {
-    const onlyAll = list.filter((r) => String(r.accountId || "") === "all");
-    if (onlyAll.length) {
-      return onlyAll;
-    }
-    return aggregatePnlRowsByDate(list);
+    return list.filter((r) => String(r.accountId || "") === "all");
   }
   return list.filter((r) => String(r.accountId || "default") === scope);
+}
+
+function countInclusiveCalendarDays(startKey, endKey) {
+  const startDate = new Date(`${String(startKey).slice(0, 10)}T12:00:00+08:00`);
+  const endDate = new Date(`${String(endKey).slice(0, 10)}T12:00:00+08:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+    return 0;
+  }
+  return Math.floor((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+}
+
+function appendLivePnlRow(pnlRows, livePos, liveDate, tradingDay, periodEnd) {
+  if (!tradingDay || !livePos) {
+    return pnlRows || [];
+  }
+  const ld = String(liveDate || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  if (!ld || ld !== pe) {
+    return pnlRows || [];
+  }
+  const rows = [...(pnlRows || [])];
+  if (rows.some((r) => String(r.date).slice(0, 10) === ld)) {
+    return rows;
+  }
+  const px = validNumber(livePos.current, livePos.prevClose, 0);
+  rows.push({
+    date: ld,
+    eodShares: Number(livePos.quantity) || 0,
+    dayClosePrice: px > 0 ? px : null,
+    dayPnlNative: 0,
+    currency: livePos.currency,
+  });
+  rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return rows;
+}
+
+/** eod_shares 日序列划段：清仓终点=当日；末段仍持仓终点=periodEnd。 */
+function resolveHoldingSegmentsFromPnl(pnlRows, carryEod, periodStart, periodEnd) {
+  const ps = String(periodStart || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  if (!ps || !pe || ps > pe) {
+    return [];
+  }
+  const inPeriod = [...(pnlRows || [])]
+    .filter((r) => {
+      const d = String(r.date).slice(0, 10);
+      return d >= ps && d <= pe;
+    })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  const segments = [];
+  let prevEod = Number(carryEod) || 0;
+  let runStart = null;
+  if (prevEod > POSITION_EPS) {
+    runStart = ps;
+  }
+
+  for (const row of inPeriod) {
+    const dk = String(row.date).slice(0, 10);
+    const eod = Number(row.eodShares) || 0;
+    if (prevEod <= POSITION_EPS && eod > POSITION_EPS) {
+      runStart = dk;
+    } else if (prevEod > POSITION_EPS && eod <= POSITION_EPS) {
+      if (runStart !== null) {
+        segments.push({ start: runStart, end: dk });
+      }
+      runStart = null;
+    }
+    prevEod = eod;
+  }
+
+  if (runStart !== null) {
+    segments.push({ start: runStart, end: pe });
+  }
+  return segments;
+}
+
+function isRankEligibleFromPnl(pnlRows, segments, livePos, periodStart, periodEnd) {
+  if (segments.length > 0) {
+    return true;
+  }
+  if (livePos && Math.abs(Number(livePos.quantity) || 0) > POSITION_EPS) {
+    return true;
+  }
+  const ps = String(periodStart || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  return (pnlRows || []).some((r) => {
+    const d = String(r.date).slice(0, 10);
+    return d >= ps && d <= pe;
+  });
+}
+
+function heldDaysFromSegmentDates(segments) {
+  let total = 0;
+  for (const seg of segments || []) {
+    total += countInclusiveCalendarDays(seg.start, seg.end);
+  }
+  return total;
+}
+
+function pxChangeFromCloseDates(closeLookup, startKey, endKey) {
+  const startClose = closeLookup.closeOnOrBefore(startKey);
+  const endClose = closeLookup.closeOnOrBefore(endKey);
+  if (!(startClose > 0) || !(endClose > 0)) {
+    return NaN;
+  }
+  return endClose / startClose - 1;
+}
+
+function pxChangeMainRowFromSegments(segments, closeLookup) {
+  if (!segments.length) {
+    return NaN;
+  }
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  return pxChangeFromCloseDates(closeLookup, first.start, last.end);
+}
+
+function buildCloseLookupFromPnl(pnlRows, livePos, liveDate, tradingDay) {
+  return buildCloseLookup(pnlRows, livePos, liveDate, tradingDay, [], []);
 }
 
 /** 排行 B：区间指标仅来自 symbol_daily_pnl 日序列。 */
@@ -661,7 +749,8 @@ function formatHoldingSegmentsLabel({
   livePosition,
   segments: segmentsIn,
 }) {
-  const segments = segmentsIn || resolveHoldingSegments(symbolTrades, periodStart, periodEnd);
+  const usePnlPath = !(symbolTrades || []).length;
+  const segments = segmentsIn || (usePnlPath ? [] : resolveHoldingSegments(symbolTrades, periodStart, periodEnd));
   if (!segments.length) {
     return "";
   }
@@ -671,8 +760,12 @@ function formatHoldingSegmentsLabel({
   }
   return segments
     .map((s) => {
-      const heldDays = countHeldDaysInRange(symbolTrades, s.start, s.end);
-      const pxChange = pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
+      const heldDays = usePnlPath
+        ? countInclusiveCalendarDays(s.start, s.end)
+        : countHeldDaysInRange(symbolTrades, s.start, s.end);
+      const pxChange = usePnlPath
+        ? pxChangeFromCloseDates(closeLookup, s.start, s.end)
+        : pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
       const profitCny = segmentProfitCny(
         s,
         segments,
@@ -700,7 +793,8 @@ function formatHoldingSegmentsLabelPublic({
   closeLookup,
   segments: segmentsIn,
 }) {
-  const segments = segmentsIn || resolveHoldingSegments(symbolTrades, periodStart, periodEnd);
+  const usePnlPath = !(symbolTrades || []).length;
+  const segments = segmentsIn || (usePnlPath ? [] : resolveHoldingSegments(symbolTrades, periodStart, periodEnd));
   if (!segments.length) {
     return "";
   }
@@ -710,8 +804,12 @@ function formatHoldingSegmentsLabelPublic({
   }
   return segments
     .map((s) => {
-      const heldDays = countHeldDaysInRange(symbolTrades, s.start, s.end);
-      const pxChange = pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
+      const heldDays = usePnlPath
+        ? countInclusiveCalendarDays(s.start, s.end)
+        : countHeldDaysInRange(symbolTrades, s.start, s.end);
+      const pxChange = usePnlPath
+        ? pxChangeFromCloseDates(closeLookup, s.start, s.end)
+        : pxChangeForInterval(symbolTrades, s.start, s.end, closeLookup);
       const pctStr = formatPercentRatio(pxChange);
       return `${s.start}～${s.end}（${heldDays}天，股价${pctStr}）`;
     })
@@ -749,13 +847,19 @@ module.exports = {
   addDay,
   countHeldDaysInRange,
   countHeldDaysFromPnl,
+  countInclusiveCalendarDays,
   collectHoldingSegmentsInPeriod,
   symbolEodQtyOnOrBefore,
   resolveEffInterval,
   resolveHoldingSegments,
+  resolveHoldingSegmentsFromPnl,
+  appendLivePnlRow,
   isRankEligible,
+  isRankEligibleFromPnl,
   heldDaysFromSegments,
+  heldDaysFromSegmentDates,
   buildCloseLookup,
+  buildCloseLookupFromPnl,
   computePeriodMetrics,
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
@@ -763,7 +867,9 @@ module.exports = {
   profitNativeToAnalysisCny,
   profitCnyToBookScalar,
   pxChangeMainRow,
+  pxChangeMainRowFromSegments,
   pxChangeForInterval,
+  pxChangeFromCloseDates,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
