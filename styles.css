@@ -2500,8 +2500,48 @@ h2 {
   display: none !important;
 }
 
-body.auth-mode {
+body.auth-mode,
+body.subscription-expired-mode {
   background: var(--bg);
+}
+
+.auth-invite-hint {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.subscription-expired-gate {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.subscription-expired-top {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 14px;
+}
+
+.subscription-expired-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px 24px;
+  overflow-y: auto;
+}
+
+.subscription-expired-lead {
+  width: min(100%, 380px);
+  margin: 0 0 20px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--text);
+  text-align: center;
 }
 
 .auth-gate {

@@ -27,6 +27,25 @@ function setCacheValue(map, key, value) {
   map.set(String(key), { at: Date.now(), value });
 }
 
+async function getSubscriptionExpiredPayload(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const { getUserValidUntil } = require("../src/db");
+  const { isSubscriptionExpired } = require("../src/user-subscription");
+  const validUntil = await getUserValidUntil(uid);
+  if (!isSubscriptionExpired(validUntil)) {
+    return null;
+  }
+  return { ok: false, status: 403, error: "免费使用已结束", code: "subscription_expired" };
+}
+
+function endJsonPayload(res, payload, statusCode = payload?.status || 500) {
+  res.statusCode = statusCode;
+  res.end(JSON.stringify(payload));
+}
+
 async function fetchSinaSuggestFromUpstream(key) {
   const iconv = require("iconv-lite");
   const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require("../src/sina-suggest");
@@ -223,6 +242,10 @@ module.exports = async function handler(req, res) {
     if (!viewerId) {
       return { ok: false, status: 401, error: "请先登录" };
     }
+    const subExpired = await getSubscriptionExpiredPayload(viewerId);
+    if (subExpired) {
+      return subExpired;
+    }
     if (!publicPath) {
       return { ok: true, userId: viewerId };
     }
@@ -252,7 +275,7 @@ module.exports = async function handler(req, res) {
       const gate = await resolveMetricsBundleUserId(false);
       if (!gate.ok) {
         res.statusCode = gate.status;
-        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        res.end(JSON.stringify({ ok: false, error: gate.error, code: gate.code || null }));
         return;
       }
       const accountScope =
@@ -296,7 +319,7 @@ module.exports = async function handler(req, res) {
       const gate = await resolveMetricsBundleUserId(isPublicAnalysisBundle);
       if (!gate.ok) {
         res.statusCode = gate.status;
-        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        res.end(JSON.stringify({ ok: false, error: gate.error, code: gate.code || null }));
         return;
       }
       const accountScope =
@@ -340,7 +363,7 @@ module.exports = async function handler(req, res) {
       const gate = await resolveMetricsBundleUserId(isPublicStockRecordBundle);
       if (!gate.ok) {
         res.statusCode = gate.status;
-        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        res.end(JSON.stringify({ ok: false, error: gate.error, code: gate.code || null }));
         return;
       }
       const accountScope =
@@ -393,7 +416,7 @@ module.exports = async function handler(req, res) {
       const gate = await resolveMetricsBundleUserId(true);
       if (!gate.ok) {
         res.statusCode = gate.status;
-        res.end(JSON.stringify({ ok: false, error: gate.error }));
+        res.end(JSON.stringify({ ok: false, error: gate.error, code: gate.code || null }));
         return;
       }
       const accountScope = String(getSearchParam(req, "accountScope") || "all").trim() || "all";
@@ -428,6 +451,11 @@ module.exports = async function handler(req, res) {
       if (!viewerId) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "未登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(viewerId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
         return;
       }
       const targetId = String(publicTradesMatch[1] || "").trim();
@@ -490,11 +518,14 @@ module.exports = async function handler(req, res) {
         `[api/index.js] direct-handle ${isMe ? "me" : isLogin ? "login" : isLogout ? "logout" : "register"} start`
       );
       // Lazy require DB and Auth logic only when these routes are hit
-      const { getUserPhone, getUserCommunityRow, verifyUserLogin, createRegisteredUser } = require("../src/db");
+      const {
+        verifyUserLogin,
+        createRegisteredUser,
+        getAuthSessionUserPayload,
+      } = require("../src/db");
       const { isValidPhone, isValidPasswordDigits } = require("../src/password");
       const { REGISTER_INVITE_CODE } = require("../src/register-invite");
       const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("../src/auth-session");
-      const { maskPhone, displayNameForUser } = require("../src/community-service");
 
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
@@ -523,19 +554,11 @@ module.exports = async function handler(req, res) {
           res.end(JSON.stringify({ ok: false, error: "未登录" }));
           return;
         }
-        const phone = await getUserPhone(userId);
-        const row = await getUserCommunityRow(userId);
+        const user = await getAuthSessionUserPayload(userId);
         res.statusCode = 200;
         res.end(JSON.stringify({
           ok: true,
-          user: {
-            id: userId,
-            phone,
-            phoneMasked: maskPhone(phone),
-            nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
-            communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
-            displayName: row ? displayNameForUser(row) : maskPhone(phone),
-          },
+          user,
         }));
         return;
       }
@@ -573,8 +596,9 @@ module.exports = async function handler(req, res) {
         // 调用 auth-session.js 里的 setSessionCookie 来生成标准的 session token
         setSessionCookie(res, u.id);
 
+        const user = await getAuthSessionUserPayload(u.id);
         res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, user: { phone: u.phone } }));
+        res.end(JSON.stringify({ ok: true, user }));
         return;
       }
 
@@ -626,8 +650,9 @@ module.exports = async function handler(req, res) {
         try {
           const u = await createRegisteredUser(phone, password);
           setSessionCookie(res, u.id);
+          const user = await getAuthSessionUserPayload(u.id);
           res.statusCode = 200;
-          res.end(JSON.stringify({ ok: true, user: { phone: u.phone } }));
+          res.end(JSON.stringify({ ok: true, user }));
         } catch (error) {
           const msg = error?.message || "注册失败";
           if (msg.includes("already registered")) {
@@ -699,6 +724,11 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
+        return;
+      }
       const { createSymbolNameMapTableNow } = require("../src/db");
       const created = await createSymbolNameMapTableNow();
       res.statusCode = 200;
@@ -758,6 +788,11 @@ module.exports = async function handler(req, res) {
       if (!userId) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
         return;
       }
       const {
@@ -873,6 +908,11 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
+        return;
+      }
       const {
         getCashTransfers,
         getCashTransfersPage,
@@ -947,6 +987,11 @@ module.exports = async function handler(req, res) {
       if (!userId) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
         return;
       }
       const {
@@ -1124,6 +1169,11 @@ module.exports = async function handler(req, res) {
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
+        return;
+      }
 
       if (isSnapshotAccountDailyDirect) {
         const accountId = getSearchParam(req, "accountId");
@@ -1213,6 +1263,11 @@ module.exports = async function handler(req, res) {
       if (!userId) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
         return;
       }
 

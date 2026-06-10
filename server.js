@@ -741,6 +741,8 @@ const {
   setSnapshotWatermark,
   verifyUserLogin,
   createRegisteredUser,
+  getAuthSessionUserPayload,
+  getUserValidUntil,
   updateUserPassword,
   verifyUserPasswordById,
   getUserPhone,
@@ -753,6 +755,7 @@ const {
   isCommunityFollowing,
   pingDatabase,
 } = require("./src/db");
+const { isSubscriptionExpired } = require("./src/user-subscription");
 const { runDailyFreeze, resolveFrozenDate, freezeUserToDate } = require("./src/eod-freeze-service");
 
 const {
@@ -878,14 +881,23 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-function requireAuth(req, res, next) {
-  const userId = readUserIdFromRequest(req);
-  if (!userId) {
-    res.status(401).json({ ok: false, error: "请先登录" });
-    return;
+async function requireAuth(req, res, next) {
+  try {
+    const userId = readUserIdFromRequest(req);
+    if (!userId) {
+      res.status(401).json({ ok: false, error: "请先登录" });
+      return;
+    }
+    const validUntil = await getUserValidUntil(userId);
+    if (isSubscriptionExpired(validUntil)) {
+      res.status(403).json({ ok: false, error: "免费使用已结束", code: "subscription_expired" });
+      return;
+    }
+    req.userId = userId;
+    next();
+  } catch (error) {
+    next(error);
   }
-  req.userId = userId;
-  next();
 }
 
 function parseBooleanInput(input, fallback = false) {
@@ -1105,19 +1117,11 @@ app.get("/api/auth/me", async (req, res) => {
       res.status(401).json({ ok: false, error: "未登录" });
       return;
     }
-    const phone = await getUserPhone(userId);
-    const row = await getUserCommunityRow(userId);
+    const user = await getAuthSessionUserPayload(userId);
     console.log("[auth.me] ok userId=", userId);
     res.json({
       ok: true,
-      user: {
-        id: userId,
-        phone,
-        phoneMasked: maskPhone(phone),
-        nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
-        communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
-        displayName: row ? displayNameForUser(row) : maskPhone(phone),
-      },
+      user,
     });
   } catch (error) {
     console.error("[auth.me] error:", error?.message || error);
@@ -1271,7 +1275,8 @@ app.post("/api/auth/register", async (req, res) => {
     }
     const u = await createRegisteredUser(phone, password);
     setSessionCookie(res, u.id);
-    res.json({ ok: true, user: { phone: u.phone } });
+    const user = await getAuthSessionUserPayload(u.id);
+    res.json({ ok: true, user });
   } catch (error) {
     const msg = error?.message || "注册失败";
     if (msg.includes("already registered")) {
@@ -1294,7 +1299,8 @@ app.post("/api/auth/login", async (req, res) => {
     }
     setSessionCookie(res, u.id);
     console.log("[auth.login] ok userId=", u.id);
-    res.json({ ok: true, user: { phone: u.phone } });
+    const user = await getAuthSessionUserPayload(u.id);
+    res.json({ ok: true, user });
   } catch (error) {
     console.error("[auth.login] error:", error?.message || error);
     res.status(500).json({

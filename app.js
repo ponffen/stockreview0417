@@ -3,7 +3,41 @@ const API_BASE = "/api";
 const API_GET_TIMEOUT_MS = 12_000;
 const API_MUTATION_TIMEOUT_MS = 10_000;
 
-function apiFetch(input, init = {}) {
+function applySessionUserPayload(user) {
+  if (!user?.phone) {
+    return false;
+  }
+  sessionPhone = String(user.phone);
+  sessionUserId = String(user.id || "");
+  sessionValidUntil = String(user.validUntil || "");
+  sessionSubscriptionExpired = user.expired === true;
+  sessionProfile = {
+    nickname: user.nickname != null ? user.nickname : null,
+    communityPublic: user.communityPublic !== false,
+    displayName: String(user.displayName || ""),
+    phoneMasked: String(user.phoneMasked || ""),
+  };
+  return true;
+}
+
+function clearSessionState() {
+  sessionUserId = "";
+  sessionPhone = "";
+  sessionValidUntil = "";
+  sessionSubscriptionExpired = false;
+  sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
+}
+
+function handleSubscriptionExpiredFromApi(path = "") {
+  const p = String(path || "");
+  if (p.includes("/auth/me") || p.includes("/auth/login") || p.includes("/auth/logout") || p.includes("/auth/register")) {
+    return;
+  }
+  sessionSubscriptionExpired = true;
+  showSubscriptionExpiredShell();
+}
+
+async function apiFetch(input, init = {}) {
   const { timeoutMs, ...rest } = init || {};
   const method = String(rest.method || "GET").toUpperCase();
   const parsedTimeout = Number(timeoutMs);
@@ -12,18 +46,30 @@ function apiFetch(input, init = {}) {
     : method === "GET" || method === "HEAD"
       ? API_GET_TIMEOUT_MS
       : API_MUTATION_TIMEOUT_MS;
-  if (resolvedTimeoutMs <= 0 || typeof AbortController === "undefined" || rest.signal) {
-    return fetch(input, { ...rest, credentials: "include" });
+  const runFetch = () => {
+    if (resolvedTimeoutMs <= 0 || typeof AbortController === "undefined" || rest.signal) {
+      return fetch(input, { ...rest, credentials: "include" });
+    }
+    const controller = new AbortController();
+    const timerId = window.setTimeout(() => controller.abort(), resolvedTimeoutMs);
+    return fetch(input, { ...rest, credentials: "include", signal: controller.signal }).finally(() => {
+      window.clearTimeout(timerId);
+    });
+  };
+  const response = await runFetch();
+  if (response.status === 403) {
+    const payload = await response.clone().json().catch(() => ({}));
+    if (payload?.code === "subscription_expired") {
+      handleSubscriptionExpiredFromApi(String(input || ""));
+    }
   }
-  const controller = new AbortController();
-  const timerId = window.setTimeout(() => controller.abort(), resolvedTimeoutMs);
-  return fetch(input, { ...rest, credentials: "include", signal: controller.signal }).finally(() => {
-    window.clearTimeout(timerId);
-  });
+  return response;
 }
 
 let sessionPhone = "";
 let sessionUserId = "";
+let sessionSubscriptionExpired = false;
+let sessionValidUntil = "";
 let sessionProfile = {
   nickname: null,
   communityPublic: true,
@@ -402,6 +448,8 @@ const communityProfileBackBtn = document.getElementById("communityProfileBackBtn
 const communityProfileTitle = document.getElementById("communityProfileTitle");
 const communityProfileFollowSlot = document.getElementById("communityProfileFollowSlot");
 const authGate = document.getElementById("authGate");
+const subscriptionExpiredGate = document.getElementById("subscriptionExpiredGate");
+const subscriptionExpiredLogoutBtn = document.getElementById("subscriptionExpiredLogoutBtn");
 const appShell = document.getElementById("appShell");
 const authLoginForm = document.getElementById("authLoginForm");
 const authRegisterForm = document.getElementById("authRegisterForm");
@@ -596,23 +644,14 @@ async function refreshSessionFromServer() {
       timeoutMs: 4_000,
     });
     if (!r.ok) {
-      sessionUserId = "";
+      clearSessionState();
       ledgerBootstrapCompleteForUid = "";
-      sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
       return false;
     }
     const j = await r.json();
-    if (!j?.ok || !j.user?.phone) {
+    if (!j?.ok || !applySessionUserPayload(j.user)) {
       return false;
     }
-    sessionPhone = String(j.user.phone);
-    sessionUserId = String(j.user.id || "");
-    sessionProfile = {
-      nickname: j.user.nickname != null ? j.user.nickname : null,
-      communityPublic: j.user.communityPublic !== false,
-      displayName: String(j.user.displayName || ""),
-      phoneMasked: String(j.user.phoneMasked || ""),
-    };
     return true;
   } catch {
     return false;
@@ -623,19 +662,47 @@ async function tryRestoreSession() {
   return refreshSessionFromServer();
 }
 
+function hideSubscriptionExpiredShell() {
+  document.body.classList.remove("subscription-expired-mode");
+  if (subscriptionExpiredGate) {
+    subscriptionExpiredGate.classList.add("hidden");
+    subscriptionExpiredGate.setAttribute("aria-hidden", "true");
+  }
+}
+
 function showAuthShell() {
   document.body.classList.add("auth-mode");
+  document.body.classList.remove("subscription-expired-mode");
   if (authGate) {
     authGate.classList.remove("hidden");
     authGate.setAttribute("aria-hidden", "false");
   }
+  hideSubscriptionExpiredShell();
   if (appShell) {
     appShell.classList.add("hidden");
   }
 }
 
+function showSubscriptionExpiredShell() {
+  document.body.classList.remove("auth-mode");
+  document.body.classList.add("subscription-expired-mode");
+  if (authGate) {
+    authGate.classList.add("hidden");
+    authGate.setAttribute("aria-hidden", "true");
+  }
+  if (appShell) {
+    appShell.classList.add("hidden");
+  }
+  if (subscriptionExpiredGate) {
+    subscriptionExpiredGate.classList.remove("hidden");
+    subscriptionExpiredGate.setAttribute("aria-hidden", "false");
+  }
+}
+
 function showAppShell() {
   document.body.classList.remove("auth-mode");
+  document.body.classList.remove("subscription-expired-mode");
+  hideSubscriptionExpiredShell();
   if (authGate) {
     authGate.classList.add("hidden");
     authGate.setAttribute("aria-hidden", "true");
@@ -643,6 +710,17 @@ function showAppShell() {
   if (appShell) {
     appShell.classList.remove("hidden");
   }
+}
+
+function enterAuthedShellAfterAuth(user) {
+  if (user) {
+    applySessionUserPayload(user);
+  }
+  if (sessionSubscriptionExpired) {
+    showSubscriptionExpiredShell();
+    return;
+  }
+  showAppShell();
 }
 
 function bindAuthUi() {
@@ -692,10 +770,11 @@ function bindAuthUi() {
         }
         return;
       }
-      sessionPhone = String(j.user?.phone || phone);
-      ledgerBootstrapCompleteForUid = "";
-      showAppShell();
-      await startAppAfterAuth();
+      enterAuthedShellAfterAuth({ ...j.user, phone: j.user?.phone || phone });
+      if (!sessionSubscriptionExpired) {
+        ledgerBootstrapCompleteForUid = "";
+        await startAppAfterAuth();
+      }
     } catch {
       if (authLoginError) {
         authLoginError.textContent = "网络超时或异常，请重试";
@@ -742,10 +821,11 @@ function bindAuthUi() {
         }
         return;
       }
-      sessionPhone = String(j.user?.phone || phone);
-      ledgerBootstrapCompleteForUid = "";
-      showAppShell();
-      await startAppAfterAuth();
+      enterAuthedShellAfterAuth({ ...j.user, phone: j.user?.phone || phone });
+      if (!sessionSubscriptionExpired) {
+        ledgerBootstrapCompleteForUid = "";
+        await startAppAfterAuth();
+      }
     } catch {
       if (authRegisterError) {
         authRegisterError.textContent = "网络超时或异常，请重试";
@@ -758,6 +838,20 @@ function bindAuthUi() {
         registerSubmitBtn.textContent = "注册";
       }
     }
+  });
+
+  subscriptionExpiredLogoutBtn?.addEventListener("click", async () => {
+    try {
+      await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" });
+    } catch {
+      // ignore
+    }
+    try {
+      window.sessionStorage.removeItem(SESSION_TAB_KEY);
+    } catch {
+      // ignore
+    }
+    window.location.reload();
   });
 
   mineLogoutBtn?.addEventListener("click", async () => {
@@ -858,6 +952,11 @@ async function initialize() {
   const authed = await tryRestoreSession();
   if (!authed) {
     showAuthShell();
+    dismissAppBootLoading();
+    return;
+  }
+  if (sessionSubscriptionExpired) {
+    showSubscriptionExpiredShell();
     dismissAppBootLoading();
     return;
   }

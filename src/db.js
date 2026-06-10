@@ -36,6 +36,12 @@ const {
 } = require("./db-pure");
 const { computeTradeAmountShareRatio } = require("./trade-amount-share-ratio");
 const { toDateKey: shanghaiCalendarDateKey } = require("../scripts/lib/market-fetch");
+const {
+  LEGACY_USER_VALID_UNTIL,
+  normalizeValidUntilDate,
+  computeNewUserValidUntil,
+  isSubscriptionExpired,
+} = require("./user-subscription");
 
 /** Vercel Marketplace / Neon 可能注入 POSTGRES_URL；统一取连接串 */
 function getDatabaseUrl() {
@@ -279,7 +285,8 @@ const DDL = [
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     nickname TEXT,
-    community_public INTEGER NOT NULL DEFAULT 1
+    community_public INTEGER NOT NULL DEFAULT 1,
+    valid_until TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS trades (
     id TEXT PRIMARY KEY,
@@ -452,6 +459,7 @@ async function initPool() {
           await c.query(DDL[i]);
         }
         console.log("[db] DDL execution completed successfully.");
+        await ensureUserSubscriptionSchemaWithClient(c);
         console.log("[db] Ensuring seed user...");
         await ensureSeedUserRowWithClient(c);
         console.log("[db] Seed user ensured.");
@@ -2641,6 +2649,58 @@ async function verifyUserLogin(phone, passwordPlain) {
   return { id: rows[0].id, phone: p };
 }
 
+let userSubscriptionSchemaPromise = null;
+
+async function ensureUserSubscriptionSchemaWithClient(client) {
+  await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS valid_until TEXT`);
+  await client.query(
+    `UPDATE users SET valid_until = $1 WHERE valid_until IS NULL OR TRIM(valid_until) = ''`,
+    [LEGACY_USER_VALID_UNTIL]
+  );
+}
+
+async function ensureUserSubscriptionSchema() {
+  if (userSubscriptionSchemaPromise) {
+    return userSubscriptionSchemaPromise;
+  }
+  userSubscriptionSchemaPromise = (async () => {
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS valid_until TEXT`).catch(() => {});
+    await q(`UPDATE users SET valid_until = $1 WHERE valid_until IS NULL OR TRIM(valid_until) = ''`, [
+      LEGACY_USER_VALID_UNTIL,
+    ]).catch(() => {});
+  })();
+  return userSubscriptionSchemaPromise;
+}
+
+async function getUserValidUntil(userId) {
+  await ensureUserSubscriptionSchema();
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return LEGACY_USER_VALID_UNTIL;
+  }
+  const { rows } = await q("SELECT valid_until FROM users WHERE id = $1", [uid]);
+  return normalizeValidUntilDate(rows[0]?.valid_until);
+}
+
+async function getAuthSessionUserPayload(userId) {
+  await ensureUserSubscriptionSchema();
+  const uid = String(userId || "").trim();
+  const phone = await getUserPhone(uid);
+  const validUntil = await getUserValidUntil(uid);
+  const row = await getUserCommunityRow(uid);
+  const { maskPhone, displayNameForUser } = require("./community-service");
+  return {
+    id: uid,
+    phone,
+    phoneMasked: maskPhone(phone),
+    nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
+    communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+    displayName: row ? displayNameForUser(row) : maskPhone(phone),
+    validUntil,
+    expired: isSubscriptionExpired(validUntil),
+  };
+}
+
 async function createRegisteredUser(phone, passwordPlain) {
   const p = String(phone || "").trim();
   if (!isValidPhone(p) || !isValidPasswordDigits(passwordPlain)) {
@@ -2649,11 +2709,13 @@ async function createRegisteredUser(phone, passwordPlain) {
   if (await findUserByPhone(p)) {
     throw new Error("phone already registered");
   }
+  await ensureUserSubscriptionSchema();
   const id = randomUUID();
   const now = nowMs();
+  const validUntil = computeNewUserValidUntil();
   await q(
-    "INSERT INTO users (id, phone, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5)",
-    [id, p, hashPassword(passwordPlain), now, now]
+    "INSERT INTO users (id, phone, password_hash, created_at, updated_at, valid_until) VALUES ($1,$2,$3,$4,$5,$6)",
+    [id, p, hashPassword(passwordPlain), now, now, validUntil]
   );
   await migrateAccountsIfEmptyForUser(id);
   try {
@@ -2661,7 +2723,7 @@ async function createRegisteredUser(phone, passwordPlain) {
   } catch (err) {
     console.warn("[createRegisteredUser] default community follow failed:", err?.message || err);
   }
-  return { id, phone: p };
+  return { id, phone: p, validUntil };
 }
 
 async function updateUserPassword(userId, newPasswordPlain) {
@@ -3093,6 +3155,9 @@ module.exports = {
   findUserByPhone,
   verifyUserLogin,
   createRegisteredUser,
+  ensureUserSubscriptionSchema,
+  getUserValidUntil,
+  getAuthSessionUserPayload,
   updateUserPassword,
   verifyUserPasswordById,
   getUserPhone,
