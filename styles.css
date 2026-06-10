@@ -2553,7 +2553,6 @@ body.subscription-expired-mode {
   flex-shrink: 0;
   margin-top: auto;
   padding-top: 20px;
-  border-top: 2px solid #f2d34a;
   width: 100%;
   max-width: 380px;
   align-self: center;
