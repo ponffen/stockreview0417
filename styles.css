@@ -1756,9 +1756,9 @@ h2 {
 }
 
 .holdings-guide-dialog__lead {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .holdings-guide-dialog__scenarios {
