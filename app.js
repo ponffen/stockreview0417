@@ -465,6 +465,11 @@ const accountManageCurrency = document.getElementById("accountManageCurrency");
 const accountManageSaveBtn = document.getElementById("accountManageSaveBtn");
 const accountManageDeleteBtn = document.getElementById("accountManageDeleteBtn");
 const accountManageDefaultHint = document.getElementById("accountManageDefaultHint");
+const holdingsGuideDialog = document.getElementById("holdingsGuideDialog");
+const closeHoldingsGuideBtn = document.getElementById("closeHoldingsGuideBtn");
+const holdingsGuideAddTradeBtn = document.getElementById("holdingsGuideAddTradeBtn");
+const holdingsGuideAddCashBtn = document.getElementById("holdingsGuideAddCashBtn");
+const holdingsGuideAddAccountBtn = document.getElementById("holdingsGuideAddAccountBtn");
 const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
@@ -944,18 +949,41 @@ function applyEmptyLedgerCommunityDefault() {
   if (!sessionPhone || !apiReady) {
     return;
   }
-  const counts = state.ledgerCounts;
-  if (!counts || typeof counts !== "object") {
-    return;
-  }
-  const trades = Number(counts.trades) || 0;
-  const cashTransfers = Number(counts.cashTransfers) || 0;
-  if (trades > 0 || cashTransfers > 0) {
+  if (!isLedgerEmpty()) {
     return;
   }
   state.appModule = "community";
   state.route = "community-feed";
   state.communityProfileUserId = null;
+}
+
+function isLedgerEmpty() {
+  if (!sessionPhone || !apiReady) {
+    return false;
+  }
+  const counts = state.ledgerCounts;
+  if (!counts || typeof counts !== "object") {
+    return false;
+  }
+  return (Number(counts.trades) || 0) === 0 && (Number(counts.cashTransfers) || 0) === 0;
+}
+
+function bumpLedgerCount(field, delta = 1) {
+  if (!state.ledgerCounts || typeof state.ledgerCounts !== "object") {
+    state.ledgerCounts = { trades: 0, cashTransfers: 0 };
+  }
+  const prev = Number(state.ledgerCounts[field]) || 0;
+  state.ledgerCounts[field] = Math.max(0, prev + Number(delta) || 0);
+}
+
+function maybeShowHoldingsGuideDialog() {
+  if (!isLedgerEmpty() || !holdingsGuideDialog) {
+    return;
+  }
+  if (holdingsGuideDialog.open) {
+    return;
+  }
+  holdingsGuideDialog.showModal();
 }
 
 function resolveValidAccountFilter(accountId) {
@@ -2857,7 +2885,13 @@ function bindEvents() {
       if (a === "holdings") {
         state.appModule = "holdings";
         state.route = "earning";
-      } else if (a === "community") {
+        closeAppDrawer();
+        persistState();
+        renderAll();
+        requestAnimationFrame(() => maybeShowHoldingsGuideDialog());
+        return;
+      }
+      if (a === "community") {
         state.appModule = "community";
         state.route = "community-feed";
       } else if (a === "mine") {
@@ -2867,6 +2901,23 @@ function bindEvents() {
       persistState();
       renderAll();
     });
+  });
+
+  closeHoldingsGuideBtn?.addEventListener("click", () => holdingsGuideDialog?.close());
+  holdingsGuideAddTradeBtn?.addEventListener("click", () => {
+    holdingsGuideDialog?.close();
+    openTradeStockSearch();
+  });
+  holdingsGuideAddCashBtn?.addEventListener("click", () => {
+    holdingsGuideDialog?.close();
+    openNewCashTransferDialog();
+  });
+  holdingsGuideAddAccountBtn?.addEventListener("click", () => {
+    holdingsGuideDialog?.close();
+    state.mineReturnRoute = "earning";
+    state.route = "mine-accounts";
+    persistState();
+    renderAll();
   });
 
   appShell?.addEventListener("click", (e) => {
@@ -3325,10 +3376,14 @@ function bindEvents() {
         console.error(err);
       }
     }
+    const isNewCashTransfer = !state.editingCashTransferId;
     const n = state.editingCashTransferId
       ? state.cashTransfers.map((x) => (x.id === saved.id ? saved : x))
       : [...state.cashTransfers, saved];
     state.cashTransfers = n;
+    if (isNewCashTransfer) {
+      bumpLedgerCount("cashTransfers", 1);
+    }
     state.editingCashTransferId = null;
     cashTransferDialog?.close();
     state.useDemoData = false;
@@ -3351,6 +3406,7 @@ function bindEvents() {
       // continue local delete
     }
     state.cashTransfers = state.cashTransfers.filter((x) => x.id !== id);
+    bumpLedgerCount("cashTransfers", -1);
     state.editingCashTransferId = null;
     cashTransferDialog?.close();
     persistState();
@@ -3438,11 +3494,15 @@ function bindEvents() {
     });
 
     state.useDemoData = false;
+    const isNewTrade = !state.editingTradeId;
     let savedTrade = trade;
     try {
       savedTrade = await saveTradeToApi(trade);
     } catch (error) {
       console.error("保存交易到数据库失败，已回退本地保存", error);
+    }
+    if (isNewTrade) {
+      bumpLedgerCount("trades", 1);
     }
     if (state.editingTradeId) {
       state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
@@ -7395,6 +7455,7 @@ async function removeTradeById(tradeId) {
     console.error("删除数据库交易失败，继续执行本地删除", error);
   }
   state.trades = state.trades.filter((item) => item.id !== tradeId);
+  bumpLedgerCount("trades", -1);
   state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== tradeId);
   if (state.trades.length === 0) {
     if (sessionPhone) {
