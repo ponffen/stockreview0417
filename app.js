@@ -5116,7 +5116,8 @@ function mountCommunityAnalysisRoutePane() {
   if (!analysisRouteHomeParent) {
     analysisRouteHomeParent = pane.parentElement;
   }
-  mount.querySelector(".app-loading-block")?.remove();
+  // 仅移除 Tab 面板占位 loading（setPublicAnalysisPanelLoading 直挂子节点），勿删 #route-analysis 内图表区 loading
+  mount.querySelector(":scope > .app-loading-block")?.remove();
   if (!mount.contains(pane)) {
     mount.appendChild(pane);
   }
@@ -5158,15 +5159,16 @@ async function loadPublicAnalysisTabData(targetId) {
   if (!tid) {
     return;
   }
-  const analysisMounted = Boolean(document.querySelector('[data-profile-panel="analysis"] #route-analysis'));
-  if (analysisMounted) {
-    showAnalysisBlockLoading("加载中…");
-  } else {
-    showRouteLoading("加载中…");
-    setPublicAnalysisPanelLoading(true);
-  }
+  let analysisMounted = false;
   try {
     mountCommunityAnalysisRoutePane();
+    analysisMounted = Boolean(document.querySelector('[data-profile-panel="analysis"] #route-analysis'));
+    if (analysisMounted) {
+      showAnalysisBlockLoading("加载中…");
+    } else {
+      showRouteLoading("加载中…");
+      setPublicAnalysisPanelLoading(true);
+    }
     renderControls();
     const bundle = await fetchPublicAnalysisBundleMetrics(tid);
     if (!bundle) {
