@@ -118,16 +118,22 @@ async function buildStockRankPayloadLegacy({
   accountProfitCny = null,
   scopeCtx = null,
   customRange = null,
+  preloadedTrades = null,
+  firstTradeDate = null,
 }) {
   const scope = String(accountScope || "all").trim() || "all";
   const asOf = String(live.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
   const fxUsd = Number(live.fxUsdCny) || 7.2;
   const fxHkd = Number(live.fxHkdCny) || 0.92;
-  const trades = await getTrades(userId);
+  const trades = preloadedTrades ?? (await getTrades(userId));
   const scopeTrades =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
-  const firstTrade =
-    scopeTrades.length > 0 ? [...scopeTrades].sort(sortTradeAsc)[0].date : asOf;
+  let firstTrade = asOf;
+  if (scope === "all" && firstTradeDate) {
+    firstTrade = String(firstTradeDate).slice(0, 10);
+  } else if (scopeTrades.length > 0) {
+    firstTrade = [...scopeTrades].sort(sortTradeAsc)[0].date;
+  }
   const { start: a, end: b } = resolveStageRange(stage, asOf, firstTrade, customRange);
   const periodEnd = live.tradingDay && live.liveDate ? live.liveDate : b;
   const pnlFrom = firstTrade && firstTrade < a ? firstTrade : a;

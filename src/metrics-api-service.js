@@ -178,6 +178,17 @@ function customStageRangeFromOpts(opts = {}) {
   return from && to ? { from, to } : null;
 }
 
+function firstTradeDateFromCtx(ctx, fallback) {
+  const asOf = String(fallback || ctx.live?.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
+  const fromAccount = String(
+    ctx.home?.account?.first_trade_date || ctx.home?.account?.firstTradeDate || "",
+  ).slice(0, 10);
+  if (fromAccount) {
+    return fromAccount;
+  }
+  return firstTradeDateFromTrades(ctx.trades, asOf);
+}
+
 async function computeReturnStages(ctx, stagesRaw, customRange = null) {
   const { userId, scope, settings, live, home } = ctx;
   const asOf = live.frozenThrough || live.liveDate || liveDateKeyShanghai();
@@ -186,14 +197,9 @@ async function computeReturnStages(ctx, stagesRaw, customRange = null) {
   const want = raw === "custom" ? ["custom"] : parseStagesParam(stagesRaw);
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const stagesNeedingRows = stageKeysNeedingSnapshotRows(want, live, mwrMode);
-  let firstTrade =
-    String(home.account?.first_trade_date || home.account?.firstTradeDate || "").slice(0, 10) || asOf;
+  const firstTrade = firstTradeDateFromCtx(ctx, asOf);
   let rowsAsc = [];
   if (stagesNeedingRows.length) {
-    const trades = await getTrades(userId);
-    if (trades.length > 0) {
-      firstTrade = [...trades].sort((a, b) => String(a.date).localeCompare(String(b.date)))[0].date;
-    }
     const rangeAsOf = liveDateKeyShanghai();
     let minStart = rangeAsOf;
     for (const key of stagesNeedingRows) {
@@ -739,7 +745,7 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
     phases.liveFallback = true;
   }
   if (phases) phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
-  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
+  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared, trades, cashTransfers };
 }
 
 
@@ -775,7 +781,7 @@ async function loadMetricsScopeContextDbOnly(userId, accountScope, diag = null) 
     phases.liveSkipped = true;
     phases.total = Object.values(phases).reduce((s, n) => s + (Number(n) || 0), 0);
   }
-  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared };
+  return { userId, scope, settings, live, um, home, accountMetaList, scopeCleared, trades, cashTransfers };
 }
 
 
@@ -812,6 +818,8 @@ async function loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag = 
       accountMetaList: pack.accountMetaList,
       scopeCleared,
       snapshotOnly: true,
+      trades: pack.trades || [],
+      cashTransfers: pack.cashTransfers || [],
     };
   }
 
@@ -889,6 +897,8 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
     accountMetaList,
     scopeCleared,
     snapshotOnly: false,
+    trades,
+    cashTransfers,
   };
 }
 
@@ -915,7 +925,7 @@ async function probeMetricsHomeBundleDb(userId, accountScope) {
 
 async function buildMetricsHoldingsFromContext(ctx, overviewStagesInternal) {
   const { userId, scope, settings, live, home } = ctx;
-  const trades = await getTrades(userId);
+  const trades = ctx.trades || (await getTrades(userId));
   const rows = await buildHoldingsPayload({
     userId,
     accountScope: scope,
@@ -1012,8 +1022,7 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc, cu
   const { fxU, fxH, book } = fxFromCtx(ctx);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const sessionAsOf = liveDateKeyShanghai();
-  const tradeList = trades || (await getTrades(userId));
-  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
   const st = String(stage || "mtd").trim() || "mtd";
   const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade, customRange);
   const rows = rowsAsc || (await loadSnapshotRowsAsc(userId, scope, start, end));
@@ -1070,8 +1079,7 @@ async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload
   const st = String(stage || "mtd").trim() || "mtd";
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const tradeList = trades || (await getTrades(userId));
-  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
   const sessionAsOf = liveDateKeyShanghai();
   const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade, customRange);
   const rows = rowsAscPreload || (await loadSnapshotRowsAsc(userId, scope, start, end));
@@ -1137,8 +1145,7 @@ async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, met
   const fxU = Number(home.account?.eod_fx_usd_cny) || 0;
   const fxH = Number(home.account?.eod_fx_hkd_cny) || 0;
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const tradeList = trades || (await getTrades(userId));
-  const firstTrade = firstTradeDateFromTrades(tradeList, asOf);
+  const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
   const st = String(stage || "mtd").trim() || "mtd";
   const { start, end } = resolveStageRange(st, asOf, firstTrade);
   const rows = rowsAsc || (await loadSnapshotRowsAsc(userId, scope, start, end));
@@ -1179,6 +1186,8 @@ async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
     accountProfitCny: rankOpts.accountProfitCny,
     scopeCtx: { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH },
     customRange: rankOpts.customRange || null,
+    preloadedTrades: ctx.trades,
+    firstTradeDate: ctx.home?.account?.first_trade_date || ctx.home?.account?.firstTradeDate,
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
@@ -1205,7 +1214,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
   const { fxU, fxH, book } = fxFromCtx(ctx);
   const st = String(stage || "mtd").trim() || "mtd";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
-  const firstTrade = firstTradeDateFromTrades(trades, asOf);
+  const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
   const { start, end } = resolveStageRange(st, asOf, firstTrade, customRange);
   const rows = rowsAscPreload || [];
 
@@ -1269,12 +1278,13 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const st = String(stage || "mtd").trim() || "mtd";
   const sym = String(benchmarkSymbol || "").trim();
   const customRange = customStageRangeFromOpts(bundleOpts);
-  const trades = await getTrades(userId);
   const asOf = ctx.live.frozenThrough || liveDateKeyShanghai();
-  const firstTrade = firstTradeDateFromTrades(trades, asOf);
+  const firstTrade = firstTradeDateFromCtx(ctx, asOf);
   const { start, end } = resolveStageRange(st, asOf, firstTrade, customRange);
-  const rowsAsc = await loadSnapshotRowsAsc(userId, scope, start, end);
-  const { stages } = await computeReturnStages(ctx, st, customRange);
+  const { stages, rowsAsc: stageRowsAsc } = await computeReturnStages(ctx, st, customRange);
+  const rowsAsc = stageRowsAsc.length
+    ? stageRowsAsc.filter((r) => r.date >= start && r.date <= end)
+    : await loadSnapshotRowsAsc(userId, scope, start, end);
   const stageRow = stages[st] || { profitCny: 0, rateTwr: 0, rateMwr: 0 };
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const rateVal = mwrMode ? stageRow.rateMwr : stageRow.rateTwr;
@@ -1286,7 +1296,7 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   };
 
   const [series, stockRank] = await Promise.all([
-    buildAnalysisSeriesBundle(ctx, st, trades, rowsAsc, customRange),
+    buildAnalysisSeriesBundle(ctx, st, ctx.trades, rowsAsc, customRange),
     buildStockRankFromContext(ctx, st, rankOpts),
   ]);
 
