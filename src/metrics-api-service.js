@@ -1196,6 +1196,7 @@ async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
     customRange: rankOpts.customRange || null,
     preloadedTrades: ctx.trades,
     firstTradeDate: ctx.home?.account?.first_trade_date || ctx.home?.account?.firstTradeDate,
+    customRange: rankOpts.customRange || null,
   });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }

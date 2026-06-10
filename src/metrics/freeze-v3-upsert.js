@@ -19,12 +19,15 @@ async function upsertAnalysisBatchV3(client, uid, rows) {
          stage_last_7d_profit, stage_last_7d_rate_twr, stage_last_7d_rate_mwr,
          stage_last_30d_profit, stage_last_30d_rate_twr, stage_last_30d_rate_mwr,
          stage_last_90d_profit, stage_last_90d_rate_twr, stage_last_90d_rate_mwr,
+         daily_trade_count,
+         stage_mtd_trade_count, stage_ytd_trade_count, stage_inception_trade_count,
+         stage_last_7d_trade_count, stage_last_30d_trade_count, stage_last_90d_trade_count,
          profit_cny, tw_r_daily, external_flow_cny, cash_cny,
          created_at, updated_at
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
          $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
-         $36,$37,$38,$39,$40,$41
+         $36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48
        )
        ON CONFLICT (user_id, account_id, date) DO UPDATE SET
          book_currency=EXCLUDED.book_currency, source_version=EXCLUDED.source_version,
@@ -40,6 +43,11 @@ async function upsertAnalysisBatchV3(client, uid, rows) {
          stage_last_7d_profit=EXCLUDED.stage_last_7d_profit, stage_last_7d_rate_twr=EXCLUDED.stage_last_7d_rate_twr, stage_last_7d_rate_mwr=EXCLUDED.stage_last_7d_rate_mwr,
          stage_last_30d_profit=EXCLUDED.stage_last_30d_profit, stage_last_30d_rate_twr=EXCLUDED.stage_last_30d_rate_twr, stage_last_30d_rate_mwr=EXCLUDED.stage_last_30d_rate_mwr,
          stage_last_90d_profit=EXCLUDED.stage_last_90d_profit, stage_last_90d_rate_twr=EXCLUDED.stage_last_90d_rate_twr, stage_last_90d_rate_mwr=EXCLUDED.stage_last_90d_rate_mwr,
+         daily_trade_count=EXCLUDED.daily_trade_count,
+         stage_mtd_trade_count=EXCLUDED.stage_mtd_trade_count, stage_ytd_trade_count=EXCLUDED.stage_ytd_trade_count,
+         stage_inception_trade_count=EXCLUDED.stage_inception_trade_count,
+         stage_last_7d_trade_count=EXCLUDED.stage_last_7d_trade_count, stage_last_30d_trade_count=EXCLUDED.stage_last_30d_trade_count,
+         stage_last_90d_trade_count=EXCLUDED.stage_last_90d_trade_count,
          profit_cny=EXCLUDED.profit_cny, tw_r_daily=EXCLUDED.tw_r_daily,
          external_flow_cny=EXCLUDED.external_flow_cny, cash_cny=EXCLUDED.cash_cny,
          updated_at=EXCLUDED.updated_at`,
@@ -79,6 +87,13 @@ async function upsertAnalysisBatchV3(client, uid, rows) {
         r.stageLast90dProfit,
         r.stageLast90dRateTwr,
         r.stageLast90dRateMwr,
+        r.dailyTradeCount ?? 0,
+        r.stageMtdTradeCount ?? 0,
+        r.stageYtdTradeCount ?? 0,
+        r.stageInceptionTradeCount ?? 0,
+        r.stageLast7dTradeCount ?? 0,
+        r.stageLast30dTradeCount ?? 0,
+        r.stageLast90dTradeCount ?? 0,
         r.dailyProfit,
         r.dailyRateTwr,
         r.dailyExternalFlow,
@@ -104,12 +119,15 @@ async function upsertSymbolBatchV3(client, uid, rows) {
          stage_last_7d_profit, stage_last_7d_rate_twr, stage_last_7d_rate_mwr,
          stage_last_30d_profit, stage_last_30d_rate_twr, stage_last_30d_rate_mwr,
          stage_last_90d_profit, stage_last_90d_rate_twr, stage_last_90d_rate_mwr,
+         daily_trade_count,
+         stage_mtd_trade_count, stage_ytd_trade_count, stage_inception_trade_count,
+         stage_last_7d_trade_count, stage_last_30d_trade_count, stage_last_90d_trade_count,
          day_trade_qty, day_trade_amount, day_trade_flow_native, day_close_price, day_pnl_native, currency,
          created_at, updated_at
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
          $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,
-         $34,$35,$36,$37,$38,$39,$40,$41
+         $34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48
        )
        ON CONFLICT (user_id, account_id, symbol, date) DO UPDATE SET
          book_currency=EXCLUDED.book_currency, source_version=EXCLUDED.source_version,
@@ -125,6 +143,11 @@ async function upsertSymbolBatchV3(client, uid, rows) {
          stage_last_7d_profit=EXCLUDED.stage_last_7d_profit, stage_last_7d_rate_twr=EXCLUDED.stage_last_7d_rate_twr, stage_last_7d_rate_mwr=EXCLUDED.stage_last_7d_rate_mwr,
          stage_last_30d_profit=EXCLUDED.stage_last_30d_profit, stage_last_30d_rate_twr=EXCLUDED.stage_last_30d_rate_twr, stage_last_30d_rate_mwr=EXCLUDED.stage_last_30d_rate_mwr,
          stage_last_90d_profit=EXCLUDED.stage_last_90d_profit, stage_last_90d_rate_twr=EXCLUDED.stage_last_90d_rate_twr, stage_last_90d_rate_mwr=EXCLUDED.stage_last_90d_rate_mwr,
+         daily_trade_count=EXCLUDED.daily_trade_count,
+         stage_mtd_trade_count=EXCLUDED.stage_mtd_trade_count, stage_ytd_trade_count=EXCLUDED.stage_ytd_trade_count,
+         stage_inception_trade_count=EXCLUDED.stage_inception_trade_count,
+         stage_last_7d_trade_count=EXCLUDED.stage_last_7d_trade_count, stage_last_30d_trade_count=EXCLUDED.stage_last_30d_trade_count,
+         stage_last_90d_trade_count=EXCLUDED.stage_last_90d_trade_count,
          day_pnl_native=EXCLUDED.daily_profit, day_trade_flow_native=EXCLUDED.daily_trade_flow,
          day_close_price=EXCLUDED.eod_price,
          updated_at=EXCLUDED.updated_at`,
@@ -162,6 +185,13 @@ async function upsertSymbolBatchV3(client, uid, rows) {
         r.stageLast90dProfit,
         r.stageLast90dRateTwr,
         r.stageLast90dRateMwr,
+        r.dailyTradeCount ?? 0,
+        r.stageMtdTradeCount ?? 0,
+        r.stageYtdTradeCount ?? 0,
+        r.stageInceptionTradeCount ?? 0,
+        r.stageLast7dTradeCount ?? 0,
+        r.stageLast30dTradeCount ?? 0,
+        r.stageLast90dTradeCount ?? 0,
         r.dailyTradeQty,
         r.dailyTradeAmount,
         r.dailyTradeFlow,

@@ -6827,6 +6827,7 @@ function mapStockRankBundleRow(row) {
   const profitText = String(row.profit ?? row.profitCny ?? "").trim() || "—";
   const pxText = String(row.pxChange ?? row.pxChangeDisplay ?? "").trim() || "—";
   const shareText = String(row.profitShare ?? "").trim() || "—";
+  const tradeCountText = String(row.tradeCount ?? "").trim() || "—";
   const daysText = String(row.heldDays ?? "").trim() || "—";
   const profitTone = String(row.profitTone || "").trim();
   const pxTone = String(row.pxTone || "").trim();
@@ -6838,6 +6839,7 @@ function mapStockRankBundleRow(row) {
     holdIntervalsLabel: String(row.holdIntervalsLabel || ""),
     profit: profitText,
     pxChange: pxText,
+    tradeCount: tradeCountText,
     heldDays: daysText,
     profitShare: shareText,
     profitTone: profitTone || bundleDisplayTone(profitText),
@@ -6871,6 +6873,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
             有效持仓区间内，起点取时间顺序第一笔买入成交价，终点取区间末日收盘（含今日则用现价），涨跌幅为终点÷起点−1；区间内无买入则起点为区间首日前一交易日收盘。多笔买入仅首笔价，非摊薄成本。
           </div>
         </span>
+        <span class="col-trades" role="columnheader">交易笔数</span>
         <span class="col-days col-with-help stock-rank-help-wrap" role="columnheader">
           <span class="col-th-label">持仓天数</span>
           <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="持仓天数说明">?</button>
@@ -6905,6 +6908,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
           ${profitCell}
           ${profitShareCell}
           <span class="col-px ${pCls}" role="cell">${escapeHtml(row.pxChange)}</span>
+          <span class="col-trades" role="cell">${escapeHtml(row.tradeCount)}</span>
           <span class="col-days" role="cell">${escapeHtml(row.heldDays)}</span>
           <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
         </div>`;

@@ -21,6 +21,13 @@ const {
   advanceStageAccSessionGap,
 } = require("./stage-accumulator");
 const {
+  StageTradeCounter,
+  countTradeRecordsOnDate,
+  isTradeRecord,
+  hydrateStageTradeAccFromRow,
+  advanceStageTradeAccSessionGap,
+} = require("./stage-trade-counter");
+const {
   lastPositiveCloseOnOrBefore,
   fxToCnyOnDate,
   inferMarket,
@@ -205,6 +212,13 @@ function mapAnalysisDbRow(row) {
     stageLast90dProfit: Number(row.stage_last_90d_profit),
     stageLast90dRateTwr: Number(row.stage_last_90d_rate_twr),
     principal: Number(row.principal),
+    dailyTradeCount: Number(row.daily_trade_count) || 0,
+    stageMtdTradeCount: Number(row.stage_mtd_trade_count) || 0,
+    stageYtdTradeCount: Number(row.stage_ytd_trade_count) || 0,
+    stageInceptionTradeCount: Number(row.stage_inception_trade_count) || 0,
+    stageLast7dTradeCount: Number(row.stage_last_7d_trade_count) || 0,
+    stageLast30dTradeCount: Number(row.stage_last_30d_trade_count) || 0,
+    stageLast90dTradeCount: Number(row.stage_last_90d_trade_count) || 0,
   };
 }
 
@@ -215,7 +229,10 @@ async function loadAnalysisRow(client, uid, accountId, dateKey) {
             stage_inception_profit, stage_inception_rate_twr,
             stage_last_7d_profit, stage_last_7d_rate_twr,
             stage_last_30d_profit, stage_last_30d_rate_twr,
-            stage_last_90d_profit, stage_last_90d_rate_twr, principal
+            stage_last_90d_profit, stage_last_90d_rate_twr, principal,
+            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
+            stage_inception_trade_count, stage_last_7d_trade_count,
+            stage_last_30d_trade_count, stage_last_90d_trade_count
      FROM analysis_daily_snapshot
      WHERE user_id = $1 AND account_id = $2 AND date = $3`,
     [uid, accountId, dateKey],
@@ -239,6 +256,13 @@ function mapSymbolDbRow(row) {
     stageLast30dRateTwr: Number(row.stage_last_30d_rate_twr),
     stageLast90dProfit: Number(row.stage_last_90d_profit),
     stageLast90dRateTwr: Number(row.stage_last_90d_rate_twr),
+    dailyTradeCount: Number(row.daily_trade_count) || 0,
+    stageMtdTradeCount: Number(row.stage_mtd_trade_count) || 0,
+    stageYtdTradeCount: Number(row.stage_ytd_trade_count) || 0,
+    stageInceptionTradeCount: Number(row.stage_inception_trade_count) || 0,
+    stageLast7dTradeCount: Number(row.stage_last_7d_trade_count) || 0,
+    stageLast30dTradeCount: Number(row.stage_last_30d_trade_count) || 0,
+    stageLast90dTradeCount: Number(row.stage_last_90d_trade_count) || 0,
   };
 }
 
@@ -248,7 +272,10 @@ async function loadSymbolRow(client, uid, accountId, sym, dateKey) {
             stage_inception_profit, stage_inception_rate_twr,
             stage_last_7d_profit, stage_last_7d_rate_twr,
             stage_last_30d_profit, stage_last_30d_rate_twr,
-            stage_last_90d_profit, stage_last_90d_rate_twr
+            stage_last_90d_profit, stage_last_90d_rate_twr,
+            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
+            stage_inception_trade_count, stage_last_7d_trade_count,
+            stage_last_30d_trade_count, stage_last_90d_trade_count
      FROM symbol_daily_pnl
      WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date = $4`,
     [uid, accountId, normalizeSymbol(sym), dateKey],
@@ -262,7 +289,10 @@ async function loadLatestSymbolRowBefore(client, uid, accountId, sym, beforeDate
             stage_inception_profit, stage_inception_rate_twr,
             stage_last_7d_profit, stage_last_7d_rate_twr,
             stage_last_30d_profit, stage_last_30d_rate_twr,
-            stage_last_90d_profit, stage_last_90d_rate_twr
+            stage_last_90d_profit, stage_last_90d_rate_twr,
+            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
+            stage_inception_trade_count, stage_last_7d_trade_count,
+            stage_last_30d_trade_count, stage_last_90d_trade_count
      FROM symbol_daily_pnl
      WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date <= $4
      ORDER BY date DESC
@@ -318,6 +348,33 @@ async function loadProfitByDate(client, uid, accountId, fromD, toD) {
   const map = new Map();
   for (const r of rows) {
     map.set(String(r.d).slice(0, 10), Number(r.daily_profit) || 0);
+  }
+  return map;
+}
+
+async function loadTradeCountByDate(client, uid, accountId, fromD, toD) {
+  const { rows } = await client.query(
+    `SELECT date::text AS d, daily_trade_count FROM analysis_daily_snapshot
+     WHERE user_id = $1 AND account_id = $2 AND date >= $3 AND date <= $4 ORDER BY date`,
+    [uid, accountId, fromD, toD],
+  );
+  const map = new Map();
+  for (const r of rows) {
+    map.set(String(r.d).slice(0, 10), Number(r.daily_trade_count) || 0);
+  }
+  return map;
+}
+
+async function loadSymbolTradeCountByDate(client, uid, accountId, sym, fromD, toD) {
+  const { rows } = await client.query(
+    `SELECT date::text AS d, daily_trade_count FROM symbol_daily_pnl
+     WHERE user_id = $1 AND account_id = $2 AND symbol = $3 AND date >= $4 AND date <= $5
+     ORDER BY date`,
+    [uid, accountId, normalizeSymbol(sym), fromD, toD],
+  );
+  const map = new Map();
+  for (const r of rows) {
+    map.set(String(r.d).slice(0, 10), Number(r.daily_trade_count) || 0);
   }
   return map;
 }
@@ -424,19 +481,30 @@ async function freezeAccountOneDay({
   }
 
   const stageAcc = new StageAccumulator();
+  const stageTradeAcc = new StageTradeCounter();
+  const dailyTradeCount = countTradeRecordsOnDate(accTrades, dk);
   if (yesterday && prevD) {
     const fromP = addCalendarDaysForProfit(dk, -89);
     const profitMap = accountMem?.profitByDate || (await loadProfitByDate(client, uid, accountId, fromP, prevD));
     for (const [d, p] of profitMap) {
       stageAcc.profitByDate.set(d, p);
     }
+    const tradeCountMap =
+      accountMem?.tradeCountByDate || (await loadTradeCountByDate(client, uid, accountId, fromP, prevD));
+    for (const [d, c] of tradeCountMap) {
+      stageTradeAcc.countByDate.set(d, c);
+    }
     hydrateStageAccFromRow(stageAcc, yesterday, dk);
+    hydrateStageTradeAccFromRow(stageTradeAcc, yesterday, dk);
     if (yesterday.date) {
       advanceStageAccSessionGap(stageAcc, yesterday.date, dk);
+      advanceStageTradeAccSessionGap(stageTradeAcc, yesterday.date, dk);
     }
   }
   stageAcc.onDay(dk, dailyProfit, dailyRateTwr);
+  stageTradeAcc.onDay(dk, dailyTradeCount);
   const snap = stageAcc.snapshotTwr();
+  const tradeSnap = stageTradeAcc.snapshot();
 
   const rowsAsc = accountMem?.rowsAsc ? [...accountMem.rowsAsc] : [];
   rowsAsc.push({ date: dk, totalAssets: ta, dailyExternalFlow: ext });
@@ -477,12 +545,16 @@ async function freezeAccountOneDay({
     stageLast90dProfit: snap.stageLast90dProfit,
     stageLast90dRateTwr: snap.stageLast90dRateTwr,
     stageLast90dRateMwr: mwr.stageLast90dRateMwr,
+    dailyTradeCount,
+    ...tradeSnap,
   };
 
   const profitByDate = accountMem?.profitByDate || new Map();
   profitByDate.set(dk, dailyProfit);
+  const tradeCountByDate = accountMem?.tradeCountByDate || new Map();
+  tradeCountByDate.set(dk, dailyTradeCount);
 
-  return { row, rowsAsc, lastRow: row, profitByDate };
+  return { row, rowsAsc, lastRow: row, profitByDate, tradeCountByDate };
 }
 
 function addCalendarDaysForProfit(dk, n) {
@@ -588,19 +660,33 @@ async function freezeSymbolOneDay({
   }
 
   const stageAcc = new StageAccumulator();
+  const stageTradeAcc = new StageTradeCounter();
+  const dailyTradeCount = dayTrades.filter((t) => isTradeRecord(t)).length;
   if (yesterday) {
     const profitMap = profitByDate || new Map();
     for (const [d, p] of profitMap) {
       stageAcc.profitByDate.set(d, p);
     }
+    let tradeCountMap = symbolMem?.tradeCountByDate || null;
+    if (!tradeCountMap && prevD && client && uid) {
+      const fromP = addCalendarDaysForProfit(dk, -89);
+      tradeCountMap = await loadSymbolTradeCountByDate(client, uid, accountId, sym, fromP, prevD);
+    }
+    for (const [d, c] of tradeCountMap || []) {
+      stageTradeAcc.countByDate.set(d, c);
+    }
     hydrateStageAccFromRow(stageAcc, yesterday, dk);
+    hydrateStageTradeAccFromRow(stageTradeAcc, yesterday, dk);
     const rowDate = yesterday.date || prevD;
     if (rowDate) {
       advanceStageAccSessionGap(stageAcc, rowDate, dk);
+      advanceStageTradeAccSessionGap(stageTradeAcc, rowDate, dk);
     }
   }
   stageAcc.onDay(dk, pnl, rDay);
+  stageTradeAcc.onDay(dk, dailyTradeCount);
   const snap = stageAcc.snapshotTwr();
+  const tradeSnap = stageTradeAcc.snapshot();
   if (Math.abs(qty) > 1e-6 && closeD > 0) {
     const existing = flowPts.find((p) => p.date === dk);
     const pt = { date: dk, value: qty * closeD, flow: dayFlow };
@@ -652,10 +738,14 @@ async function freezeSymbolOneDay({
     stageLast90dProfit: snap.stageLast90dProfit,
     stageLast90dRateTwr: snap.stageLast90dRateTwr,
     stageLast90dRateMwr: mwrRate,
+    dailyTradeCount,
+    ...tradeSnap,
   };
 
   const profitByDateOut = profitByDate || new Map();
   profitByDateOut.set(dk, pnl);
+  const tradeCountByDateOut = symbolMem?.tradeCountByDate || new Map();
+  tradeCountByDateOut.set(dk, dailyTradeCount);
 
   return {
     row,
@@ -675,8 +765,16 @@ async function freezeSymbolOneDay({
       stageLast30dRateTwr: row.stageLast30dRateTwr,
       stageLast90dProfit: row.stageLast90dProfit,
       stageLast90dRateTwr: row.stageLast90dRateTwr,
+      dailyTradeCount: row.dailyTradeCount,
+      stageMtdTradeCount: row.stageMtdTradeCount,
+      stageYtdTradeCount: row.stageYtdTradeCount,
+      stageInceptionTradeCount: row.stageInceptionTradeCount,
+      stageLast7dTradeCount: row.stageLast7dTradeCount,
+      stageLast30dTradeCount: row.stageLast30dTradeCount,
+      stageLast90dTradeCount: row.stageLast90dTradeCount,
     },
     profitByDate: profitByDateOut,
+    tradeCountByDate: tradeCountByDateOut,
   };
 }
 
@@ -822,6 +920,7 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
           rowsAsc: result.rowsAsc,
           lastRow: result.lastRow,
           profitByDate: result.profitByDate,
+          tradeCountByDate: result.tradeCountByDate,
         });
         analysisBuffer.push(result.row);
         accountRowsWritten += 1;

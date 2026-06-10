@@ -1047,6 +1047,7 @@ h2 {
     minmax(4.5rem, max-content)
     minmax(5rem, max-content)
     minmax(4.5rem, max-content)
+    minmax(4.5rem, max-content)
     minmax(12rem, 1fr);
 }
 
@@ -1056,6 +1057,7 @@ h2 {
     var(--stock-rank-col-name)
     minmax(4.5rem, max-content)
     minmax(5rem, max-content)
+    minmax(4.5rem, max-content)
     minmax(6rem, max-content)
     minmax(11rem, 1fr);
 }
@@ -1104,6 +1106,7 @@ h2 {
 
 .analysis-stock-rank-table .col-profit,
 .analysis-stock-rank-table .col-px,
+.analysis-stock-rank-table .col-trades,
 .analysis-stock-rank-table .col-days,
 .analysis-stock-rank-table .col-profit-share,
 .analysis-stock-rank-table .col-profit-share-head {

@@ -5,6 +5,15 @@ const { runSchemaDdl } = require("../db");
 
 const METRICS_SOURCE_VERSION = "3";
 
+const TRADE_COUNT_STAGE_COLS = [
+  "stage_mtd_trade_count",
+  "stage_ytd_trade_count",
+  "stage_inception_trade_count",
+  "stage_last_7d_trade_count",
+  "stage_last_30d_trade_count",
+  "stage_last_90d_trade_count",
+];
+
 const ANALYSIS_STAGE_COLS = [
   "stage_mtd_profit",
   "stage_mtd_rate_twr",
@@ -44,7 +53,9 @@ async function ensureMetricsSchemaV3() {
       `daily_external_flow DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_cash_delta DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `cash DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_trade_count INTEGER NOT NULL DEFAULT 0`,
       ...ANALYSIS_STAGE_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
+      ...TRADE_COUNT_STAGE_COLS.map((c) => `${c} INTEGER NOT NULL DEFAULT 0`),
     ];
     for (const def of analysisAdds) {
       const col = def.split(" ")[0];
@@ -62,7 +73,9 @@ async function ensureMetricsSchemaV3() {
       `eod_price DOUBLE PRECISION`,
       `eod_market_value_native DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `position_weight DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_trade_count INTEGER NOT NULL DEFAULT 0`,
       ...ANALYSIS_STAGE_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
+      ...TRADE_COUNT_STAGE_COLS.map((c) => `${c} INTEGER NOT NULL DEFAULT 0`),
     ];
     for (const def of symbolAdds) {
       await runSchemaDdl(`ALTER TABLE symbol_daily_pnl ADD COLUMN IF NOT EXISTS ${def}`).catch(() => {});
@@ -94,4 +107,5 @@ module.exports = {
   ensureMetricsSchemaV3,
   METRICS_SOURCE_VERSION,
   ANALYSIS_STAGE_COLS,
+  TRADE_COUNT_STAGE_COLS,
 };

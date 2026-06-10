@@ -5,6 +5,12 @@ const { normalizeSymbol } = require("../db");
 const { fmtPlainSignedAmount } = require("../account-kpi-surface");
 const { liveCnyToBookAmount, isAggregateScope } = require("./account-book-metrics");
 const { isFreshStagePeriod, stageUsesFrozenCumulativeFields } = require("./stages");
+const {
+  stageTradeCountFromRow,
+  countTradeRecordsOnDate,
+  countTradeRecordsInRange,
+  isTradeRecord,
+} = require("./stage-trade-counter");
 
 function stageProfitFromFrozenRow(row, stageKey) {
   const st = String(stageKey || "last_30d").trim() || "last_30d";
@@ -612,6 +618,69 @@ function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition 
   return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
 }
 
+function scopeSymbolTrades(trades, scope, symbol) {
+  const sym = normalizeSymbol(symbol);
+  const sc = String(scope || "all").trim() || "all";
+  return (trades || []).filter((t) => {
+    if (!isTradeRecord(t)) {
+      return false;
+    }
+    if (normalizeSymbol(t.symbol) !== sym) {
+      return false;
+    }
+    if (sc === "all") {
+      return true;
+    }
+    return String(t.accountId || "default") === sc;
+  });
+}
+
+function computeMainRowTradeCount({
+  stageKey,
+  stageStart,
+  frozenRow,
+  live,
+  symbolTrades,
+  periodStart,
+  periodEnd,
+  frozenThrough,
+}) {
+  const st = String(stageKey || "mtd").trim() || "mtd";
+  const ps = String(periodStart || stageStart || "").slice(0, 10);
+  const pe = String(periodEnd || "").slice(0, 10);
+  const ft = String(frozenThrough || "").slice(0, 10);
+  const tradeList = symbolTrades || [];
+
+  if (st === "custom") {
+    return countTradeRecordsInRange(tradeList, ps, pe);
+  }
+
+  if (st === "today") {
+    const dk = live?.tradingDay ? String(live.liveDate || "").slice(0, 10) : ft;
+    if (live?.tradingDay && dk) {
+      return countTradeRecordsOnDate(tradeList, dk);
+    }
+    return Number(frozenRow?.dailyTradeCount) || 0;
+  }
+
+  const ss = String(stageStart || ps).slice(0, 10);
+  let count = 0;
+  if (stageUsesFrozenCumulativeFields(st) && isFreshStagePeriod(ss, ft)) {
+    const frozenEnd = ft && ft < pe ? ft : pe;
+    count = countTradeRecordsInRange(tradeList, ss, frozenEnd);
+  } else {
+    count = stageTradeCountFromRow(frozenRow, st);
+  }
+
+  if (live?.tradingDay) {
+    const liveDate = String(live.liveDate || "").slice(0, 10);
+    if (liveDate > ft && liveDate >= ss && liveDate <= pe) {
+      count += countTradeRecordsOnDate(tradeList, liveDate);
+    }
+  }
+  return count;
+}
+
 function computeMainRowProfitCny({
   stageKey,
   stageStart,
@@ -863,6 +932,8 @@ module.exports = {
   computePeriodMetrics,
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
+  computeMainRowTradeCount,
+  scopeSymbolTrades,
   nativeFrozenPlusTodayToCny,
   profitNativeToAnalysisCny,
   profitCnyToBookScalar,

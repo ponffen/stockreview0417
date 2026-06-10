@@ -1597,6 +1597,14 @@ function mapSymbolDailyPnlChartRow(row) {
     stageLast7dProfit: row.stage_last_7d_profit == null ? null : Number(row.stage_last_7d_profit),
     stageLast30dProfit: row.stage_last_30d_profit == null ? null : Number(row.stage_last_30d_profit),
     stageLast90dProfit: row.stage_last_90d_profit == null ? null : Number(row.stage_last_90d_profit),
+    dailyTradeCount: row.daily_trade_count == null ? null : Number(row.daily_trade_count),
+    stageMtdTradeCount: row.stage_mtd_trade_count == null ? null : Number(row.stage_mtd_trade_count),
+    stageYtdTradeCount: row.stage_ytd_trade_count == null ? null : Number(row.stage_ytd_trade_count),
+    stageInceptionTradeCount:
+      row.stage_inception_trade_count == null ? null : Number(row.stage_inception_trade_count),
+    stageLast7dTradeCount: row.stage_last_7d_trade_count == null ? null : Number(row.stage_last_7d_trade_count),
+    stageLast30dTradeCount: row.stage_last_30d_trade_count == null ? null : Number(row.stage_last_30d_trade_count),
+    stageLast90dTradeCount: row.stage_last_90d_trade_count == null ? null : Number(row.stage_last_90d_trade_count),
     currency: row.currency,
     bookCurrency: row.book_currency,
     dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
@@ -1769,6 +1777,9 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
             stage_mtd_profit, stage_ytd_profit, stage_inception_profit,
             stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
+            stage_inception_trade_count, stage_last_7d_trade_count,
+            stage_last_30d_trade_count, stage_last_90d_trade_count,
             currency, book_currency, day_close_price
      FROM symbol_daily_pnl
      WHERE user_id = $1

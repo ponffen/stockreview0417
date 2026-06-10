@@ -17,6 +17,7 @@ const {
 const { ensureMetricsSchemaV3, METRICS_SOURCE_VERSION } = require("./schema-v3");
 const { upsertAnalysisBatchV3, upsertSymbolBatchV3 } = require("./freeze-v3-upsert");
 const { StageAccumulator } = require("./stage-accumulator");
+const { StageTradeCounter, countTradeRecordsOnDate, isTradeRecord } = require("./stage-trade-counter");
 const { windowStartForStage } = require("./stage-accumulator");
 const { addCalendarDays, monthStartKeyShanghai, yearStartKeyShanghai } = require("./stages");
 const {
@@ -251,6 +252,7 @@ async function freezeAccountHistory({
   const twrArr = computeTwrFromDayPoints(twrInputs);
 
   const stageAcc = new StageAccumulator();
+  const stageTradeAcc = new StageTradeCounter();
   const rowsAsc = [];
   let prevTa = 0;
   let prevCash = 0;
@@ -261,6 +263,9 @@ async function freezeAccountHistory({
   for (let i = 0; i < dayPoints.length; i += 1) {
     const p = dayPoints[i];
     const dk = p.date;
+    const dailyTradeCount = countTradeRecordsOnDate(accTrades, dk);
+    stageTradeAcc.onDay(dk, dailyTradeCount);
+    const tradeSnap = stageTradeAcc.snapshot();
     const tw = twrArr[i] || { twRDaily: 0, twRCumulative: 0 };
     const cashCny = computeLedgerCashCnyUpToDate(sessionTrades, sessionCash, accounts, accountId, fxUsdMap, fxHkdMap, dk);
     const mvCny = Number(p.nav) || 0;
@@ -322,6 +327,8 @@ async function freezeAccountHistory({
         stageLast90dProfit: snap.stageLast90dProfit,
         stageLast90dRateTwr: snap.stageLast90dRateTwr,
         stageLast90dRateMwr: mwr.stageLast90dRateMwr,
+        dailyTradeCount,
+        ...tradeSnap,
       });
     }
 
@@ -348,6 +355,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
   const D = String(frozenDate).slice(0, 10);
   const dates = allDates.filter((d) => d <= D);
   const stageAcc = new StageAccumulator();
+  const stageTradeAcc = new StageTradeCounter();
   const flowPts = [];
   const dailyOut = [];
   let pi = 0;
@@ -368,6 +376,8 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       pi += 1;
     }
     const qEod = qty;
+    const dailyTradeCount = dayTrades.filter((t) => isTradeRecord(t)).length;
+    stageTradeAcc.onDay(day, dailyTradeCount);
     const hasActivity =
       dayTrades.length > 0 || Math.abs(qBod) > 1e-6 || Math.abs(qEod) > 1e-6;
     if (!hasActivity) {
@@ -401,6 +411,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       flowPts.push({ date: day, value: qEod * closeD, flow: dayFlow });
     }
     const snap = stageAcc.snapshotTwr();
+    const tradeSnap = stageTradeAcc.snapshot();
     const endVal = qEod * closeD;
     const mwrRate = mwrForFreezeStorage(symbolMwrFromValueFlowPoints(flowPts, day, endVal));
     dailyOut.push({
@@ -412,7 +423,9 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       dailyRateTwr: rDay,
       eodShares: qEod,
       eodPrice: closeD,
+      dailyTradeCount,
       ...snap,
+      ...tradeSnap,
       stageMtdRateMwr: mwrRate,
       stageYtdRateMwr: mwrRate,
       stageInceptionRateMwr: mwrRate,

@@ -25,6 +25,9 @@ const {
   buildCloseLookup,
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
+  computeMainRowTradeCount,
+  scopeSymbolTrades,
+  countTradeRecordsInRange,
   profitNativeToAnalysisCny,
   pxChangeMainRowFromSegments,
   formatHoldingSegmentsLabel,
@@ -73,6 +76,11 @@ function fmtStockRankHeldDays(heldDays) {
   return `${d}天`;
 }
 
+function fmtStockRankTradeCount(tradeCount) {
+  const n = Math.max(0, Math.floor(Number(tradeCount) || 0));
+  return `${n}笔`;
+}
+
 function profitToneFromCny(profitCny) {
   const v = Number(profitCny);
   if (!Number.isFinite(v) || Math.abs(v) < 1e-9) {
@@ -93,6 +101,7 @@ function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
     const profitBook = stockRankRowProfitToBook(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny);
     const pxChange = Number(r.pxChange);
     const heldDays = Number(r.heldDays) || 0;
+    const tradeCount = Number(r.tradeCount) || 0;
     return {
       rank: r.rank,
       symbol: r.symbol,
@@ -100,6 +109,7 @@ function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
       holdIntervalsLabel: r.holdIntervalsLabel,
       profit: fmtPlainSignedAmount(profitBook),
       pxChange: Number.isFinite(pxChange) ? fmtSignedPercentRatio(pxChange) : "—",
+      tradeCount: fmtStockRankTradeCount(tradeCount),
       heldDays: fmtStockRankHeldDays(heldDays),
       profitShare: fmtStockRankProfitShare(profitBook, accountProfit),
       profitTone: profitToneFromCny(profitBook),
@@ -203,6 +213,7 @@ async function buildStockRankPayloadLegacy({
       holdIntervalsLabel,
       profitCny,
       pxChange: m.pxChange,
+      tradeCount: countTradeRecordsInRange(symbolTrades, a, periodEnd),
       heldDays: m.heldDays,
     });
   }
@@ -226,6 +237,7 @@ async function buildStockRankPayloadV3({
   publicLayout = false,
   accountProfitCny = null,
   scopeCtx = null,
+  preloadedTrades = null,
 }) {
   const scope = String(accountScope || "all").trim() || "all";
   const stageKey = String(stage || "mtd").trim() || "mtd";
@@ -311,6 +323,17 @@ async function buildStockRankPayloadV3({
     });
     const heldDays = heldDaysFromSegmentDates(segments);
     const pxChange = segments.length > 0 ? pxChangeMainRowFromSegments(segments, closeLookup) : NaN;
+    const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
+    const tradeCount = computeMainRowTradeCount({
+      stageKey,
+      stageStart: periodStart,
+      frozenRow,
+      live,
+      symbolTrades,
+      periodStart,
+      periodEnd,
+      frozenThrough,
+    });
 
     let holdIntervalsLabel = "";
     if (publicLayout) {
@@ -346,6 +369,7 @@ async function buildStockRankPayloadV3({
       holdIntervalsLabel,
       profitCny,
       pxChange,
+      tradeCount,
       heldDays,
     });
   }
@@ -383,6 +407,7 @@ async function finalizeStockRankPayload({
       holdIntervalsLabel: r.holdIntervalsLabel,
       profitCny: r.profitCny,
       pxChange: r.pxChange,
+      tradeCount: r.tradeCount,
       heldDays: r.heldDays,
     };
   });
