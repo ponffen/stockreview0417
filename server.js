@@ -1249,7 +1249,7 @@ app.delete("/api/community/follow/:targetId", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-const REGISTER_INVITE_CODE = "20260422";
+const { REGISTER_INVITE_CODE } = require("./src/register-invite");
 
 app.post("/api/auth/register", async (req, res) => {
   try {

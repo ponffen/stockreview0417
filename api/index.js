@@ -481,12 +481,17 @@ module.exports = async function handler(req, res) {
   const isMe = pathOnly === "/api/auth/me";
   const isLogin = pathOnly === "/api/auth/login";
   const isLogout = pathOnly === "/api/auth/logout";
+  const isRegister = pathOnly === "/api/auth/register";
 
-  if (isMe || isLogin || isLogout) {
+  if (isMe || isLogin || isLogout || isRegister) {
     try {
-      console.log(`[api/index.js] direct-handle ${isMe ? 'me' : isLogin ? 'login' : 'logout'} start`);
+      console.log(
+        `[api/index.js] direct-handle ${isMe ? "me" : isLogin ? "login" : isLogout ? "logout" : "register"} start`
+      );
       // Lazy require DB and Auth logic only when these routes are hit
-      const { getUserPhone, getUserCommunityRow, verifyUserLogin } = require("../src/db");
+      const { getUserPhone, getUserCommunityRow, verifyUserLogin, createRegisteredUser } = require("../src/db");
+      const { isValidPhone, isValidPasswordDigits } = require("../src/password");
+      const { REGISTER_INVITE_CODE } = require("../src/register-invite");
       const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("../src/auth-session");
       const { maskPhone, displayNameForUser } = require("../src/community-service");
 
@@ -569,6 +574,69 @@ module.exports = async function handler(req, res) {
 
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, user: { phone: u.phone } }));
+        return;
+      }
+
+      if (isRegister) {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: "Method Not Allowed" }));
+          return;
+        }
+
+        const bodyStr = await new Promise((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => {
+            data += chunk;
+          });
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+
+        let body = {};
+        if (bodyStr) {
+          try {
+            body = JSON.parse(bodyStr);
+          } catch (_) {
+            body = {};
+          }
+        }
+
+        const phone = body?.phone != null ? String(body.phone).trim() : "";
+        const password = body?.password != null ? String(body.password) : "";
+        const inviteCode = body?.inviteCode != null ? String(body.inviteCode).trim() : "";
+
+        if (!isValidPhone(phone)) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "请输入 11 位手机号" }));
+          return;
+        }
+        if (!isValidPasswordDigits(password)) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "密码为不少于 6 位的数字" }));
+          return;
+        }
+        if (inviteCode !== REGISTER_INVITE_CODE) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "邀请码错误" }));
+          return;
+        }
+
+        try {
+          const u = await createRegisteredUser(phone, password);
+          setSessionCookie(res, u.id);
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, user: { phone: u.phone } }));
+        } catch (error) {
+          const msg = error?.message || "注册失败";
+          if (msg.includes("already registered")) {
+            res.statusCode = 409;
+            res.end(JSON.stringify({ ok: false, error: "该手机号已注册" }));
+            return;
+          }
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: msg }));
+        }
         return;
       }
     } catch (error) {
