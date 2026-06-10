@@ -772,7 +772,7 @@ const {
   enrichTradesWithSymbolNames,
 } = require("./src/symbol-name-resolve");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
-const { parseSinaSuggestText, suggestLineToItem } = require("./src/sina-suggest");
+const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
 const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
@@ -2220,18 +2220,15 @@ app.post("/api/daily-close/backfill", requireAuth, async (req, res) => {
   }
 });
 
-/**
- * 新浪 suggest 搜索代理（免浏览器跨域、GBK 解码），供新增交易时按字联想。
- * see https://suggest3.sinajs.cn/suggest/
- */
-app.get("/api/sina/suggest", async (req, res) => {
-  const key = req.query.key != null ? String(req.query.key) : "";
-  if (!key || key.length > 64) {
-    res.status(400).json({ ok: false, error: "invalid key" });
+/** 股票搜索联想（新增交易搜股） */
+app.get("/api/search", async (req, res) => {
+  const query = req.query.query != null ? String(req.query.query).trim() : "";
+  if (!query || query.length > 64) {
+    res.status(400).json({ ok: false, error: "invalid query" });
     return;
   }
   const url = `https://suggest3.sinajs.cn/suggest/?key=${encodeURIComponent(
-    key
+    query
   )}&type=111,41,31,101&name=suggest&num=50`;
   try {
     const r = await fetch(url, {
@@ -2239,7 +2236,7 @@ app.get("/api/sina/suggest", async (req, res) => {
       signal: AbortSignal.timeout(6500),
     });
     if (!r.ok) {
-      res.status(502).json({ ok: false, error: "sina suggest http error" });
+      res.status(502).json({ ok: false, error: "search upstream http error" });
       return;
     }
     const buf = Buffer.from(await r.arrayBuffer());
@@ -2256,9 +2253,9 @@ app.get("/api/sina/suggest", async (req, res) => {
       }
     }
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, results });
+    res.json({ ok: true, results: publicSearchResults(results) });
   } catch (error) {
-    res.status(502).json({ ok: false, error: error?.message || "sina suggest failed" });
+    res.status(502).json({ ok: false, error: error?.message || "search failed" });
   }
 });
 

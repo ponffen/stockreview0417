@@ -29,7 +29,7 @@ function setCacheValue(map, key, value) {
 
 async function fetchSinaSuggestFromUpstream(key) {
   const iconv = require("iconv-lite");
-  const { parseSinaSuggestText, suggestLineToItem } = require("../src/sina-suggest");
+  const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require("../src/sina-suggest");
   const { normalizeSymbol } = require("../src/db");
   const url = `https://suggest3.sinajs.cn/suggest/?key=${encodeURIComponent(
     key
@@ -54,10 +54,11 @@ async function fetchSinaSuggestFromUpstream(key) {
       results.push(item);
     }
   }
-  return results;
+  return publicSearchResults(results);
 }
 
 async function fetchSinaSuggestFromAliyun(key) {
+  const { publicSearchResults } = require("../src/sina-suggest");
   const base = String(process.env.ALIYUN_SINA_SUGGEST_PROXY_BASE_URL || DEFAULT_ALIYUN_SINA_SUGGEST_PROXY_BASE)
     .trim()
     .replace(/\/+$/, "");
@@ -79,7 +80,7 @@ async function fetchSinaSuggestFromAliyun(key) {
   if (!json?.ok || !Array.isArray(json.results)) {
     throw new Error("aliyun suggest payload invalid");
   }
-  return json.results;
+  return publicSearchResults(json.results);
 }
 
 function getServerlessApp() {
@@ -685,7 +686,7 @@ module.exports = async function handler(req, res) {
   const isCashTransfersPostDirect = req.method === "POST" && pathOnly === "/api/cash-transfers";
   const isCashTransfersDeleteDirect = req.method === "DELETE" && !!cashTransfersDeleteMatch;
   const isCashTransfersImportDirect = req.method === "POST" && pathOnly === "/api/cash-transfers/import";
-  const isSinaSuggestDirect = req.method === "GET" && pathOnly === "/api/sina/suggest";
+  const isStockSearchDirect = req.method === "GET" && pathOnly === "/api/search";
 
   if (isCreateSymbolNameMapDirect) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -710,31 +711,32 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  if (isSinaSuggestDirect) {
+  if (isStockSearchDirect) {
+    const { publicSearchResults } = require("../src/sina-suggest");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
-    const key = String(getSearchParam(req, "key") || "").trim();
-    if (!key || key.length > 64) {
+    const query = String(getSearchParam(req, "query") || "").trim();
+    if (!query || query.length > 64) {
       res.statusCode = 400;
-      res.end(JSON.stringify({ ok: false, error: "invalid key" }));
+      res.end(JSON.stringify({ ok: false, error: "invalid query" }));
       return;
     }
-    const cacheKey = key.toLowerCase();
+    const cacheKey = query.toLowerCase();
     const cached = getCacheHit(sinaSuggestCache, cacheKey, DIRECT_SINA_SUGGEST_CACHE_TTL_MS);
     if (Array.isArray(cached)) {
       res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, results: cached, source: "cache" }));
+      res.end(JSON.stringify({ ok: true, results: publicSearchResults(cached) }));
       return;
     }
     try {
       let results = null;
       try {
-        results = await fetchSinaSuggestFromAliyun(key);
+        results = await fetchSinaSuggestFromAliyun(query);
       } catch (error) {
-        console.warn("[api/index.js] aliyun suggest failed:", error?.message || error);
+        console.warn("[api/index.js] aliyun search failed:", error?.message || error);
       }
       if (!Array.isArray(results)) {
-        results = await fetchSinaSuggestFromUpstream(key);
+        results = await fetchSinaSuggestFromUpstream(query);
       }
       setCacheValue(sinaSuggestCache, cacheKey, results);
       res.statusCode = 200;
@@ -742,7 +744,7 @@ module.exports = async function handler(req, res) {
       return;
     } catch (error) {
       res.statusCode = 502;
-      res.end(JSON.stringify({ ok: false, error: error?.message || "sina suggest failed" }));
+      res.end(JSON.stringify({ ok: false, error: error?.message || "search failed" }));
       return;
     }
   }

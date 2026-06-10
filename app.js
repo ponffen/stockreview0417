@@ -3930,7 +3930,7 @@ async function runTradeSearchSuggestQuery(raw) {
   tradeStockSearchResults.hidden = false;
   try {
     const res = await apiFetch(
-      `${base}/sina/suggest?key=${encodeURIComponent(q)}`,
+      `${base}/search?query=${encodeURIComponent(q)}`,
       { signal: c.signal, cache: "no-store" }
     );
     if (c.signal.aborted) {
@@ -3953,12 +3953,10 @@ async function runTradeSearchSuggestQuery(raw) {
         const sym = row.symbol != null ? String(row.symbol) : "";
         const code = formatSymbolForDisplay(sym);
         const name = row.name != null ? String(row.name) : sym;
-        const mkt = row.market != null ? String(row.market) : "";
         return `<li role="option" id="tssr-${i}" data-symbol="${escapeHtml(sym)}" data-name="${escapeHtml(name)}">
           <div class="trade-stock-search-name">${escapeHtml(name)}</div>
           <div class="trade-stock-search-meta">
-            <span class="trade-stock-search-code">${escapeHtml(code || sym)}</span><br />
-            <span>${escapeHtml(mkt)}</span>
+            <span class="trade-stock-search-code">${escapeHtml(code || sym)}</span>
           </div>
         </li>`;
       })

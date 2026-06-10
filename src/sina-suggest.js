@@ -49,6 +49,22 @@ function suggestLineToItem(line, normalizeSymbol) {
   return { typeCode, code: rawCode, name, symbol, market };
 }
 
+/** 对外 /api/search 响应：不含 typeCode、market */
+function publicSearchResult(item) {
+  if (!item || !item.symbol) {
+    return null;
+  }
+  return {
+    code: item.code,
+    name: item.name,
+    symbol: item.symbol,
+  };
+}
+
+function publicSearchResults(items) {
+  return (Array.isArray(items) ? items : []).map(publicSearchResult).filter(Boolean);
+}
+
 function parseSinaSuggestText(text) {
   const m = /var suggest="([^"]*)"/.exec(String(text || ""));
   if (!m) {
@@ -65,4 +81,6 @@ function parseSinaSuggestText(text) {
 module.exports = {
   suggestLineToItem,
   parseSinaSuggestText,
+  publicSearchResult,
+  publicSearchResults,
 };
