@@ -16,6 +16,7 @@ const STOCK_RANK_PUBLIC_KEYS = new Set([
   "symbol",
   "name",
   "pxChange",
+  "tradeCount",
   "heldDays",
   "profitShare",
   "holdIntervalsLabel",
