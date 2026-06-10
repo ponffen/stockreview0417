@@ -178,6 +178,14 @@ function customStageRangeFromOpts(opts = {}) {
   return from && to ? { from, to } : null;
 }
 
+function tradesForMetricsScope(trades, scope) {
+  const sc = String(scope || "all").trim() || "all";
+  if (sc === "all" || !Array.isArray(trades)) {
+    return trades;
+  }
+  return trades.filter((t) => String(t.accountId || "default") === sc);
+}
+
 function firstTradeDateFromCtx(ctx, fallback) {
   const asOf = String(fallback || ctx.live?.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
   const fromAccount = String(
@@ -186,7 +194,7 @@ function firstTradeDateFromCtx(ctx, fallback) {
   if (fromAccount) {
     return fromAccount;
   }
-  return firstTradeDateFromTrades(ctx.trades, asOf);
+  return firstTradeDateFromTrades(tradesForMetricsScope(ctx.trades, ctx.scope), asOf);
 }
 
 async function computeReturnStages(ctx, stagesRaw, customRange = null) {

@@ -60,9 +60,34 @@ function resolveFrozenThrough(umRow, analysisRow) {
   return capFrozenThroughToSnapshot(meta, snap) || meta || snap || "";
 }
 
+/** 账户 scope 下最早成交日；trades 已按 trade_date 升序时取首条匹配即可。 */
+function minFirstTradeDateForScope(trades, accountScope, fallback = "") {
+  const scope = String(accountScope || "all").trim() || "all";
+  const fb = String(fallback || "").slice(0, 10);
+  if (!Array.isArray(trades) || !trades.length) {
+    return fb;
+  }
+  const tradeDate = (t) => String(t.date || t.trade_date || "").slice(0, 10);
+  const accountId = (t) => String(t.accountId || t.account_id || "default");
+  if (scope === "all") {
+    const d = tradeDate(trades[0]);
+    return d || fb;
+  }
+  for (const t of trades) {
+    if (accountId(t) === scope) {
+      const d = tradeDate(t);
+      if (d) {
+        return d;
+      }
+    }
+  }
+  return fb;
+}
+
 module.exports = {
   mapAnalysisRowToHomeAccount,
   mapSymbolRowToHomeSummary,
   resolveFrozenThrough,
+  minFirstTradeDateForScope,
   addCalendarDays,
 };

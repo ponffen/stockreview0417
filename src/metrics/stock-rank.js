@@ -129,7 +129,7 @@ async function buildStockRankPayloadLegacy({
   const scopeTrades =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
   let firstTrade = asOf;
-  if (scope === "all" && firstTradeDate) {
+  if (firstTradeDate) {
     firstTrade = String(firstTradeDate).slice(0, 10);
   } else if (scopeTrades.length > 0) {
     firstTrade = [...scopeTrades].sort(sortTradeAsc)[0].date;

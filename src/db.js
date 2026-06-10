@@ -1932,10 +1932,12 @@ async function getHomeSummaryForUser(userId, accountScope = "all") {
   );
   const frozenThrough = resolveFrozenThrough({ frozen_through: ftMeta }, ar[0]);
   const snapshotDate = await resolveMetricsSnapshotDate(uid, sc, frozenThrough);
-  const { rows: tr } = await q(
-    `SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`,
-    [uid],
-  );
+  const firstTradeSql =
+    sc === "all"
+      ? `SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`
+      : `SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1 AND account_id = $2`;
+  const firstTradeParams = sc === "all" ? [uid] : [uid, sc];
+  const { rows: tr } = await q(firstTradeSql, firstTradeParams);
   const firstTrade = tr[0]?.d ? String(tr[0].d).slice(0, 10) : snapshotDate || frozenThrough;
   const homeAccount = mapAnalysisRowToHomeAccount(ar[0], snapshotDate || frozenThrough, firstTrade);
   let symRows = [];
@@ -1994,7 +1996,12 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
   return withOneShotDbClient(async (client) => {
     const cq = (text, params) => client.query(text, params);
     const settingsRes = await cq("SELECT key, value FROM app_settings WHERE user_id = $1", [uid]);
-    const { mapAnalysisRowToHomeAccount, mapSymbolRowToHomeSummary, resolveFrozenThrough } = require("./metrics/frozen-pack-v3");
+    const {
+      mapAnalysisRowToHomeAccount,
+      mapSymbolRowToHomeSummary,
+      resolveFrozenThrough,
+      minFirstTradeDateForScope,
+    } = require("./metrics/frozen-pack-v3");
     const homeAccRes = await cq(
       `SELECT * FROM analysis_daily_snapshot WHERE user_id = $1 AND account_id = $2 ORDER BY date DESC LIMIT 1`,
       [uid, scope],
@@ -2044,10 +2051,8 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
     const analysisRow = homeAccRes.rows[0] || null;
     const frozenThrough = resolveFrozenThrough(umRow, analysisRow);
     const snapshotDate = await resolveMetricsSnapshotDate(uid, scope, frozenThrough);
-    const firstTradeRes = await cq(`SELECT MIN(trade_date)::text AS d FROM trades WHERE user_id = $1`, [uid]);
-    const firstTrade = firstTradeRes.rows[0]?.d
-      ? String(firstTradeRes.rows[0].d).slice(0, 10)
-      : snapshotDate || frozenThrough;
+    const packTrades = (tradesRes.rows || []).map(rowToTrade);
+    const firstTrade = minFirstTradeDateForScope(packTrades, scope, snapshotDate || frozenThrough);
     const homeAccount = mapAnalysisRowToHomeAccount(analysisRow, snapshotDate || frozenThrough, firstTrade);
     const symRes =
       snapshotDate && analysisRow
@@ -2099,7 +2104,7 @@ async function fetchHomeBundleFrozenPack(userId, accountScope = "all") {
       accountMetaList,
       lastEodRows,
       frozenSymbolEodRows,
-      trades: (tradesRes.rows || []).map(rowToTrade),
+      trades: packTrades,
       cashTransfers: (cashRes.rows || []).map(rowToCashTransfer),
       singleConnection: true,
     };
