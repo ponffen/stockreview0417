@@ -471,67 +471,11 @@ function tradesInPeriod(symbolTrades, periodStart, periodEnd) {
   });
 }
 
-function hasRebuyAfterClearInPeriod(symbolTrades, periodStart, periodEnd) {
-  let qty = 0;
-  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
-    const dk = String(t.date).slice(0, 10);
-    if (dk < periodStart) {
-      qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
-    }
-  }
-  let clearedOnce = false;
-  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
-    const dk = String(t.date).slice(0, 10);
-    if (dk < periodStart || dk > periodEnd) {
-      continue;
-    }
-    const before = qty;
-    qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
-    if (before > 1e-6 && qty <= 1e-6) {
-      clearedOnce = true;
-    }
-    if (clearedOnce && before <= 1e-6 && qty > 1e-6) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function firstBuyDateInPeriod(symbolTrades, periodStart, periodEnd) {
-  for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
-    const dk = String(t.date).slice(0, 10);
-    if (dk < periodStart || dk > periodEnd) {
-      continue;
-    }
-    if (t.side === "buy" && validNumber(t.quantity, 0) > 0) {
-      return dk;
-    }
-  }
-  return null;
-}
-
-/** 单段快捷或逐日划段；多段卖光再买必须完整划段。 */
+/** 逐日划段：清仓终点取卖光日，末段仍持仓时终点取 periodEnd。 */
 function resolveHoldingSegments(symbolTrades, periodStart, periodEnd) {
   const ps = String(periodStart || "").slice(0, 10);
   const pe = String(periodEnd || "").slice(0, 10);
   if (!ps || !pe || ps > pe) {
-    return [];
-  }
-  if (!hasRebuyAfterClearInPeriod(symbolTrades, ps, pe)) {
-    let qty = 0;
-    for (const t of [...(symbolTrades || [])].sort(sortTradeAsc)) {
-      const dk = String(t.date).slice(0, 10);
-      if (dk < ps) {
-        qty += t.side === "buy" ? Number(t.quantity) : -Number(t.quantity);
-      }
-    }
-    if (qty > 1e-6) {
-      return [{ start: ps, end: pe }];
-    }
-    const firstBuy = firstBuyDateInPeriod(symbolTrades, ps, pe);
-    if (firstBuy) {
-      return [{ start: firstBuy, end: pe }];
-    }
     return [];
   }
   return collectHoldingSegmentsInPeriod(symbolTrades, ps, pe);
