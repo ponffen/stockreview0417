@@ -621,7 +621,7 @@
         </article>
       </section>
 
-      <section id="route-holdings-ai" class="route-pane">
+      <section id="route-ai-analysis" class="route-pane">
         <article class="panel holdings-ai-panel">
           <p class="holdings-ai-lead">连接 Claude 后，可实时读取你的持仓与成交数据，在对话中深度复盘；只读，不会修改账户。</p>
           <div id="holdingsAiStatus" class="holdings-ai-status" aria-live="polite">加载中…</div>
@@ -651,13 +651,6 @@
         <div id="communityLeaderboardList" class="community-list"></div>
       </section>
 
-      <section id="route-community-ai" class="route-pane">
-        <article class="panel community-empty-panel">
-          <p class="community-empty-title">AI</p>
-          <p class="community-empty-desc">功能即将上线</p>
-        </article>
-      </section>
-
       <section id="route-community-profile" class="route-pane community-profile-route">
         <article class="panel community-profile-head-panel">
           <div class="community-profile-top-row">
@@ -678,9 +671,6 @@
         <button class="bottom-tab-btn" data-route="analysis" data-module="holdings">
           <span class="tab-ico">◔</span><span>分析</span>
         </button>
-        <button class="bottom-tab-btn" data-route="holdings-ai" data-module="holdings">
-          <span class="tab-ico">◇</span><span>AI</span>
-        </button>
         <button class="bottom-tab-btn" data-route="trade" data-module="holdings">
           <span class="tab-ico">¥</span><span>交易</span>
         </button>
@@ -695,9 +685,6 @@
         </button>
         <button class="bottom-tab-btn" data-route="community-rank" data-module="community">
           <span class="tab-ico">▤</span><span>排行</span>
-        </button>
-        <button class="bottom-tab-btn" data-route="community-ai" data-module="community">
-          <span class="tab-ico">◇</span><span>AI</span>
         </button>
       </nav>
 
@@ -720,6 +707,7 @@
       <nav class="app-drawer-nav">
         <button type="button" class="app-drawer-item" data-drawer-action="holdings">组合分析</button>
         <button type="button" class="app-drawer-item" data-drawer-action="community">社区广场</button>
+        <button type="button" class="app-drawer-item" data-drawer-action="ai-analysis">AI分析</button>
         <button type="button" class="app-drawer-item" data-drawer-action="mine">我的</button>
       </nav>
     </aside>

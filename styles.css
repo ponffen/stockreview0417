@@ -2324,13 +2324,8 @@ h2 {
   border-top: 1px solid var(--line);
   background: var(--panel);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  z-index: 100;
-}
-
-/** 他人持仓底栏仅 3 项，需占满整行（避免继承 4 列网格右侧留白） */
-.bottom-tabs.bottom-tabs--profile {
   grid-template-columns: repeat(3, 1fr);
+  z-index: 100;
 }
 
 .bottom-tab-btn {

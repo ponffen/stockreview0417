@@ -1039,6 +1039,10 @@ function normalizeModuleHomeOnColdLoad() {
     state.communityProfileUserId = null;
     return;
   }
+  if (state.appModule === "ai") {
+    state.route = "ai-analysis";
+    return;
+  }
   if (state.appModule === "community") {
     if (state.route !== "community-profile") {
       state.route = "community-feed";
@@ -2010,7 +2014,8 @@ async function hydrateState() {
       ? parsed.cashTransfers.map(normalizeCashTransferRow)
       : [];
     state.tradePanelTab = parsed.tradePanelTab === "cash" ? "cash" : "trades";
-    state.appModule = parsed.appModule === "community" ? "community" : "holdings";
+    state.appModule =
+      parsed.appModule === "community" ? "community" : parsed.appModule === "ai" ? "ai" : "holdings";
     if (parsed.ledgerCounts && typeof parsed.ledgerCounts === "object") {
       state.ledgerCounts = {
         trades: Number(parsed.ledgerCounts.trades) || 0,
@@ -2071,8 +2076,15 @@ async function hydrateState() {
   state.stockRecordAccountId = resolveValidAccountFilter(state.stockRecordAccountId);
   state.customRangeDraftStart = state.customRangeStart;
   state.customRangeDraftEnd = state.customRangeEnd;
-  if (!["holdings", "community"].includes(state.appModule)) {
+  if (!["holdings", "community", "ai"].includes(state.appModule)) {
     state.appModule = "holdings";
+  }
+  if (state.route === "holdings-ai" || state.route === "community-ai") {
+    state.route = "ai-analysis";
+    state.appModule = "ai";
+  }
+  if (state.route === "ai-analysis") {
+    state.appModule = "ai";
   }
   if (state.route?.startsWith("community-") && state.route !== "community-profile") {
     state.appModule = "community";
@@ -2083,7 +2095,6 @@ async function hydrateState() {
     "trade",
     "trade-records",
     "trade-cash",
-    "holdings-ai",
     "trade-search",
   ]);
   if (holdingsRoutes.has(state.route)) {
@@ -3059,6 +3070,9 @@ function bindEvents() {
       if (a === "community") {
         state.appModule = "community";
         state.route = "community-feed";
+      } else if (a === "ai-analysis") {
+        state.appModule = "ai";
+        state.route = "ai-analysis";
       } else if (a === "mine") {
         state.route = "mine";
       }
@@ -4230,7 +4244,7 @@ function renderAll() {
     } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
       void openCommunityProfileAnalysisTab();
     }
-  } else if (state.route === "holdings-ai") {
+  } else if (state.route === "ai-analysis") {
     void refreshHoldingsAiConnectionStatus();
   }
 }
@@ -4420,7 +4434,8 @@ function applyBrowserRouteSnapshot(snapshot) {
   if (!route) {
     return false;
   }
-  const appModule = snapshot.appModule === "community" ? "community" : "holdings";
+  const appModule =
+    snapshot.appModule === "community" ? "community" : snapshot.appModule === "ai" ? "ai" : "holdings";
   state.appModule = appModule;
   state.route = route;
   state.previousRoute = String(snapshot.previousRoute || state.previousRoute || "earning");
@@ -5847,7 +5862,7 @@ function renderRoute() {
     "trade-records",
     "trade-cash",
     "trade-search",
-    "holdings-ai",
+    "ai-analysis",
     "mine",
     "mine-accounts",
     "mine-algo",
@@ -5855,12 +5870,16 @@ function renderRoute() {
     "community-feed",
     "community-following",
     "community-rank",
-    "community-ai",
     "community-profile",
     "stock-record",
   ]);
   if (!validRoutes.has(state.route)) {
-    state.route = state.appModule === "community" ? "community-feed" : "earning";
+    state.route =
+      state.appModule === "community"
+        ? "community-feed"
+        : state.appModule === "ai"
+          ? "ai-analysis"
+          : "earning";
   }
   const routeChanged = state.route !== lastRenderedRouteForScrollReset;
   if (
@@ -5878,6 +5897,8 @@ function renderRoute() {
       appHeaderTitle.textContent = "组合分析";
     } else if (isMineRoute(state.route)) {
       appHeaderTitle.textContent = "我的";
+    } else if (state.route === "ai-analysis" || state.appModule === "ai") {
+      appHeaderTitle.textContent = "AI分析";
     } else if (state.appModule === "community") {
       appHeaderTitle.textContent = "社区广场";
     } else {
@@ -5927,6 +5948,7 @@ function renderRoute() {
     state.route === "trade-records" ||
     state.route === "trade-cash" ||
     state.route === "community-profile" ||
+    state.route === "ai-analysis" ||
     isMineRoute(state.route);
   document.querySelectorAll(".bottom-tabs").forEach((bar) => {
     const isProfile = bar.classList.contains("bottom-tabs--profile");
