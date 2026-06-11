@@ -624,11 +624,13 @@
       <section id="route-ai-analysis" class="route-pane">
         <article class="panel holdings-ai-panel">
           <p class="holdings-ai-lead">连接 Claude 后，可实时读取你的持仓与成交数据，在对话中深度复盘；只读，不会修改账户。</p>
-          <div id="holdingsAiStatus" class="holdings-ai-status" aria-live="polite">加载中…</div>
+          <div class="holdings-ai-status-row">
+            <div id="holdingsAiStatus" class="holdings-ai-status" aria-live="polite">加载中…</div>
+            <button type="button" id="holdingsAiDisconnectBtn" class="holdings-ai-disconnect-link hidden">断开连接</button>
+          </div>
           <div class="holdings-ai-actions">
             <button type="button" id="holdingsAiConnectBtn" class="btn btn-primary full">连接 Claude</button>
             <a id="holdingsAiOpenClaudeBtn" class="btn btn-primary full hidden" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">在 Claude 中复盘</a>
-            <button type="button" id="holdingsAiDisconnectBtn" class="btn btn-ghost full hidden">断开连接</button>
           </div>
           <ol class="holdings-ai-steps">
             <li>点击下方「连接 Claude」</li>

@@ -2862,14 +2862,35 @@ body.subscription-expired-mode {
   color: var(--text);
 }
 
+.holdings-ai-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
 .holdings-ai-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 14px;
+  margin: 0;
+  min-width: 0;
   font-size: 14px;
   line-height: 1.4;
   color: var(--muted);
+}
+
+.holdings-ai-disconnect-link {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--blue);
+  cursor: pointer;
 }
 
 .holdings-ai-status::before {
