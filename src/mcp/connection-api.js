@@ -1,7 +1,7 @@
 const { readUserIdFromRequest } = require("../auth-session");
 const { getUserValidUntil } = require("../db");
 const { isSubscriptionExpired } = require("../user-subscription");
-const { claudeInstallDeepLink, mcpResourceUrl } = require("./config");
+const { DEFAULT_CLIENT_ID, claudeInstallDeepLink, mcpResourceUrl } = require("./config");
 const { hasActiveClaudeConnection, revokeClaudeConnection } = require("./oauth-store");
 const { sendJson } = require("./http-utils");
 
@@ -36,6 +36,7 @@ async function handleConnectionStatus(req, res) {
       expiresAt: status.expiresAt || null,
       mcpUrl,
       installDeepLink: claudeInstallDeepLink(mcpUrl),
+      oauthClientId: DEFAULT_CLIENT_ID,
       claudeNewChatUrl: "https://claude.ai/new",
     },
   });

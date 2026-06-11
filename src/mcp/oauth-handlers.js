@@ -6,6 +6,7 @@ const { getAuthSessionUserPayload } = require("../db");
 const {
   DEFAULT_SCOPE,
   DEFAULT_CLIENT_ID,
+  isAllowedOAuthClientId,
   getPublicBaseUrl,
   mcpResourceUrl,
 } = require("./config");
@@ -71,6 +72,7 @@ function handleWellKnownAuthServer(req, res) {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
+    client_id_metadata_document_supported: true,
     scopes_supported: [DEFAULT_SCOPE],
   });
 }
@@ -93,7 +95,7 @@ async function handleOAuthAuthorize(req, res) {
     oauthError(res, 400, "unsupported_response_type", "仅支持 response_type=code");
     return;
   }
-  if (clientId !== DEFAULT_CLIENT_ID) {
+  if (!isAllowedOAuthClientId(clientId)) {
     oauthError(res, 400, "invalid_client", "未知 client_id");
     return;
   }
@@ -235,6 +237,10 @@ async function handleOAuthToken(req, res) {
       oauthError(res, 400, "invalid_request", "缺少 code / redirect_uri / code_verifier");
       return;
     }
+    if (!isAllowedOAuthClientId(clientId)) {
+      oauthError(res, 400, "invalid_client", "未知 client_id");
+      return;
+    }
     const row = await consumeAuthCode(code);
     if (!row) {
       oauthError(res, 400, "invalid_grant", "授权码无效或已过期");
@@ -262,6 +268,10 @@ async function handleOAuthToken(req, res) {
     const clientId = String(body.client_id || DEFAULT_CLIENT_ID).trim();
     if (!refreshToken) {
       oauthError(res, 400, "invalid_request", "缺少 refresh_token");
+      return;
+    }
+    if (!isAllowedOAuthClientId(clientId)) {
+      oauthError(res, 400, "invalid_client", "未知 client_id");
       return;
     }
     const row = await findRefreshToken(refreshToken);

@@ -25,6 +25,22 @@ function mcpResourceUrl(req) {
   return `${getPublicBaseUrl(req)}/mcp`;
 }
 
+function isAllowedOAuthClientId(clientId) {
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return false;
+  }
+  if (id === DEFAULT_CLIENT_ID) {
+    return true;
+  }
+  try {
+    const u = new URL(id);
+    return u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function claudeInstallDeepLink(mcpUrl = "https://www.higcc.com/mcp") {
   const params = new URLSearchParams({
     modal: "add-custom-connector",
@@ -37,6 +53,7 @@ function claudeInstallDeepLink(mcpUrl = "https://www.higcc.com/mcp") {
 module.exports = {
   DEFAULT_SCOPE,
   DEFAULT_CLIENT_ID,
+  isAllowedOAuthClientId,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,

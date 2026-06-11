@@ -127,8 +127,8 @@ async function hasActiveClaudeConnection(userId) {
   const pool = await initPool();
   const { rows } = await pool.query(
     `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
-     WHERE user_id = $1 AND client_id = $2 AND expires_at > $3`,
-    [uid, DEFAULT_CLIENT_ID, Date.now()]
+     WHERE user_id = $1 AND expires_at > $2`,
+    [uid, Date.now()]
   );
   const exp = Number(rows[0]?.exp) || 0;
   return {
@@ -144,10 +144,7 @@ async function revokeClaudeConnection(userId) {
     return;
   }
   const pool = await initPool();
-  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND client_id = $2`, [
-    uid,
-    DEFAULT_CLIENT_ID,
-  ]);
+  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1`, [uid]);
 }
 
 function verifyPkce(codeVerifier, codeChallenge) {
