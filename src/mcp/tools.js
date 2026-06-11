@@ -14,6 +14,7 @@ const {
 const { getPublicTradesPage } = require("../community-service");
 const { resolveDataAccess } = require("./target-access");
 const { searchCommunityUsers } = require("./community-search");
+const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
 
 const OTHER_USER_TARGET_RULE =
   "查他人时：若用户只给昵称/称呼，必须先调用 search_community_users，展示候选人并请用户确认后，再将确认的 user_id 作为 target_user_id；禁止把昵称当作 target_user_id。";
@@ -126,6 +127,16 @@ function toolMeta(access, extra = {}) {
 async function callMcpTool(viewerId, name, args = {}) {
   const tool = String(name || "").trim();
   const input = args && typeof args === "object" ? args : {};
+
+  const subGate = await assertMcpUserActive(viewerId);
+  if (!subGate.ok) {
+    if (subGate.code === "subscription_expired") {
+      throw new McpSubscriptionExpiredError();
+    }
+    const err = new Error(subGate.error || "forbidden");
+    err.status = subGate.status || 403;
+    throw err;
+  }
 
   if (tool === "search_community_users") {
     return searchCommunityUsers(viewerId, input);

@@ -2,6 +2,11 @@ const { verifyAccessToken } = require("./oauth-tokens");
 const { TOOL_DEFS, callMcpTool } = require("./tools");
 const { mcpResourceUrl } = require("./config");
 const { extractBearerToken, readRequestBody, sendJson } = require("./http-utils");
+const {
+  MCP_SUBSCRIPTION_EXPIRED_MESSAGE,
+  assertMcpUserActive,
+  isMcpSubscriptionExpiredError,
+} = require("./subscription-gate");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const PROTOCOL_VERSION = "2024-11-05";
@@ -54,6 +59,12 @@ async function dispatchMcpMethod(viewerId, method, params) {
         isError: false,
       };
     } catch (error) {
+      if (isMcpSubscriptionExpiredError(error)) {
+        return {
+          content: [{ type: "text", text: MCP_SUBSCRIPTION_EXPIRED_MESSAGE }],
+          isError: true,
+        };
+      }
       const status = Number(error?.status) || 500;
       return {
         content: [
@@ -100,6 +111,9 @@ async function handleSingleMcpMessage(viewerId, message) {
     }
     return rpcResult(id, result);
   } catch (error) {
+    if (isMcpSubscriptionExpiredError(error)) {
+      return rpcError(id, -32003, MCP_SUBSCRIPTION_EXPIRED_MESSAGE);
+    }
     const code = Number(error?.code) || -32603;
     return rpcError(id, code, error?.message || "Internal error");
   }
@@ -118,6 +132,36 @@ async function handleMcpRequest(req, res) {
         id: null,
       },
       mcpAuthChallengeHeaders(req)
+    );
+    return;
+  }
+
+  const gate = await assertMcpUserActive(auth.userId);
+  if (!gate.ok) {
+    const status = gate.status || 403;
+    const challenge = mcpAuthChallengeHeaders(req);
+    if (req.method === "GET") {
+      sendJson(
+        res,
+        status,
+        {
+          ok: false,
+          error: gate.error,
+          code: gate.code || null,
+        },
+        challenge,
+      );
+      return;
+    }
+    sendJson(
+      res,
+      status,
+      {
+        jsonrpc: "2.0",
+        error: { code: -32003, message: gate.error },
+        id: null,
+      },
+      challenge,
     );
     return;
   }

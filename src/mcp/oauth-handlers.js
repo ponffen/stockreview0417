@@ -1,6 +1,9 @@
-const { getUserValidUntil } = require("../db");
-const { isSubscriptionExpired } = require("../user-subscription");
 const { readUserIdFromRequest } = require("../auth-session");
+const {
+  MCP_SUBSCRIPTION_EXPIRED_CODE,
+  MCP_SUBSCRIPTION_EXPIRED_MESSAGE,
+  assertMcpUserActive,
+} = require("./subscription-gate");
 const { maskPhone } = require("../community-service");
 const { getAuthSessionUserPayload } = require("../db");
 const {
@@ -45,11 +48,7 @@ async function assertOAuthUser(req) {
   if (!userId) {
     return { ok: false, status: 401, error: "请先登录" };
   }
-  const validUntil = await getUserValidUntil(userId);
-  if (isSubscriptionExpired(validUntil)) {
-    return { ok: false, status: 403, error: "免费使用已结束", code: "subscription_expired" };
-  }
-  return { ok: true, userId };
+  return assertMcpUserActive(userId);
 }
 
 function handleWellKnownProtectedResource(req, res) {
@@ -110,11 +109,32 @@ async function handleOAuthAuthorize(req, res) {
 
   const gate = await assertOAuthUser(req);
   if (!gate.ok) {
+    if (gate.code === MCP_SUBSCRIPTION_EXPIRED_CODE) {
+      sendHtml(
+        res,
+        403,
+        `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>麻雀 · 授权 Claude</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f6f7f9;color:#111}
+.card{max-width:420px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px}
+h1{font-size:20px;margin:0 0 12px}
+p{color:#6b7280;line-height:1.6;margin:0 0 16px}
+a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px}
+</style></head><body><div class="card">
+<h1>无法授权</h1>
+<p>${escapeHtml(MCP_SUBSCRIPTION_EXPIRED_MESSAGE)}</p>
+<a class="btn" href="/">返回麻雀</a>
+</div></body></html>`,
+      );
+      return;
+    }
     const returnTo = `${getPublicBaseUrl(req)}${String(req.url || "/oauth/authorize")}`;
     const loginUrl = `/?auth=login&returnTo=${encodeURIComponent(returnTo)}`;
     sendHtml(
       res,
-      gate.status === 403 ? 403 : 401,
+      401,
       `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>麻雀 · 授权 Claude</title>
@@ -128,7 +148,7 @@ a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;paddi
 <h1>请先登录麻雀</h1>
 <p>授权 Claude 读取持仓数据前，需要登录你的麻雀账户。</p>
 <a class="btn" href="${escapeHtml(loginUrl)}">去登录</a>
-</div></body></html>`
+</div></body></html>`,
     );
     return;
   }
@@ -254,6 +274,11 @@ async function handleOAuthToken(req, res) {
       oauthError(res, 400, "invalid_grant", "PKCE 校验失败");
       return;
     }
+    const subGate = await assertMcpUserActive(row.userId);
+    if (!subGate.ok) {
+      oauthError(res, 403, "access_denied", subGate.error);
+      return;
+    }
     const tokens = await issueTokens({
       userId: row.userId,
       clientId: row.clientId,
@@ -277,6 +302,11 @@ async function handleOAuthToken(req, res) {
     const row = await findRefreshToken(refreshToken);
     if (!row || row.clientId !== clientId) {
       oauthError(res, 400, "invalid_grant", "refresh_token 无效或已过期");
+      return;
+    }
+    const subGate = await assertMcpUserActive(row.userId);
+    if (!subGate.ok) {
+      oauthError(res, 403, "access_denied", subGate.error);
       return;
     }
     const tokens = await issueTokens({
