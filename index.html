@@ -622,23 +622,43 @@
       </section>
 
       <section id="route-ai-analysis" class="route-pane">
-        <article class="panel holdings-ai-panel">
-          <p class="holdings-ai-lead">连接 Claude 后，可实时读取你的持仓与成交数据，在对话中深度复盘；只读，不会修改账户。</p>
-          <div class="holdings-ai-status-row">
-            <div id="holdingsAiStatus" class="holdings-ai-status" aria-live="polite">加载中…</div>
-            <button type="button" id="holdingsAiDisconnectBtn" class="holdings-ai-disconnect-link hidden">断开连接</button>
+        <div class="ai-analysis-page">
+          <article class="panel ai-analysis-intro">
+            <p class="ai-analysis-lead">连接AI工具后，可读取麻雀所有的数据，在AI工具中深度复盘。</p>
+            <div class="ai-analysis-notes">
+              <p class="ai-analysis-notes-label">说明：</p>
+              <ol class="ai-analysis-notes-list">
+                <li>只读数据，不会修改数据。</li>
+                <li>自己的数据是真实数据，其他用户数据已经归一化脱敏。</li>
+              </ol>
+            </div>
+          </article>
+
+          <div class="ai-analysis-providers">
+            <article class="panel ai-provider-card" data-provider="claude">
+              <h2 class="ai-provider-title">Claude</h2>
+              <div class="ai-provider-status-row">
+                <div id="holdingsAiStatus" class="ai-provider-status" aria-live="polite">加载中…</div>
+                <button type="button" id="holdingsAiDisconnectBtn" class="ai-provider-disconnect hidden">断开连接</button>
+              </div>
+              <div class="ai-provider-actions">
+                <button type="button" id="holdingsAiConnectBtn" class="btn btn-primary full">连接 Claude</button>
+                <a id="holdingsAiOpenClaudeBtn" class="btn btn-primary full hidden" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">在 Claude 中复盘</a>
+              </div>
+              <ol class="ai-provider-steps">
+                <li>点击下方「连接 Claude」</li>
+                <li>在 Claude 中确认添加「麻雀」连接器并登录授权</li>
+                <li>返回本页，状态显示「已连接」</li>
+                <li>点击「在 Claude 中复盘」开始对话</li>
+              </ol>
+              <div class="ai-provider-examples">
+                <p class="ai-provider-examples-lead">连接成功后，您可以这样子问：</p>
+                <p class="ai-provider-examples-item">示例1：我已经配置了麻雀的mcp，你看看我本人现在持仓的top3。</p>
+                <p class="ai-provider-examples-item">示例2：西坡GCC这个人top5的持仓是什么？</p>
+              </div>
+            </article>
           </div>
-          <div class="holdings-ai-actions">
-            <button type="button" id="holdingsAiConnectBtn" class="btn btn-primary full">连接 Claude</button>
-            <a id="holdingsAiOpenClaudeBtn" class="btn btn-primary full hidden" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">在 Claude 中复盘</a>
-          </div>
-          <ol class="holdings-ai-steps">
-            <li>点击下方「连接 Claude」</li>
-            <li>在 Claude 中确认添加「麻雀」连接器并登录授权</li>
-            <li>返回本页，状态显示「已连接」</li>
-            <li>点击「在 Claude 中复盘」开始对话</li>
-          </ol>
-        </article>
+        </div>
       </section>
 
       <section id="route-community-feed" class="route-pane">

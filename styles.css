@@ -2850,27 +2850,69 @@ body.subscription-expired-mode {
   font-size: 14px;
 }
 
-.holdings-ai-panel {
-  margin: 16px 12px;
-  padding: 20px 16px 24px;
+.ai-analysis-page {
+  padding: 0 0 20px;
 }
 
-.holdings-ai-lead {
-  margin: 0 0 16px;
+.ai-analysis-intro {
+  margin: 16px 12px 12px;
+  padding: 18px 16px 20px;
+}
+
+.ai-analysis-lead {
+  margin: 0 0 14px;
   font-size: 15px;
   line-height: 1.55;
   color: var(--text);
 }
 
-.holdings-ai-status-row {
+.ai-analysis-notes {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ai-analysis-notes-label {
+  margin: 0 0 6px;
+}
+
+.ai-analysis-notes-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.ai-analysis-notes-list li {
+  margin: 0;
+}
+
+.ai-analysis-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-provider-card {
+  margin: 0 12px;
+  padding: 18px 16px 20px;
+}
+
+.ai-provider-title {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ai-provider-status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin: 0 0 14px;
+  min-height: 24px;
 }
 
-.holdings-ai-status {
+.ai-provider-status {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2881,19 +2923,7 @@ body.subscription-expired-mode {
   color: var(--muted);
 }
 
-.holdings-ai-disconnect-link {
-  flex-shrink: 0;
-  border: none;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.4;
-  color: var(--blue);
-  cursor: pointer;
-}
-
-.holdings-ai-status::before {
+.ai-provider-status::before {
   content: "";
   width: 8px;
   height: 8px;
@@ -2902,29 +2932,45 @@ body.subscription-expired-mode {
   flex-shrink: 0;
 }
 
-.holdings-ai-status.is-connected {
+.ai-provider-status.is-connected {
   color: #047857;
 }
 
-.holdings-ai-status.is-connected::before {
+.ai-provider-status.is-connected::before {
   background: #10b981;
 }
 
-.holdings-ai-status.is-error {
+.ai-provider-status.is-error {
   color: #b91c1c;
 }
 
-.holdings-ai-status.is-error::before {
+.ai-provider-status.is-error::before {
   background: #ef4444;
 }
 
-.holdings-ai-actions {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 18px;
+.ai-provider-disconnect {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.holdings-ai-actions .btn {
+.ai-provider-disconnect.hidden {
+  display: none;
+}
+
+.ai-provider-actions {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ai-provider-actions .btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2936,12 +2982,35 @@ body.subscription-expired-mode {
   line-height: 1.2;
 }
 
-.holdings-ai-steps {
+.ai-provider-steps {
   margin: 0;
   padding-left: 20px;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.7;
+}
+
+.ai-provider-examples {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ai-provider-examples-lead {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.ai-provider-examples-item {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.ai-provider-examples-item:last-child {
+  margin-bottom: 0;
 }
 
 .community-card {
