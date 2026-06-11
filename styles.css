@@ -300,7 +300,21 @@ body {
 .app-drawer-nav {
   display: flex;
   flex-direction: column;
-  padding: 10px 0;
+  padding: 6px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-drawer-divider {
+  border: none;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.app-drawer-divider--short {
+  width: 4.5em;
+  height: 1px;
+  margin: 4px 0 4px 20px;
+  background: var(--line);
 }
 
 .app-drawer-item {
@@ -308,7 +322,7 @@ body {
   border: none;
   background: transparent;
   text-align: left;
-  padding: 16px 20px;
+  padding: 14px 20px;
   font: inherit;
   font-size: 16px;
   color: var(--text);
