@@ -311,10 +311,11 @@ body {
 }
 
 .app-drawer-divider--short {
-  width: 4.5em;
+  align-self: stretch;
   height: 1px;
-  margin: 4px 0 4px 20px;
+  margin: 4px 20px;
   background: var(--line);
+  box-sizing: border-box;
 }
 
 .app-drawer-item {
