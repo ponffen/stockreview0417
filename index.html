@@ -625,13 +625,7 @@
         <div class="ai-analysis-page">
           <article class="panel ai-analysis-intro">
             <p class="ai-analysis-lead">连接AI工具后，可读取麻雀所有的数据，在AI工具中深度复盘。</p>
-            <div class="ai-analysis-notes">
-              <p class="ai-analysis-notes-label">说明：</p>
-              <ol class="ai-analysis-notes-list">
-                <li>只读数据，不会修改数据。</li>
-                <li>自己的数据是真实数据，其他用户数据已经归一化脱敏。</li>
-              </ol>
-            </div>
+            <p class="ai-analysis-notes">说明：1、只读数据，不会修改数据。2、本人数据是真实数据，其他用户数据已经归一化脱敏。</p>
           </article>
 
           <div class="ai-analysis-providers">
@@ -645,14 +639,17 @@
                 <button type="button" id="holdingsAiConnectBtn" class="btn btn-primary full">连接 Claude</button>
                 <a id="holdingsAiOpenClaudeBtn" class="btn btn-primary full hidden" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">在 Claude 中复盘</a>
               </div>
-              <ol class="ai-provider-steps">
-                <li>点击下方「连接 Claude」</li>
-                <li>在 Claude 中确认添加「麻雀」连接器并登录授权</li>
-                <li>返回本页，状态显示「已连接」</li>
-                <li>点击「在 Claude 中复盘」开始对话</li>
-              </ol>
+              <div class="ai-provider-guide">
+                <p class="ai-provider-section-lead">连接步骤：</p>
+                <ol class="ai-provider-steps">
+                  <li>点击下方「连接 Claude」</li>
+                  <li>在 Claude 中确认添加「麻雀」连接器并登录授权</li>
+                  <li>返回本页，状态显示「已连接」</li>
+                  <li>点击「在 Claude 中复盘」开始对话</li>
+                </ol>
+              </div>
               <div class="ai-provider-examples">
-                <p class="ai-provider-examples-lead">连接成功后，您可以这样子问：</p>
+                <p class="ai-provider-section-lead">连接成功后，您可在Claude中这样问：</p>
                 <p class="ai-provider-examples-item">示例1：我已经配置了麻雀的mcp，你看看我本人现在持仓的top3。</p>
                 <p class="ai-provider-examples-item">示例2：西坡GCC这个人top5的持仓是什么？</p>
               </div>

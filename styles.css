@@ -2867,22 +2867,10 @@ body.subscription-expired-mode {
 }
 
 .ai-analysis-notes {
+  margin: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.65;
-}
-
-.ai-analysis-notes-label {
-  margin: 0 0 6px;
-}
-
-.ai-analysis-notes-list {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.ai-analysis-notes-list li {
-  margin: 0;
 }
 
 .ai-analysis-providers {
@@ -2982,6 +2970,17 @@ body.subscription-expired-mode {
   line-height: 1.2;
 }
 
+.ai-provider-guide {
+  margin-top: 4px;
+}
+
+.ai-provider-section-lead {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 .ai-provider-steps {
   margin: 0;
   padding-left: 20px;
@@ -2996,12 +2995,6 @@ body.subscription-expired-mode {
   border-top: 1px solid var(--line);
   font-size: 13px;
   line-height: 1.65;
-}
-
-.ai-provider-examples-lead {
-  margin: 0 0 10px;
-  font-size: 14px;
-  color: var(--text);
 }
 
 .ai-provider-examples-item {
