@@ -13,11 +13,28 @@ const {
 } = require("../metrics-api-service");
 const { getPublicTradesPage } = require("../community-service");
 const { resolveDataAccess } = require("./target-access");
+const { searchCommunityUsers } = require("./community-search");
+
+const OTHER_USER_TARGET_RULE =
+  "查他人时：若用户只给昵称/称呼，必须先调用 search_community_users，展示候选人并请用户确认后，再将确认的 user_id 作为 target_user_id；禁止把昵称当作 target_user_id。";
 
 const TOOL_DEFS = [
   {
+    name: "search_community_users",
+    description:
+      "按昵称或展示名搜索社区用户，返回可查看的公开组合候选人（含 user_id、展示名、收益与重仓提示）。查他人持仓/成交/分析前必须先调用本工具，经用户确认后再用返回的 user_id 作为 target_user_id。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "昵称或展示名关键词，如「西坡GCC」" },
+        limit: { type: "number", description: "最多返回候选人数，默认 5，最大 10" },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "get_portfolio_summary",
-    description: "组合摘要：总资产、现金占比、阶段收益（today/mtd/ytd/inception）。默认当前授权用户；可查他人公开组合时传 target_user_id。",
+    description: `组合摘要：总资产、现金占比、阶段收益（today/mtd/ytd/inception）。默认当前授权用户；可查他人公开组合时传 target_user_id。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -29,7 +46,7 @@ const TOOL_DEFS = [
   },
   {
     name: "get_holdings",
-    description: "当前持仓表：市值、数量、权重、收益等。",
+    description: `当前持仓表：市值、数量、权重、收益等。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -41,7 +58,7 @@ const TOOL_DEFS = [
   },
   {
     name: "get_analysis",
-    description: "分析区间 bundle：收益走势序列、资产结构、个股排名等。stage 支持 mtd/ytd/last_7d/last_30d/last_90d/custom 等。",
+    description: `分析区间 bundle：收益走势序列、资产结构、个股排名等。stage 支持 mtd/ytd/last_7d/last_30d/last_90d/custom 等。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -56,7 +73,7 @@ const TOOL_DEFS = [
   },
   {
     name: "get_trades",
-    description: "成交记录分页（新→旧），可按 symbol 筛选。用于逐笔复盘。",
+    description: `成交记录分页（新→旧），可按 symbol 筛选。用于逐笔复盘。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -82,7 +99,7 @@ const TOOL_DEFS = [
   },
   {
     name: "get_stock_rank",
-    description: "分析区间内个股排名（收益、交易笔数、持仓天数等）。",
+    description: `分析区间内个股排名（收益、交易笔数、持仓天数等）。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -109,6 +126,11 @@ function toolMeta(access, extra = {}) {
 async function callMcpTool(viewerId, name, args = {}) {
   const tool = String(name || "").trim();
   const input = args && typeof args === "object" ? args : {};
+
+  if (tool === "search_community_users") {
+    return searchCommunityUsers(viewerId, input);
+  }
+
   const access = await resolveDataAccess(viewerId, input.target_user_id);
   if (!access.ok) {
     const err = new Error(access.error || "forbidden");
