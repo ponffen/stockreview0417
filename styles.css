@@ -2863,28 +2863,56 @@ body.subscription-expired-mode {
 }
 
 .holdings-ai-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 14px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface-muted, #f3f4f6);
   font-size: 14px;
+  line-height: 1.4;
   color: var(--muted);
+}
+
+.holdings-ai-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  flex-shrink: 0;
 }
 
 .holdings-ai-status.is-connected {
   color: #047857;
-  background: #ecfdf5;
+}
+
+.holdings-ai-status.is-connected::before {
+  background: #10b981;
 }
 
 .holdings-ai-status.is-error {
   color: #b91c1c;
-  background: #fef2f2;
+}
+
+.holdings-ai-status.is-error::before {
+  background: #ef4444;
 }
 
 .holdings-ai-actions {
   display: grid;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.holdings-ai-actions .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 14px;
+  line-height: 1.2;
 }
 
 .holdings-ai-steps {

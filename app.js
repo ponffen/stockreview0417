@@ -3106,7 +3106,7 @@ function bindEvents() {
     await refreshHoldingsAiConnectionStatus({ force: true });
     const link = String(holdingsAiConnection.installDeepLink || "").trim();
     if (link) {
-      window.location.href = link;
+      window.open(link, "_blank", "noopener,noreferrer");
       return;
     }
     holdingsAiStatus.textContent = "无法生成连接链接，请稍后重试";
