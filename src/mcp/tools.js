@@ -1,0 +1,226 @@
+const {
+  getTradesPage,
+  getTradesPageForSymbol,
+  getCashTransfersPage,
+  normalizeSymbol,
+} = require("../db");
+const { enrichTradesWithSymbolNames } = require("../symbol-name-resolve");
+const {
+  getMetricsHomeBundle,
+  getMetricsAnalysisBundle,
+  getMetricsPublicHomeBundle,
+  getMetricsPublicAnalysisBundle,
+} = require("../metrics-api-service");
+const { getPublicTradesPage } = require("../community-service");
+const { resolveDataAccess } = require("./target-access");
+
+const TOOL_DEFS = [
+  {
+    name: "get_portfolio_summary",
+    description: "组合摘要：总资产、现金占比、阶段收益（today/mtd/ytd/inception）。默认当前授权用户；可查他人公开组合时传 target_user_id。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string", description: "可选。他人用户 ID；仅公开账户可用。" },
+        account_id: { type: "string", description: "账户筛选，默认 all" },
+        stages: { type: "string", description: "阶段列表，逗号分隔，默认 today,mtd,ytd,inception" },
+      },
+    },
+  },
+  {
+    name: "get_holdings",
+    description: "当前持仓表：市值、数量、权重、收益等。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string" },
+        account_id: { type: "string" },
+        stages: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "get_analysis",
+    description: "分析区间 bundle：收益走势序列、资产结构、个股排名等。stage 支持 mtd/ytd/last_7d/last_30d/last_90d/custom 等。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string" },
+        account_id: { type: "string" },
+        stage: { type: "string", description: "默认 ytd" },
+        from: { type: "string", description: "custom 区间起始 YYYY-MM-DD" },
+        to: { type: "string", description: "custom 区间结束 YYYY-MM-DD" },
+        benchmark_symbol: { type: "string", description: "可选基准代码" },
+      },
+    },
+  },
+  {
+    name: "get_trades",
+    description: "成交记录分页（新→旧），可按 symbol 筛选。用于逐笔复盘。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string" },
+        account_id: { type: "string" },
+        symbol: { type: "string" },
+        limit: { type: "number", description: "默认 50，最大 100" },
+        offset: { type: "number", description: "默认 0" },
+      },
+    },
+  },
+  {
+    name: "get_cash_transfers",
+    description: "银证转账记录（仅本人账户；他人公开页不提供）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_id: { type: "string" },
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "get_stock_rank",
+    description: "分析区间内个股排名（收益、交易笔数、持仓天数等）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string" },
+        account_id: { type: "string" },
+        stage: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
+        benchmark_symbol: { type: "string" },
+      },
+    },
+  },
+];
+
+function toolMeta(access, extra = {}) {
+  return {
+    viewerId: access.viewerId,
+    targetId: access.targetId,
+    mode: access.mode,
+    ...extra,
+  };
+}
+
+async function callMcpTool(viewerId, name, args = {}) {
+  const tool = String(name || "").trim();
+  const input = args && typeof args === "object" ? args : {};
+  const access = await resolveDataAccess(viewerId, input.target_user_id);
+  if (!access.ok) {
+    const err = new Error(access.error || "forbidden");
+    err.status = access.status || 403;
+    throw err;
+  }
+
+  const accountId = String(input.account_id || "all").trim() || "all";
+
+  if (tool === "get_cash_transfers") {
+    if (access.mode === "public") {
+      return {
+        meta: toolMeta(access),
+        error: "他人公开组合不提供银证转账记录",
+        data: [],
+      };
+    }
+    const limit = Math.min(100, Math.max(1, Number(input.limit) || 50));
+    const offset = Math.max(0, Number(input.offset) || 0);
+    const page = await getCashTransfersPage(access.dataUserId, {
+      limit,
+      offset,
+      accountId: accountId === "all" ? null : accountId,
+    });
+    return { meta: toolMeta(access), ...page };
+  }
+
+  if (tool === "get_trades") {
+    const limit = Math.min(100, Math.max(1, Number(input.limit) || 50));
+    const offset = Math.max(0, Number(input.offset) || 0);
+    const symbol = input.symbol ? normalizeSymbol(String(input.symbol)) : "";
+    if (access.mode === "public") {
+      const page = await getPublicTradesPage(access.viewerId, access.dataUserId, {
+        limit,
+        offset,
+        account_id: accountId,
+        symbol: symbol || undefined,
+      });
+      if (page.error) {
+        const err = new Error(page.error);
+        err.status = page.error === "hidden" ? 403 : 404;
+        throw err;
+      }
+      return { meta: toolMeta(access), data: page.data, pagination: page.pagination };
+    }
+    const pageOpts = {
+      limit,
+      offset,
+      accountId: accountId === "all" ? null : accountId,
+    };
+    const page = symbol
+      ? await getTradesPageForSymbol(access.dataUserId, symbol, pageOpts)
+      : await getTradesPage(access.dataUserId, pageOpts);
+    await enrichTradesWithSymbolNames(page.data);
+    return { meta: toolMeta(access), data: page.data, pagination: page.pagination };
+  }
+
+  if (tool === "get_portfolio_summary" || tool === "get_holdings") {
+    const stages = String(input.stages || "today,mtd,ytd,inception").trim() || "today,mtd,ytd,inception";
+    const bundle =
+      access.mode === "public"
+        ? await getMetricsPublicHomeBundle(access.dataUserId, accountId, stages)
+        : await getMetricsHomeBundle(access.dataUserId, accountId, stages);
+    if (tool === "get_holdings") {
+      return {
+        meta: toolMeta(access, { stages }),
+        holdings: bundle?.holdings || { rows: [] },
+        metaBundle: bundle?.meta || null,
+      };
+    }
+    return {
+      meta: toolMeta(access, { stages }),
+      returns: bundle?.returns || null,
+      assets: bundle?.assets || null,
+      metaBundle: bundle?.meta || null,
+    };
+  }
+
+  if (tool === "get_analysis" || tool === "get_stock_rank") {
+    const stage = String(input.stage || "ytd").trim() || "ytd";
+    const bench = String(input.benchmark_symbol || "").trim();
+    const opts = {
+      customFrom: input.from ? String(input.from).slice(0, 10) : undefined,
+      customTo: input.to ? String(input.to).slice(0, 10) : undefined,
+    };
+    const bundle =
+      access.mode === "public"
+        ? await getMetricsPublicAnalysisBundle(access.dataUserId, accountId, stage, bench, opts)
+        : await getMetricsAnalysisBundle(access.dataUserId, accountId, stage, bench, opts);
+    if (tool === "get_stock_rank") {
+      return {
+        meta: toolMeta(access, { stage }),
+        stockRank: bundle?.stockRank || null,
+        metaBundle: bundle?.meta || null,
+      };
+    }
+    return {
+      meta: toolMeta(access, { stage }),
+      returns: bundle?.returns || null,
+      assets: bundle?.assets || null,
+      series: bundle?.series || null,
+      stockRank: bundle?.stockRank || null,
+      metaBundle: bundle?.meta || null,
+    };
+  }
+
+  const err = new Error(`unknown tool: ${tool}`);
+  err.status = 400;
+  throw err;
+}
+
+module.exports = {
+  TOOL_DEFS,
+  callMcpTool,
+};

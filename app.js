@@ -78,6 +78,13 @@ let sessionProfile = {
 };
 let authSubmitting = false;
 let analysisStockRankHelpListenersBound = false;
+let holdingsAiConnectionLoading = false;
+let holdingsAiConnection = {
+  connected: false,
+  expiresAt: null,
+  installDeepLink: "",
+  claudeNewChatUrl: "https://claude.ai/new",
+};
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
 function getApiBaseForFetch() {
@@ -513,6 +520,10 @@ const accountManageCurrency = document.getElementById("accountManageCurrency");
 const accountManageSaveBtn = document.getElementById("accountManageSaveBtn");
 const accountManageDeleteBtn = document.getElementById("accountManageDeleteBtn");
 const accountManageDefaultHint = document.getElementById("accountManageDefaultHint");
+const holdingsAiStatus = document.getElementById("holdingsAiStatus");
+const holdingsAiConnectBtn = document.getElementById("holdingsAiConnectBtn");
+const holdingsAiOpenClaudeBtn = document.getElementById("holdingsAiOpenClaudeBtn");
+const holdingsAiDisconnectBtn = document.getElementById("holdingsAiDisconnectBtn");
 const holdingsGuideDialog = document.getElementById("holdingsGuideDialog");
 const closeHoldingsGuideBtn = document.getElementById("closeHoldingsGuideBtn");
 const holdingsGuideAddTradeBtn = document.getElementById("holdingsGuideAddTradeBtn");
@@ -1083,6 +1094,61 @@ function maybeShowHoldingsGuideDialog() {
     return;
   }
   holdingsGuideDialog.showModal();
+}
+
+function renderHoldingsAiConnectionUi() {
+  if (!holdingsAiStatus) {
+    return;
+  }
+  holdingsAiStatus.classList.remove("is-connected", "is-error");
+  if (holdingsAiConnectionLoading) {
+    holdingsAiStatus.textContent = "加载中…";
+  } else if (holdingsAiConnection.connected) {
+    holdingsAiStatus.textContent = "已连接 Claude";
+    holdingsAiStatus.classList.add("is-connected");
+  } else {
+    holdingsAiStatus.textContent = "未连接";
+  }
+  holdingsAiConnectBtn?.classList.toggle("hidden", !!holdingsAiConnection.connected);
+  holdingsAiOpenClaudeBtn?.classList.toggle("hidden", !holdingsAiConnection.connected);
+  holdingsAiDisconnectBtn?.classList.toggle("hidden", !holdingsAiConnection.connected);
+  if (holdingsAiOpenClaudeBtn) {
+    holdingsAiOpenClaudeBtn.href =
+      String(holdingsAiConnection.claudeNewChatUrl || "https://claude.ai/new").trim() || "https://claude.ai/new";
+  }
+}
+
+async function refreshHoldingsAiConnectionStatus({ force = false } = {}) {
+  if (!holdingsAiStatus || !sessionPhone || sessionSubscriptionExpired) {
+    return;
+  }
+  if (holdingsAiConnectionLoading && !force) {
+    return;
+  }
+  holdingsAiConnectionLoading = true;
+  renderHoldingsAiConnectionUi();
+  try {
+    const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection-status`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload?.ok) {
+      holdingsAiStatus.textContent = payload?.error || "连接状态加载失败";
+      holdingsAiStatus.classList.add("is-error");
+      return;
+    }
+    const data = payload.data || {};
+    holdingsAiConnection = {
+      connected: !!data.connected,
+      expiresAt: data.expiresAt || null,
+      installDeepLink: String(data.installDeepLink || ""),
+      claudeNewChatUrl: String(data.claudeNewChatUrl || "https://claude.ai/new"),
+    };
+  } catch {
+    holdingsAiStatus.textContent = "网络错误";
+    holdingsAiStatus.classList.add("is-error");
+  } finally {
+    holdingsAiConnectionLoading = false;
+    renderHoldingsAiConnectionUi();
+  }
 }
 
 function resolveValidAccountFilter(accountId) {
@@ -3019,6 +3085,41 @@ function bindEvents() {
     renderAll();
   });
 
+  holdingsAiConnectBtn?.addEventListener("click", async () => {
+    if (!sessionPhone || sessionSubscriptionExpired) {
+      return;
+    }
+    await refreshHoldingsAiConnectionStatus({ force: true });
+    const link = String(holdingsAiConnection.installDeepLink || "").trim();
+    if (link) {
+      window.location.href = link;
+      return;
+    }
+    holdingsAiStatus.textContent = "无法生成连接链接，请稍后重试";
+    holdingsAiStatus?.classList.add("is-error");
+  });
+  holdingsAiDisconnectBtn?.addEventListener("click", async () => {
+    if (!sessionPhone || sessionSubscriptionExpired) {
+      return;
+    }
+    try {
+      const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection`, { method: "DELETE" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.ok) {
+        holdingsAiStatus.textContent = payload?.error || "断开失败";
+        holdingsAiStatus?.classList.add("is-error");
+        return;
+      }
+      holdingsAiConnection.connected = false;
+      holdingsAiConnection.expiresAt = null;
+      renderHoldingsAiConnectionUi();
+      void refreshHoldingsAiConnectionStatus({ force: true });
+    } catch {
+      holdingsAiStatus.textContent = "网络错误";
+      holdingsAiStatus?.classList.add("is-error");
+    }
+  });
+
   appShell?.addEventListener("click", (e) => {
     const sortBtn = e.target.closest(".stock-table .th-sort-btn");
     if (
@@ -4129,6 +4230,8 @@ function renderAll() {
     } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
       void openCommunityProfileAnalysisTab();
     }
+  } else if (state.route === "holdings-ai") {
+    void refreshHoldingsAiConnectionStatus();
   }
 }
 

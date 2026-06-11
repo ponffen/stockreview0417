@@ -235,6 +235,21 @@ module.exports = async function handler(req, res) {
   const pathOnly = urlPathOnly(req.url);
   const pathKey = apiPathKey(pathOnly);
 
+  try {
+    const { handleMcpDirectRoute } = require("../src/mcp/direct-routes");
+    if (await handleMcpDirectRoute(req, res, pathKey)) {
+      return;
+    }
+  } catch (error) {
+    console.error("[api/index.js] mcp direct route error:", error);
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ ok: false, error: error?.message || "mcp route failed" }));
+    }
+    return;
+  }
+
   async function resolveMetricsBundleUserId(publicPath) {
     const { readUserIdFromRequest } = require("../src/auth-session");
     const { getUserCommunityRow } = require("../src/db");
