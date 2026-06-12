@@ -253,6 +253,19 @@ function parseType(rawType) {
   return "trade";
 }
 
+const NOTE_MAX_LENGTH = 500;
+
+function normalizeNoteText(raw) {
+  const text = String(raw ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!text) {
+    return "";
+  }
+  return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
+}
+
 function normalizeTrade(input) {
   const raw = input || {};
   const type = parseType(raw.type || raw.tradeType || raw["类型"]);
@@ -300,7 +313,7 @@ function normalizeTrade(input) {
   const date = toDateKey(
     raw.date || raw.trade_date || raw.tradeDate || raw.dealDate || raw["日期"] || raw["成交日期"]
   );
-  const note = String(raw.note || raw.remark || raw["备注"] || "").trim();
+  const note = normalizeNoteText(raw.note || raw.remark || raw["备注"]);
   const createdAt = validNumber(raw.createdAt, raw.created_at, raw.timestamp, Date.parse(date), nowMs());
   const amountShareRatioRaw = raw.amountShareRatio ?? raw.amount_share_ratio;
   const amountShareRatio =
@@ -424,7 +437,7 @@ function normalizeCashTransfer(raw) {
     date: toDateKey(r.date || r.transfer_date),
     direction: direction === "out" ? "out" : "in",
     amount,
-    note: String(r.note || "").trim(),
+    note: normalizeNoteText(r.note),
     createdAt: validNumber(r.createdAt, r.created_at, nowMs()),
   };
 }

@@ -910,13 +910,83 @@ h2 {
 }
 
 .form-row input,
-.form-row select {
+.form-row select,
+.form-row textarea {
   flex: 1;
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0 10px;
   font-size: 14px;
+}
+
+.form-row--note {
+  align-items: flex-start;
+}
+
+.form-row--note label {
+  padding-top: 8px;
+}
+
+.ledger-note-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.ledger-note-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: calc(1.45em * 3 + 16px);
+  padding: 8px 10px;
+  line-height: 1.45;
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
+}
+
+@supports not (field-sizing: content) {
+  .ledger-note-textarea {
+    overflow-y: hidden;
+  }
+}
+
+.ledger-note-suggest {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  max-height: min(40vh, 200px);
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 12%);
+}
+
+.ledger-note-suggest[hidden] {
+  display: none;
+}
+
+.ledger-note-suggest li {
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #3d4654;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.ledger-note-suggest li:hover,
+.ledger-note-suggest li:focus {
+  background: #f3f6fa;
 }
 
 .range-row {
@@ -1684,7 +1754,7 @@ h2 {
 }
 
 .trade-record-note-text {
-  white-space: normal;
+  white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -1857,6 +1927,7 @@ h2 {
 
 .dialog form {
   padding: 12px;
+  overflow: visible;
 }
 
 .stock-record-dialog {
@@ -3876,6 +3947,9 @@ body.subscription-expired-mode {
 
 .community-feed-note .community-feed-dd {
   font-weight: 400;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .trade-search-panel {

@@ -322,6 +322,7 @@ let pendingSettingsSyncTimer = null;
 /** 与 session 对齐，避免个股页重复拉全量成交/银证 */
 let ledgerBootstrapCompleteForUid = "";
 const TRADE_LIST_PAGE_SIZE = 10;
+const NOTE_MAX_LENGTH = 500;
 const tradeListPager = {
   gen: 0,
   offset: 0,
@@ -533,6 +534,7 @@ const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
 const tradeNoteInput = document.getElementById("tradeNote");
+const tradeNoteSuggest = document.getElementById("tradeNoteSuggest");
 const tradeAccountInput = document.getElementById("tradeAccount");
 const tradeSubtabTrades = document.getElementById("tradeSubtabTrades");
 const tradeSubtabCash = document.getElementById("tradeSubtabCash");
@@ -548,6 +550,7 @@ const cashTransferDate = document.getElementById("cashTransferDate");
 const cashTransferDirection = document.getElementById("cashTransferDirection");
 const cashTransferAmount = document.getElementById("cashTransferAmount");
 const cashTransferNote = document.getElementById("cashTransferNote");
+const cashTransferNoteSuggest = document.getElementById("cashTransferNoteSuggest");
 const cashTransferSubmitBtn = document.getElementById("cashTransferSubmitBtn");
 const cashTransferDeleteBtn = document.getElementById("cashTransferDeleteBtn");
 const tradeSearchBackBtn = document.getElementById("tradeSearchBackBtn");
@@ -3578,7 +3581,7 @@ function bindEvents() {
       date: String(formData.get("date") || toDateKey(new Date())),
       direction: String(formData.get("direction") || "in") === "out" ? "out" : "in",
       amount: Number(formData.get("amount") || 0),
-      note: String(formData.get("note") || "").trim(),
+      note: normalizeNoteInput(formData.get("note")),
       createdAt: existing?.createdAt || Date.now(),
     };
     const normalized = normalizeCashTransferRow(row);
@@ -3667,8 +3670,11 @@ function bindEvents() {
 
   closeTradeDialogBtn.addEventListener("click", () => {
     clearEditState();
+    hideLedgerNoteSuggest(tradeNoteSuggest);
     tradeDialog.close();
   });
+  setupLedgerNoteField(tradeNoteInput, tradeNoteSuggest);
+  setupLedgerNoteField(cashTransferNote, cashTransferNoteSuggest);
   tradeTypeInput.addEventListener("change", applyTradeTypePreset);
   tradePriceInput?.addEventListener("input", syncTradeAmountFromPriceQuantity);
   tradeQuantityInput?.addEventListener("input", syncTradeAmountFromPriceQuantity);
@@ -3703,7 +3709,7 @@ function bindEvents() {
       quantity,
       amount,
       date: String(formData.get("date") || toDateKey(new Date())),
-      note: String(formData.get("note") || "").trim(),
+      note: normalizeNoteInput(formData.get("note")),
       createdAt: Date.now(),
     });
 
@@ -4082,7 +4088,9 @@ function openNewTradeDialog(prefill) {
       }
     }
   }
+  hideLedgerNoteSuggest(tradeNoteSuggest);
   tradeDialog.showModal();
+  resetLedgerNoteTextarea(tradeNoteInput);
   syncTradeAmountFromPriceQuantity();
 }
 
@@ -4795,8 +4803,9 @@ function feedRowHtml(t) {
     name: t.name,
     variant: "feed",
   });
-  const noteBlock = t.note
-    ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(t.note)}</span></p>`
+  const noteText = normalizeNoteInput(t.note);
+  const noteBlock = noteText
+    ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(noteText)}</span></p>`
     : "";
   return `
     <article class="community-feed-card">
@@ -7248,7 +7257,9 @@ function openNewCashTransferDialog() {
   if (cashTransferAccount) {
     cashTransferAccount.value = resolveTradeFormDefaultAccountId();
   }
+  hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
+  resetLedgerNoteTextarea(cashTransferNote);
 }
 
 function openEditCashTransferDialog(rawId) {
@@ -7278,14 +7289,131 @@ function openEditCashTransferDialog(rawId) {
     cashTransferAmount.value = String(r.amount);
   }
   if (cashTransferNote) {
-    cashTransferNote.value = r.note;
+    cashTransferNote.value = r.note || "";
+    resetLedgerNoteTextarea(cashTransferNote);
   }
+  hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
+}
+
+function normalizeNoteInput(raw) {
+  const text = String(raw ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!text) {
+    return "";
+  }
+  return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
+}
+
+function autoResizeLedgerNoteTextarea(el) {
+  if (!el) {
+    return;
+  }
+  el.style.height = "auto";
+  const styles = getComputedStyle(el);
+  const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
+  const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
+  const minHeight = lineHeight * 3 + paddingTop + paddingBottom;
+  el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`;
+}
+
+function resetLedgerNoteTextarea(el) {
+  if (!el) {
+    return;
+  }
+  el.style.height = "";
+  autoResizeLedgerNoteTextarea(el);
+}
+
+function hideLedgerNoteSuggest(suggestEl) {
+  if (!suggestEl) {
+    return;
+  }
+  suggestEl.hidden = true;
+  suggestEl.innerHTML = "";
+  delete suggestEl._ledgerNotes;
+}
+
+function collectLedgerNoteSuggestions(limit = 20) {
+  const seen = new Set();
+  const items = [];
+  const push = (note, ts) => {
+    const text = normalizeNoteInput(note);
+    if (!text || seen.has(text)) {
+      return;
+    }
+    seen.add(text);
+    items.push({ text, ts: Number(ts) || 0 });
+  };
+  for (const trade of state.trades || []) {
+    push(trade.note, trade.createdAt);
+  }
+  for (const row of state.cashTransfers || []) {
+    push(row.note, row.createdAt);
+  }
+  items.sort((a, b) => b.ts - a.ts);
+  return items.slice(0, limit).map((item) => item.text);
+}
+
+function renderLedgerNoteSuggestList(suggestEl, notes) {
+  if (!suggestEl) {
+    return;
+  }
+  if (!notes.length) {
+    hideLedgerNoteSuggest(suggestEl);
+    return;
+  }
+  suggestEl._ledgerNotes = notes;
+  suggestEl.innerHTML = notes
+    .map((note, i) => {
+      const firstLine = note.split("\n")[0] || "";
+      const preview = firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+      return `<li role="option" tabindex="-1" data-note-idx="${i}">${escapeHtml(preview)}</li>`;
+    })
+    .join("");
+  suggestEl.hidden = false;
+}
+
+function setupLedgerNoteField(textarea, suggestEl) {
+  if (!textarea) {
+    return;
+  }
+  autoResizeLedgerNoteTextarea(textarea);
+  textarea.addEventListener("input", () => {
+    autoResizeLedgerNoteTextarea(textarea);
+  });
+  textarea.addEventListener("focus", () => {
+    renderLedgerNoteSuggestList(suggestEl, collectLedgerNoteSuggestions());
+  });
+  textarea.addEventListener("blur", () => {
+    window.setTimeout(() => hideLedgerNoteSuggest(suggestEl), 150);
+  });
+  suggestEl?.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+  });
+  suggestEl?.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-note-idx]");
+    if (!li || !suggestEl?.contains(li)) {
+      return;
+    }
+    const idx = Number(li.getAttribute("data-note-idx"));
+    const picked = Array.isArray(suggestEl._ledgerNotes) ? suggestEl._ledgerNotes[idx] : "";
+    if (!picked) {
+      return;
+    }
+    textarea.value = picked;
+    autoResizeLedgerNoteTextarea(textarea);
+    hideLedgerNoteSuggest(suggestEl);
+    textarea.focus();
+  });
 }
 
 /** 交易/资金/个股记录：备注在数据行下方展示（无备注则不占行）。 */
 function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}, opts = {}) {
-  const text = String(note || "").trim();
+  const text = normalizeNoteInput(note);
   if (!text) {
     return "";
   }
@@ -7651,6 +7779,8 @@ function openEditTradeDialog(tradeId) {
   tradeAmountInput.value = trade.amount;
   tradeDateInput.value = trade.date;
   tradeNoteInput.value = trade.note || "";
+  resetLedgerNoteTextarea(tradeNoteInput);
+  hideLedgerNoteSuggest(tradeNoteSuggest);
   if (tradeAccountInput) {
     tradeAccountInput.value = trade.accountId || DEFAULT_ACCOUNT.id;
   }
@@ -11245,7 +11375,7 @@ function normalizeTrade(input) {
   const defaultAmount = Math.abs(trade.price * trade.quantity);
   trade.amount = Math.abs(Number.isFinite(Number(trade.amount)) ? Number(trade.amount) : defaultAmount);
   trade.date = trade.date || toDateKey(new Date());
-  trade.note = trade.note || "";
+  trade.note = normalizeNoteInput(trade.note);
   trade.name = trade.name || trade.symbol;
   trade.createdAt = Number(trade.createdAt || Date.now());
   return trade;
@@ -11261,7 +11391,7 @@ function normalizeCashTransferRow(input) {
     date: toDateKey(r.date || new Date()),
     direction,
     amount: Math.abs(Number(r.amount) || 0),
-    note: String(r.note || "").trim(),
+    note: normalizeNoteInput(r.note),
     createdAt: Number(r.createdAt) || Date.now(),
   };
 }

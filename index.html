@@ -785,9 +785,26 @@
           <input id="cashTransferAmount" name="amount" type="number" step="0.01" min="0" required />
         </div>
         <p class="form-hint">金额按该账户默认币种计（与账户设置中币种一致）。</p>
-        <div class="form-row">
+        <div class="form-row form-row--note">
           <label for="cashTransferNote">备注</label>
-          <input id="cashTransferNote" name="note" placeholder="可选" />
+          <div class="ledger-note-field">
+            <ul
+              id="cashTransferNoteSuggest"
+              class="ledger-note-suggest"
+              role="listbox"
+              aria-label="历史备注"
+              hidden
+            ></ul>
+            <textarea
+              id="cashTransferNote"
+              name="note"
+              class="ledger-note-textarea"
+              rows="3"
+              maxlength="500"
+              placeholder="可选"
+              autocomplete="off"
+            ></textarea>
+          </div>
         </div>
         <button id="cashTransferSubmitBtn" type="submit" class="btn btn-primary full">保存</button>
         <button
@@ -851,9 +868,26 @@
           <label for="tradeDate">成交日期</label>
           <input id="tradeDate" name="date" type="date" required />
         </div>
-        <div class="form-row">
+        <div class="form-row form-row--note">
           <label for="tradeNote">备注</label>
-          <input id="tradeNote" name="note" placeholder="可选" />
+          <div class="ledger-note-field">
+            <ul
+              id="tradeNoteSuggest"
+              class="ledger-note-suggest"
+              role="listbox"
+              aria-label="历史备注"
+              hidden
+            ></ul>
+            <textarea
+              id="tradeNote"
+              name="note"
+              class="ledger-note-textarea"
+              rows="3"
+              maxlength="500"
+              placeholder="可选"
+              autocomplete="off"
+            ></textarea>
+          </div>
         </div>
         <button id="tradeSubmitBtn" type="submit" class="btn btn-primary full">保存交易</button>
       </form>
