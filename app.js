@@ -9171,57 +9171,6 @@ function latestKlineDay(rows = []) {
   return latest;
 }
 
-function mergeStockRecordPriceSeriesWithTradeDates(sourceRows, sortedTrades) {
-  const source = Array.isArray(sourceRows) ? sourceRows : [];
-  const trades = Array.isArray(sortedTrades) ? sortedTrades : [];
-  const priceByDate = new Map();
-  const tradePriceByDate = new Map();
-
-  source.forEach((row) => {
-    const date = String(row?.date || "").slice(0, 10);
-    const price = Number(row?.price);
-    if (!date || !Number.isFinite(price) || price <= 0) {
-      return;
-    }
-    priceByDate.set(date, price);
-  });
-  trades.forEach((trade) => {
-    const date = String(trade?.date || "").slice(0, 10);
-    const price = Number(trade?.price);
-    if (!date || !Number.isFinite(price) || price <= 0) {
-      return;
-    }
-    // 同日多笔成交取最后一笔价格。
-    tradePriceByDate.set(date, price);
-  });
-
-  const allDates = [...new Set([...priceByDate.keys(), ...tradePriceByDate.keys()])].sort();
-  if (!allDates.length) {
-    return [];
-  }
-
-  const merged = [];
-  let rollingPrice = 0;
-  allDates.forEach((date) => {
-    const sourcePrice = priceByDate.get(date);
-    const tradePrice = tradePriceByDate.get(date);
-    if (Number.isFinite(sourcePrice) && sourcePrice > 0) {
-      rollingPrice = sourcePrice;
-    } else if (Number.isFinite(tradePrice) && tradePrice > 0) {
-      rollingPrice = tradePrice;
-    }
-    if (!(rollingPrice > 0)) {
-      rollingPrice = Number.isFinite(sourcePrice)
-        ? sourcePrice
-        : Number.isFinite(tradePrice)
-          ? tradePrice
-          : 0;
-    }
-    merged.push({ date, price: rollingPrice });
-  });
-  return merged;
-}
-
 function stockRecordVisibleSlice(source) {
   return trimChartViewport(source, {
     minWindow: ANALYSIS_CHART_MIN_WINDOW,
@@ -9236,11 +9185,7 @@ function stockRecordVisibleSlice(source) {
 
 function drawStockRecordCharts(symbol, symbolTrades) {
   const bundlePoints = stockRecordChartPointsFromBundle(state.stockRecordBundle);
-  if (bundlePoints.length) {
-    drawStockRecordChartsFromBundle(symbol, symbolTrades, bundlePoints);
-    return;
-  }
-  drawStockRecordChartLegacy(symbol, symbolTrades);
+  drawStockRecordChartsFromBundle(symbol, symbolTrades, bundlePoints);
 }
 
 function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
@@ -9478,143 +9423,6 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     chartNavTotal: () => totalCount,
     valueFormatter: (value) => `${formatNumber(value, 2)}%`,
   });
-}
-
-function drawStockRecordChartLegacy(symbol, symbolTrades) {
-  const canvas = stockRecordChart;
-  if (!canvas) {
-    return;
-  }
-  const kline = getKlineBySymbol(symbol);
-  const sortedTrades = [...symbolTrades].sort(sortTradeAsc);
-  const baseSource =
-    kline.length > 1
-      ? kline.map((item) => ({ date: item.day, price: Number(item.close) }))
-      : sortedTrades.map((item) => ({ date: item.date, price: validNumber(item.price, 0) }));
-  const source = mergeStockRecordPriceSeriesWithTradeDates(baseSource, sortedTrades);
-  if (!source.length) {
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    return;
-  }
-  const { visible, totalCount } = stockRecordVisibleSlice(source);
-  const qtyByDate = {};
-  let qty = 0;
-  sortedTrades.forEach((trade) => {
-    qty += trade.side === "buy" ? trade.quantity : -trade.quantity;
-    qtyByDate[trade.date] = qty;
-  });
-  let rollingQty = 0;
-  const firstVisibleDate = String(visible[0]?.date || "");
-  if (firstVisibleDate) {
-    sortedTrades.forEach((trade) => {
-      if (String(trade.date || "") <= firstVisibleDate) {
-        rollingQty += trade.side === "buy" ? trade.quantity : -trade.quantity;
-      }
-    });
-  }
-  const values = visible.map((item) => {
-    if (qtyByDate[item.date] != null) {
-      rollingQty = qtyByDate[item.date];
-    }
-    return { date: item.date, price: validNumber(item.price, 0), qty: rollingQty };
-  });
-  const rightLabel = "持仓股数";
-  const payload = buildChartPayload(
-    [
-      {
-        key: "price",
-        label: "股价",
-        color: "#4091e0",
-        axis: "left",
-        values: values.map((item) => ({ date: item.date, value: item.price })),
-      },
-      {
-        key: "qty",
-        label: rightLabel,
-        color: "#ff4d4f",
-        axis: "right",
-        values: values.map((item) => ({ date: item.date, value: item.qty })),
-      },
-    ],
-    {
-      labels: { price: "股价", qty: rightLabel },
-      yAxisMode: "left-right",
-      xMin: 2,
-      xMax: canvas.width - 2,
-      yMin: 20,
-      yMax: canvas.height - 36,
-      yRangePadding: {
-        minFactor: STOCK_RECORD_AXIS_MIN_FACTOR,
-        maxFactor: STOCK_RECORD_AXIS_MAX_FACTOR,
-      },
-    }
-  );
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawChartGrid(ctx, canvas.width, canvas.height, payload);
-  payload.seriesList.forEach((series) => {
-    drawSeries(ctx, series.values, payload.mapX, payload.mapY, series.color || "#2f80f6");
-  });
-  const pointByDate = Object.fromEntries(values.map((item, idx) => [item.date, idx]));
-  sortedTrades.forEach((trade) => {
-    const idx = pointByDate[trade.date];
-    if (idx == null) {
-      return;
-    }
-    const point = payload.seriesMap.price.values[idx];
-    if (!point) {
-      return;
-    }
-    ctx.fillStyle = trade.side === "buy" ? "#3b7bf6" : "#ffffff";
-    ctx.strokeStyle = "#3b7bf6";
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
-  if (payload.seriesMap?.price?.values?.length) {
-    drawSeriesExtrema(ctx, payload, payload.seriesMap.price, (value) => formatNumber(value, 2));
-  }
-  if (payload.seriesMap?.qty?.values?.length) {
-    drawSeriesExtrema(ctx, payload, payload.seriesMap.qty, (value) => formatNumber(value, 0));
-  }
-  drawAxisLabels(ctx, payload, {
-    leftLabel: "",
-    rightLabel: "",
-    xLabel: "",
-    valueFormatter: (value, axis, key) => {
-      if (key === "qty" || axis === "right") {
-        return formatNumber(value, 0);
-      }
-      return formatNumber(value, 2);
-    },
-  });
-  drawCrosshairOverlay(ctx, payload, canvas.id, (value, key, axis) => {
-    if (key === "qty" || axis === "right") {
-      return formatNumber(value, 0);
-    }
-    return formatNumber(value, 2);
-  });
-  bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
-    mode: "stock",
-    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
-    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
-    chartNavTotal: () => totalCount,
-    valueFormatter: (value, key, axis) => {
-      if (key === "qty" || axis === "right") {
-        return formatNumber(value, 0);
-      }
-      return formatNumber(value, 2);
-    },
-  });
-  const legacyVisible = values.map((item) => ({
-    qty: item.qty,
-    price: item.price,
-    shares: item.qty,
-    marketValueNative: Number(item.qty) * Number(item.price),
-  }));
-  updateStockRecordChartLatestSummaries(legacyVisible, useCommunityPublicStockRecord());
 }
 
 function buildSymbolHistoryPoints(symbol, symbolTrades, fallbackPrice = 0) {

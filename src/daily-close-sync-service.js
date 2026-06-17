@@ -10,7 +10,6 @@ const {
 const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
 
 const POSITION_EPSILON = 1e-6;
-const KEEP_AFTER_FLAT_DAYS = 365;
 const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
 const BENCHMARK_DAILY_SYMBOLS = ["sh000001", "sz399001", "rt_hkHSI", "gb_inx"];
 const FX_DAILY_LOOKBACK_DAYS = 7;
@@ -82,16 +81,14 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
       extensionUntil: null,
     };
   }
-  const extensionAnchor = lastExitDate || lastTradeDate;
-  const extensionUntil = addCalendarDays(extensionAnchor, KEEP_AFTER_FLAT_DAYS);
-  const active = extensionUntil >= asOfDate;
+  const flatThrough = lastExitDate || lastTradeDate;
   return {
     from,
-    to: active ? asOfDate : extensionUntil,
-    active,
+    to: flatThrough,
+    active: false,
     currentlyHolding: false,
     lastTradeDate,
-    extensionUntil,
+    extensionUntil: null,
   };
 }
 
@@ -259,7 +256,6 @@ async function runDailyCloseSync(options = {}) {
 }
 
 module.exports = {
-  KEEP_AFTER_FLAT_DAYS,
   buildGlobalDailyClosePlan,
   runDailyCloseSync,
 };

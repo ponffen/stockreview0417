@@ -34,6 +34,8 @@ const {
 } = require("./stage-chart-common");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
+const { enumerateFreezeSessionDates } = require("./freeze-calendar");
+const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
 
 const POSITION_EPS = 1e-6;
 
@@ -203,6 +205,127 @@ async function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
   return { current, prevClose: prev, quoteTime };
 }
 
+function netQtyFromTrades(symbolTrades) {
+  let net = 0;
+  for (const tr of symbolTrades || []) {
+    net += tr.side === "buy" ? Number(tr.quantity) || 0 : -(Number(tr.quantity) || 0);
+  }
+  return net;
+}
+
+function lastTradeDateFromTrades(symbolTrades) {
+  const sorted = [...(symbolTrades || [])].sort(sortTradeAsc);
+  return sorted.length ? String(sorted[sorted.length - 1].date || "").slice(0, 10) : "";
+}
+
+/**
+ * 已清仓且冻结已追上最后成交：才走清仓图表补点逻辑。
+ * rebuilding / frozen 未追上 / 仍有持仓 → false，保持原逻辑。
+ */
+function isSymbolClearedStable({
+  symbolTrades,
+  livePosition,
+  um,
+  frozenThrough,
+  anchorPnlRow,
+}) {
+  if (um?.rebuilding) {
+    return false;
+  }
+  const frozen = String(frozenThrough || "").slice(0, 10);
+  if (!frozen || !anchorPnlRow) {
+    return false;
+  }
+  const lastTrade = lastTradeDateFromTrades(symbolTrades);
+  if (!lastTrade || lastTrade > frozen) {
+    return false;
+  }
+  if (hasOpenPositionQuantity(netQtyFromTrades(symbolTrades))) {
+    return false;
+  }
+  const liveQty = Number(livePosition?.quantity) || 0;
+  if (hasOpenPositionQuantity(liveQty)) {
+    return false;
+  }
+  const eodShares = Number(anchorPnlRow.eodShares ?? anchorPnlRow.eod_shares) || 0;
+  return !hasOpenPositionQuantity(eodShares);
+}
+
+function chartPointFromPnlRow(pnl, closeLookup, stageKey) {
+  const dk = String(pnl.date || pnl.dk || "").slice(0, 10);
+  const close = closeLookup.closeOn(dk);
+  if (!(close > 0)) {
+    return null;
+  }
+  const shares = Number(pnl.eodShares ?? pnl.eod_shares) || 0;
+  const mvNat =
+    pnl.eodMarketValueNative != null && Number.isFinite(Number(pnl.eodMarketValueNative))
+      ? Number(pnl.eodMarketValueNative)
+      : shares * close;
+  const weight =
+    pnl.positionWeight != null && Number.isFinite(Number(pnl.positionWeight))
+      ? Number(pnl.positionWeight)
+      : 0;
+  const profitNat = stageProfitFromSymbolPnlRow(pnl, stageKey);
+  return {
+    date: dk,
+    close,
+    shares,
+    mvNat,
+    weight,
+    profitNat: Number.isFinite(profitNat) ? profitNat : 0,
+  };
+}
+
+/** 清仓标的：区间内每个交易日一个点；缺冻结行则股数/市值/占比为 0，收益拉最近 EOD 直线。 */
+function buildClearedStableChartPoints({
+  sessionDates,
+  pnlRows,
+  closeLookup,
+  stageKey,
+  anchorPnlRow,
+}) {
+  const anchorProfit = stageProfitFromSymbolPnlRow(anchorPnlRow, stageKey);
+  const pnlByDate = new Map();
+  for (const row of pnlRows || []) {
+    const dk = String(row.date || row.dk || "").slice(0, 10);
+    if (dk) {
+      pnlByDate.set(dk, row);
+    }
+  }
+  const raw = [];
+  for (const dk of sessionDates || []) {
+    const pnl = pnlByDate.get(dk);
+    if (pnl) {
+      const pt = chartPointFromPnlRow(pnl, closeLookup, stageKey);
+      if (pt) {
+        raw.push(pt);
+      }
+      continue;
+    }
+    const close = closeLookup.closeOn(dk);
+    if (!(close > 0)) {
+      continue;
+    }
+    raw.push({
+      date: dk,
+      close,
+      shares: 0,
+      mvNat: 0,
+      weight: 0,
+      profitNat: Number.isFinite(anchorProfit) ? anchorProfit : 0,
+    });
+  }
+  return raw.map((p) => ({
+    date: p.date,
+    close: formatClosePrice(p.close),
+    shares: formatShares(p.shares),
+    marketValueNative: fmtPlainAmount(p.mvNat),
+    weight: fmtPercentRatio(p.weight),
+    profit: fmtPlainSignedAmount(p.profitNat),
+  }));
+}
+
 function todayProfitNativeFromLive(livePosition, ccy, live) {
   const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
   if (ccy === "CNY") {
@@ -243,29 +366,10 @@ function buildChartPointsForPage({
 
   const raw = [];
   for (const pnl of sortedPnl) {
-    const dk = pnl.dk;
-    const close = closeLookup.closeOn(dk);
-    if (!(close > 0)) {
-      continue;
+    const pt = chartPointFromPnlRow(pnl, closeLookup, stageKey);
+    if (pt) {
+      raw.push(pt);
     }
-    const shares = Number(pnl.eodShares) || 0;
-    const mvNat =
-      pnl.eodMarketValueNative != null && Number.isFinite(Number(pnl.eodMarketValueNative))
-        ? Number(pnl.eodMarketValueNative)
-        : shares * close;
-    const weight =
-      pnl.positionWeight != null && Number.isFinite(Number(pnl.positionWeight))
-        ? Number(pnl.positionWeight)
-        : 0;
-    const profitNat = stageProfitFromSymbolPnlRow(pnl, stageKey);
-    raw.push({
-      date: dk,
-      close,
-      shares,
-      mvNat,
-      weight,
-      profitNat: Number.isFinite(profitNat) ? profitNat : 0,
-    });
   }
 
   const liveQty = Number(livePosition?.quantity) || 0;
@@ -367,17 +471,14 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     uid,
   );
 
-  const pageRange = pageCloseDateRange(pnlRows, endDate);
-  const headlineCloseFrom = addCalendarDays(endDate || frozenThrough || "1970-01-01", -90);
-
   const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
   const includeLive = true;
+  const chartFrom = String(from || firstTrade || endDate || "").slice(0, 10);
+  const anchorAsOf = frozenThrough || endDate;
 
-  const [pageCloseRows, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
-    pageRange
-      ? getSymbolDailyCloseRange(sym, pageRange.from, pageRange.to)
-      : Promise.resolve([]),
-    getSymbolDailyCloseRange(sym, headlineCloseFrom, endDate || "9999-12-31"),
+  const [anchorPnlRow, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
+    getSymbolDailyPnlRowOnOrBefore({ accountId: accountIdForPnl, symbol: sym, asOf: anchorAsOf }, uid),
+    getSymbolDailyCloseRange(sym, addCalendarDays(endDate || frozenThrough || "1970-01-01", -90), endDate || "9999-12-31"),
     includeLive && live.tradingDay && livePos && Math.abs(Number(livePos.quantity) || 0) > POSITION_EPS
       ? getSymbolDailyPnlRowOnOrBefore(
           { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough || endDate },
@@ -387,21 +488,50 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     getSymbolNameMap([sym]),
   ]);
 
+  const clearedStable = isSymbolClearedStable({
+    symbolTrades,
+    livePosition: livePos,
+    um,
+    frozenThrough,
+    anchorPnlRow,
+  });
+
+  const pageCloseFrom = clearedStable
+    ? addCalendarDays(chartFrom, -7)
+    : pageCloseDateRange(pnlRows, endDate)?.from;
+  const pageCloseTo = endDate || frozenThrough || chartFrom;
+  const pageCloseRows =
+    pageCloseFrom && pageCloseTo
+      ? await getSymbolDailyCloseRange(sym, pageCloseFrom, pageCloseTo)
+      : [];
+
   const pageCloseLookup = closeLookupFromRows(pageCloseRows);
   const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);
   const frozenStageProfit = frozenProfitRow ? stageProfitFromSymbolPnlRow(frozenProfitRow, stageKey) : 0;
 
-  const points = buildChartPointsForPage({
-    pnlRows,
-    closeLookup: pageCloseLookup,
-    live,
-    livePosition: livePos,
-    ccy,
-    endDate,
-    includeLive,
-    stageKey,
-    frozenStageProfit,
-  });
+  let points;
+  if (clearedStable) {
+    const sessionDates = enumerateFreezeSessionDates(chartFrom, endDate);
+    points = buildClearedStableChartPoints({
+      sessionDates,
+      pnlRows,
+      closeLookup: pageCloseLookup,
+      stageKey,
+      anchorPnlRow,
+    });
+  } else {
+    points = buildChartPointsForPage({
+      pnlRows,
+      closeLookup: pageCloseLookup,
+      live,
+      livePosition: livePos,
+      ccy,
+      endDate,
+      includeLive,
+      stageKey,
+      frozenStageProfit,
+    });
+  }
 
   const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
   const current = headlineQuote.current;
@@ -425,6 +555,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       rebuilding: !!um?.rebuilding,
       quoteTime: headlineQuote.quoteTime ?? null,
       stage: stageKey,
+      positionStatus: clearedStable ? "cleared" : "open",
     },
     headline: {
       name: displayName,
