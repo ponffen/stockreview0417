@@ -3877,6 +3877,17 @@ function bindEvents() {
   });
 
   bindAnalysisStockRankHelpOnce();
+  analysisStockRankBody?.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-stock-record]");
+    if (!link || !analysisStockRankBody.contains(link)) {
+      return;
+    }
+    event.preventDefault();
+    const symbol = link.getAttribute("data-stock-record");
+    if (symbol) {
+      openStockRecordFromAnalysisRank(symbol);
+    }
+  });
 }
 
 function resetStockRankHelpBubbleLayout(bubble) {
@@ -7175,6 +7186,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
           </div>
         </span>
         <span class="col-hold-interval" role="columnheader">持仓区间</span>
+        <span class="col-action" role="columnheader">操作</span>
       </div>
       ${rows
         .map((row, idx) => {
@@ -7191,6 +7203,10 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
           const rankCodeHtml = rankCode
             ? `<span class="rank-code">${escapeHtml(rankCode)}</span>`
             : "";
+          const symEsc = escapeHtml(String(row.symbol || "").trim());
+          const recordCell = symEsc
+            ? `<span class="col-action" role="cell"><a href="javascript:void(0)" class="record-link analysis-stock-rank-record-link" data-stock-record="${symEsc}">记录</a></span>`
+            : `<span class="col-action" role="cell">—</span>`;
           return `
         <div class="analysis-stock-rank-row" role="row">
           <span class="col-rank" role="cell">${rankNum}</span>
@@ -7204,6 +7220,7 @@ function buildAnalysisStockRankHtml(rows, rankOpts = {}) {
           <span class="col-trades" role="cell">${escapeHtml(row.tradeCount)}</span>
           <span class="col-days" role="cell">${escapeHtml(row.heldDays)}</span>
           <span class="col-hold-interval" role="cell">${escapeHtml(row.holdIntervalsLabel)}</span>
+          ${recordCell}
         </div>`;
         })
         .join("")}
@@ -8894,6 +8911,21 @@ async function openAddTradePrefilledForActiveRecordSymbol() {
     return;
   }
   await openNewTradeDialogPrefilledForSymbol(state.activeRecordSymbol, { accountSource: "stock-record" });
+}
+
+function openStockRecordFromAnalysisRank(symbol) {
+  const sym = String(symbol || "").trim();
+  if (!sym) {
+    return;
+  }
+  const fromPublic =
+    state.route === "community-profile" &&
+    (state.communityProfileTab || "earning") === "analysis";
+  if (fromPublic) {
+    void openStockRecordDialog(sym, { fromPublicProfile: true });
+    return;
+  }
+  void openStockRecordDialog(sym);
 }
 
 async function openStockRecordDialog(symbol, opts = {}) {

@@ -1104,8 +1104,9 @@ h2 {
 }
 
 .analysis-stock-rank-table {
-  min-width: 740px;
+  min-width: 780px;
   --stock-rank-col-rank: 28px;
+  --stock-rank-col-action: 2.5rem;
   /* 名称列固定宽：超长截断，且不撑开 grid 侵入右侧列 */
   --stock-rank-col-name: 6.75rem;
   --stock-rank-col-gap: 8px;
@@ -1133,7 +1134,8 @@ h2 {
     minmax(5rem, max-content)
     minmax(4.5rem, max-content)
     minmax(4.5rem, max-content)
-    minmax(12rem, 1fr);
+    minmax(12rem, 1fr)
+    var(--stock-rank-col-action);
 }
 
 .analysis-stock-rank-table:not(:has(.col-profit)) {
@@ -1144,7 +1146,8 @@ h2 {
     minmax(5rem, max-content)
     minmax(4.5rem, max-content)
     minmax(6rem, max-content)
-    minmax(11rem, 1fr);
+    minmax(11rem, 1fr)
+    var(--stock-rank-col-action);
 }
 
 .analysis-stock-rank-table > .analysis-stock-rank-head,
@@ -1422,6 +1425,12 @@ h2 {
   justify-content: flex-end;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.analysis-stock-rank-table .col-action {
+  justify-content: center;
+  text-align: center;
   white-space: nowrap;
 }
 
