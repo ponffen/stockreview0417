@@ -47,11 +47,9 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
   }
   let eodQty = 0;
   let everHeld = false;
-  let lastExitDate = null;
   let i = 0;
   while (i < sorted.length) {
     const day = sorted[i].date;
-    const prevEodQty = eodQty;
     while (i < sorted.length && sorted[i].date === day) {
       const tr = sorted[i];
       eodQty += tr.side === "buy" ? tr.quantity : -tr.quantity;
@@ -59,9 +57,6 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
     }
     if (eodQty > POSITION_EPSILON) {
       everHeld = true;
-    }
-    if (prevEodQty > POSITION_EPSILON && eodQty <= POSITION_EPSILON) {
-      lastExitDate = day;
     }
   }
   if (!everHeld) {
@@ -71,22 +66,12 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
   const lastTradeDate = sorted[sorted.length - 1].date;
   const currentlyHolding = eodQty > POSITION_EPSILON;
   const from = addCalendarDays(firstTradeDate, -1);
-  if (currentlyHolding) {
-    return {
-      from,
-      to: asOfDate,
-      active: true,
-      currentlyHolding: true,
-      lastTradeDate,
-      extensionUntil: null,
-    };
-  }
-  const flatThrough = lastExitDate || lastTradeDate;
+  // 曾持仓标的：日 K 一旦纳入同步就持续拉到 asOfDate，清仓后也不停。
   return {
     from,
-    to: flatThrough,
-    active: false,
-    currentlyHolding: false,
+    to: asOfDate,
+    active: true,
+    currentlyHolding,
     lastTradeDate,
     extensionUntil: null,
   };
