@@ -326,6 +326,79 @@ function buildClearedStableChartPoints({
   }));
 }
 
+function pnlEodShares(row) {
+  return Number(row?.eodShares ?? row?.eod_shares) || 0;
+}
+
+function pnlRowDateKey(row) {
+  return String(row?.date || row?.dk || "").slice(0, 10);
+}
+
+/**
+ * 自 symbol_daily_pnl 识别「平仓后、再建仓前」的清仓段（冻结已覆盖平仓日）。
+ */
+function detectClearedSegments(pnlRowsAsc, frozenThrough, um) {
+  if (um?.rebuilding) {
+    return [];
+  }
+  const frozen = String(frozenThrough || "").slice(0, 10);
+  if (!frozen) {
+    return [];
+  }
+  const sorted = [...(pnlRowsAsc || [])]
+    .map((row) => ({ ...row, dk: pnlRowDateKey(row) }))
+    .filter((row) => row.dk)
+    .sort((a, b) => a.dk.localeCompare(b.dk));
+
+  const segments = [];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prevSh = pnlEodShares(sorted[i - 1]);
+    const curSh = pnlEodShares(sorted[i]);
+    if (!hasOpenPositionQuantity(prevSh) || hasOpenPositionQuantity(curSh)) {
+      continue;
+    }
+    const exitDate = sorted[i].dk;
+    if (exitDate > frozen) {
+      continue;
+    }
+    const anchorPnlRow = sorted[i];
+    let j = i + 1;
+    while (j < sorted.length && !hasOpenPositionQuantity(pnlEodShares(sorted[j]))) {
+      j += 1;
+    }
+    const reentryDate = j < sorted.length ? sorted[j].dk : null;
+    const fillFrom = addCalendarDays(exitDate, 1);
+    const fillTo = reentryDate ? addCalendarDays(reentryDate, -1) : frozen;
+    if (fillFrom && fillTo && fillFrom <= fillTo) {
+      segments.push({ from: fillFrom, to: fillTo, exitDate, reentryDate, anchorPnlRow });
+    }
+    if (j < sorted.length) {
+      i = j - 1;
+    }
+  }
+  return segments;
+}
+
+function clearedSegmentsInChartRange(segments, chartFrom, endDate) {
+  const from = String(chartFrom || "").slice(0, 10);
+  const end = String(endDate || "").slice(0, 10);
+  if (!from || !end) {
+    return [];
+  }
+  return (segments || []).filter((seg) => seg.from <= end && seg.to >= from);
+}
+
+function mapRawChartPoints(raw) {
+  return (raw || []).map((p) => ({
+    date: p.date,
+    close: formatClosePrice(p.close),
+    shares: formatShares(p.shares),
+    marketValueNative: fmtPlainAmount(p.mvNat),
+    weight: fmtPercentRatio(p.weight),
+    profit: fmtPlainSignedAmount(p.profitNat),
+  }));
+}
+
 function todayProfitNativeFromLive(livePosition, ccy, live) {
   const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
   if (ccy === "CNY") {
@@ -340,6 +413,85 @@ function todayProfitNativeFromLive(livePosition, ccy, live) {
   return fx > 0 ? todayProfitCny / fx : 0;
 }
 
+function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLive, frozenStageProfit }) {
+  const list = Array.isArray(raw) ? raw : [];
+  const end = String(endDate || "").slice(0, 10);
+  const liveQty = Number(livePosition?.quantity) || 0;
+  if (!includeLive || !live?.tradingDay || !livePosition || !hasOpenPositionQuantity(liveQty) || !end) {
+    return list;
+  }
+  const liveDate = String(live.liveDate || "").slice(0, 10);
+  const current = Number(livePosition.current) || 0;
+  const mvNat = liveQty * current;
+  const totalAssetsCny = Number(live.totalAssetsCny) || 0;
+  const rate =
+    ccy === "USD"
+      ? Number(live.fxUsdCny) || 0
+      : ccy === "HKD"
+        ? Number(live.fxHkdCny) || 0
+        : 1;
+  const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
+  const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
+  const frozenProfit = Number.isFinite(Number(frozenStageProfit)) ? Number(frozenStageProfit) : 0;
+  const profitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
+  const row = {
+    date: liveDate,
+    close: current > 0 ? current : list.length ? list[list.length - 1].close : 0,
+    shares: liveQty,
+    mvNat,
+    weight,
+    profitNat,
+  };
+  const hit = list.findIndex((p) => p.date === liveDate);
+  if (hit >= 0) {
+    const next = list.slice();
+    next[hit] = row;
+    return next;
+  }
+  if (liveDate <= end) {
+    return [...list, row].sort((a, b) => a.date.localeCompare(b.date));
+  }
+  return list;
+}
+
+/** 在已有点基础上，为历史清仓段补工作日点（股数/市值/占比 0，收益拉平仓日 EOD 直线）。 */
+function appendClearedSegmentChartPoints(raw, { clearedSegments, chartFrom, endDate, closeLookup, stageKey }) {
+  const out = Array.isArray(raw) ? [...raw] : [];
+  const dates = new Set(out.map((p) => p.date));
+  const chartStart = String(chartFrom || "").slice(0, 10);
+  const chartEnd = String(endDate || "").slice(0, 10);
+
+  for (const seg of clearedSegments || []) {
+    const segFrom = seg.from > chartStart ? seg.from : chartStart;
+    const segTo = seg.to < chartEnd ? seg.to : chartEnd;
+    if (!segFrom || !segTo || segFrom > segTo) {
+      continue;
+    }
+    const anchorProfit = stageProfitFromSymbolPnlRow(seg.anchorPnlRow, stageKey);
+    const sessionDates = enumerateFreezeSessionDates(segFrom, segTo);
+    for (const dk of sessionDates) {
+      if (dates.has(dk)) {
+        continue;
+      }
+      const close = closeLookup.closeOn(dk);
+      if (!(close > 0)) {
+        continue;
+      }
+      out.push({
+        date: dk,
+        close,
+        shares: 0,
+        mvNat: 0,
+        weight: 0,
+        profitNat: Number.isFinite(anchorProfit) ? anchorProfit : 0,
+      });
+      dates.add(dk);
+    }
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
 function buildChartPointsForPage({
   pnlRows,
   closeLookup,
@@ -350,8 +502,10 @@ function buildChartPointsForPage({
   includeLive,
   stageKey,
   frozenStageProfit,
+  clearedSegments,
+  chartFrom,
 }) {
-  if (!pnlRows.length && !includeLive) {
+  if (!pnlRows.length && !includeLive && !(clearedSegments || []).length) {
     return [];
   }
   const end = String(endDate || "").slice(0, 10);
@@ -364,7 +518,7 @@ function buildChartPointsForPage({
     .filter((row) => row.dk && row.dk <= end)
     .sort((a, b) => a.dk.localeCompare(b.dk));
 
-  const raw = [];
+  let raw = [];
   for (const pnl of sortedPnl) {
     const pt = chartPointFromPnlRow(pnl, closeLookup, stageKey);
     if (pt) {
@@ -372,47 +526,24 @@ function buildChartPointsForPage({
     }
   }
 
-  const liveQty = Number(livePosition?.quantity) || 0;
-  if (includeLive && live?.tradingDay && livePosition && Math.abs(liveQty) > POSITION_EPS) {
-    const liveDate = String(live.liveDate || "").slice(0, 10);
-    const current = Number(livePosition.current) || 0;
-    const mvNat = liveQty * current;
-    const totalAssetsCny = Number(live.totalAssetsCny) || 0;
-    const rate =
-      ccy === "USD"
-        ? Number(live.fxUsdCny) || 0
-        : ccy === "HKD"
-          ? Number(live.fxHkdCny) || 0
-          : 1;
-    const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
-    const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
-    const frozenProfit = Number.isFinite(Number(frozenStageProfit)) ? Number(frozenStageProfit) : 0;
-    const profitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
-    const row = {
-      date: liveDate,
-      close: current > 0 ? current : raw.length ? raw[raw.length - 1].close : 0,
-      shares: liveQty,
-      mvNat,
-      weight,
-      profitNat,
-    };
-    const hit = raw.findIndex((p) => p.date === liveDate);
-    if (hit >= 0) {
-      raw[hit] = row;
-    } else if (liveDate <= end) {
-      raw.push(row);
-      raw.sort((a, b) => a.date.localeCompare(b.date));
-    }
-  }
+  raw = appendClearedSegmentChartPoints(raw, {
+    clearedSegments,
+    chartFrom,
+    endDate: end,
+    closeLookup,
+    stageKey,
+  });
 
-  return raw.map((p) => ({
-    date: p.date,
-    close: formatClosePrice(p.close),
-    shares: formatShares(p.shares),
-    marketValueNative: fmtPlainAmount(p.mvNat),
-    weight: fmtPercentRatio(p.weight),
-    profit: fmtPlainSignedAmount(p.profitNat),
-  }));
+  raw = applyLiveChartPoint(raw, {
+    live,
+    livePosition,
+    ccy,
+    endDate: end,
+    includeLive,
+    frozenStageProfit,
+  });
+
+  return mapRawChartPoints(raw);
 }
 
 function pageCloseDateRange(pnlRowsAsc, endDate, bufferDays = 7) {
@@ -465,15 +596,21 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const firstTrade = firstTradeDateFromTrades(symbolTrades, endDate);
   const sessionAsOf = endDate || liveDateKeyShanghai();
   const { start: from } = resolveStageRange(stageKey, sessionAsOf, firstTrade);
+  const chartFrom = String(from || firstTrade || endDate || "").slice(0, 10);
 
   const pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
     { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
     uid,
   );
+  const pnlRowsForSegments = await getSymbolDailyPnlChartSeriesDateRange(
+    { ...pnlQueryBase, from: firstTrade || "1970-01-01", to: endDate || "9999-12-31" },
+    uid,
+  );
+  const clearedSegmentsAll = detectClearedSegments(pnlRowsForSegments, frozenThrough, um);
+  const clearedSegments = clearedSegmentsInChartRange(clearedSegmentsAll, chartFrom, endDate);
 
   const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
   const includeLive = true;
-  const chartFrom = String(from || firstTrade || endDate || "").slice(0, 10);
   const anchorAsOf = frozenThrough || endDate;
 
   const [anchorPnlRow, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
@@ -496,9 +633,16 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     anchorPnlRow,
   });
 
-  const pageCloseFrom = clearedStable
+  let pageCloseFrom = clearedStable
     ? addCalendarDays(chartFrom, -7)
     : pageCloseDateRange(pnlRows, endDate)?.from;
+  if (clearedSegments.length) {
+    const segMin = clearedSegments.reduce((min, seg) => (seg.from < min ? seg.from : min), clearedSegments[0].from);
+    const segCandidate = addCalendarDays(segMin, -7);
+    if (!pageCloseFrom || segCandidate < pageCloseFrom) {
+      pageCloseFrom = segCandidate;
+    }
+  }
   const pageCloseTo = endDate || frozenThrough || chartFrom;
   const pageCloseRows =
     pageCloseFrom && pageCloseTo
@@ -530,6 +674,8 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       includeLive,
       stageKey,
       frozenStageProfit,
+      clearedSegments,
+      chartFrom,
     });
   }
 
@@ -556,6 +702,12 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
       quoteTime: headlineQuote.quoteTime ?? null,
       stage: stageKey,
       positionStatus: clearedStable ? "cleared" : "open",
+      clearedSegments: clearedSegments.map((seg) => ({
+        from: seg.from,
+        to: seg.to,
+        exitDate: seg.exitDate,
+        reentryDate: seg.reentryDate || null,
+      })),
     },
     headline: {
       name: displayName,
