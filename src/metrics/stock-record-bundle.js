@@ -25,7 +25,7 @@ const {
 const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
-const { liveDateKeyShanghai, getTradingDateKeyBy0830 } = require("./trading-calendar");
+const { liveDateKeyShanghai } = require("./trading-calendar");
 const { resolveStageRange } = require("./stages");
 const {
   stockRecordRangeChipToStage,
@@ -98,21 +98,14 @@ function formatTradingIntervalWithSide(rate, side) {
   return suffix ? `${rateText} ${suffix}` : rateText;
 }
 
-/** 现价相对「当日之前」最近一笔成交价涨跌幅（与前端 tooltip 一致）。 */
-function computeTradingIntervalFormatted(symbolTrades, currentPrice, sessionDateKey) {
+/** 现价相对最近一笔成交价涨跌幅（与首页持仓表 regret 一致）。 */
+function computeTradingIntervalFormatted(symbolTrades, currentPrice) {
   const price = Number(currentPrice);
   if (!(price > 0) || !Array.isArray(symbolTrades) || !symbolTrades.length) {
     return "—";
   }
-  const todayKey = String(sessionDateKey || getTradingDateKeyBy0830()).slice(0, 10);
-  let refTrade = null;
-  for (let i = symbolTrades.length - 1; i >= 0; i -= 1) {
-    const dk = String(symbolTrades[i]?.date || "").slice(0, 10);
-    if (dk && dk < todayKey) {
-      refTrade = symbolTrades[i];
-      break;
-    }
-  }
+  const sorted = [...symbolTrades].sort(sortTradeAsc);
+  const refTrade = sorted[sorted.length - 1];
   const refPrice = Number(refTrade?.price);
   if (!refTrade || !(refPrice > 0)) {
     return "—";
@@ -685,8 +678,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
   const changeAbs = current - prev;
   const changePct = prev > 0 ? changeAbs / prev : 0;
   const displayName = resolveDisplayNameFromMap(sym, nameMap);
-  const sessionDateKey = live.tradingDay ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10) : endDate;
-  const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current, sessionDateKey);
+  const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current);
 
   const payload = {
     meta: {
