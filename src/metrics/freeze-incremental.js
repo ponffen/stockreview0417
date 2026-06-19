@@ -26,6 +26,7 @@ const {
   isTradeRecord,
   hydrateStageTradeAccFromRow,
   advanceStageTradeAccSessionGap,
+  resolveTradeSnapForFreezeDay,
 } = require("./stage-trade-counter");
 const {
   lastPositiveCloseOnOrBefore,
@@ -504,7 +505,7 @@ async function freezeAccountOneDay({
   stageAcc.onDay(dk, dailyProfit, dailyRateTwr);
   stageTradeAcc.onDay(dk, dailyTradeCount);
   const snap = stageAcc.snapshotTwr();
-  const tradeSnap = stageTradeAcc.snapshot();
+  const tradeSnap = resolveTradeSnapForFreezeDay(dailyTradeCount, stageTradeAcc.snapshot(), yesterday);
 
   const rowsAsc = accountMem?.rowsAsc ? [...accountMem.rowsAsc] : [];
   rowsAsc.push({ date: dk, totalAssets: ta, dailyExternalFlow: ext });
@@ -686,7 +687,7 @@ async function freezeSymbolOneDay({
   stageAcc.onDay(dk, pnl, rDay);
   stageTradeAcc.onDay(dk, dailyTradeCount);
   const snap = stageAcc.snapshotTwr();
-  const tradeSnap = stageTradeAcc.snapshot();
+  const tradeSnap = resolveTradeSnapForFreezeDay(dailyTradeCount, stageTradeAcc.snapshot(), yesterday);
   if (Math.abs(qty) > 1e-6 && closeD > 0) {
     const existing = flowPts.find((p) => p.date === dk);
     const pt = { date: dk, value: qty * closeD, flow: dayFlow };

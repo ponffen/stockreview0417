@@ -664,13 +664,7 @@ function computeMainRowTradeCount({
   }
 
   const ss = String(stageStart || ps).slice(0, 10);
-  let count = 0;
-  if (stageUsesFrozenCumulativeFields(st) && isFreshStagePeriod(ss, ft)) {
-    const frozenEnd = ft && ft < pe ? ft : pe;
-    count = countTradeRecordsInRange(tradeList, ss, frozenEnd);
-  } else {
-    count = stageTradeCountFromRow(frozenRow, st);
-  }
+  let count = stageTradeCountFromRow(frozenRow, st);
 
   if (live?.tradingDay) {
     const liveDate = String(live.liveDate || "").slice(0, 10);

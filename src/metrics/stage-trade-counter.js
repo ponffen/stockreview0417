@@ -132,6 +132,30 @@ function advanceStageTradeAccSessionGap(stageAcc, lastRowDate, targetDateKey) {
   }
 }
 
+function stageTradeSnapFromRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    stageMtdTradeCount: Number(row.stageMtdTradeCount ?? row.stage_mtd_trade_count) || 0,
+    stageYtdTradeCount: Number(row.stageYtdTradeCount ?? row.stage_ytd_trade_count) || 0,
+    stageInceptionTradeCount: Number(row.stageInceptionTradeCount ?? row.stage_inception_trade_count) || 0,
+    stageLast7dTradeCount: Number(row.stageLast7dTradeCount ?? row.stage_last_7d_trade_count) || 0,
+    stageLast30dTradeCount: Number(row.stageLast30dTradeCount ?? row.stage_last_30d_trade_count) || 0,
+    stageLast90dTradeCount: Number(row.stageLast90dTradeCount ?? row.stage_last_90d_trade_count) || 0,
+  };
+}
+
+/** 无成交日：stage 笔数累计字段沿用昨日冻结行；有成交日用 counter 快照。 */
+function resolveTradeSnapForFreezeDay(dailyTradeCount, tradeSnap, yesterdayRow) {
+  const daily = Math.max(0, Math.floor(Number(dailyTradeCount) || 0));
+  if (daily > 0) {
+    return tradeSnap;
+  }
+  const prev = stageTradeSnapFromRow(yesterdayRow);
+  return prev || tradeSnap;
+}
+
 function stageTradeCountFromRow(row, stageKey) {
   const st = String(stageKey || "last_30d").trim() || "last_30d";
   if (!row) {
@@ -168,5 +192,7 @@ module.exports = {
   countTradeRecordsInRange,
   hydrateStageTradeAccFromRow,
   advanceStageTradeAccSessionGap,
+  stageTradeSnapFromRow,
+  resolveTradeSnapForFreezeDay,
   stageTradeCountFromRow,
 };
