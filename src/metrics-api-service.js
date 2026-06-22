@@ -41,6 +41,13 @@ const {
   isFreshStagePeriod,
   stageUsesFrozenCumulativeFields,
 } = require("./metrics/stages");
+const {
+  isLastNdStage,
+  lastNdProfit,
+  lastNdRateTwr,
+  anchorInceptionProfitFromWindowRows,
+  anchorInceptionRateTwrFromWindowRows,
+} = require("./metrics/last-nd");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const { isWeekendDateKey } = require("./metrics/freeze-calendar");
 const { buildHoldingsPayload } = require("./metrics/holdings-display");
@@ -438,9 +445,19 @@ function stageProfitFromFrozenAndLive(
     } else if (stageKey !== "today") {
       const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate, customRange);
       const m = metricsForWindow(rowsAsc, start, end);
-      frozenProfit = m.profitCny;
-      rateTwr = m.rateTwr;
-      rateMwr = m.rateMwr;
+      if (isLastNdStage(stageKey)) {
+        const windowRows = (rowsAsc || []).filter((r) => r.date >= start && r.date <= end);
+        const lastRow = windowRows.length ? windowRows[windowRows.length - 1] : null;
+        const anchorP = anchorInceptionProfitFromWindowRows(windowRows);
+        const anchorR = anchorInceptionRateTwrFromWindowRows(windowRows);
+        frozenProfit = lastRow ? lastNdProfit(lastRow.stageInceptionProfit, anchorP) : 0;
+        rateTwr = lastRow ? lastNdRateTwr(lastRow.stageInceptionRateTwr, anchorR) : 0;
+        rateMwr = m.rateMwr;
+      } else {
+        frozenProfit = m.profitCny;
+        rateTwr = m.rateTwr;
+        rateMwr = m.rateMwr;
+      }
     }
   } else if (stageKey !== "today" && !stageUsesFrozenCumulativeFields(stageKey)) {
     const { end } = resolveStageRange(stageKey, rangeAsOf, firstTradeDate, customRange);
@@ -1045,6 +1062,18 @@ async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc, cu
         profit: formatSignedProfitForScope(cum, scope, book, fxU, fxH),
       };
     });
+  } else if (isLastNdStage(st)) {
+    const anchor = anchorInceptionProfitFromWindowRows(filtered);
+    points = filtered.map((r) => ({
+      date: r.date,
+      profit: formatSignedProfitForScope(
+        lastNdProfit(r.stageInceptionProfit, anchor),
+        scope,
+        book,
+        fxU,
+        fxH,
+      ),
+    }));
   } else {
     points = filtered.map((r) => ({
       date: r.date,
@@ -1100,6 +1129,12 @@ async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload
       rate = chainTwrRate(rate, d);
       return { date: r.date, rate: fmtSignedPercentRatio(rate) };
     });
+  } else if (!mwrMode && isLastNdStage(st)) {
+    const anchorTwr = anchorInceptionRateTwrFromWindowRows(filtered);
+    points = filtered.map((r) => ({
+      date: r.date,
+      rate: fmtSignedPercentRatio(lastNdRateTwr(r.stageInceptionRateTwr, anchorTwr)),
+    }));
   } else {
     const rateFromRow = (r) =>
       mwrMode ? stageRateMwrFromSnapshotRow(r, st) : stageRateTwrFromSnapshotRow(r, st);
