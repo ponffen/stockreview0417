@@ -156,11 +156,46 @@ function externalFlowCnyForDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMa
   return sum;
 }
 
+/**
+ * 区间 (fromExclusive, toInclusive] 内银证出入金合计（CNY）。
+ * 用于 live 单期 TWR 的「外部流入」：覆盖「上一个冻结日之后 → 今天」整段（含周末/节假日），
+ * 避免空档期转入被误算成投资收益。外币按 toInclusive 日汇率换算，与 live 现金的计价基准一致。
+ */
+function externalFlowCnyForRange(cashRows, accounts, accountId, fxUsdMap, fxHkdMap, fromExclusive, toInclusive) {
+  const from = String(fromExclusive || "").slice(0, 10);
+  const to = String(toInclusive || "").slice(0, 10);
+  if (!to) {
+    return 0;
+  }
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const filtered =
+    String(accountId || "all").trim() === "all"
+      ? cashRows || []
+      : (cashRows || []).filter((c) => String(c.accountId || "default") === String(accountId));
+  let sum = 0;
+  for (const r of filtered) {
+    const dk = String(r.date || "").slice(0, 10);
+    if (!dk || dk <= from || dk > to) {
+      continue;
+    }
+    const acc = accById.get(String(r.accountId || "default")) || { currency: "CNY" };
+    const ccy = String(acc.currency || "CNY").toUpperCase();
+    const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
+    const nat = sign * Math.abs(Number(r.amount) || 0);
+    if (!Number.isFinite(nat) || nat === 0) {
+      continue;
+    }
+    sum += ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, to);
+  }
+  return sum;
+}
+
 module.exports = {
   tradeCashFlowInAccountCurrency,
   computeLedgerCashCnyUpToDate,
   principalCnyUpToDate,
   externalFlowCnyForDate,
+  externalFlowCnyForRange,
   tradeSignedCashNativeForLedger,
   tradeCashFlowInAccountCurrency,
 };

@@ -3,7 +3,7 @@
  */
 const { normalizeSymbol } = require("../db");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
-const { computeLedgerCashCnyUpToDate, externalFlowCnyForDate } = require("../ledger-metrics");
+const { computeLedgerCashCnyUpToDate, externalFlowCnyForRange } = require("../ledger-metrics");
 const { shouldCountTodayPositionPnlFromQuote } = require("../position-today-pnl");
 
 function chainTwrRate(frozenRate, todayRate) {
@@ -114,12 +114,15 @@ function applyEodPlusLiveTotals({
   const mvCny = eodMv + (Number(liveMarketValueCny) - eodMv);
   const cashCny = eodCash + (Number(ledgerCashAtLive) - cashFrozen);
   const totalAssetsCny = mvCny + cashCny;
-  const externalFlowTodayCny = externalFlowCnyForDate(
+  // 外部流入须覆盖「冻结日之后 → 今天」整段（含周末/节假日），与 liveTA−frozenTA 的口径对齐，
+  // 否则空档期的银证转入（如周末转入）会被当日 TWR 误算成投资收益。
+  const externalFlowTodayCny = externalFlowCnyForRange(
     cashTransfers,
     accounts,
     scope,
     fxUsdMap,
     fxHkdMap,
+    ft,
     liveDate,
   );
   return {

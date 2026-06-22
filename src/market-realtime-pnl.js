@@ -498,16 +498,20 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   }
 
   const cashAsOf = tradingDay ? liveDate : frozenThrough || liveDate;
+  // fxUsdMap/fxHkdMap 只含冻结日一条，缺 liveDate；交易日按实时汇率补上 liveDate，
+  // 否则 cashAsOf=liveDate 时外币现金会用 7.2/0.92 兜底汇率换算，虚增 live 现金/总资产。
+  const fxUsdMapLive = tradingDay ? { ...fxUsdMap, [String(liveDate)]: fxSpot.USD } : fxUsdMap;
+  const fxHkdMapLive = tradingDay ? { ...fxHkdMap, [String(liveDate)]: fxSpot.HKD } : fxHkdMap;
   const ledgerCashAtLive = computeLedgerCashCnyUpToDate(
     trades,
     cashTransfers,
     accounts,
     scope,
-    fxUsdMap,
-    fxHkdMap,
+    fxUsdMapLive,
+    fxHkdMapLive,
     cashAsOf,
   );
-  const principalBase = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, cashAsOf);
+  const principalBase = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, cashAsOf);
   let cashCny = ledgerCashAtLive;
   let liveMarketValueCny = liveMarketValue;
   let totalAssetsCny = liveMarketValue + cashCny;
@@ -518,12 +522,6 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   let principalLive = principalBase;
 
   if (tradingDay) {
-    const fxLiveMap = {
-      [String(liveDate)]: fxSpot.USD,
-    };
-    const fxHkdLiveMap = {
-      [String(liveDate)]: fxSpot.HKD,
-    };
     const hybrid = applyEodPlusLiveTotals({
       homeAcc,
       frozenThrough,
@@ -534,8 +532,8 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       cashTransfers,
       accounts,
       scope,
-      fxUsdMap: { ...fxUsdMap, ...fxLiveMap },
-      fxHkdMap: { ...fxHkdMap, ...fxHkdLiveMap },
+      fxUsdMap: fxUsdMapLive,
+      fxHkdMap: fxHkdMapLive,
     });
     if (hybrid) {
       liveMarketValueCny = hybrid.liveMarketValueCny;
@@ -557,7 +555,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     principalLive =
       eodPrincipal > 0
         ? eodPrincipal + externalFlowTodayCny
-        : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+        : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, liveDate);
 
     return {
       tradingDay: true,
