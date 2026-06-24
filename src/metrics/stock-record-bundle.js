@@ -394,9 +394,12 @@ function mapRawChartPoints(raw) {
 }
 
 function todayProfitNativeFromLive(livePosition, ccy, live) {
-  const todayProfitCny = Number(livePosition?.todayProfitCny) || 0;
+  if (livePosition?.todayProfitNative != null && Number.isFinite(Number(livePosition.todayProfitNative))) {
+    return Number(livePosition.todayProfitNative);
+  }
+  const todayProfitBook = Number(livePosition?.todayProfitCny) || 0;
   if (ccy === "CNY") {
-    return todayProfitCny;
+    return todayProfitBook;
   }
   const fx =
     ccy === "USD"
@@ -404,7 +407,7 @@ function todayProfitNativeFromLive(livePosition, ccy, live) {
       : ccy === "HKD"
         ? Number(live?.fxHkdCny) || 0
         : 1;
-  return fx > 0 ? todayProfitCny / fx : 0;
+  return fx > 0 ? todayProfitBook / fx : 0;
 }
 
 function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLive, frozenStageProfit }) {

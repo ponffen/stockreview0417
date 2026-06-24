@@ -53,35 +53,119 @@ function tradeCashFlowInAccountCurrency(trade, accountCurrency, fxUsdMap, fxHkdM
   return Number.isFinite(fxAcc) && fxAcc > 0 ? flowCny / fxAcc : flowCny;
 }
 
-/**
- * 与前端 computeLedgerCashAndPrincipal 一致：各账户滚账本位币期末余额，
- * 再按 asOfDateKey 当日汇率折 CNY（与日快照其它人民币字段一致）。
- */
-function computeLedgerCashCnyUpToDate(tradeList, cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey) {
-  const end = String(asOfDateKey || "").slice(0, 10);
+function bookCurrencyForScope(accounts, accountId) {
+  const scope = String(accountId || "all").trim() || "all";
+  if (scope === "all") {
+    return "CNY";
+  }
   const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const acc = accById.get(scope) || { currency: "CNY" };
+  const c = String(acc.currency || "CNY").toUpperCase();
+  if (c === "USD" || c === "HKD" || c === "CNY") {
+    return c;
+  }
+  return "CNY";
+}
+
+function nativeAmountToBook(nat, nativeCcy, bookCcy, fxUsdMap, fxHkdMap, dateKey) {
+  const n = Number(nat) || 0;
+  if (!n) {
+    return 0;
+  }
+  const from = String(nativeCcy || "CNY").toUpperCase();
+  const book = String(bookCcy || "CNY").toUpperCase();
+  if (from === book) {
+    return n;
+  }
+  const dk = String(dateKey || "").slice(0, 10);
+  const cny = from === "CNY" ? n : n * fxToCnyOnDate(fxUsdMap, fxHkdMap, from, dk);
+  if (book === "CNY") {
+    return cny;
+  }
+  const bookFx = fxToCnyOnDate(fxUsdMap, fxHkdMap, book, dk);
+  return Number.isFinite(bookFx) && bookFx > 0 ? cny / bookFx : cny;
+}
+
+function ledgerCashBalanceNativeForAccount(filterTr, filterCtf, accId, accById, fxUsdMap, fxHkdMap) {
+  const acc = accById.get(accId) || { currency: "CNY" };
+  const accCcy = String(acc.currency || "CNY").toUpperCase();
+  const events = [];
+  for (const r of filterCtf) {
+    if (String(r.accountId || "default") !== accId) {
+      continue;
+    }
+    events.push({
+      kind: "ct",
+      id: String(r.id || ""),
+      date: String(r.date || "").slice(0, 10),
+      createdAt: Number(r.createdAt) || 0,
+      delta: cashTransferDeltaNative(r, accById),
+    });
+  }
+  for (const t of filterTr) {
+    if (String(t.accountId || "default") !== accId) {
+      continue;
+    }
+    events.push({
+      kind: "tr",
+      id: String(t.id || ""),
+      date: String(t.date || "").slice(0, 10),
+      createdAt: Number(t.createdAt) || 0,
+      delta: tradeCashFlowInAccountCurrency(t, accCcy, fxUsdMap, fxHkdMap),
+    });
+  }
+  events.sort(compareLedgerEvent);
+  let balNat = 0;
+  for (const ev of events) {
+    balNat += ev.delta;
+  }
+  return { balNat, accCcy };
+}
+
+function filterLedgerRowsUpToDate(tradeList, cashRows, accountId, asOfDateKey) {
+  const end = String(asOfDateKey || "").slice(0, 10);
+  const scope = String(accountId || "all").trim() || "all";
   const rowsTr = (Array.isArray(tradeList) ? tradeList : [])
     .map((t) => ({ ...t, date: normalizeTradeCalendarDateKey(t.date) }))
     .filter((t) => String(t.date).slice(0, 10) <= end);
   const rowsCtf = (Array.isArray(cashRows) ? cashRows : []).filter(
     (r) => String(r.date || "").slice(0, 10) <= end,
   );
-
-  const filterTr = accountId === "all" ? rowsTr : rowsTr.filter((t) => String(t.accountId || "default") === String(accountId));
+  const filterTr =
+    scope === "all" ? rowsTr : rowsTr.filter((t) => String(t.accountId || "default") === scope);
   const filterCtf =
-    accountId === "all" ? rowsCtf : rowsCtf.filter((c) => String(c.accountId || "default") === String(accountId));
-
+    scope === "all" ? rowsCtf : rowsCtf.filter((c) => String(c.accountId || "default") === scope);
   const accountIds = new Set();
-  for (const r of filterCtf) accountIds.add(String(r.accountId || "default"));
-  for (const t of filterTr) accountIds.add(String(t.accountId || "default"));
+  for (const r of filterCtf) {
+    accountIds.add(String(r.accountId || "default"));
+  }
+  for (const t of filterTr) {
+    accountIds.add(String(t.accountId || "default"));
+  }
+  return { end, scope, filterTr, filterCtf, accountIds };
+}
 
+/**
+ * 与前端 computeLedgerCashAndPrincipal 一致：各账户滚账本位币期末余额，
+ * 再按 asOfDateKey 当日汇率折 CNY（与日快照其它人民币字段一致）。
+ */
+function computeLedgerCashCnyUpToDate(tradeList, cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey) {
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const { end, filterTr, filterCtf, accountIds } = filterLedgerRowsUpToDate(
+    tradeList,
+    cashRows,
+    accountId,
+    asOfDateKey,
+  );
   let cashCny = 0;
   for (const accId of accountIds) {
     const acc = accById.get(accId) || { currency: "CNY" };
     const accCcy = String(acc.currency || "CNY").toUpperCase();
     const events = [];
     for (const r of filterCtf) {
-      if (String(r.accountId || "default") !== accId) continue;
+      if (String(r.accountId || "default") !== accId) {
+        continue;
+      }
       events.push({
         kind: "ct",
         id: String(r.id || ""),
@@ -91,7 +175,9 @@ function computeLedgerCashCnyUpToDate(tradeList, cashRows, accounts, accountId, 
       });
     }
     for (const t of filterTr) {
-      if (String(t.accountId || "default") !== accId) continue;
+      if (String(t.accountId || "default") !== accId) {
+        continue;
+      }
       events.push({
         kind: "tr",
         id: String(t.id || ""),
@@ -112,6 +198,42 @@ function computeLedgerCashCnyUpToDate(tradeList, cashRows, accounts, accountId, 
     }
   }
   return cashCny;
+}
+
+/**
+ * 滚账现金：全部账户=人民币汇总；单账户=该账户记账币（不再折人民币）。
+ */
+function computeLedgerCashBookUpToDate(tradeList, cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey) {
+  const scope = String(accountId || "all").trim() || "all";
+  if (scope === "all") {
+    return computeLedgerCashCnyUpToDate(tradeList, cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey);
+  }
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const { filterTr, filterCtf } = filterLedgerRowsUpToDate(tradeList, cashRows, accountId, asOfDateKey);
+  const { balNat } = ledgerCashBalanceNativeForAccount(filterTr, filterCtf, scope, accById, fxUsdMap, fxHkdMap);
+  return balNat;
+}
+
+function principalBookUpToDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey) {
+  const scope = String(accountId || "all").trim() || "all";
+  const book = bookCurrencyForScope(accounts, scope);
+  const end = String(asOfDateKey || "").slice(0, 10);
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const rows = (Array.isArray(cashRows) ? cashRows : []).filter((r) => String(r.date || "").slice(0, 10) <= end);
+  const filtered =
+    scope === "all" ? rows : rows.filter((c) => String(c.accountId || "default") === scope);
+  let sum = 0;
+  for (const r of filtered) {
+    const acc = accById.get(String(r.accountId || "default")) || { currency: "CNY" };
+    const ccy = String(acc.currency || "CNY").toUpperCase();
+    const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
+    const nat = sign * Math.abs(Number(r.amount) || 0);
+    if (!Number.isFinite(nat) || nat === 0) {
+      continue;
+    }
+    sum += nativeAmountToBook(nat, ccy, book, fxUsdMap, fxHkdMap, end);
+  }
+  return sum;
 }
 
 function principalCnyUpToDate(cashRows, accounts, accountId, fxUsdMap, fxHkdMap, asOfDateKey) {
@@ -190,12 +312,45 @@ function externalFlowCnyForRange(cashRows, accounts, accountId, fxUsdMap, fxHkdM
   return sum;
 }
 
+function externalFlowBookForRange(cashRows, accounts, accountId, fxUsdMap, fxHkdMap, fromExclusive, toInclusive) {
+  const scope = String(accountId || "all").trim() || "all";
+  const book = bookCurrencyForScope(accounts, scope);
+  const from = String(fromExclusive || "").slice(0, 10);
+  const to = String(toInclusive || "").slice(0, 10);
+  if (!to) {
+    return 0;
+  }
+  const accById = new Map((accounts || []).map((a) => [String(a.id), a]));
+  const filtered =
+    scope === "all" ? cashRows || [] : (cashRows || []).filter((c) => String(c.accountId || "default") === scope);
+  let sum = 0;
+  for (const r of filtered) {
+    const dk = String(r.date || "").slice(0, 10);
+    if (!dk || dk <= from || dk > to) {
+      continue;
+    }
+    const acc = accById.get(String(r.accountId || "default")) || { currency: "CNY" };
+    const ccy = String(acc.currency || "CNY").toUpperCase();
+    const sign = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
+    const nat = sign * Math.abs(Number(r.amount) || 0);
+    if (!Number.isFinite(nat) || nat === 0) {
+      continue;
+    }
+    sum += nativeAmountToBook(nat, ccy, book, fxUsdMap, fxHkdMap, to);
+  }
+  return sum;
+}
+
 module.exports = {
+  bookCurrencyForScope,
+  nativeAmountToBook,
   tradeCashFlowInAccountCurrency,
   computeLedgerCashCnyUpToDate,
+  computeLedgerCashBookUpToDate,
   principalCnyUpToDate,
+  principalBookUpToDate,
   externalFlowCnyForDate,
   externalFlowCnyForRange,
+  externalFlowBookForRange,
   tradeSignedCashNativeForLedger,
-  tradeCashFlowInAccountCurrency,
 };

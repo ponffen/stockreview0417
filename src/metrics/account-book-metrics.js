@@ -14,7 +14,7 @@ function isAggregateScope(scope) {
   return String(scope || "all").trim() === "all";
 }
 
-/** 盘中 live 由 market-realtime-pnl 以人民币汇总；单账户非 CNY 账本需一次 CNY→记账币。 */
+/** 盘中 live 与冻结快照同口径：全部账户=人民币，单账户=记账币（历史字段名仍带 Cny 后缀）。 */
 function liveCnyToBookAmount(cny, bookCurrency, fxUsdCny, fxHkdCny) {
   const book = String(bookCurrency || "CNY").toUpperCase().slice(0, 3) || "CNY";
   if (book === "CNY") {
@@ -76,34 +76,20 @@ function liveScalarOrFrozen(liveValue, frozenValue, toBook) {
 
 /**
  * 账户维总资产/市值/现金/本金（展示用记账币数值）。
- * 冻结：单账户=账本币；all=CNY。交易日 live：all 与 CNY 账本直接用 CNY live，其余一次 CNY→账本。
+ * 冻结与盘中 live 均为 scope 计价币，不再做 CNY→记账币换汇。
  */
 function resolveAccountAssetScalars(ctx) {
   const { scope, live, home } = ctx;
   const frozen = frozenHomeScalars(home?.account);
-  const book = String(ctx.bookCurrency || "CNY").toUpperCase().slice(0, 3) || "CNY";
-  const fxU = Number(ctx.fxUsdCny) || 0;
-  const fxH = Number(ctx.fxHkdCny) || 0;
 
   if (!live?.tradingDay) {
     return frozen;
   }
 
-  const toBook = isAggregateScope(scope) ? null : (cny) => liveCnyToBookAmount(cny, book, fxU, fxH);
-  const ta = liveScalarOrFrozen(live.totalAssetsCny, frozen.totalAssets, toBook) || frozen.totalAssets;
-  const mv = liveScalarOrFrozen(live.liveMarketValueCny, frozen.marketValue, toBook);
-  const cash = liveScalarOrFrozen(live.cashCny, frozen.cash, toBook) || frozen.cash;
-  const principal = liveScalarOrFrozen(live.principalCny, frozen.principal, toBook) || frozen.principal;
-  if (isAggregateScope(scope)) {
-    return {
-      totalAssets: ta,
-      marketValue: mv,
-      cash,
-      principal,
-      cashRatioPct: ta > 0 ? (cash / ta) * 100 : frozen.cashRatioPct,
-    };
-  }
-
+  const ta = liveScalarOrFrozen(live.totalAssetsCny, frozen.totalAssets, null) || frozen.totalAssets;
+  const mv = liveScalarOrFrozen(live.liveMarketValueCny, frozen.marketValue, null);
+  const cash = liveScalarOrFrozen(live.cashCny, frozen.cash, null) || frozen.cash;
+  const principal = liveScalarOrFrozen(live.principalCny, frozen.principal, null) || frozen.principal;
   return {
     totalAssets: ta,
     marketValue: mv,
@@ -113,12 +99,9 @@ function resolveAccountAssetScalars(ctx) {
   };
 }
 
-/** 盘中今日盈亏、银证净额：live 为 CNY 时换到记账币；冻结阶段收益已是记账币。 */
-function liveProfitScalarToBook(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny) {
-  if (isAggregateScope(scope)) {
-    return Number(profitCny) || 0;
-  }
-  return liveCnyToBookAmount(profitCny, bookCurrency, fxUsdCny, fxHkdCny);
+/** 盘中今日盈亏、银证净额：与 scope 计价币一致，直接取用。 */
+function liveProfitScalarToBook(profitScalar, scope, bookCurrency, fxUsdCny, fxHkdCny) {
+  return Number(profitScalar) || 0;
 }
 
 function enrichCtxFx(ctx) {

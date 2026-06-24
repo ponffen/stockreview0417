@@ -235,14 +235,27 @@ async function buildHoldingsPayload({
     const totalFrozenNative = Number(snap?.total_profit_native) || 0;
     const current = Number(liveP?.current) || 0;
     const prev = Number(liveP?.prevClose) || current;
-    const todayProfitCny = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
-    const todayProfitNative = isCnyStock ? todayProfitCny : fx > 0 ? todayProfitCny / fx : 0;
+    const todayProfitBook = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const todayProfitNative =
+      liveP?.todayProfitNative != null && Number.isFinite(Number(liveP.todayProfitNative))
+        ? Number(liveP.todayProfitNative)
+        : isCnyStock
+          ? todayProfitBook
+          : fx > 0
+            ? todayProfitBook / fx
+            : 0;
     const monthNative = monthFrozenNative + todayProfitNative;
     const yearNative = yearFrozenNative + todayProfitNative;
     const totalNative = totalFrozenNative + todayProfitNative;
-    const monthCny = monthFrozenNative * (isCnyStock ? 1 : fx) + todayProfitCny;
-    const yearCny = yearFrozenNative * (isCnyStock ? 1 : fx) + todayProfitCny;
-    const totalCny = totalFrozenNative * (isCnyStock ? 1 : fx) + todayProfitCny;
+    const monthCny = isAggregateScope(scopeId)
+      ? monthFrozenNative * (isCnyStock ? 1 : fx) + todayProfitBook
+      : monthNative;
+    const yearCny = isAggregateScope(scopeId)
+      ? yearFrozenNative * (isCnyStock ? 1 : fx) + todayProfitBook
+      : yearNative;
+    const totalCny = isAggregateScope(scopeId)
+      ? totalFrozenNative * (isCnyStock ? 1 : fx) + todayProfitBook
+      : totalNative;
     const dayChg = prev > 0 ? (current - prev) / prev : 0;
     const mvNat = qty * current;
     const mvCny = Number(liveP?.marketValueCny) || mvNat * (isCnyStock ? 1 : fx);
@@ -284,7 +297,7 @@ async function buildHoldingsPayload({
       weight: "—",
       cost: Number.isFinite(sigma) ? sigma.toFixed(3) : "—",
       todayProfit: fmtPlainSignedAmount(todayProfitNative),
-      todayProfitCny: fmtPlainSignedAmount(todayProfitCny),
+      todayProfitCny: fmtPlainSignedAmount(todayProfitBook),
       monthProfit: fmtPlainSignedAmount(monthNative),
       monthProfitCny: fmtPlainSignedAmount(monthCny),
       monthWeight: "—",
@@ -314,14 +327,27 @@ async function buildHoldingsPayload({
     const isCn = row.isCnyStock === true;
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
-    const todayProfitCny = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const todayProfitBook = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
     const monthNative = freshMonth ? 0 : Number(snap?.month_profit_native) || 0;
     const yearNative = freshYear ? 0 : Number(snap?.ytd_profit_native) || 0;
     const totalNative = Number(snap?.total_profit_native) || 0;
-    const todayProfitNative = isCn ? todayProfitCny : fx > 0 ? todayProfitCny / fx : 0;
-    const monthCny = monthNative * (isCn ? 1 : fx) + todayProfitCny;
-    const yearCny = yearNative * (isCn ? 1 : fx) + todayProfitCny;
-    const totalCny = totalNative * (isCn ? 1 : fx) + todayProfitCny;
+    const todayProfitNative =
+      liveP?.todayProfitNative != null && Number.isFinite(Number(liveP.todayProfitNative))
+        ? Number(liveP.todayProfitNative)
+        : isCn
+          ? todayProfitBook
+          : fx > 0
+            ? todayProfitBook / fx
+            : 0;
+    const monthCny = isAggregateScope(accountScope)
+      ? monthNative * (isCn ? 1 : fx) + todayProfitBook
+      : monthNative + todayProfitNative;
+    const yearCny = isAggregateScope(accountScope)
+      ? yearNative * (isCn ? 1 : fx) + todayProfitBook
+      : yearNative + todayProfitNative;
+    const totalCny = isAggregateScope(accountScope)
+      ? totalNative * (isCn ? 1 : fx) + todayProfitBook
+      : totalNative + todayProfitNative;
     const mv = Number(liveP?.marketValueCny) || 0;
     const weight = totalAssets > 0 ? mv / totalAssets : 0;
     const monthStock = isAggregateScope(accountScope) ? monthCny : monthNative + todayProfitNative;

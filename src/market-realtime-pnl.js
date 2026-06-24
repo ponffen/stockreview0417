@@ -11,7 +11,7 @@ const {
   normalizeSymbol,
   addCalendarDays,
 } = require("./db");
-const { computeLedgerCashCnyUpToDate, principalCnyUpToDate } = require("./ledger-metrics");
+const { computeLedgerCashBookUpToDate, principalBookUpToDate, bookCurrencyForScope } = require("./ledger-metrics");
 const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metrics/snapshot-plus-live");
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
@@ -24,7 +24,7 @@ const {
 } = require("./metrics/holdings-active-symbols");
 const {
   parseQuoteTimeToDateKey,
-  todayProfitCnyForHolding,
+  computeTodayProfitNative,
 } = require("./position-today-pnl");
 const { normalizeQuoteTimeToBeijingBySymbol } = require("./tencent-quote-time");
 
@@ -269,6 +269,18 @@ function getSymbolCurrency(symbol) {
   return "USD";
 }
 
+/** 个股原币金额 → 当前 scope 计价币（全部账户=人民币，单账户=记账币）。 */
+function rateSymbolToBook(symCcy, bookCcy, fxSpot) {
+  const sym = String(symCcy || "CNY").toUpperCase();
+  const book = String(bookCcy || "CNY").toUpperCase();
+  if (sym === book) {
+    return 1;
+  }
+  const symCny = sym === "CNY" ? 1 : sym === "USD" ? fxSpot.USD : sym === "HKD" ? fxSpot.HKD : 1;
+  const bookCny = book === "CNY" ? 1 : book === "USD" ? fxSpot.USD : book === "HKD" ? fxSpot.HKD : 1;
+  return bookCny > 0 ? symCny / bookCny : symCny;
+}
+
 /** 冻结日市值：0 为有效值，勿用 total_assets 或 lastMarketValue 顶替。 */
 function frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny = 0) {
   const eod = homeAcc?.eod_market_value_cny ?? homeAcc?.eodMarketValueCny;
@@ -295,10 +307,11 @@ function buildLiveFromHomeFrozen({
   lastMarketValueCny,
 }) {
   const asOf = tradingDay ? liveDate : frozenThrough || liveDate;
-  const cashCny = computeLedgerCashCnyUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
-  const principalCny = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const bookCcy = bookCurrencyForScope(accounts, scope);
+  const cashBook = computeLedgerCashBookUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const principalBook = principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
   const mv = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
-  const cashUse = Number(homeAcc?.eod_cash_cny) || cashCny;
+  const cashUse = Number(homeAcc?.eod_cash_cny) || cashBook;
   const ta =
     Number(homeAcc?.eod_total_assets_cny) ||
     (Number.isFinite(mv) ? mv : 0) + (Number.isFinite(cashUse) ? cashUse : 0) ||
@@ -316,7 +329,7 @@ function buildLiveFromHomeFrozen({
     cashCny: cashUse,
     totalAssetsCny,
     cashRatio: totalAssetsCny > 0 ? cashUse / totalAssetsCny : 0,
-    principalCny: Number(homeAcc?.eod_principal_cny) || principalCny,
+    principalCny: Number(homeAcc?.eod_principal_cny) || principalBook,
     positions: [],
     fxUsdCny: fxUsdFrozen || FX_FALLBACK.USD,
     fxHkdCny: fxHkdFrozen || FX_FALLBACK.HKD,
@@ -407,7 +420,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   if (hkdP?.current > 0) {
     fxSpot.HKD = hkdP.current;
   }
-  const fxRate = (ccy) => (ccy === "CNY" ? 1 : ccy === "USD" ? fxSpot.USD : ccy === "HKD" ? fxSpot.HKD : 1);
+  const bookCcy = bookCurrencyForScope(accounts, scope);
 
   const quoteMap = {};
   for (const sym of symbols) {
@@ -477,24 +490,35 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     }
     const current = Number(quote.current) || 0;
     const prevClose = Number(quote.prevClose) || current;
-    const rate = fxRate(getSymbolCurrency(symbol));
-    const mv = qty * current * rate;
+    const symCcy = getSymbolCurrency(symbol);
+    const rateToBook = rateSymbolToBook(symCcy, bookCcy, fxSpot);
+    const mvNat = qty * current;
+    const mv = mvNat * rateToBook;
     liveMarketValue += mv;
     const todayKey = tradingDay ? liveDate : priceAsOf;
-    const todayP = tradingDay
-      ? todayProfitCnyForHolding({
+    const todayNat = tradingDay
+      ? computeTodayProfitNative({
           quote,
           symbol,
           prevClose,
           current,
-          rate,
           trades: scoped,
           todayKey,
           frozenMvNat: frozenMvNatForSymbol(frozenBySym, symbol),
           endQuantity: qty,
         })
       : 0;
-    positions.push({ symbol, quantity: qty, current, prevClose, todayProfitCny: todayP, marketValueCny: mv });
+    const todayP = todayNat * rateToBook;
+    positions.push({
+      symbol,
+      quantity: qty,
+      current,
+      prevClose,
+      currency: symCcy,
+      todayProfitNative: todayNat,
+      todayProfitCny: todayP,
+      marketValueCny: mv,
+    });
   }
 
   const cashAsOf = tradingDay ? liveDate : frozenThrough || liveDate;
@@ -502,7 +526,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   // 否则 cashAsOf=liveDate 时外币现金会用 7.2/0.92 兜底汇率换算，虚增 live 现金/总资产。
   const fxUsdMapLive = tradingDay ? { ...fxUsdMap, [String(liveDate)]: fxSpot.USD } : fxUsdMap;
   const fxHkdMapLive = tradingDay ? { ...fxHkdMap, [String(liveDate)]: fxSpot.HKD } : fxHkdMap;
-  const ledgerCashAtLive = computeLedgerCashCnyUpToDate(
+  const ledgerCashAtLive = computeLedgerCashBookUpToDate(
     trades,
     cashTransfers,
     accounts,
@@ -511,7 +535,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     fxHkdMapLive,
     cashAsOf,
   );
-  const principalBase = principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, cashAsOf);
+  const principalBase = principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, cashAsOf);
   let cashCny = ledgerCashAtLive;
   let liveMarketValueCny = liveMarketValue;
   let totalAssetsCny = liveMarketValue + cashCny;
@@ -555,12 +579,13 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     principalLive =
       eodPrincipal > 0
         ? eodPrincipal + externalFlowTodayCny
-        : principalCnyUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, liveDate);
+        : principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, liveDate);
 
     return {
       tradingDay: true,
       liveDate,
       frozenThrough: frozenThrough || null,
+      bookCurrency: bookCcy,
       delayed: !!quoteReq.delayed,
       quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
       todayProfitCny,
@@ -593,6 +618,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     tradingDay: false,
     liveDate: null,
     frozenThrough: frozenThrough || null,
+    bookCurrency: bookCcy,
     delayed: !!quoteReq.delayed,
     quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
     todayProfitCny: 0,
