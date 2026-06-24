@@ -285,6 +285,7 @@ const DDL = [
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     nickname TEXT,
+    notes TEXT,
     community_public INTEGER NOT NULL DEFAULT 1,
     valid_until TEXT
   )`,
@@ -460,6 +461,7 @@ async function initPool() {
         }
         console.log("[db] DDL execution completed successfully.");
         await ensureUserSubscriptionSchemaWithClient(c);
+        await ensureUserNotesSchemaWithClient(c);
         console.log("[db] Ensuring seed user...");
         await ensureSeedUserRowWithClient(c);
         console.log("[db] Seed user ensured.");
@@ -2672,6 +2674,46 @@ async function ensureUserSubscriptionSchema() {
   return userSubscriptionSchemaPromise;
 }
 
+let userNotesSchemaPromise = null;
+
+async function ensureUserNotesSchemaWithClient(client) {
+  await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT`);
+  await client.query(`
+    DO $$ BEGIN
+      ALTER TABLE users ADD CONSTRAINT users_notes_len CHECK (notes IS NULL OR length(notes) <= 1000);
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+  `);
+  await client.query(`
+    UPDATE users
+    SET notes = TRIM(nickname)
+    WHERE (notes IS NULL OR TRIM(notes) = '')
+      AND nickname IS NOT NULL AND TRIM(nickname) != ''
+  `);
+}
+
+async function ensureUserNotesSchema() {
+  if (userNotesSchemaPromise) {
+    return userNotesSchemaPromise;
+  }
+  userNotesSchemaPromise = (async () => {
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT`).catch(() => {});
+    await q(`
+      DO $$ BEGIN
+        ALTER TABLE users ADD CONSTRAINT users_notes_len CHECK (notes IS NULL OR length(notes) <= 1000);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `).catch(() => {});
+    await q(`
+      UPDATE users
+      SET notes = TRIM(nickname)
+      WHERE (notes IS NULL OR TRIM(notes) = '')
+        AND nickname IS NOT NULL AND TRIM(nickname) != ''
+    `).catch(() => {});
+  })();
+  return userNotesSchemaPromise;
+}
+
 async function getUserValidUntil(userId) {
   await ensureUserSubscriptionSchema();
   const uid = String(userId || "").trim();
@@ -2684,6 +2726,7 @@ async function getUserValidUntil(userId) {
 
 async function getAuthSessionUserPayload(userId) {
   await ensureUserSubscriptionSchema();
+  await ensureUserNotesSchema();
   const uid = String(userId || "").trim();
   const phone = await getUserPhone(uid);
   const validUntil = await getUserValidUntil(uid);
@@ -2710,6 +2753,7 @@ async function createRegisteredUser(phone, passwordPlain) {
     throw new Error("phone already registered");
   }
   await ensureUserSubscriptionSchema();
+  await ensureUserNotesSchema();
   const id = randomUUID();
   const now = nowMs();
   const validUntil = computeNewUserValidUntil();
