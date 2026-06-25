@@ -572,6 +572,13 @@ async function freezeSymbolsForUser(ctx) {
           stageLast90dProfit: replay.stageLast90dProfit,
           stageLast90dRateTwr: replay.stageLast90dRateTwr,
           stageLast90dRateMwr: replay.stageLast90dRateMwr,
+          dailyTradeCount: replay.dailyTradeCount ?? 0,
+          stageMtdTradeCount: replay.stageMtdTradeCount ?? 0,
+          stageYtdTradeCount: replay.stageYtdTradeCount ?? 0,
+          stageInceptionTradeCount: replay.stageInceptionTradeCount ?? 0,
+          stageLast7dTradeCount: replay.stageLast7dTradeCount ?? 0,
+          stageLast30dTradeCount: replay.stageLast30dTradeCount ?? 0,
+          stageLast90dTradeCount: replay.stageLast90dTradeCount ?? 0,
         });
         if (symBuffer.length >= 200) {
           const chunk = symBuffer.splice(0, symBuffer.length);
