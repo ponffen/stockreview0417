@@ -99,7 +99,7 @@ function applyEodPlusLiveTotals({
   const eodMv = Number(homeAcc?.eod_market_value_cny) || 0;
   const eodCash = Number(homeAcc?.eod_cash_cny) || 0;
   const ft = String(frozenThrough || "").slice(0, 10);
-  if (!ft || !(eodTa > 0)) {
+  if (!ft) {
     return null;
   }
   const cashFrozen = computeLedgerCashBookUpToDate(

@@ -307,16 +307,59 @@ function buildLiveFromHomeFrozen({
   lastMarketValueCny,
 }) {
   const asOf = tradingDay ? liveDate : frozenThrough || liveDate;
-  const bookCcy = bookCurrencyForScope(accounts, scope);
   const cashBook = computeLedgerCashBookUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
   const principalBook = principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
   const mv = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
-  const cashUse = Number(homeAcc?.eod_cash_cny) || cashBook;
-  const ta =
+  let cashUse = Number(homeAcc?.eod_cash_cny) || cashBook;
+  let totalAssetsCny =
     Number(homeAcc?.eod_total_assets_cny) ||
     (Number.isFinite(mv) ? mv : 0) + (Number.isFinite(cashUse) ? cashUse : 0) ||
     0;
-  const totalAssetsCny = ta > 0 ? ta : mv + cashUse;
+  let liveMv = mv;
+  let principalLive = Number(homeAcc?.eod_principal_cny) || principalBook;
+
+  if (tradingDay) {
+    const hybrid = applyEodPlusLiveTotals({
+      homeAcc,
+      frozenThrough,
+      liveDate,
+      liveMarketValueCny: mv,
+      ledgerCashAtLive: cashBook,
+      trades,
+      cashTransfers,
+      accounts,
+      scope,
+      fxUsdMap,
+      fxHkdMap,
+    });
+    if (hybrid) {
+      liveMv = hybrid.liveMarketValueCny;
+      cashUse = hybrid.cashCny;
+      totalAssetsCny = hybrid.totalAssetsCny;
+      const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
+      principalLive =
+        eodPrincipal > 0
+          ? eodPrincipal + hybrid.externalFlowTodayCny
+          : principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, liveDate);
+    } else if (frozenThrough) {
+      const cashFrozen = computeLedgerCashBookUpToDate(
+        trades,
+        cashTransfers,
+        accounts,
+        scope,
+        fxUsdMap,
+        fxHkdMap,
+        frozenThrough,
+      );
+      const eodCash = Number(homeAcc?.eod_cash_cny) || 0;
+      cashUse = eodCash + (cashBook - cashFrozen);
+      totalAssetsCny = liveMv + cashUse;
+    }
+  }
+
+  if (!(totalAssetsCny > 0)) {
+    totalAssetsCny = liveMv + cashUse;
+  }
   return {
     tradingDay: !!tradingDay,
     liveDate: tradingDay ? liveDate : null,
@@ -324,12 +367,12 @@ function buildLiveFromHomeFrozen({
     delayed: false,
     quoteTime: null,
     todayProfitCny: 0,
-    liveMarketValueCny: mv,
+    liveMarketValueCny: liveMv,
     lastMarketValueCny: mv,
     cashCny: cashUse,
     totalAssetsCny,
     cashRatio: totalAssetsCny > 0 ? cashUse / totalAssetsCny : 0,
-    principalCny: Number(homeAcc?.eod_principal_cny) || principalBook,
+    principalCny: principalLive,
     positions: [],
     fxUsdCny: fxUsdFrozen || FX_FALLBACK.USD,
     fxHkdCny: fxHkdFrozen || FX_FALLBACK.HKD,
