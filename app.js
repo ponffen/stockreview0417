@@ -8455,7 +8455,7 @@ function paintStockTableFromMetricsRows(rows, ctx) {
   const sorted = sortMetricsHoldingsRows(rows);
   if (!sorted.length) {
     clearStockTableColLayout(ctx);
-    tbody.innerHTML = `<tr><td colspan="${colCount}"><p class="empty">暂无持仓，点击“记一笔”开始记录。</p></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colCount}"><p class="empty">暂无持仓，请点击“交易tab”然后添加交易记录。</p></td></tr>`;
     return;
   }
   ensureStockTableColWidths(sorted, ctx, {
