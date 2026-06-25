@@ -146,14 +146,16 @@ function stageTradeSnapFromRow(row) {
   };
 }
 
-/** 无成交日：stage 笔数累计字段沿用昨日冻结行；有成交日用 counter 快照。 */
+/** 无成交日：以 StageTradeCounter.onDay 快照为准（含月初/年初重置）；仅无快照时回退昨日行。 */
 function resolveTradeSnapForFreezeDay(dailyTradeCount, tradeSnap, yesterdayRow) {
   const daily = Math.max(0, Math.floor(Number(dailyTradeCount) || 0));
   if (daily > 0) {
     return tradeSnap;
   }
-  const prev = stageTradeSnapFromRow(yesterdayRow);
-  return prev || tradeSnap;
+  if (tradeSnap) {
+    return tradeSnap;
+  }
+  return stageTradeSnapFromRow(yesterdayRow);
 }
 
 function stageTradeCountFromRow(row, stageKey) {
