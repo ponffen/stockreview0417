@@ -3836,7 +3836,8 @@ function bindEvents() {
       event.preventDefault();
       const sym = addTradeLink.getAttribute("data-stock-add-trade");
       if (sym) {
-        void openNewTradeDialogPrefilledForSymbol(sym, { accountSource: "overview" });
+        const name = addTradeLink.getAttribute("data-stock-add-trade-name");
+        void openNewTradeDialogPrefilledForSymbol(sym, { accountSource: "overview", name });
       }
       return;
     }
@@ -8397,9 +8398,10 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
   const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
   const qty = bundleFmtText(row.quantity);
   const symEsc = escapeHtml(sym);
+  const nameEsc = escapeHtml(String(row.name || "").trim());
   const recordLink = `<a href="javascript:void(0)" class="record-link stock-table-record-link" data-stock-record="${symEsc}">分析</a>`;
   const tradeLink = ctx.showTradeLink
-    ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}">交易</a>`
+    ? `<a href="javascript:void(0)" class="record-link stock-table-trade-link" data-stock-add-trade="${symEsc}" data-stock-add-trade-name="${nameEsc}">交易</a>`
     : "";
   const attr = ` data-stock-col="${col}"`;
   switch (col) {
@@ -8893,7 +8895,10 @@ async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
   const bundle = state.stockRecordBundle;
   const headlineName = bundle?.headline?.name;
   const trade = tradeSource.find((t) => normalizeSymbol(t.symbol) === symKey);
-  const apiName = String(headlineName || trade?.name || "").trim();
+  const rowName = String(opts.name || "").trim();
+  const apiName = String(
+    (rowName && rowName !== "-" ? rowName : "") || headlineName || trade?.name || "",
+  ).trim();
   const prefillName = apiName && apiName !== "-" ? apiName : symKey;
   const prefill = { symbol: symKey, name: prefillName };
   if (accountSource === "stock-record") {
