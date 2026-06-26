@@ -105,7 +105,12 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
         mode: "freeze-v3",
       };
     } catch (error) {
-      await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null }).catch(() => {});
+      console.warn("[freeze-v3] failed", uid, error?.message || error);
+      try {
+        await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
+      } catch (clearError) {
+        console.error("[freeze-v3] clear rebuilding failed", uid, clearError?.message || clearError);
+      }
       return { userId: uid, skipped: true, reason: error?.message || "freeze-v3-failed" };
     }
   }
@@ -119,6 +124,10 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     logger,
   });
   if (!result.ok) {
+    console.warn("[freeze] incremental failed", uid, result.reason || "freeze-failed");
+    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null }).catch((e) => {
+      console.error("[freeze] clear rebuilding failed", uid, e?.message || e);
+    });
     return { userId: uid, skipped: true, reason: result.reason || "freeze-failed" };
   }
   if (result.skipped) {

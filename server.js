@@ -1724,6 +1724,18 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       fullRebuild,
       logger: console,
     });
+    const failedUsers = (result.users || []).filter((row) => row?.skipped);
+    if (failedUsers.length) {
+      await insertCronJobRun({
+        jobName: "freeze-eod",
+        startedAt,
+        finishedAt: Date.now(),
+        ok: false,
+        errorMessage: failedUsers.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(","),
+      }).catch(() => {});
+      res.status(500).json({ ok: false, error: "freeze-eod failed", data: result });
+      return;
+    }
     analysisDailyMemoryCache.clear();
     dailyCloseForTradesMemoryCache.clear();
     realtimePatchMemoryCache.clear();

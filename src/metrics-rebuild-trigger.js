@@ -76,7 +76,18 @@ function normalizeDispatchBody(payload) {
 }
 
 async function postFreezeEodDispatch(url, secret, body) {
-  return fetch(url, {
+  const query = new URLSearchParams();
+  if (body.rebuildFromDate) {
+    query.set("rebuildFromDate", String(body.rebuildFromDate).slice(0, 10));
+  }
+  if (body.force) {
+    query.set("force", "true");
+  }
+  if (body.fullRebuild) {
+    query.set("fullRebuild", "true");
+  }
+  const targetUrl = query.toString() ? `${url}?${query}` : url;
+  return fetch(targetUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -85,6 +96,23 @@ async function postFreezeEodDispatch(url, secret, body) {
     },
     body: JSON.stringify({ ...body, token: secret }),
   });
+}
+
+function freezeDispatchUsersFailed(payload) {
+  const users = Array.isArray(payload?.data?.users) ? payload.data.users : [];
+  return users.some((row) => row?.skipped);
+}
+
+async function readFreezeDispatchPayload(response) {
+  const text = await response.text().catch(() => "");
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function dispatchFreezeEodJobAsync(payload) {
@@ -106,24 +134,28 @@ async function dispatchFreezeEodJobAsync(payload) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const response = await postFreezeEodDispatch(url, secret, body);
-      if (response.ok) {
+      const payload = await readFreezeDispatchPayload(response);
+      const usersFailed = response.ok && freezeDispatchUsersFailed(payload);
+      if (response.ok && !usersFailed) {
         console.log(
-          "[metrics-rebuild-trigger] freeze-eod dispatch ok status=%s userIds=%s attempt=%s origin=%s",
+          "[metrics-rebuild-trigger] freeze-eod dispatch ok status=%s userIds=%s attempt=%s origin=%s rebuildFromDate=%s",
           response.status,
           userIdsLabel,
           attempt,
           resolveInternalApiOrigin(),
+          body.rebuildFromDate || "-",
         );
         return;
       }
-      const detail = await response.text().catch(() => "");
+      const detail = payload ? JSON.stringify(payload).slice(0, 200) : "";
       console.warn(
-        "[metrics-rebuild-trigger] freeze-eod dispatch failed status=%s userIds=%s attempt=%s origin=%s %s",
+        "[metrics-rebuild-trigger] freeze-eod dispatch failed status=%s userIds=%s attempt=%s origin=%s rebuildFromDate=%s %s",
         response.status,
         userIdsLabel,
         attempt,
         resolveInternalApiOrigin(),
-        detail ? detail.slice(0, 200) : "",
+        body.rebuildFromDate || "-",
+        detail,
       );
     } catch (e) {
       console.warn(

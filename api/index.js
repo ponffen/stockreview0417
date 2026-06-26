@@ -1159,6 +1159,13 @@ module.exports = async function handler(req, res, context) {
           ? body.userIds
           : userIdFromQuery ? [userIdFromQuery] : [];
         const fromCron = cronHeader != null;
+        console.log(
+          "[api/index.js] freeze-eod start userIds=%s rebuildFromDate=%s force=%s fullRebuild=%s",
+          userIds.join(",") || "-",
+          rebuildFromDate || "-",
+          force,
+          fullRebuild,
+        );
         const data = await runDailyFreeze({
           frozenDate,
           force,
@@ -1169,6 +1176,21 @@ module.exports = async function handler(req, res, context) {
           fullRebuild,
           logger: console,
         });
+        const failedUsers = (data.users || []).filter((row) => row?.skipped);
+        if (failedUsers.length) {
+          console.warn(
+            "[api/index.js] freeze-eod partial-fail users=%s",
+            failedUsers.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(","),
+          );
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: "freeze-eod failed", data }));
+          return;
+        }
+        console.log(
+          "[api/index.js] freeze-eod done elapsedMs=%s userIds=%s",
+          data.elapsedMs,
+          userIds.join(",") || "-",
+        );
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;
