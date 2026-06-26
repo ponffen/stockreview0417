@@ -1,13 +1,7 @@
 /**
- * 写路径静默重算：从本次受影响最早日（前推 1 天）逐日 freeze 到昨日。
+ * 写路径：debounce 合并 hint 后异步调 freeze-eod（见 metrics-rebuild-trigger.js）。
  */
-const {
-  getTrades,
-  upsertUserMetricsMeta,
-  getUserMetricsMeta,
-  getLatestAnalysisSnapshotDate,
-} = require("./db");
-const { resolveFrozenDate } = require("./eod-freeze-service");
+const { upsertUserMetricsMeta, getUserMetricsMeta, getLatestAnalysisSnapshotDate } = require("./db");
 const { addCalendarDays } = require("./metrics/stages");
 const { minDateKey, normDateKey } = require("./metrics/date-keys");
 const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
@@ -16,8 +10,6 @@ const DEBOUNCE_MS = Math.max(
   1000,
   Math.min(120_000, Number(process.env.METRICS_REBUILD_DEBOUNCE_MS) || 10_000),
 );
-const MAX_RETRIES = Math.max(1, Math.min(5, Number(process.env.METRICS_REBUILD_RETRIES) || 3));
-const RETRY_BASE_MS = Math.max(500, Number(process.env.METRICS_REBUILD_RETRY_MS) || 2000);
 
 const queueByUser = new Map();
 const pendingByUser = new Map();
@@ -87,68 +79,6 @@ function mergePending(uid, hintDates, fullRebuild) {
   return cur;
 }
 
-async function runMetricsRebuildForUser(userId, opts = {}) {
-  const uid = String(userId || "").trim();
-  if (!uid) {
-    return { ok: false };
-  }
-  const fullRebuild = !!opts.fullRebuild;
-  const trades = await getTrades(uid);
-  if (!trades?.length) {
-    await upsertUserMetricsMeta(uid, { rebuilding: false });
-    return { ok: true, skip: true, reason: "no-trades" };
-  }
-
-  const rebuildFromDate = fullRebuild ? null : earliestFromHints(opts.hintDates, false);
-  if (!fullRebuild && !rebuildFromDate) {
-    await upsertUserMetricsMeta(uid, { rebuilding: false });
-    return { ok: true, skip: true, reason: "no-hint" };
-  }
-
-  const frozenEnd = resolveFrozenDate();
-  await upsertUserMetricsMeta(uid, {
-    rebuilding: true,
-    rebuildFrom: rebuildFromDate || null,
-  });
-
-  const freezeOpts = {
-    frozenDate: frozenEnd,
-    force: true,
-    syncDailyClose: false,
-    logger: console,
-    rebuildFromDate: rebuildFromDate || undefined,
-    fullRebuild,
-  };
-
-  let lastErr = null;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
-    try {
-      const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
-      await runFreezeV3ForUser(uid, freezeOpts);
-      const meta = await getUserMetricsMeta(uid);
-      const { getLatestAnalysisSnapshotDate } = require("./db");
-      const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
-      const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
-      const frozenThrough = capFrozenThroughToSnapshot(frozenEnd, latestSnap) || latestSnap || meta.frozenThrough || frozenEnd;
-      await upsertUserMetricsMeta(uid, {
-        rebuilding: false,
-        dataVersion: (meta.dataVersion || 0) + 1,
-        frozenThrough,
-        rebuildFrom: null,
-      });
-      return { ok: true, rebuildFromDate, frozenEnd, attempt };
-    } catch (error) {
-      lastErr = error;
-      console.warn("[metrics-rebuild]", uid, `attempt ${attempt}/${MAX_RETRIES}`, error?.message || error);
-      if (attempt < MAX_RETRIES) {
-        await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
-      }
-    }
-  }
-  await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
-  throw lastErr || new Error("metrics rebuild failed");
-}
-
 function flushPendingRebuild(uid) {
   const pending = pendingByUser.get(uid);
   if (!pending) {
@@ -185,6 +115,7 @@ function flushPendingRebuild(uid) {
 }
 
 async function flushPendingRebuildWork(uid, hintDates, fullRebuild) {
+  const { triggerLedgerMetricsFreeze } = require("./metrics-rebuild-trigger");
   if (!fullRebuild) {
     const frozenThrough = await resolveFrozenThroughForUser(uid);
     const { freezeHints, liveOnlyHints } = partitionHintDates(hintDates, frozenThrough);
@@ -194,9 +125,9 @@ async function flushPendingRebuildWork(uid, hintDates, fullRebuild) {
       }
       return { ok: true, skip: true, reason: "live-only-after-frozen-through" };
     }
-    return runMetricsRebuildForUser(uid, { hintDates: freezeHints, fullRebuild: false });
+    return triggerLedgerMetricsFreeze(uid, { hintDates: freezeHints, fullRebuild: false });
   }
-  return runMetricsRebuildForUser(uid, { hintDates, fullRebuild: true });
+  return triggerLedgerMetricsFreeze(uid, { hintDates, fullRebuild: true });
 }
 
 function isVercelRuntime() {
@@ -214,17 +145,13 @@ function scheduleMetricsRebuildForUser(userId, opts = {}) {
     pending.timer = null;
   }
   const debounceMs = isVercelRuntime() ? 400 : DEBOUNCE_MS;
-  if (isVercelRuntime() && !queueByUser.has(uid)) {
-    pending.timer = setTimeout(() => flushPendingRebuild(uid), debounceMs);
-    return;
-  }
   pending.timer = setTimeout(() => flushPendingRebuild(uid), debounceMs);
 }
 
-/** Vercel：在当次 Serverless 调用内尽快开跑（避免仅 setTimeout 后实例被回收）。 */
+/** 保存后立即触发 freeze-eod（不等 debounce）。 */
 function kickMetricsRebuildNow(userId) {
   const uid = String(userId || "").trim();
-  if (!uid || !isVercelRuntime()) {
+  if (!uid) {
     return;
   }
   const pending = pendingByUser.get(uid);
@@ -237,9 +164,9 @@ function kickMetricsRebuildNow(userId) {
 
 module.exports = {
   scheduleMetricsRebuildForUser,
-  runMetricsRebuildForUser,
   kickMetricsRebuildNow,
   partitionHintDates,
   resolveFrozenThroughForUser,
   refreshLiveMetricsOnly,
+  earliestFromHints,
 };

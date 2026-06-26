@@ -1130,6 +1130,8 @@ module.exports = async function handler(req, res) {
         const frozenDate = getSearchParam(req, "frozenDate") || body?.frozenDate;
         const force = parseBooleanInput(getSearchParam(req, "force") || body?.force, false);
         const syncDailyClose = parseBooleanInput(getSearchParam(req, "syncDailyClose") || body?.syncDailyClose, false);
+        const rebuildFromDate = getSearchParam(req, "rebuildFromDate") || body?.rebuildFromDate || null;
+        const fullRebuild = parseBooleanInput(getSearchParam(req, "fullRebuild") || body?.fullRebuild, false);
         const userIdFromQuery = getSearchParam(req, "userId");
         const userIds = Array.isArray(body?.userIds) && body.userIds.length
           ? body.userIds
@@ -1141,6 +1143,8 @@ module.exports = async function handler(req, res) {
           syncDailyClose,
           userIds,
           fromCron,
+          rebuildFromDate,
+          fullRebuild,
           logger: console,
         });
         res.statusCode = 200;

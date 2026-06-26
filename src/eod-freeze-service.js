@@ -54,8 +54,53 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   if (!uid) {
     return { userId: "", skipped: true, reason: "missing-user" };
   }
-  const { runFreezeIncrementalForUser } = require("./metrics/freeze-incremental");
   const fd = frozenDate ? resolveFrozenDate(frozenDate) : resolveFrozenDate();
+  const rebuildFromDate = options.rebuildFromDate
+    ? String(options.rebuildFromDate).slice(0, 10)
+    : null;
+  const fullRebuild = options.fullRebuild === true;
+  const useFreezeV3 = fullRebuild || !!rebuildFromDate;
+
+  if (useFreezeV3) {
+    const {
+      getUserMetricsMeta,
+      upsertUserMetricsMeta,
+      getLatestAnalysisSnapshotDate,
+    } = require("./db");
+    const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
+    try {
+      const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
+      await runFreezeV3ForUser(uid, {
+        frozenDate: fd,
+        force: true,
+        syncDailyClose: options.syncDailyClose === true,
+        rebuildFromDate: rebuildFromDate || undefined,
+        fullRebuild,
+        logger,
+      });
+      const meta = await getUserMetricsMeta(uid, { light: true });
+      const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
+      const frozenThrough =
+        capFrozenThroughToSnapshot(fd, latestSnap) || latestSnap || meta.frozenThrough || fd;
+      await upsertUserMetricsMeta(uid, {
+        rebuilding: false,
+        rebuildFrom: null,
+        dataVersion: (meta.dataVersion || 0) + 1,
+        frozenThrough,
+      });
+      return {
+        userId: uid,
+        skipped: false,
+        frozenDate: frozenThrough,
+        mode: "freeze-v3",
+      };
+    } catch (error) {
+      await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null }).catch(() => {});
+      return { userId: uid, skipped: true, reason: error?.message || "freeze-v3-failed" };
+    }
+  }
+
+  const { runFreezeIncrementalForUser } = require("./metrics/freeze-incremental");
   const result = await runFreezeIncrementalForUser(uid, {
     frozenDate: fd,
     force: options.force === true,
@@ -98,6 +143,10 @@ async function runDailyFreeze(options = {}) {
   }
   const syncDailyClose = options.syncDailyClose === true;
   const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
+  const rebuildFromDate = options.rebuildFromDate
+    ? String(options.rebuildFromDate).slice(0, 10)
+    : null;
+  const fullRebuild = options.fullRebuild === true;
   const userIds = userIdsInput.length
     ? [...new Set(userIdsInput.map((u) => String(u || "").trim()).filter(Boolean))]
     : await listAllUserIds();
@@ -105,7 +154,13 @@ async function runDailyFreeze(options = {}) {
   const results = [];
   try {
     for (const uid of userIds) {
-      const one = await freezeUserToDate(uid, frozenDate, { logger, force, syncDailyClose });
+      const one = await freezeUserToDate(uid, frozenDate, {
+        logger,
+        force,
+        syncDailyClose,
+        rebuildFromDate,
+        fullRebuild,
+      });
       results.push(one);
     }
     const successCount = results.filter((r) => !r.skipped).length;
