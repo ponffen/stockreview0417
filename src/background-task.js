@@ -1,27 +1,49 @@
 /**
- * Vercel：用 waitUntil 延长请求生命周期，保证 res.end 后仍能跑完 dispatch/freeze。
+ * Vercel：优先用 handler 注入的 context.waitUntil，其次 @vercel/functions。
  * 本地：普通 fire-and-forget。
  */
-function runInBackground(task) {
-  const run = () => Promise.resolve().then(task);
+const { AsyncLocalStorage } = require("async_hooks");
+
+const requestContext = new AsyncLocalStorage();
+
+function runWithRequestContext(context, fn) {
+  const waitUntil =
+    context && typeof context.waitUntil === "function" ? context.waitUntil.bind(context) : null;
+  return requestContext.run({ waitUntil }, fn);
+}
+
+function resolveWaitUntil() {
+  const store = requestContext.getStore();
+  if (store?.waitUntil) {
+    return store.waitUntil;
+  }
   if (String(process.env.VERCEL || "").trim() === "1") {
     try {
       const { waitUntil } = require("@vercel/functions");
-      waitUntil(
-        run().catch((e) => {
-          console.warn("[background-task] failed", e?.message || e);
-        }),
-      );
-      return;
+      if (typeof waitUntil === "function") {
+        return waitUntil;
+      }
     } catch (e) {
       console.warn("[background-task] waitUntil unavailable", e?.message || e);
     }
   }
-  void run().catch((e) => {
+  return null;
+}
+
+function runInBackground(task) {
+  const run = () => Promise.resolve().then(task);
+  const onError = (e) => {
     console.warn("[background-task] failed", e?.message || e);
-  });
+  };
+  const waitUntil = resolveWaitUntil();
+  if (waitUntil) {
+    waitUntil(run().catch(onError));
+    return;
+  }
+  void run().catch(onError);
 }
 
 module.exports = {
   runInBackground,
+  runWithRequestContext,
 };

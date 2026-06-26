@@ -13,14 +13,26 @@ function isVercelRuntime() {
   return String(process.env.VERCEL || "").trim() === "1";
 }
 
-function resolveInternalApiOrigin() {
-  const vercel = String(process.env.VERCEL_URL || "").trim();
-  if (vercel) {
-    return vercel.startsWith("http") ? vercel.replace(/\/$/, "") : `https://${vercel}`;
+function normalizeOrigin(value) {
+  const raw = String(value || "").trim().replace(/\/$/, "");
+  if (!raw) {
+    return "";
   }
-  const site = String(process.env.SITE_URL || process.env.APP_URL || "").trim().replace(/\/$/, "");
+  return raw.startsWith("http") ? raw : `https://${raw}`;
+}
+
+function resolveInternalApiOrigin() {
+  const site = normalizeOrigin(process.env.SITE_URL || process.env.APP_URL);
   if (site) {
     return site;
+  }
+  const production = normalizeOrigin(process.env.VERCEL_PROJECT_PRODUCTION_URL);
+  if (production) {
+    return production;
+  }
+  const vercel = normalizeOrigin(process.env.VERCEL_URL);
+  if (vercel) {
+    return vercel;
   }
   const port = Number(process.env.PORT) || 3030;
   return `http://127.0.0.1:${port}`;
@@ -52,6 +64,17 @@ function normalizeDispatchBody(payload) {
   };
 }
 
+async function postFreezeEodDispatch(url, secret, body) {
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${secret}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 async function dispatchFreezeEodJobAsync(payload) {
   const secret = cronSecret();
   const body = normalizeDispatchBody(payload);
@@ -65,33 +88,49 @@ async function dispatchFreezeEodJobAsync(payload) {
   }
 
   const url = `${resolveInternalApiOrigin()}/api/cron/freeze-eod`;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${secret}`,
-      },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
+  const userIdsLabel = body.userIds.join(",");
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await postFreezeEodDispatch(url, secret, body);
+      if (response.ok) {
+        console.log(
+          "[metrics-rebuild-trigger] freeze-eod dispatch ok status=%s userIds=%s attempt=%s origin=%s",
+          response.status,
+          userIdsLabel,
+          attempt,
+          resolveInternalApiOrigin(),
+        );
+        return;
+      }
       const detail = await response.text().catch(() => "");
       console.warn(
-        "[metrics-rebuild-trigger] freeze-eod dispatch http",
+        "[metrics-rebuild-trigger] freeze-eod dispatch failed status=%s userIds=%s attempt=%s origin=%s %s",
         response.status,
+        userIdsLabel,
+        attempt,
+        resolveInternalApiOrigin(),
         detail ? detail.slice(0, 200) : "",
       );
-      await runFreezeJobDirect(body);
+    } catch (e) {
+      console.warn(
+        "[metrics-rebuild-trigger] freeze-eod dispatch failed userIds=%s attempt=%s origin=%s %s",
+        userIdsLabel,
+        attempt,
+        resolveInternalApiOrigin(),
+        e?.message || e,
+      );
     }
-  } catch (e) {
-    console.warn("[metrics-rebuild-trigger] freeze-eod dispatch failed", e?.message || e);
-    await runFreezeJobDirect(body);
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
-}
 
-function dispatchFreezeEodJob(payload) {
-  const { runInBackground } = require("./background-task");
-  runInBackground(() => dispatchFreezeEodJobAsync(payload));
+  console.warn(
+    "[metrics-rebuild-trigger] freeze-eod dispatch gave up userIds=%s; rebuilding stays true",
+    userIdsLabel,
+  );
 }
 
 /**
@@ -141,7 +180,6 @@ async function triggerLedgerMetricsFreeze(userId, opts = {}) {
 }
 
 module.exports = {
-  dispatchFreezeEodJob,
   dispatchFreezeEodJobAsync,
   triggerLedgerMetricsFreeze,
   resolveInternalApiOrigin,

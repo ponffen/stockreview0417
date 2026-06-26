@@ -204,7 +204,9 @@ function extractBearerToken(req) {
 }
 
 // 最外层 handler：先处理"不依赖 server.js"的自证端点，再异步加载 Express app
-module.exports = async function handler(req, res) {
+module.exports = async function handler(req, res, context) {
+  const { runWithRequestContext } = require("../src/background-task");
+  return runWithRequestContext(context, async () => {
   console.log(
     "[api/index.js] handler start url=%s method=%s x-matched-path=%s x-forwarded-uri=%s",
     req.url,
@@ -1475,4 +1477,5 @@ module.exports = async function handler(req, res) {
       );
     }
   }
+  });
 };
