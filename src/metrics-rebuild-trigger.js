@@ -42,40 +42,56 @@ async function runFreezeJobDirect(payload) {
   });
 }
 
-function dispatchFreezeEodJob(payload) {
-  const secret = cronSecret();
-  const body = {
+function normalizeDispatchBody(payload) {
+  return {
     userIds: payload.userIds || [],
     force: payload.force !== false,
     syncDailyClose: !!payload.syncDailyClose,
     rebuildFromDate: payload.rebuildFromDate || undefined,
     fullRebuild: !!payload.fullRebuild,
   };
+}
+
+async function dispatchFreezeEodJobAsync(payload) {
+  const secret = cronSecret();
+  const body = normalizeDispatchBody(payload);
   if (!body.userIds.length) {
     return;
   }
 
   if (!isVercelRuntime() || !secret) {
-    void runFreezeJobDirect(body).catch((e) => {
-      console.warn("[metrics-rebuild-trigger] direct freeze failed", e?.message || e);
-    });
+    await runFreezeJobDirect(body);
     return;
   }
 
   const url = `${resolveInternalApiOrigin()}/api/cron/freeze-eod`;
-  void fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${secret}`,
-    },
-    body: JSON.stringify(body),
-  }).catch((e) => {
-    console.warn("[metrics-rebuild-trigger] freeze-eod dispatch failed", e?.message || e);
-    void runFreezeJobDirect(body).catch((err) => {
-      console.warn("[metrics-rebuild-trigger] direct freeze fallback failed", err?.message || err);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify(body),
     });
-  });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn(
+        "[metrics-rebuild-trigger] freeze-eod dispatch http",
+        response.status,
+        detail ? detail.slice(0, 200) : "",
+      );
+      await runFreezeJobDirect(body);
+    }
+  } catch (e) {
+    console.warn("[metrics-rebuild-trigger] freeze-eod dispatch failed", e?.message || e);
+    await runFreezeJobDirect(body);
+  }
+}
+
+function dispatchFreezeEodJob(payload) {
+  const { runInBackground } = require("./background-task");
+  runInBackground(() => dispatchFreezeEodJobAsync(payload));
 }
 
 /**
@@ -103,7 +119,7 @@ async function triggerLedgerMetricsFreeze(userId, opts = {}) {
       rebuilding: true,
       rebuildFrom: rebuildFromDate || null,
     });
-    dispatchFreezeEodJob({
+    await dispatchFreezeEodJobAsync({
       userIds: [uid],
       force: true,
       rebuildFromDate: rebuildFromDate || undefined,
@@ -116,7 +132,7 @@ async function triggerLedgerMetricsFreeze(userId, opts = {}) {
     rebuilding: true,
     rebuildFrom: null,
   });
-  dispatchFreezeEodJob({
+  await dispatchFreezeEodJobAsync({
     userIds: [uid],
     force: true,
     fullRebuild: true,
@@ -126,6 +142,7 @@ async function triggerLedgerMetricsFreeze(userId, opts = {}) {
 
 module.exports = {
   dispatchFreezeEodJob,
+  dispatchFreezeEodJobAsync,
   triggerLedgerMetricsFreeze,
   resolveInternalApiOrigin,
 };

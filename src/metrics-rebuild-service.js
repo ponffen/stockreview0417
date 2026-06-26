@@ -82,7 +82,7 @@ function mergePending(uid, hintDates, fullRebuild) {
 function flushPendingRebuild(uid) {
   const pending = pendingByUser.get(uid);
   if (!pending) {
-    return;
+    return Promise.resolve();
   }
   if (pending.timer) {
     clearTimeout(pending.timer);
@@ -91,11 +91,11 @@ function flushPendingRebuild(uid) {
   const hintDates = [...(pending.hintDates || [])];
   const fullRebuild = !!pending.fullRebuild;
   if (!hintDates.length && !fullRebuild) {
-    return;
+    return Promise.resolve();
   }
   if (queueByUser.has(uid)) {
     mergePending(uid, hintDates, fullRebuild);
-    return;
+    return queueByUser.get(uid) || Promise.resolve();
   }
   const p = flushPendingRebuildWork(uid, hintDates, fullRebuild)
     .catch((e) => {
@@ -112,6 +112,7 @@ function flushPendingRebuild(uid) {
       }
     });
   queueByUser.set(uid, p);
+  return p;
 }
 
 async function flushPendingRebuildWork(uid, hintDates, fullRebuild) {
@@ -145,7 +146,10 @@ function scheduleMetricsRebuildForUser(userId, opts = {}) {
     pending.timer = null;
   }
   const debounceMs = isVercelRuntime() ? 400 : DEBOUNCE_MS;
-  pending.timer = setTimeout(() => flushPendingRebuild(uid), debounceMs);
+  const { runInBackground } = require("./background-task");
+  pending.timer = setTimeout(() => {
+    runInBackground(() => flushPendingRebuild(uid));
+  }, debounceMs);
 }
 
 /** 保存后立即触发 freeze-eod（不等 debounce）。 */
@@ -159,7 +163,8 @@ function kickMetricsRebuildNow(userId) {
     clearTimeout(pending.timer);
     pending.timer = null;
   }
-  setImmediate(() => flushPendingRebuild(uid));
+  const { runInBackground } = require("./background-task");
+  runInBackground(() => flushPendingRebuild(uid));
 }
 
 module.exports = {
