@@ -22,6 +22,17 @@ function normalizeOrigin(value) {
 }
 
 function resolveInternalApiOrigin() {
+  // Vercel 实例互调：优先部署域名，避免自定义域 CDN 剥掉 Authorization
+  if (isVercelRuntime()) {
+    const vercel = normalizeOrigin(process.env.VERCEL_URL);
+    if (vercel) {
+      return vercel;
+    }
+    const production = normalizeOrigin(process.env.VERCEL_PROJECT_PRODUCTION_URL);
+    if (production) {
+      return production;
+    }
+  }
   const site = normalizeOrigin(process.env.SITE_URL || process.env.APP_URL);
   if (site) {
     return site;
@@ -70,8 +81,9 @@ async function postFreezeEodDispatch(url, secret, body) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${secret}`,
+      "x-cron-secret": secret,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, token: secret }),
   });
 }
 

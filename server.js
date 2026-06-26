@@ -933,7 +933,12 @@ function isCronAuthorized(req) {
   }
   const bearer = extractBearerToken(req);
   const queryToken = String(req.query?.token || req.body?.token || "").trim();
-  return bearer === configuredSecret || queryToken === configuredSecret;
+  const headerSecret = String(req.headers?.["x-cron-secret"] || "").trim();
+  return (
+    bearer === configuredSecret ||
+    queryToken === configuredSecret ||
+    headerSecret === configuredSecret
+  );
 }
 
 async function collectLiveSymbolsForUser(userId, accountId = "all") {

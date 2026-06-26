@@ -203,6 +203,26 @@ function extractBearerToken(req) {
   return auth.slice(7).trim();
 }
 
+function cronSecretFromEnv() {
+  return String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+}
+
+function isCronSecretMatched(req, body, configuredSecret) {
+  if (!configuredSecret) {
+    return false;
+  }
+  const tokenFromBearer = extractBearerToken(req);
+  const tokenFromQuery = getSearchParam(req, "token");
+  const tokenFromBody = String(body?.token || "").trim();
+  const tokenFromHeader = String(req.headers?.["x-cron-secret"] || "").trim();
+  return (
+    tokenFromBearer === configuredSecret ||
+    tokenFromQuery === configuredSecret ||
+    tokenFromBody === configuredSecret ||
+    tokenFromHeader === configuredSecret
+  );
+}
+
 // 最外层 handler：先处理"不依赖 server.js"的自证端点，再异步加载 Express app
 module.exports = async function handler(req, res, context) {
   const { runWithRequestContext } = require("../src/background-task");
@@ -1114,17 +1134,17 @@ module.exports = async function handler(req, res, context) {
       if (isCronFreezeDirect) {
         const body = req.method === "POST" ? await readJsonBody(req) : {};
         const cronHeader = req.headers?.["x-vercel-cron"];
-        const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
-        const tokenFromBearer = extractBearerToken(req);
-        const tokenFromQuery = getSearchParam(req, "token");
-        const tokenFromBody = String(body?.token || "").trim();
-        const secretMatched =
-          !!configuredSecret &&
-          (tokenFromBearer === configuredSecret ||
-            tokenFromQuery === configuredSecret ||
-            tokenFromBody === configuredSecret);
+        const configuredSecret = cronSecretFromEnv();
+        const secretMatched = isCronSecretMatched(req, body, configuredSecret);
         const sessionUserId = readUserIdFromRequest(req);
         if (!sessionUserId && cronHeader == null && !secretMatched) {
+          console.warn(
+            "[api/index.js] cron auth failed freeze-eod secretConfigured=%s bearerLen=%s bodyTokenLen=%s headerSecretLen=%s",
+            !!configuredSecret,
+            extractBearerToken(req).length,
+            String(body?.token || "").trim().length,
+            String(req.headers?.["x-cron-secret"] || "").trim().length,
+          );
           res.statusCode = 401;
           res.end(JSON.stringify({ ok: false, error: "unauthorized cron request" }));
           return;
@@ -1157,15 +1177,8 @@ module.exports = async function handler(req, res, context) {
       if (isCronDailyCloseDirect) {
         const body = req.method === "POST" ? await readJsonBody(req) : {};
         const cronHeader = req.headers?.["x-vercel-cron"];
-        const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
-        const tokenFromBearer = extractBearerToken(req);
-        const tokenFromQuery = getSearchParam(req, "token");
-        const tokenFromBody = String(body?.token || "").trim();
-        const secretMatched =
-          !!configuredSecret &&
-          (tokenFromBearer === configuredSecret ||
-            tokenFromQuery === configuredSecret ||
-            tokenFromBody === configuredSecret);
+        const configuredSecret = cronSecretFromEnv();
+        const secretMatched = isCronSecretMatched(req, body, configuredSecret);
         const sessionUserId = readUserIdFromRequest(req);
         if (!sessionUserId && cronHeader == null && !secretMatched) {
           res.statusCode = 401;
