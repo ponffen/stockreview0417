@@ -822,6 +822,7 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
 
   const latest = await getLatestAnalysisSnapshotDate(uid, "all");
   if (!options.force && !options.fullRebuild && latest && latest >= frozenDateKey) {
+    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
     return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
   }
 
@@ -834,6 +835,7 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
     datesToProcess = [frozenDateKey];
   }
   if (!datesToProcess.length) {
+    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
     return { ok: true, userId: uid, skipped: true, reason: "no-dates", frozenDate: latest };
   }
 
@@ -1000,6 +1002,8 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
     frozenThrough: frozenThroughEffective,
     isCleared: false,
     clearedAt: null,
+    rebuilding: false,
+    rebuildFrom: null,
   });
   for (const accId of accountIds.filter((a) => a !== "all")) {
     const accLatest = await getLatestAnalysisSnapshotDate(uid, accId);

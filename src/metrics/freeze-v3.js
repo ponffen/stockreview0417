@@ -620,6 +620,7 @@ async function runFreezeV3ForUser(userId, options = {}) {
   const frozenDateKey = String(frozenDate).slice(0, 10);
   const latest = await getLatestAnalysisSnapshotDate(uid, "all");
   if (!options.force && !options.symbolsOnly && !options.symbolsFullRebuild && latest && latest >= frozenDateKey) {
+    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
     return { ok: true, userId: uid, skipped: true, reason: "already-up-to-date", frozenDate: latest };
   }
 
@@ -772,6 +773,8 @@ async function runFreezeV3ForUser(userId, options = {}) {
     frozenThrough: frozenThroughEffective,
     isCleared: false,
     clearedAt: null,
+    rebuilding: false,
+    rebuildFrom: null,
   });
   for (const accId of accountIds.filter((a) => a !== "all")) {
     const accLatest = await getLatestAnalysisSnapshotDate(uid, accId);
