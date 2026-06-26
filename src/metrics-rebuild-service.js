@@ -60,9 +60,11 @@ async function refreshLiveMetricsOnly(userId) {
     return { ok: false };
   }
   const meta = await getUserMetricsMeta(uid, { light: true });
-  if (meta.rebuilding) {
-    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
-  }
+  await upsertUserMetricsMeta(uid, {
+    rebuilding: false,
+    rebuildFrom: null,
+    dataVersion: (meta.dataVersion || 0) + 1,
+  });
   return { ok: true, mode: "live-only" };
 }
 

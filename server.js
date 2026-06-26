@@ -67,7 +67,7 @@ function invalidateDailyCloseAndAnalysisCache(userId, opts = {}) {
   clearUserScopedCache(analysisDailyMemoryCache, userId);
   clearUserScopedCache(dailyCloseForTradesMemoryCache, userId);
   clearUserScopedCache(realtimePatchMemoryCache, userId);
-  notifyLedgerMutation(userId, opts);
+  void notifyLedgerMutation(userId, opts);
 }
 
 function sanitizeSymbolList(input) {

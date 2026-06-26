@@ -904,7 +904,7 @@ module.exports = async function handler(req, res, context) {
         if (!prior) {
           await ensureSymbolNameMapOnNewTrade(saved.symbol, saved.name);
         }
-        notifyLedgerMutation(userId, { hintDates: hintDatesFromTradeMutation(prior, saved) });
+        await notifyLedgerMutation(userId, { hintDates: hintDatesFromTradeMutation(prior, saved) });
         const [enriched] = await enrichTradesWithSymbolNames([saved]);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: enriched }));
@@ -920,7 +920,7 @@ module.exports = async function handler(req, res, context) {
         }
         const del = await deleteTradeById(tradeId, userId);
         if (del.deleted) {
-          notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
+          await notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
         }
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, deleted: del.deleted }));
@@ -981,7 +981,7 @@ module.exports = async function handler(req, res, context) {
         const body = await readJsonBody(req);
         const prior = body?.id ? await getCashTransferByIdForUser(body.id, userId) : null;
         const saved = await upsertCashTransfer(body || {}, userId);
-        notifyLedgerMutation(userId, { hintDates: hintDatesFromCashMutation(prior, saved) });
+        await notifyLedgerMutation(userId, { hintDates: hintDatesFromCashMutation(prior, saved) });
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: saved }));
         return;
@@ -996,7 +996,7 @@ module.exports = async function handler(req, res, context) {
         }
         const del = await deleteCashTransferById(cashId, userId);
         if (del.deleted) {
-          notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
+          await notifyLedgerMutation(userId, { hintDates: del.date ? [del.date] : [] });
         }
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, deleted: del.deleted }));
@@ -1072,7 +1072,7 @@ module.exports = async function handler(req, res, context) {
         const trades = Array.isArray(body?.trades) ? body.trades : [];
         const normalized = trades.map((item) => normalizeTrade(item));
         const data = await importTrades(normalized, mode, userId);
-        notifyLedgerMutation(userId, {
+        await notifyLedgerMutation(userId, {
           fullRebuild: mode === "replace",
           hintDates: hintDatesFromImportRows(normalized, "date"),
         });
@@ -1086,7 +1086,7 @@ module.exports = async function handler(req, res, context) {
         const mode = body?.mode === "replace" ? "replace" : "append";
         const rows = Array.isArray(body?.cashTransfers) ? body.cashTransfers : [];
         const data = await importCashTransfers(rows, mode, userId);
-        notifyLedgerMutation(userId, {
+        await notifyLedgerMutation(userId, {
           fullRebuild: mode === "replace",
           hintDates: hintDatesFromImportRows(rows, "date"),
         });

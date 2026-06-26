@@ -40,6 +40,7 @@ function runInBackground(task) {
     waitUntil(run().catch(onError));
     return;
   }
+  console.warn("[background-task] waitUntil unavailable, running detached");
   void run().catch(onError);
 }
 

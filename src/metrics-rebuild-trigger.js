@@ -1,6 +1,5 @@
 /**
- * 写路径：标记 rebuilding 后在 waitUntil 内直接跑 freeze（Vercel 同实例，maxDuration=300s）。
- * 定时 Cron 仍走 /api/cron/freeze-eod；写路径不再 HTTP 自调（易假 200）。
+ * 写路径：成交响应前同步打标 rebuilding，freeze 在 waitUntil 内同实例执行。
  */
 const { upsertUserMetricsMeta, getUserMetricsMeta } = require("./db");
 const {
@@ -86,52 +85,76 @@ async function dispatchFreezeEodJobAsync(payload) {
 }
 
 /**
- * 合并 hint 后打标并异步触发 freeze（不 await）。
+ * 同步阶段：判断是否需要 freeze，需要则立即写 rebuilding=true。
+ * @returns {Promise<{ payload?: object, skip?: boolean, reason?: string }>}
  */
-async function triggerLedgerMetricsFreeze(userId, opts = {}) {
+async function prepareLedgerMetricsFreeze(userId, opts = {}) {
   const uid = String(userId || "").trim();
   if (!uid) {
-    return { ok: false };
+    return { skip: true, reason: "missing-user" };
   }
   const fullRebuild = !!opts.fullRebuild;
   const hintDates = opts.hintDates || [];
 
   if (!fullRebuild) {
+    if (!hintDates.length) {
+      return { skip: true, reason: "no-hint-dates" };
+    }
     const frozenThrough = await resolveFrozenThroughForUser(uid);
     const { freezeHints, liveOnlyHints } = partitionHintDates(hintDates, frozenThrough);
     if (!freezeHints.length) {
       if (liveOnlyHints.length) {
         await refreshLiveMetricsOnly(uid);
       }
-      return { ok: true, skip: true, reason: "live-only-after-frozen-through" };
+      return { skip: true, reason: "live-only-after-frozen-through" };
     }
     const rebuildFromDate = earliestFromHints(freezeHints, false);
     await upsertUserMetricsMeta(uid, {
       rebuilding: true,
       rebuildFrom: rebuildFromDate || null,
     });
-    await dispatchFreezeEodJobAsync({
-      userIds: [uid],
-      force: true,
-      rebuildFromDate: rebuildFromDate || undefined,
-      fullRebuild: false,
-    });
-    return { ok: true, dispatched: true, rebuildFromDate };
+    return {
+      payload: {
+        userIds: [uid],
+        force: true,
+        rebuildFromDate: rebuildFromDate || undefined,
+        fullRebuild: false,
+      },
+      rebuildFromDate,
+    };
   }
 
   await upsertUserMetricsMeta(uid, {
     rebuilding: true,
     rebuildFrom: null,
   });
-  await dispatchFreezeEodJobAsync({
-    userIds: [uid],
-    force: true,
+  return {
+    payload: {
+      userIds: [uid],
+      force: true,
+      fullRebuild: true,
+    },
     fullRebuild: true,
-  });
-  return { ok: true, dispatched: true, fullRebuild: true };
+  };
+}
+
+/** debounce flush 仍走此入口（内部 await freeze）。 */
+async function triggerLedgerMetricsFreeze(userId, opts = {}) {
+  const prepared = await prepareLedgerMetricsFreeze(userId, opts);
+  if (!prepared.payload) {
+    return { ok: true, skip: true, reason: prepared.reason || "no-op" };
+  }
+  await dispatchFreezeEodJobAsync(prepared.payload);
+  return {
+    ok: true,
+    dispatched: true,
+    rebuildFromDate: prepared.rebuildFromDate,
+    fullRebuild: prepared.fullRebuild,
+  };
 }
 
 module.exports = {
+  prepareLedgerMetricsFreeze,
   dispatchFreezeEodJobAsync,
   triggerLedgerMetricsFreeze,
 };

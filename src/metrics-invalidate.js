@@ -21,18 +21,40 @@ function hintDatesFromImportRows(rows, dateField = "date") {
 }
 
 /**
+ * 成交响应前同步打标；freeze 在 waitUntil 后台执行。
  * @param {string} userId
  * @param {{ hintDates?: string[], fullRebuild?: boolean }} opts
  */
-function notifyLedgerMutation(userId, opts = {}) {
+async function notifyLedgerMutation(userId, opts = {}) {
   const uid = String(userId || "").trim();
-  if (!uid) return;
-  const { scheduleMetricsRebuildForUser, kickMetricsRebuildNow } = require("./metrics-rebuild-service");
-  scheduleMetricsRebuildForUser(uid, {
+  if (!uid) {
+    return;
+  }
+  const { prepareLedgerMetricsFreeze, dispatchFreezeEodJobAsync } = require("./metrics-rebuild-trigger");
+  const { runInBackground } = require("./background-task");
+
+  const prepared = await prepareLedgerMetricsFreeze(uid, {
     hintDates: opts.hintDates || [],
     fullRebuild: !!opts.fullRebuild,
   });
-  kickMetricsRebuildNow(uid);
+
+  if (!prepared.payload) {
+    console.log(
+      "[metrics-invalidate] skip userId=%s reason=%s hints=%s",
+      uid,
+      prepared.reason || "no-op",
+      (opts.hintDates || []).join(",") || "-",
+    );
+    return;
+  }
+
+  console.log(
+    "[metrics-invalidate] freeze queued userId=%s rebuildFromDate=%s fullRebuild=%s",
+    uid,
+    prepared.rebuildFromDate || "-",
+    !!prepared.fullRebuild,
+  );
+  runInBackground(() => dispatchFreezeEodJobAsync(prepared.payload));
 }
 
 module.exports = {
