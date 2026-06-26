@@ -1,4 +1,4 @@
-const { listAllUserIds, setSnapshotWatermark } = require("./db");
+const { listAllUserIds, setSnapshotWatermark, backfillTradeAmountShareRatiosForUser } = require("./db");
 const { toDateKey } = require("../scripts/lib/market-fetch");
 const { shouldSkipScheduledFreezeCron } = require("./metrics/freeze-calendar");
 
@@ -38,6 +38,15 @@ function getTradingDateKey(baseDate = new Date()) {
     return addCalendarDays(current, -1);
   }
   return current;
+}
+
+/** 冻结快照重建后，回填该用户成交的 amount_share_ratio（仅写该字段，best-effort，不影响冻结结果）。 */
+async function backfillAmountShareRatioAfterFreeze(uid, logger) {
+  try {
+    await backfillTradeAmountShareRatiosForUser(uid, { logger });
+  } catch (error) {
+    logger?.warn?.(`[amount-share-backfill] user=${uid} failed: ${error?.message || error}`);
+  }
 }
 
 function resolveFrozenDate(input) {
@@ -88,6 +97,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
         dataVersion: (meta.dataVersion || 0) + 1,
         frozenThrough,
       });
+      await backfillAmountShareRatioAfterFreeze(uid, logger);
       return {
         userId: uid,
         skipped: false,
@@ -114,6 +124,7 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
   if (result.skipped) {
     return { userId: uid, skipped: true, reason: result.reason, frozenDate: result.frozenDate };
   }
+  await backfillAmountShareRatioAfterFreeze(uid, logger);
   return {
     userId: uid,
     skipped: false,

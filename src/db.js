@@ -2621,6 +2621,62 @@ async function setTradeAmountShareRatio(tradeId, ratio) {
   await q(`UPDATE trades SET amount_share_ratio = $2 WHERE id = $1`, [tradeId, ratio]);
 }
 
+/**
+ * 回填某用户全部成交的 amount_share_ratio（按每笔成交 trade_date 的历史时点快照）。
+ * 总资产口径：analysis_daily_snapshot 中 account_id='all'、成交日当天或之前最近一个冻结日的 total_assets，
+ * 与新增成交时 resolveAmountShareRatioForTrade 完全一致。仅写 amount_share_ratio，不动其他字段。
+ * 供日冻结（增量 / 全量重算）在快照重建后调用。
+ */
+async function backfillTradeAmountShareRatiosForUser(userId, options = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return { trades: 0, updated: 0, nullCount: 0 };
+  }
+  const logger = options.logger || null;
+  const { rows } = await q(
+    `SELECT id, symbol, amount, trade_date
+     FROM trades
+     WHERE user_id = $1 AND type = 'trade'
+     ORDER BY trade_date ASC, created_at ASC`,
+    [uid],
+  );
+  const snapCache = new Map();
+  let updated = 0;
+  let nullCount = 0;
+  for (const row of rows) {
+    const asOf = String(row.trade_date || "").slice(0, 10);
+    let ratio = null;
+    if (asOf) {
+      let snap = snapCache.get(asOf);
+      if (snap === undefined) {
+        snap = await selectAnalysisSnapshotAllAccountOnOrBefore(uid, asOf);
+        snapCache.set(asOf, snap);
+      }
+      if (snap) {
+        ratio = computeTradeAmountShareRatio({
+          amount: Number(row.amount),
+          symbol: row.symbol,
+          totalAssetsCny: snap.totalAssets,
+          fxUsdCny: snap.fxUsdCny,
+          fxHkdCny: snap.fxHkdCny,
+        });
+      }
+    }
+    await setTradeAmountShareRatio(row.id, ratio);
+    if (ratio == null) {
+      nullCount += 1;
+    } else {
+      updated += 1;
+    }
+  }
+  if (logger && typeof logger.log === "function") {
+    logger.log(
+      `[amount-share-backfill] user=${uid} trades=${rows.length} withRatio=${updated} null=${nullCount}`,
+    );
+  }
+  return { trades: rows.length, updated, nullCount };
+}
+
 async function getCliUserId() {
   const phone = String(process.env.STOCKREVIEW_PHONE || SEED_USER_PHONE).trim();
   const { rows } = await q("SELECT id FROM users WHERE phone = $1", [phone]);
@@ -3194,6 +3250,8 @@ module.exports = {
   ensurePerformanceSchemaV2,
   listTradesForAmountShareBackfill,
   setTradeAmountShareRatio,
+  backfillTradeAmountShareRatiosForUser,
+  selectAnalysisSnapshotAllAccountOnOrBefore,
   closeDatabase,
   getCliUserId,
   findUserByPhone,
