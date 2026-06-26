@@ -33,6 +33,7 @@ const {
   xirrStageToLive,
 } = require("./home-summary-maths");
 const { getComputeLiveMetrics } = require("./market-realtime-pnl");
+const { getLiveMetricsWithFrozenPack } = require("./metrics/live-metrics-context");
 const {
   ALL_STAGES,
   parseStagesParam,
@@ -1434,7 +1435,7 @@ async function getBenchmarkSeries(userId, symbol, stage) {
   }
   const scope = "all";
   const settings = await getSettings(userId);
-  const live = await getComputeLiveMetrics(userId, scope);
+  const live = await getLiveMetricsWithFrozenPack(userId, scope);
   const um = await getUserMetricsMeta(userId);
   const payload = await buildBenchmarkSeriesPayload({ userId, symbol: sym, stage, live });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };

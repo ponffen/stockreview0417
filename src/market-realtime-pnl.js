@@ -380,8 +380,11 @@ function buildLiveFromHomeFrozen({
   };
 }
 
-function liveMetricsCacheKey(userId, scope) {
-  return `${String(userId || "").trim()}|${String(scope || "all").trim() || "all"}`;
+function liveMetricsCacheKey(userId, scope, opts = {}) {
+  const uid = String(userId || "").trim();
+  const scopeNorm = String(scope || "all").trim() || "all";
+  const variant = opts?.preloaded?.homeAccount ? "pack" : "bare";
+  return `${uid}|${scopeNorm}|${variant}`;
 }
 
 async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
@@ -682,7 +685,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
 async function getComputeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
-  const key = liveMetricsCacheKey(uid, scope);
+  const key = liveMetricsCacheKey(uid, scope, opts);
   const now = Date.now();
   const cached = liveMetricsRecent.get(key);
   if (cached && now - cached.at < LIVE_METRICS_DEDUP_MS) {

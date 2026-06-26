@@ -22,7 +22,8 @@ const {
   fmtPercentRatio,
   fmtSignedPercentRatio,
 } = require("../account-kpi-surface");
-const { getComputeLiveMetrics, fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
+const { fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
+const { getLiveMetricsWithFrozenPack } = require("./live-metrics-context");
 const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai } = require("./trading-calendar");
@@ -427,7 +428,9 @@ function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLiv
       : ccy === "HKD"
         ? Number(live.fxHkdCny) || 0
         : 1;
-  const mvCny = ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0;
+  const mvCny =
+    Number(livePosition?.marketValueCny) ||
+    (ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0);
   const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
   const frozenProfit = Number.isFinite(Number(frozenStageProfit)) ? Number(frozenStageProfit) : 0;
   const profitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
@@ -558,7 +561,14 @@ function pageCloseDateRange(pnlRowsAsc, endDate, bufferDays = 7) {
   };
 }
 
-async function buildStockRecordBundlePayload({ userId, accountScope, symbol, publicLayout = false, ...chartOpts }) {
+async function buildStockRecordBundlePayload({
+  userId,
+  accountScope,
+  symbol,
+  publicLayout = false,
+  live: liveIn,
+  ...chartOpts
+}) {
   const uid = String(userId || "").trim();
   const sym = normalizeSymbol(symbol);
   const scope = String(accountScope || "all").trim() || "all";
@@ -572,7 +582,7 @@ async function buildStockRecordBundlePayload({ userId, accountScope, symbol, pub
     getTrades(uid),
     getAccounts(uid),
     getUserMetricsMeta(uid),
-    getComputeLiveMetrics(uid, scope),
+    liveIn ? Promise.resolve(liveIn) : getLiveMetricsWithFrozenPack(uid, scope),
   ]);
   const book = resolveBookCurrencyForAccountScope({ ...settings, accounts }, scope);
   const ccy = getSymbolCurrency(sym);
