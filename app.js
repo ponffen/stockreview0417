@@ -7547,7 +7547,7 @@ function buildTradeRecordRowHtml(trade, ctx) {
           <td class="trade-col-date">${trade.date.replace(/-/g, "/")}</td>
           <td class="trade-col-name">${escapeHtml(getDisplayName(trade.symbol, trade.name))}</td>
           <td class="trade-col-type type-cell">${tradeDirectionCellLabel(trade)}</td>
-          <td class="trade-col-price num">${formatNumber(trade.price, 2)}</td>
+          <td class="trade-col-price num">${formatNumber(trade.price, 3)}</td>
           ${amountCells}
           <td class="trade-col-account trade-account-cell">${accLabel}</td>
         </tr>
@@ -9055,7 +9055,7 @@ async function renderStockRecordPage(symbol) {
       <tr class="stock-record-trade-row trade-row--clickable" data-record-id="${id}">
         <td>${trade.date.replace(/-/g, "/")}</td>
         <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
-        <td>${formatNumber(trade.price, 2)}</td>`;
+        <td>${formatNumber(trade.price, 3)}</td>`;
       const accCell = `<td class="trade-account-cell">${formatTradeAccountCellHtml(trade, usePub ? detail : null)}</td>`;
       if (usePub) {
         const share = publicTradeAmountShare(trade);
