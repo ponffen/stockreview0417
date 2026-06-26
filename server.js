@@ -1712,8 +1712,38 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     const syncDailyClose = parseBooleanInput(req.query?.syncDailyClose ?? req.body?.syncDailyClose, false);
     const rebuildFromDate = req.query?.rebuildFromDate || req.body?.rebuildFromDate || null;
     const fullRebuild = parseBooleanInput(req.query?.fullRebuild ?? req.body?.fullRebuild, false);
+    const runAsync = parseBooleanInput(req.query?.async ?? req.body?.async, false);
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
     const fromCron = req.headers["x-vercel-cron"] != null;
+
+    if (runAsync) {
+      const { runInBackground } = require("./src/background-task");
+      const { runAndVerifyFreeze } = require("./src/metrics-rebuild-trigger");
+      const freezeBody = {
+        userIds,
+        force,
+        syncDailyClose,
+        rebuildFromDate: rebuildFromDate || undefined,
+        fullRebuild,
+      };
+      console.log(
+        "[server] freeze-eod async accepted userIds=%s rebuildFromDate=%s",
+        userIds.join(",") || "-",
+        rebuildFromDate || "-",
+      );
+      runInBackground(() =>
+        runAndVerifyFreeze(freezeBody).catch((e) => {
+          console.warn(
+            "[server] freeze-eod async failed userIds=%s %s",
+            userIds.join(",") || "-",
+            e?.message || e,
+          );
+        }),
+      );
+      res.status(202).json({ ok: true, accepted: true });
+      return;
+    }
+
     const result = await runDailyFreeze({
       frozenDate: forcedDate,
       force,
@@ -1724,7 +1754,8 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       fullRebuild,
       logger: console,
     });
-    const failedUsers = (result.users || []).filter((row) => row?.skipped);
+    const { isFreezeUserFailure } = require("./src/metrics-rebuild-trigger");
+    const failedUsers = (result.users || []).filter(isFreezeUserFailure);
     if (failedUsers.length) {
       await insertCronJobRun({
         jobName: "freeze-eod",

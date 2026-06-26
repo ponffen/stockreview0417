@@ -1154,11 +1154,44 @@ module.exports = async function handler(req, res, context) {
         const syncDailyClose = parseBooleanInput(getSearchParam(req, "syncDailyClose") || body?.syncDailyClose, false);
         const rebuildFromDate = getSearchParam(req, "rebuildFromDate") || body?.rebuildFromDate || null;
         const fullRebuild = parseBooleanInput(getSearchParam(req, "fullRebuild") || body?.fullRebuild, false);
+        const runAsync = parseBooleanInput(getSearchParam(req, "async") || body?.async, false);
         const userIdFromQuery = getSearchParam(req, "userId");
         const userIds = Array.isArray(body?.userIds) && body.userIds.length
           ? body.userIds
           : userIdFromQuery ? [userIdFromQuery] : [];
         const fromCron = cronHeader != null;
+
+        if (runAsync) {
+          const { runInBackground } = require("../src/background-task");
+          const { runAndVerifyFreeze } = require("../src/metrics-rebuild-trigger");
+          const freezeBody = {
+            userIds,
+            force,
+            syncDailyClose,
+            rebuildFromDate: rebuildFromDate || undefined,
+            fullRebuild,
+          };
+          console.log(
+            "[api/index.js] freeze-eod async accepted userIds=%s rebuildFromDate=%s force=%s fullRebuild=%s",
+            userIds.join(",") || "-",
+            rebuildFromDate || "-",
+            force,
+            fullRebuild,
+          );
+          runInBackground(() =>
+            runAndVerifyFreeze(freezeBody).catch((e) => {
+              console.warn(
+                "[api/index.js] freeze-eod async failed userIds=%s %s",
+                userIds.join(",") || "-",
+                e?.message || e,
+              );
+            }),
+          );
+          res.statusCode = 202;
+          res.end(JSON.stringify({ ok: true, accepted: true }));
+          return;
+        }
+
         console.log(
           "[api/index.js] freeze-eod start userIds=%s rebuildFromDate=%s force=%s fullRebuild=%s",
           userIds.join(",") || "-",
@@ -1176,7 +1209,8 @@ module.exports = async function handler(req, res, context) {
           fullRebuild,
           logger: console,
         });
-        const failedUsers = (data.users || []).filter((row) => row?.skipped);
+        const { isFreezeUserFailure } = require("../src/metrics-rebuild-trigger");
+        const failedUsers = (data.users || []).filter(isFreezeUserFailure);
         if (failedUsers.length) {
           console.warn(
             "[api/index.js] freeze-eod partial-fail users=%s",

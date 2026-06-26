@@ -54,13 +54,7 @@ async function notifyLedgerMutation(userId, opts = {}) {
     prepared.rebuildFromDate || "-",
     !!prepared.fullRebuild,
   );
-  const freezeTask = () => dispatchFreezeEodJobAsync(prepared.payload);
-  if (String(process.env.VERCEL || "").trim() === "1") {
-    // Vercel：同请求内 await freeze（maxDuration=300s），避免 waitUntil 未执行导致假完成
-    await freezeTask();
-    return;
-  }
-  runInBackground(freezeTask);
+  runInBackground(() => dispatchFreezeEodJobAsync(prepared.payload));
 }
 
 module.exports = {
