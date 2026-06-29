@@ -1210,7 +1210,19 @@ module.exports = async function handler(req, res, context) {
           logger: console,
         });
         const { isFreezeUserFailure } = require("../src/metrics-rebuild-trigger");
+        const lagRemaining = Array.isArray(data?.lagRemaining) ? data.lagRemaining : [];
         const failedUsers = (data.users || []).filter(isFreezeUserFailure);
+        if (lagRemaining.length) {
+          console.warn(
+            "[api/index.js] freeze-eod lag remaining count=%s ids=%s catchUpRounds=%s",
+            lagRemaining.length,
+            lagRemaining.join(","),
+            data.catchUpRounds ?? 0,
+          );
+          res.statusCode = 207;
+          res.end(JSON.stringify({ ok: false, error: "freeze-eod partial", data }));
+          return;
+        }
         if (failedUsers.length) {
           console.warn(
             "[api/index.js] freeze-eod partial-fail users=%s",

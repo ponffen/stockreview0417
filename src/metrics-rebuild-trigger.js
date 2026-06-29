@@ -72,6 +72,10 @@ async function runAndVerifyFreeze(body) {
   const userIdsLabel = body.userIds.join(",");
   const t0 = Date.now();
   const data = await runFreezeJobDirect(body);
+  const lagRemaining = Array.isArray(data?.lagRemaining) ? data.lagRemaining : [];
+  if (lagRemaining.length) {
+    throw new Error(`freeze lag remaining (${lagRemaining.length}): ${lagRemaining.join(",")}`);
+  }
   const failed = (data?.users || []).filter(isFreezeUserFailure);
   if (failed.length) {
     const reasons = failed.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(",");

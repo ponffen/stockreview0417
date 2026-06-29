@@ -1755,6 +1755,28 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       logger: console,
     });
     const { isFreezeUserFailure } = require("./src/metrics-rebuild-trigger");
+    const lagRemaining = Array.isArray(result?.lagRemaining) ? result.lagRemaining : [];
+    if (lagRemaining.length) {
+      await insertCronJobRun({
+        jobName: "freeze-eod",
+        startedAt,
+        finishedAt: Date.now(),
+        ok: false,
+        metaJson: JSON.stringify({
+          frozenDate: result?.frozenDate,
+          catchUpRounds: result?.catchUpRounds,
+          lagRemaining,
+          watermark: result?.watermark?.status,
+        }),
+        errorMessage: `lag=${lagRemaining.length}`,
+      }).catch(() => {});
+      analysisDailyMemoryCache.clear();
+      dailyCloseForTradesMemoryCache.clear();
+      realtimePatchMemoryCache.clear();
+      res.setHeader("Cache-Control", "no-store");
+      res.status(207).json({ ok: false, error: "freeze-eod partial", data: result });
+      return;
+    }
     const failedUsers = (result.users || []).filter(isFreezeUserFailure);
     if (failedUsers.length) {
       await insertCronJobRun({
@@ -1775,7 +1797,13 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       startedAt,
       finishedAt: Date.now(),
       ok: true,
-      metaJson: JSON.stringify({ frozenDate: result?.frozenDate, users: result?.users?.length }),
+      metaJson: JSON.stringify({
+        frozenDate: result?.frozenDate,
+        users: result?.users?.length,
+        catchUpRounds: result?.catchUpRounds,
+        lagRemaining: result?.lagRemaining,
+        watermark: result?.watermark?.status,
+      }),
     });
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, data: result });

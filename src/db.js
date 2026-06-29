@@ -3056,6 +3056,48 @@ async function getLatestAnalysisSnapshotDate(userId, accountId = "all") {
   return rows[0]?.d ? String(rows[0].d) : null;
 }
 
+/** 有成交、未清仓，且 all 账户快照日早于 target 的用户（日终 cron 漏跑检测）。 */
+async function listFreezeLagUserIds(targetDate, options = {}) {
+  const { normDateKey, isWeekendDateKey, previousSessionDate } = require("./metrics/freeze-calendar");
+  let target = normDateKey(targetDate);
+  if (!target) {
+    return [];
+  }
+  while (target && isWeekendDateKey(target)) {
+    target = previousSessionDate(target);
+  }
+  if (!target) {
+    return [];
+  }
+  const scope = Array.isArray(options.scopeUserIds)
+    ? [...new Set(options.scopeUserIds.map((id) => String(id || "").trim()).filter(Boolean))]
+    : null;
+  const params = [target];
+  let scopeClause = "";
+  if (scope?.length) {
+    params.push(scope);
+    scopeClause = `AND u.id::text = ANY($${params.length}::text[])`;
+  }
+  const { rows } = await q(
+    `SELECT u.id::text AS id
+     FROM users u
+     WHERE EXISTS (SELECT 1 FROM trades t WHERE t.user_id = u.id LIMIT 1)
+       AND NOT EXISTS (
+         SELECT 1 FROM user_metrics_meta um
+         WHERE um.user_id = u.id AND um.is_cleared IS TRUE
+       )
+       AND COALESCE(
+         (SELECT MAX(a.date) FROM analysis_daily_snapshot a
+          WHERE a.user_id = u.id AND a.account_id = 'all'),
+         '1970-01-01'
+       ) < $1
+       ${scopeClause}
+     ORDER BY u.created_at ASC`,
+    params,
+  );
+  return rows.map((row) => String(row.id || "").trim()).filter(Boolean);
+}
+
 async function listAllUserIds() {
   const { rows } = await q("SELECT id FROM users ORDER BY created_at ASC");
   return rows.map((row) => String(row.id || "").trim()).filter(Boolean);
@@ -3283,6 +3325,7 @@ module.exports = {
   getCommunityFeedTradesRecent,
   listPublicCommunityUserIds,
   listAllUserIds,
+  listFreezeLagUserIds,
   selectSymbolDailyPositionsOnDate,
   getSnapshotWatermark,
   setSnapshotWatermark,

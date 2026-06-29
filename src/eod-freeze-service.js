@@ -1,6 +1,7 @@
-const { listAllUserIds, setSnapshotWatermark, backfillTradeAmountShareRatiosForUser } = require("./db");
+const { listAllUserIds, setSnapshotWatermark } = require("./db");
 const { toDateKey } = require("../scripts/lib/market-fetch");
 const { shouldSkipScheduledFreezeCron } = require("./metrics/freeze-calendar");
+const { listLagUserIds, alignFrozenThroughForScope } = require("./metrics/freeze-lag");
 
 function addCalendarDays(dateKey, days) {
   const d = new Date(`${String(dateKey || "").slice(0, 10)}T12:00:00+08:00`);
@@ -40,15 +41,6 @@ function getTradingDateKey(baseDate = new Date()) {
   return current;
 }
 
-/** 冻结快照重建后，回填该用户成交的 amount_share_ratio（仅写该字段，best-effort，不影响冻结结果）。 */
-async function backfillAmountShareRatioAfterFreeze(uid, logger) {
-  try {
-    await backfillTradeAmountShareRatiosForUser(uid, { logger });
-  } catch (error) {
-    logger?.warn?.(`[amount-share-backfill] user=${uid} failed: ${error?.message || error}`);
-  }
-}
-
 function resolveFrozenDate(input) {
   if (input) {
     return toDateKey(input);
@@ -57,65 +49,30 @@ function resolveFrozenDate(input) {
   return addCalendarDays(tradingDate, -1);
 }
 
+function freezeLagMaxRounds() {
+  return Math.max(1, Math.min(10, Number(process.env.FREEZE_LAG_MAX_ROUNDS || 5)));
+}
+
+function mergeFreezeResult(map, row) {
+  if (!row?.userId) {
+    return;
+  }
+  const prev = map.get(row.userId);
+  map.set(row.userId, {
+    ...prev,
+    ...row,
+    attempts: (prev?.attempts || 0) + 1,
+  });
+}
+
 async function freezeUserToDate(userId, frozenDate, options = {}) {
   const logger = options.logger || console;
   const uid = String(userId || "").trim();
   if (!uid) {
     return { userId: "", skipped: true, reason: "missing-user" };
   }
-  const fd = frozenDate ? resolveFrozenDate(frozenDate) : resolveFrozenDate();
-  const rebuildFromDate = options.rebuildFromDate
-    ? String(options.rebuildFromDate).slice(0, 10)
-    : null;
-  const fullRebuild = options.fullRebuild === true;
-  const useFreezeV3 = fullRebuild || !!rebuildFromDate;
-
-  if (useFreezeV3) {
-    const {
-      getUserMetricsMeta,
-      upsertUserMetricsMeta,
-      getLatestAnalysisSnapshotDate,
-    } = require("./db");
-    const { capFrozenThroughToSnapshot } = require("./metrics/freeze-calendar");
-    try {
-      const { runFreezeV3ForUser } = require("./metrics/freeze-v3");
-      await runFreezeV3ForUser(uid, {
-        frozenDate: fd,
-        force: true,
-        syncDailyClose: options.syncDailyClose === true,
-        rebuildFromDate: rebuildFromDate || undefined,
-        fullRebuild,
-        logger,
-      });
-      const meta = await getUserMetricsMeta(uid, { light: true });
-      const latestSnap = await getLatestAnalysisSnapshotDate(uid, "all");
-      const frozenThrough =
-        capFrozenThroughToSnapshot(fd, latestSnap) || latestSnap || meta.frozenThrough || fd;
-      await upsertUserMetricsMeta(uid, {
-        rebuilding: false,
-        rebuildFrom: null,
-        dataVersion: (meta.dataVersion || 0) + 1,
-        frozenThrough,
-      });
-      await backfillAmountShareRatioAfterFreeze(uid, logger);
-      return {
-        userId: uid,
-        skipped: false,
-        frozenDate: frozenThrough,
-        mode: "freeze-v3",
-      };
-    } catch (error) {
-      console.warn("[freeze-v3] failed", uid, error?.message || error);
-      try {
-        await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null });
-      } catch (clearError) {
-        console.error("[freeze-v3] clear rebuilding failed", uid, clearError?.message || clearError);
-      }
-      return { userId: uid, skipped: true, reason: error?.message || "freeze-v3-failed" };
-    }
-  }
-
   const { runFreezeIncrementalForUser } = require("./metrics/freeze-incremental");
+  const fd = frozenDate ? resolveFrozenDate(frozenDate) : resolveFrozenDate();
   const result = await runFreezeIncrementalForUser(uid, {
     frozenDate: fd,
     force: options.force === true,
@@ -124,16 +81,11 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     logger,
   });
   if (!result.ok) {
-    console.warn("[freeze] incremental failed", uid, result.reason || "freeze-failed");
-    await upsertUserMetricsMeta(uid, { rebuilding: false, rebuildFrom: null }).catch((e) => {
-      console.error("[freeze] clear rebuilding failed", uid, e?.message || e);
-    });
     return { userId: uid, skipped: true, reason: result.reason || "freeze-failed" };
   }
   if (result.skipped) {
     return { userId: uid, skipped: true, reason: result.reason, frozenDate: result.frozenDate };
   }
-  await backfillAmountShareRatioAfterFreeze(uid, logger);
   return {
     userId: uid,
     skipped: false,
@@ -142,6 +94,26 @@ async function freezeUserToDate(userId, frozenDate, options = {}) {
     symbolRowsWritten: result.timing?.symbolRows || 0,
     timing: result.timing,
   };
+}
+
+async function freezeUsersBatch(userIds, frozenDate, options, resultsByUser, phase) {
+  const logger = options.logger || console;
+  const list = [...new Set((userIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  for (const uid of list) {
+    const one = await freezeUserToDate(uid, frozenDate, options);
+    mergeFreezeResult(resultsByUser, { ...one, phase });
+    if (one.skipped && one.reason && one.reason !== "already-up-to-date" && one.reason !== "no-trades") {
+      logger.warn?.("[freeze-eod]", phase, uid, one.reason);
+    }
+  }
+  return list.length;
+}
+
+function buildWatermarkMessage({ frozenDate, scopeCount, results, catchUpRounds, lagRemaining, aligned }) {
+  const successCount = results.filter((r) => !r.skipped).length;
+  const lagPart = lagRemaining.length ? `, lag=${lagRemaining.length}` : "";
+  const alignPart = aligned.length ? `, metaAligned=${aligned.length}` : "";
+  return `target=${frozenDate}, scope=${scopeCount}, updated=${successCount}, catchUpRounds=${catchUpRounds}${lagPart}${alignPart}`;
 }
 
 async function runDailyFreeze(options = {}) {
@@ -159,52 +131,100 @@ async function runDailyFreeze(options = {}) {
       finishedAt: Date.now(),
       elapsedMs: 0,
       users: [],
+      lagRemaining: [],
+      catchUpRounds: 0,
     };
   }
   const syncDailyClose = options.syncDailyClose === true;
-  const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
-  const rebuildFromDate = options.rebuildFromDate
-    ? String(options.rebuildFromDate).slice(0, 10)
-    : null;
   const fullRebuild = options.fullRebuild === true;
-  const userIds = userIdsInput.length
+  const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
+  const scopeUserIds = userIdsInput.length
     ? [...new Set(userIdsInput.map((u) => String(u || "").trim()).filter(Boolean))]
     : await listAllUserIds();
+  const freezeOpts = { logger, force, syncDailyClose, fullRebuild };
   const startedAt = Date.now();
-  const results = [];
+  const resultsByUser = new Map();
+  const maxRounds = freezeLagMaxRounds();
+  let catchUpRounds = 0;
+  let lagRemaining = [];
+  let aligned = [];
+  let caughtError = null;
+
   try {
-    for (const uid of userIds) {
-      const one = await freezeUserToDate(uid, frozenDate, {
-        logger,
-        force,
-        syncDailyClose,
-        rebuildFromDate,
-        fullRebuild,
-      });
-      results.push(one);
+    logger.info?.("[freeze-eod] pass1 scope=%s target=%s", scopeUserIds.length, frozenDate);
+    await freezeUsersBatch(scopeUserIds, frozenDate, freezeOpts, resultsByUser, "pass1");
+
+    while (catchUpRounds < maxRounds) {
+      const lagUserIds = await listLagUserIds(frozenDate, scopeUserIds);
+      if (!lagUserIds.length) {
+        break;
+      }
+      catchUpRounds += 1;
+      logger.info?.(
+        "[freeze-eod] catch-up round=%s lag=%s target=%s",
+        catchUpRounds,
+        lagUserIds.length,
+        frozenDate,
+      );
+      await freezeUsersBatch(lagUserIds, frozenDate, freezeOpts, resultsByUser, `catch-up-${catchUpRounds}`);
     }
-    const successCount = results.filter((r) => !r.skipped).length;
-    await setSnapshotWatermark({
-      frozenDate,
-      status: "success",
-      message: `users=${userIds.length}, updated=${successCount}`,
-    });
-    return {
-      ok: true,
-      frozenDate,
-      startedAt,
-      finishedAt: Date.now(),
-      elapsedMs: Date.now() - startedAt,
-      users: results,
-    };
+
+    lagRemaining = await listLagUserIds(frozenDate, scopeUserIds);
+    aligned = await alignFrozenThroughForScope(frozenDate, scopeUserIds);
+    if (aligned.length) {
+      logger.info?.("[freeze-eod] meta aligned count=%s", aligned.length);
+    }
+    if (lagRemaining.length) {
+      logger.warn?.("[freeze-eod] lag remaining count=%s ids=%s", lagRemaining.length, lagRemaining.join(","));
+    }
   } catch (error) {
-    await setSnapshotWatermark({
-      frozenDate,
-      status: "failed",
-      message: String(error?.message || error || "freeze failed"),
-    });
-    throw error;
+    caughtError = error;
+    logger.error?.("[freeze-eod] error", error?.message || error);
+    try {
+      lagRemaining = await listLagUserIds(frozenDate, scopeUserIds);
+    } catch (lagErr) {
+      logger.warn?.("[freeze-eod] lag check after error failed", lagErr?.message || lagErr);
+    }
   }
+
+  const results = [...resultsByUser.values()];
+  const finishedAt = Date.now();
+  const watermarkStatus = caughtError ? "failed" : lagRemaining.length ? "partial_failed" : "success";
+  const watermarkMessage = caughtError
+    ? `${String(caughtError?.message || caughtError).slice(0, 320)}${lagRemaining.length ? `; lag=${lagRemaining.length}` : ""}`
+    : buildWatermarkMessage({
+        frozenDate,
+        scopeCount: scopeUserIds.length,
+        results,
+        catchUpRounds,
+        lagRemaining,
+        aligned,
+      });
+
+  await setSnapshotWatermark({
+    frozenDate,
+    status: watermarkStatus,
+    message: watermarkMessage,
+  });
+
+  const payload = {
+    ok: !caughtError && lagRemaining.length === 0,
+    partial: !caughtError && lagRemaining.length > 0,
+    frozenDate,
+    startedAt,
+    finishedAt,
+    elapsedMs: finishedAt - startedAt,
+    catchUpRounds,
+    lagRemaining,
+    metaAligned: aligned,
+    users: results,
+    watermark: { status: watermarkStatus, message: watermarkMessage },
+  };
+
+  if (caughtError) {
+    throw caughtError;
+  }
+  return payload;
 }
 
 module.exports = {
