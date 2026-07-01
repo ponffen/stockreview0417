@@ -3005,10 +3005,25 @@ body.subscription-expired-mode {
 }
 
 .ai-analysis-lead {
-  margin: 0 0 14px;
+  margin: 0 0 10px;
   font-size: 15px;
   line-height: 1.55;
   color: var(--text);
+}
+
+.ai-analysis-intro-copy {
+  margin: 0 0 16px;
+}
+
+.ai-analysis-examples-item {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.ai-analysis-examples-item:last-child {
+  margin-bottom: 0;
 }
 
 .ai-analysis-notes {
