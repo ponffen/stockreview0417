@@ -51,11 +51,49 @@ function isClaudeRedirectUri(uri) {
   }
 }
 
+function isWorkBuddyRedirectUri(uri) {
+  try {
+    const u = new URL(String(uri || ""));
+    if (u.protocol !== "workbuddy:") {
+      return false;
+    }
+    const host = u.hostname.toLowerCase();
+    if (host && host !== "workbuddy") {
+      return false;
+    }
+    const path = u.pathname.toLowerCase();
+    return path.includes("/mcp/") && path.endsWith("/oauth/callback");
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedOAuthRedirectUri(uri) {
+  return isHttpsUrl(uri) || isWorkBuddyRedirectUri(uri);
+}
+
+function isAllowedDcrRedirectUri(uri) {
+  return isChatGptRedirectUri(uri) || isClaudeRedirectUri(uri) || isWorkBuddyRedirectUri(uri);
+}
+
 function normalizeRedirectUris(value) {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.map((item) => String(item || "").trim()).filter((item) => isHttpsUrl(item));
+  return value.map((item) => String(item || "").trim()).filter((item) => isAllowedOAuthRedirectUri(item));
+}
+
+function detectOAuthProvider({ clientId, redirectUris = [] }) {
+  if (redirectUris.some(isWorkBuddyRedirectUri)) {
+    return "workbuddy";
+  }
+  if (isChatGptOAuthClientId(clientId) || redirectUris.some(isChatGptRedirectUri)) {
+    return "chatgpt";
+  }
+  if (isClaudeOAuthClientId(clientId) || redirectUris.some(isClaudeRedirectUri)) {
+    return "claude";
+  }
+  return "other";
 }
 
 function redirectUriAllowed(redirectUri, allowedUris) {
@@ -127,7 +165,7 @@ async function resolveOAuthClient({ clientId, redirectUri, registeredClient = nu
     if (redirectUri && !redirectUriAllowed(redirectUri, redirectUris)) {
       return { ok: false, error: "invalid_client", description: "redirect_uri 未注册" };
     }
-    const provider = isChatGptOAuthClientId(id) || redirectUris.some(isChatGptRedirectUri) ? "chatgpt" : "other";
+    const provider = detectOAuthProvider({ clientId: id, redirectUris });
     return {
       ok: true,
       client: {
@@ -153,15 +191,7 @@ async function resolveOAuthClient({ clientId, redirectUri, registeredClient = nu
     if (redirectUri && !redirectUriAllowed(redirectUri, metadata.redirectUris)) {
       return { ok: false, error: "invalid_client", description: "redirect_uri 不在 client 元数据中" };
     }
-    const provider = isChatGptOAuthClientId(id)
-      ? "chatgpt"
-      : isClaudeOAuthClientId(id)
-        ? "claude"
-        : metadata.redirectUris.some(isChatGptRedirectUri)
-          ? "chatgpt"
-          : metadata.redirectUris.some(isClaudeRedirectUri)
-            ? "claude"
-            : "other";
+    const provider = detectOAuthProvider({ clientId: id, redirectUris: metadata.redirectUris });
     return {
       ok: true,
       client: {
@@ -184,6 +214,9 @@ function providerLabel(provider) {
   if (provider === "claude") {
     return "Claude";
   }
+  if (provider === "workbuddy") {
+    return "WorkBuddy";
+  }
   return "客户端";
 }
 
@@ -191,6 +224,9 @@ module.exports = {
   isHttpsUrl,
   isChatGptRedirectUri,
   isClaudeRedirectUri,
+  isWorkBuddyRedirectUri,
+  isAllowedOAuthRedirectUri,
+  isAllowedDcrRedirectUri,
   normalizeRedirectUris,
   redirectUriAllowed,
   fetchCimdMetadata,

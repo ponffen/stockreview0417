@@ -25,18 +25,15 @@ const {
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,
 } = require("./oauth-store");
-const { resolveOAuthClient, providerLabel, normalizeRedirectUris, isChatGptRedirectUri } = require("./oauth-client");
+const {
+  resolveOAuthClient,
+  providerLabel,
+  normalizeRedirectUris,
+  isAllowedOAuthRedirectUri,
+  isAllowedDcrRedirectUri,
+} = require("./oauth-client");
 const { signAccessToken } = require("./oauth-tokens");
 const { getQuery, readRequestBody, sendJson, sendHtml, escapeHtml } = require("./http-utils");
-
-function isHttpsUrl(url) {
-  try {
-    const u = new URL(String(url || ""));
-    return u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 function oauthError(res, status, error, description = "") {
   sendJson(res, status, {
@@ -115,10 +112,10 @@ async function handleOAuthRegister(req, res) {
   const body = await readRequestBody(req);
   const redirectUris = normalizeRedirectUris(body.redirect_uris);
   if (!redirectUris.length) {
-    oauthError(res, 400, "invalid_client_metadata", "redirect_uris 必须为 https 且非空");
+    oauthError(res, 400, "invalid_client_metadata", "redirect_uris 必须为 https 或 workbuddy 协议且非空");
     return;
   }
-  if (!redirectUris.every((uri) => isChatGptRedirectUri(uri) || /^https:\/\/(claude\.ai|.*\.anthropic\.com)(\/|$)/i.test(uri))) {
+  if (!redirectUris.every((uri) => isAllowedDcrRedirectUri(uri))) {
     oauthError(res, 400, "invalid_redirect_uri", "redirect_uris 不被允许");
     return;
   }
@@ -175,8 +172,8 @@ async function handleOAuthAuthorize(req, res) {
     oauthError(res, 400, "unsupported_response_type", "仅支持 response_type=code");
     return;
   }
-  if (!redirectUri || !isHttpsUrl(redirectUri)) {
-    oauthError(res, 400, "invalid_request", "redirect_uri 必须为 https");
+  if (!redirectUri || !isAllowedOAuthRedirectUri(redirectUri)) {
+    oauthError(res, 400, "invalid_request", "redirect_uri 不被允许");
     return;
   }
   if (!codeChallenge || challengeMethod !== "S256") {
