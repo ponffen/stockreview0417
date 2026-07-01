@@ -35,6 +35,17 @@ async function ensureMcpOAuthSchema() {
       created_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_oauth_refresh_user ON mcp_oauth_refresh_token (user_id, client_id);
+    CREATE TABLE IF NOT EXISTS mcp_oauth_client (
+      client_id TEXT PRIMARY KEY,
+      client_name TEXT NOT NULL DEFAULT '',
+      redirect_uris JSONB NOT NULL DEFAULT '[]'::jsonb,
+      token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+      grant_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+      response_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+      source TEXT NOT NULL DEFAULT 'dcr',
+      created_at BIGINT NOT NULL
+    );
+    ALTER TABLE mcp_oauth_auth_code ADD COLUMN IF NOT EXISTS resource TEXT NOT NULL DEFAULT '';
   `);
   schemaReady = true;
 }
@@ -51,9 +62,19 @@ async function saveAuthCode(row) {
   await ensureMcpOAuthSchema();
   const pool = await initPool();
   await pool.query(
-    `INSERT INTO mcp_oauth_auth_code (code, user_id, client_id, redirect_uri, code_challenge, scope, expires_at, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [row.code, row.userId, row.clientId, row.redirectUri, row.codeChallenge, row.scope, row.expiresAt, row.createdAt]
+    `INSERT INTO mcp_oauth_auth_code (code, user_id, client_id, redirect_uri, code_challenge, scope, resource, expires_at, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      row.code,
+      row.userId,
+      row.clientId,
+      row.redirectUri,
+      row.codeChallenge,
+      row.scope,
+      row.resource || "",
+      row.expiresAt,
+      row.createdAt,
+    ],
   );
 }
 
@@ -64,7 +85,7 @@ async function consumeAuthCode(code) {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `DELETE FROM mcp_oauth_auth_code WHERE code = $1 RETURNING user_id, client_id, redirect_uri, code_challenge, scope, expires_at`,
+      `DELETE FROM mcp_oauth_auth_code WHERE code = $1 RETURNING user_id, client_id, redirect_uri, code_challenge, scope, resource, expires_at`,
       [String(code || "")]
     );
     await client.query("COMMIT");
@@ -81,6 +102,7 @@ async function consumeAuthCode(code) {
       redirectUri: row.redirect_uri,
       codeChallenge: row.code_challenge,
       scope: row.scope,
+      resource: row.resource || "",
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -175,6 +197,61 @@ async function revokeChatGptConnection(userId) {
   await revokeOAuthConnection(userId, "chatgpt");
 }
 
+async function saveRegisteredClient(row) {
+  await ensureMcpOAuthSchema();
+  const pool = await initPool();
+  await pool.query(
+    `INSERT INTO mcp_oauth_client (
+      client_id, client_name, redirect_uris, token_endpoint_auth_method, grant_types, response_types, source, created_at
+    ) VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::jsonb,$7,$8)
+    ON CONFLICT (client_id) DO UPDATE SET
+      client_name = EXCLUDED.client_name,
+      redirect_uris = EXCLUDED.redirect_uris,
+      token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method,
+      grant_types = EXCLUDED.grant_types,
+      response_types = EXCLUDED.response_types,
+      source = EXCLUDED.source`,
+    [
+      row.clientId,
+      row.clientName || "",
+      JSON.stringify(row.redirectUris || []),
+      row.tokenEndpointAuthMethod || "none",
+      JSON.stringify(row.grantTypes || []),
+      JSON.stringify(row.responseTypes || []),
+      row.source || "dcr",
+      row.createdAt || Date.now(),
+    ],
+  );
+}
+
+async function findRegisteredClient(clientId) {
+  await ensureMcpOAuthSchema();
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return null;
+  }
+  const pool = await initPool();
+  const { rows } = await pool.query(
+    `SELECT client_id, client_name, redirect_uris, token_endpoint_auth_method, grant_types, response_types, source, created_at
+     FROM mcp_oauth_client WHERE client_id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    clientId: row.client_id,
+    clientName: row.client_name || "",
+    redirectUris: Array.isArray(row.redirect_uris) ? row.redirect_uris.map(String) : [],
+    tokenEndpointAuthMethod: row.token_endpoint_auth_method || "none",
+    grantTypes: Array.isArray(row.grant_types) ? row.grant_types.map(String) : [],
+    responseTypes: Array.isArray(row.response_types) ? row.response_types.map(String) : [],
+    source: row.source || "dcr",
+    createdAt: Number(row.created_at) || 0,
+  };
+}
+
 function verifyPkce(codeVerifier, codeChallenge) {
   const verifier = String(codeVerifier || "");
   const challenge = String(codeChallenge || "");
@@ -198,6 +275,8 @@ module.exports = {
   revokeOAuthConnection,
   revokeClaudeConnection,
   revokeChatGptConnection,
+  saveRegisteredClient,
+  findRegisteredClient,
   verifyPkce,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,

@@ -1172,7 +1172,8 @@ function renderHoldingsAiConnectionUi() {
       String(holdingsAiProvidersState.connectorName || "麻雀").trim() || "麻雀";
   }
   if (holdingsAiChatGptConnectorUrl) {
-    holdingsAiChatGptConnectorUrl.textContent = String(holdingsAiProvidersState.mcpUrl || "—").trim() || "—";
+    holdingsAiChatGptConnectorUrl.textContent =
+      String(holdingsAiProvidersState.mcpUrl || "https://www.higcc.com/mcp").trim() || "https://www.higcc.com/mcp";
   }
 }
 

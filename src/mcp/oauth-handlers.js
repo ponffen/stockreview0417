@@ -9,7 +9,6 @@ const { getAuthSessionUserPayload } = require("../db");
 const {
   DEFAULT_SCOPE,
   DEFAULT_CLIENT_ID,
-  isAllowedOAuthClientId,
   getPublicBaseUrl,
   mcpResourceUrl,
 } = require("./config");
@@ -20,10 +19,13 @@ const {
   saveRefreshToken,
   findRefreshToken,
   verifyPkce,
+  saveRegisteredClient,
+  findRegisteredClient,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,
 } = require("./oauth-store");
+const { resolveOAuthClient, providerLabel, normalizeRedirectUris, isChatGptRedirectUri } = require("./oauth-client");
 const { signAccessToken } = require("./oauth-tokens");
 const { getQuery, readRequestBody, sendJson, sendHtml, escapeHtml } = require("./http-utils");
 
@@ -51,6 +53,22 @@ async function assertOAuthUser(req) {
   return assertMcpUserActive(userId);
 }
 
+function authServerMetadata(req) {
+  const base = getPublicBaseUrl(req);
+  return {
+    issuer: base,
+    authorization_endpoint: `${base}/oauth/authorize`,
+    token_endpoint: `${base}/oauth/token`,
+    registration_endpoint: `${base}/oauth/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    client_id_metadata_document_supported: true,
+    scopes_supported: [DEFAULT_SCOPE],
+  };
+}
+
 function handleWellKnownProtectedResource(req, res) {
   const base = getPublicBaseUrl(req);
   sendJson(res, 200, {
@@ -62,18 +80,7 @@ function handleWellKnownProtectedResource(req, res) {
 }
 
 function handleWellKnownAuthServer(req, res) {
-  const base = getPublicBaseUrl(req);
-  sendJson(res, 200, {
-    issuer: base,
-    authorization_endpoint: `${base}/oauth/authorize`,
-    token_endpoint: `${base}/oauth/token`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
-    client_id_metadata_document_supported: true,
-    scopes_supported: [DEFAULT_SCOPE],
-  });
+  sendJson(res, 200, authServerMetadata(req));
 }
 
 function handleWellKnownProtectedResourceMcp(req, res) {
@@ -82,6 +89,67 @@ function handleWellKnownProtectedResourceMcp(req, res) {
 
 function handleWellKnownAuthServerMcp(req, res) {
   handleWellKnownAuthServer(req, res);
+}
+
+function handleWellKnownOpenIdConfiguration(req, res) {
+  sendJson(res, 200, authServerMetadata(req));
+}
+
+function assertResourceParam(resource, req) {
+  const expected = mcpResourceUrl(req);
+  const actual = String(resource || "").trim();
+  if (!actual) {
+    return { ok: true, resource: expected };
+  }
+  if (actual !== expected) {
+    return { ok: false, error: "invalid_request", description: "resource 参数不匹配" };
+  }
+  return { ok: true, resource: actual };
+}
+
+async function handleOAuthRegister(req, res) {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { ok: false, error: "Method Not Allowed" });
+    return;
+  }
+  const body = await readRequestBody(req);
+  const redirectUris = normalizeRedirectUris(body.redirect_uris);
+  if (!redirectUris.length) {
+    oauthError(res, 400, "invalid_client_metadata", "redirect_uris 必须为 https 且非空");
+    return;
+  }
+  if (!redirectUris.every((uri) => isChatGptRedirectUri(uri) || /^https:\/\/(claude\.ai|.*\.anthropic\.com)(\/|$)/i.test(uri))) {
+    oauthError(res, 400, "invalid_redirect_uri", "redirect_uris 不被允许");
+    return;
+  }
+  const clientId = `mcp-${randomToken(18)}`;
+  const now = Math.floor(Date.now() / 1000);
+  const clientName = String(body.client_name || "ChatGPT").trim() || "ChatGPT";
+  const grantTypes = Array.isArray(body.grant_types) && body.grant_types.length
+    ? body.grant_types.map(String)
+    : ["authorization_code", "refresh_token"];
+  const responseTypes = Array.isArray(body.response_types) && body.response_types.length
+    ? body.response_types.map(String)
+    : ["code"];
+  await saveRegisteredClient({
+    clientId,
+    clientName,
+    redirectUris,
+    tokenEndpointAuthMethod: "none",
+    grantTypes,
+    responseTypes,
+    source: "dcr",
+    createdAt: Date.now(),
+  });
+  sendJson(res, 201, {
+    client_id: clientId,
+    client_id_issued_at: now,
+    client_name: clientName,
+    redirect_uris: redirectUris,
+    token_endpoint_auth_method: "none",
+    grant_types: grantTypes,
+    response_types: responseTypes,
+  });
 }
 
 async function handleOAuthAuthorize(req, res) {
@@ -97,13 +165,14 @@ async function handleOAuthAuthorize(req, res) {
   const challengeMethod = String(q.get("code_challenge_method") || "S256").trim();
   const scope = String(q.get("scope") || DEFAULT_SCOPE).trim() || DEFAULT_SCOPE;
   const state = String(q.get("state") || "").trim();
+  const resourceCheck = assertResourceParam(q.get("resource"), req);
+  if (!resourceCheck.ok) {
+    oauthError(res, 400, resourceCheck.error, resourceCheck.description);
+    return;
+  }
 
   if (responseType !== "code") {
     oauthError(res, 400, "unsupported_response_type", "仅支持 response_type=code");
-    return;
-  }
-  if (!isAllowedOAuthClientId(clientId)) {
-    oauthError(res, 400, "invalid_client", "未知 client_id");
     return;
   }
   if (!redirectUri || !isHttpsUrl(redirectUri)) {
@@ -115,6 +184,21 @@ async function handleOAuthAuthorize(req, res) {
     return;
   }
 
+  const registeredClient = await findRegisteredClient(clientId);
+  let clientResolved;
+  try {
+    clientResolved = await resolveOAuthClient({ clientId, redirectUri, registeredClient });
+  } catch {
+    oauthError(res, 400, "invalid_client", "无法解析 client_id");
+    return;
+  }
+  if (!clientResolved.ok) {
+    oauthError(res, 400, clientResolved.error, clientResolved.description);
+    return;
+  }
+  const oauthClient = clientResolved.client;
+  const providerName = providerLabel(oauthClient.provider);
+
   const gate = await assertOAuthUser(req);
   if (!gate.ok) {
     if (gate.code === MCP_SUBSCRIPTION_EXPIRED_CODE) {
@@ -123,7 +207,7 @@ async function handleOAuthAuthorize(req, res) {
         403,
         `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>麻雀 · 授权 Claude</title>
+<title>麻雀 · 授权 ${escapeHtml(providerName)}</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f6f7f9;color:#111}
 .card{max-width:420px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px}
@@ -145,7 +229,7 @@ a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;paddi
       401,
       `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>麻雀 · 授权 Claude</title>
+<title>麻雀 · 授权 ${escapeHtml(providerName)}</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f6f7f9;color:#111}
 .card{max-width:420px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px}
@@ -154,7 +238,7 @@ p{color:#6b7280;line-height:1.6;margin:0 0 16px}
 a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px}
 </style></head><body><div class="card">
 <h1>请先登录麻雀</h1>
-<p>授权 Claude 读取持仓数据前，需要登录你的麻雀账户。</p>
+<p>授权 ${escapeHtml(providerName)} 读取持仓数据前，需要登录你的麻雀账户。</p>
 <a class="btn" href="${escapeHtml(loginUrl)}">去登录</a>
 </div></body></html>`,
     );
@@ -171,7 +255,7 @@ a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;paddi
       200,
       `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>麻雀 · 授权 Claude</title>
+<title>麻雀 · 授权 ${escapeHtml(providerName)}</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f6f7f9;color:#111}
 .card{max-width:440px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px}
@@ -182,8 +266,8 @@ ul{color:#6b7280;padding-left:18px;margin:0 0 18px}
 a.btn,button.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;border:none;font-size:14px;cursor:pointer}
 a.ghost{background:#fff;color:#111;border:1px solid #d1d5db}
 </style></head><body><div class="card">
-<h1>授权 Claude 读取数据</h1>
-<p><strong>${display}</strong>，Claude 将通过「麻雀」连接器读取：</p>
+<h1>授权 ${escapeHtml(providerName)} 读取数据</h1>
+<p><strong>${display}</strong>，${escapeHtml(providerName)} 将通过「麻雀」连接器读取：</p>
 <ul>
 <li>持仓与资产摘要</li>
 <li>成交与银证转账（本人）</li>
@@ -208,6 +292,7 @@ a.ghost{background:#fff;color:#111;border:1px solid #d1d5db}
     redirectUri,
     codeChallenge,
     scope,
+    resource: resourceCheck.resource,
     expiresAt: now + AUTH_CODE_TTL_SEC * 1000,
     createdAt: now,
   });
@@ -223,12 +308,13 @@ a.ghost{background:#fff;color:#111;border:1px solid #d1d5db}
   res.end();
 }
 
-async function issueTokens({ userId, clientId, scope }) {
+async function issueTokens({ userId, clientId, scope, resource }) {
   const now = Date.now();
   const accessToken = signAccessToken({
     userId,
     clientId,
     scope,
+    resource,
     expMs: now + ACCESS_TOKEN_TTL_SEC * 1000,
   });
   const refreshToken = randomToken(32);
@@ -261,12 +347,19 @@ async function handleOAuthToken(req, res) {
     const redirectUri = String(body.redirect_uri || "").trim();
     const codeVerifier = String(body.code_verifier || "").trim();
     const clientId = String(body.client_id || DEFAULT_CLIENT_ID).trim();
+    const resourceCheck = assertResourceParam(body.resource, req);
+    if (!resourceCheck.ok) {
+      oauthError(res, 400, resourceCheck.error, resourceCheck.description);
+      return;
+    }
     if (!code || !redirectUri || !codeVerifier) {
       oauthError(res, 400, "invalid_request", "缺少 code / redirect_uri / code_verifier");
       return;
     }
-    if (!isAllowedOAuthClientId(clientId)) {
-      oauthError(res, 400, "invalid_client", "未知 client_id");
+    const registeredClient = await findRegisteredClient(clientId);
+    const clientResolved = await resolveOAuthClient({ clientId, redirectUri, registeredClient });
+    if (!clientResolved.ok) {
+      oauthError(res, 400, clientResolved.error, clientResolved.description);
       return;
     }
     const row = await consumeAuthCode(code);
@@ -276,6 +369,10 @@ async function handleOAuthToken(req, res) {
     }
     if (row.clientId !== clientId || row.redirectUri !== redirectUri) {
       oauthError(res, 400, "invalid_grant", "client 或 redirect_uri 不匹配");
+      return;
+    }
+    if (row.resource && resourceCheck.resource && row.resource !== resourceCheck.resource) {
+      oauthError(res, 400, "invalid_grant", "resource 不匹配");
       return;
     }
     if (!verifyPkce(codeVerifier, row.codeChallenge)) {
@@ -291,6 +388,7 @@ async function handleOAuthToken(req, res) {
       userId: row.userId,
       clientId: row.clientId,
       scope: row.scope || DEFAULT_SCOPE,
+      resource: row.resource || resourceCheck.resource,
     });
     sendJson(res, 200, tokens);
     return;
@@ -299,12 +397,19 @@ async function handleOAuthToken(req, res) {
   if (grantType === "refresh_token") {
     const refreshToken = String(body.refresh_token || "").trim();
     const clientId = String(body.client_id || DEFAULT_CLIENT_ID).trim();
+    const resourceCheck = assertResourceParam(body.resource, req);
+    if (!resourceCheck.ok) {
+      oauthError(res, 400, resourceCheck.error, resourceCheck.description);
+      return;
+    }
     if (!refreshToken) {
       oauthError(res, 400, "invalid_request", "缺少 refresh_token");
       return;
     }
-    if (!isAllowedOAuthClientId(clientId)) {
-      oauthError(res, 400, "invalid_client", "未知 client_id");
+    const registeredClient = await findRegisteredClient(clientId);
+    const clientResolved = await resolveOAuthClient({ clientId, registeredClient });
+    if (!clientResolved.ok) {
+      oauthError(res, 400, clientResolved.error, clientResolved.description);
       return;
     }
     const row = await findRefreshToken(refreshToken);
@@ -321,6 +426,7 @@ async function handleOAuthToken(req, res) {
       userId: row.userId,
       clientId: row.clientId,
       scope: row.scope || DEFAULT_SCOPE,
+      resource: resourceCheck.resource,
     });
     sendJson(res, 200, tokens);
     return;
@@ -334,6 +440,8 @@ module.exports = {
   handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
   handleWellKnownAuthServerMcp,
+  handleWellKnownOpenIdConfiguration,
+  handleOAuthRegister,
   handleOAuthAuthorize,
   handleOAuthToken,
   assertOAuthUser,

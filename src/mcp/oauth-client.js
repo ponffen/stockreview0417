@@ -1,0 +1,199 @@
+const {
+  DEFAULT_CLIENT_ID,
+  isClaudeOAuthClientId,
+  isChatGptOAuthClientId,
+} = require("./config");
+
+const CIMD_FETCH_TIMEOUT_MS = 8000;
+const CIMD_CACHE_TTL_MS = 5 * 60 * 1000;
+const cimdCache = new Map();
+
+function isHttpsUrl(url) {
+  try {
+    return new URL(String(url || "")).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isChatGptRedirectUri(uri) {
+  try {
+    const u = new URL(String(uri || ""));
+    if (u.protocol !== "https:") {
+      return false;
+    }
+    const host = u.hostname.toLowerCase();
+    if (!/^(chatgpt\.com|openai\.com)$/.test(host)) {
+      return false;
+    }
+    if (u.pathname.startsWith("/connector/oauth/")) {
+      return true;
+    }
+    if (u.pathname === "/connector_platform_oauth_redirect") {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isClaudeRedirectUri(uri) {
+  try {
+    const u = new URL(String(uri || ""));
+    if (u.protocol !== "https:") {
+      return false;
+    }
+    const host = u.hostname.toLowerCase();
+    return /claude\.ai|anthropic\.com/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeRedirectUris(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => String(item || "").trim()).filter((item) => isHttpsUrl(item));
+}
+
+function redirectUriAllowed(redirectUri, allowedUris) {
+  const target = String(redirectUri || "").trim();
+  if (!target) {
+    return false;
+  }
+  return allowedUris.some((item) => item === target);
+}
+
+async function fetchCimdMetadata(clientIdUrl) {
+  const url = String(clientIdUrl || "").trim();
+  if (!isHttpsUrl(url)) {
+    return null;
+  }
+  const cached = cimdCache.get(url);
+  if (cached && Date.now() - cached.at < CIMD_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const response = await fetch(url, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(CIMD_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const json = await response.json();
+  const metadata = {
+    clientId: url,
+    clientName: String(json?.client_name || json?.client_id || "OAuth Client").trim() || "OAuth Client",
+    redirectUris: normalizeRedirectUris(json?.redirect_uris),
+    tokenEndpointAuthMethod: String(json?.token_endpoint_auth_method || "none").trim() || "none",
+    grantTypes: Array.isArray(json?.grant_types) ? json.grant_types.map(String) : ["authorization_code", "refresh_token"],
+    responseTypes: Array.isArray(json?.response_types) ? json.response_types.map(String) : ["code"],
+    source: "cimd",
+  };
+  cimdCache.set(url, { at: Date.now(), value: metadata });
+  return metadata;
+}
+
+async function resolveOAuthClient({ clientId, redirectUri, registeredClient = null }) {
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return { ok: false, error: "invalid_client", description: "缺少 client_id" };
+  }
+
+  if (id === DEFAULT_CLIENT_ID) {
+    const redirectUris = normalizeRedirectUris(registeredClient?.redirectUris);
+    if (redirectUri && redirectUris.length && !redirectUriAllowed(redirectUri, redirectUris)) {
+      return { ok: false, error: "invalid_client", description: "redirect_uri 未注册" };
+    }
+    if (redirectUri && !isClaudeRedirectUri(redirectUri)) {
+      return { ok: false, error: "invalid_client", description: "redirect_uri 不被允许" };
+    }
+    return {
+      ok: true,
+      client: {
+        clientId: id,
+        clientName: "Claude",
+        redirectUris: redirectUris.length ? redirectUris : redirectUri ? [redirectUri] : [],
+        provider: "claude",
+        source: "static",
+      },
+    };
+  }
+
+  if (registeredClient) {
+    const redirectUris = normalizeRedirectUris(registeredClient.redirectUris);
+    if (redirectUri && !redirectUriAllowed(redirectUri, redirectUris)) {
+      return { ok: false, error: "invalid_client", description: "redirect_uri 未注册" };
+    }
+    const provider = isChatGptOAuthClientId(id) || redirectUris.some(isChatGptRedirectUri) ? "chatgpt" : "other";
+    return {
+      ok: true,
+      client: {
+        clientId: id,
+        clientName: String(registeredClient.clientName || "OAuth Client").trim() || "OAuth Client",
+        redirectUris,
+        provider,
+        source: registeredClient.source || "dcr",
+      },
+    };
+  }
+
+  if (isHttpsUrl(id)) {
+    let metadata;
+    try {
+      metadata = await fetchCimdMetadata(id);
+    } catch {
+      return { ok: false, error: "invalid_client", description: "无法获取 client_id 元数据" };
+    }
+    if (!metadata) {
+      return { ok: false, error: "invalid_client", description: "client_id 元数据无效" };
+    }
+    if (redirectUri && !redirectUriAllowed(redirectUri, metadata.redirectUris)) {
+      return { ok: false, error: "invalid_client", description: "redirect_uri 不在 client 元数据中" };
+    }
+    const provider = isChatGptOAuthClientId(id)
+      ? "chatgpt"
+      : isClaudeOAuthClientId(id)
+        ? "claude"
+        : metadata.redirectUris.some(isChatGptRedirectUri)
+          ? "chatgpt"
+          : metadata.redirectUris.some(isClaudeRedirectUri)
+            ? "claude"
+            : "other";
+    return {
+      ok: true,
+      client: {
+        clientId: id,
+        clientName: metadata.clientName,
+        redirectUris: metadata.redirectUris,
+        provider,
+        source: "cimd",
+      },
+    };
+  }
+
+  return { ok: false, error: "invalid_client", description: "未知 client_id" };
+}
+
+function providerLabel(provider) {
+  if (provider === "chatgpt") {
+    return "ChatGPT";
+  }
+  if (provider === "claude") {
+    return "Claude";
+  }
+  return "客户端";
+}
+
+module.exports = {
+  isHttpsUrl,
+  isChatGptRedirectUri,
+  isClaudeRedirectUri,
+  normalizeRedirectUris,
+  redirectUriAllowed,
+  fetchCimdMetadata,
+  resolveOAuthClient,
+  providerLabel,
+};

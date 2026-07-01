@@ -4,13 +4,14 @@ function getSecret() {
   return String(process.env.MCP_OAUTH_SECRET || process.env.AUTH_SECRET || "stockreview-dev-secret-change-in-production");
 }
 
-function signAccessToken({ userId, clientId, scope, expMs }) {
+function signAccessToken({ userId, clientId, scope, resource, expMs }) {
   const payload = Buffer.from(
     JSON.stringify({
       typ: "mcp_access",
       u: String(userId || ""),
       c: String(clientId || ""),
       s: String(scope || ""),
+      r: String(resource || ""),
       exp: Number(expMs) || 0,
     }),
     "utf8"
@@ -45,6 +46,7 @@ function verifyAccessToken(token) {
       userId: json.u,
       clientId: json.c || "",
       scope: json.s || "",
+      resource: json.r || "",
     };
   } catch {
     return null;

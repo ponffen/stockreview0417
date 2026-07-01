@@ -1,6 +1,6 @@
 const { verifyAccessToken } = require("./oauth-tokens");
 const { TOOL_DEFS, callMcpTool } = require("./tools");
-const { mcpResourceUrl } = require("./config");
+const { mcpResourceUrl, DEFAULT_SCOPE } = require("./config");
 const { extractBearerToken, readRequestBody, sendJson } = require("./http-utils");
 const {
   MCP_SUBSCRIPTION_EXPIRED_MESSAGE,
@@ -12,9 +12,9 @@ const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const PROTOCOL_VERSION = "2024-11-05";
 
 function mcpAuthChallengeHeaders(req) {
-  const meta = `${getPublicBaseUrl(req)}/.well-known/oauth-protected-resource`;
+  const meta = `${getPublicBaseUrl(req)}/.well-known/oauth-protected-resource/mcp`;
   return {
-    "WWW-Authenticate": `Bearer realm="maque", resource_metadata="${meta}"`,
+    "WWW-Authenticate": `Bearer realm="maque", resource_metadata="${meta}", scope="${DEFAULT_SCOPE}"`,
   };
 }
 
@@ -122,7 +122,21 @@ async function handleSingleMcpMessage(viewerId, message) {
 async function handleMcpRequest(req, res) {
   const token = extractBearerToken(req);
   const auth = token ? verifyAccessToken(token) : null;
+  const expectedResource = mcpResourceUrl(req);
   if (!auth?.userId) {
+    sendJson(
+      res,
+      401,
+      {
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Unauthorized" },
+        id: null,
+      },
+      mcpAuthChallengeHeaders(req)
+    );
+    return;
+  }
+  if (auth.resource && auth.resource !== expectedResource) {
     sendJson(
       res,
       401,

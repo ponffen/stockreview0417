@@ -3,6 +3,8 @@ const {
   handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
   handleWellKnownAuthServerMcp,
+  handleWellKnownOpenIdConfiguration,
+  handleOAuthRegister,
   handleOAuthAuthorize,
   handleOAuthToken,
 } = require("./oauth-handlers");
@@ -27,6 +29,12 @@ function matchMcpDirectRoute(pathOnly) {
   }
   if (key === "/.well-known/oauth-authorization-server/mcp") {
     return "well-known-auth-server-mcp";
+  }
+  if (key === "/.well-known/openid-configuration") {
+    return "well-known-openid-configuration";
+  }
+  if (key === "/oauth/register") {
+    return "oauth-register";
   }
   if (key === "/oauth/authorize") {
     return "oauth-authorize";
@@ -65,6 +73,14 @@ async function handleMcpDirectRoute(req, res, pathOnly) {
   }
   if (route === "well-known-auth-server-mcp") {
     handleWellKnownAuthServerMcp(req, res);
+    return true;
+  }
+  if (route === "well-known-openid-configuration") {
+    handleWellKnownOpenIdConfiguration(req, res);
+    return true;
+  }
+  if (route === "oauth-register") {
+    await handleOAuthRegister(req, res);
     return true;
   }
   if (route === "oauth-authorize") {

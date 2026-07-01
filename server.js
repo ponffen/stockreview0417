@@ -972,6 +972,8 @@ const {
   handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
   handleWellKnownAuthServerMcp,
+  handleWellKnownOpenIdConfiguration,
+  handleOAuthRegister,
   handleOAuthAuthorize,
   handleOAuthToken,
 } = require("./src/mcp/oauth-handlers");
@@ -982,6 +984,8 @@ app.get("/.well-known/oauth-protected-resource", handleWellKnownProtectedResourc
 app.get("/.well-known/oauth-protected-resource/mcp", handleWellKnownProtectedResourceMcp);
 app.get("/.well-known/oauth-authorization-server", handleWellKnownAuthServer);
 app.get("/.well-known/oauth-authorization-server/mcp", handleWellKnownAuthServerMcp);
+app.get("/.well-known/openid-configuration", handleWellKnownOpenIdConfiguration);
+app.post("/oauth/register", (req, res) => void handleOAuthRegister(req, res));
 app.get("/oauth/authorize", (req, res) => void handleOAuthAuthorize(req, res));
 app.post("/oauth/token", (req, res) => void handleOAuthToken(req, res));
 app.get("/mcp", (req, res) => void handleMcpRequest(req, res));
