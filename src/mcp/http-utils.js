@@ -90,6 +90,26 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function clientAcceptsEventStream(req) {
+  const accept = String(req.headers?.accept || "").toLowerCase();
+  return accept.includes("text/event-stream");
+}
+
+function sendSseJsonRpcMessages(res, messages, headers = {}) {
+  for (const [k, v] of Object.entries(headers)) {
+    res.setHeader(k, v);
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  for (const message of messages) {
+    res.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+  }
+  res.end();
+}
+
 module.exports = {
   getQuery,
   readRequestBody,
@@ -98,4 +118,6 @@ module.exports = {
   sendText,
   extractBearerToken,
   escapeHtml,
+  clientAcceptsEventStream,
+  sendSseJsonRpcMessages,
 };

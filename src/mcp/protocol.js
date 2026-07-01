@@ -1,7 +1,7 @@
 const { verifyAccessToken } = require("./oauth-tokens");
 const { TOOL_DEFS, callMcpTool } = require("./tools");
 const { mcpResourceUrl, DEFAULT_SCOPE } = require("./config");
-const { extractBearerToken, readRequestBody, sendJson } = require("./http-utils");
+const { extractBearerToken, readRequestBody, sendJson, clientAcceptsEventStream, sendSseJsonRpcMessages } = require("./http-utils");
 const {
   MCP_SUBSCRIPTION_EXPIRED_MESSAGE,
   assertMcpUserActive,
@@ -120,6 +120,21 @@ async function handleSingleMcpMessage(viewerId, message) {
 }
 
 async function handleMcpRequest(req, res) {
+  try {
+    await handleMcpRequestInner(req, res);
+  } catch (error) {
+    console.error("[mcp] unhandled request error:", error);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal error" },
+        id: null,
+      });
+    }
+  }
+}
+
+async function handleMcpRequestInner(req, res) {
   const token = extractBearerToken(req);
   const auth = token ? verifyAccessToken(token) : null;
   const expectedResource = mcpResourceUrl(req);
@@ -180,12 +195,18 @@ async function handleMcpRequest(req, res) {
     return;
   }
 
+  if (req.method === "DELETE") {
+    res.statusCode = 200;
+    res.setHeader("Cache-Control", "no-store");
+    res.end();
+    return;
+  }
+
   if (req.method === "GET") {
-    sendJson(res, 200, {
-      ok: true,
-      name: SERVER_INFO.name,
-      resource: mcpResourceUrl(req),
-      transport: "http",
+    sendJson(res, 405, {
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Method Not Allowed" },
+      id: null,
     });
     return;
   }
@@ -209,6 +230,10 @@ async function handleMcpRequest(req, res) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.end();
+    return;
+  }
+  if (clientAcceptsEventStream(req)) {
+    sendSseJsonRpcMessages(res, responses);
     return;
   }
   sendJson(res, 200, responses.length === 1 ? responses[0] : responses);
