@@ -1,7 +1,16 @@
 const { verifyAccessToken } = require("./oauth-tokens");
 const { TOOL_DEFS, callMcpTool } = require("./tools");
 const { mcpResourceUrl, DEFAULT_SCOPE } = require("./config");
-const { extractBearerToken, readRequestBody, sendJson, clientAcceptsEventStream, sendSseJsonRpcMessages } = require("./http-utils");
+const {
+  extractBearerToken,
+  readRequestBody,
+  sendJson,
+  clientAcceptsEventStream,
+  sendSseJsonRpcMessages,
+  mcpCorsHeaders,
+  sendOptions,
+  startMcpSseStream,
+} = require("./http-utils");
 const {
   MCP_SUBSCRIPTION_EXPIRED_MESSAGE,
   assertMcpUserActive,
@@ -10,6 +19,7 @@ const {
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const PROTOCOL_VERSION = "2024-11-05";
+const { randomUUID } = require("crypto");
 
 function mcpAuthChallengeHeaders(req) {
   const meta = `${getPublicBaseUrl(req)}/.well-known/oauth-protected-resource/mcp`;
@@ -135,6 +145,23 @@ async function handleMcpRequest(req, res) {
 }
 
 async function handleMcpRequestInner(req, res) {
+  const cors = mcpCorsHeaders(req);
+
+  if (req.method === "OPTIONS") {
+    sendOptions(res, cors);
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    res.statusCode = 200;
+    for (const [k, v] of Object.entries(cors)) {
+      res.setHeader(k, v);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.end();
+    return;
+  }
+
   const token = extractBearerToken(req);
   const auth = token ? verifyAccessToken(token) : null;
   const expectedResource = mcpResourceUrl(req);
@@ -147,7 +174,7 @@ async function handleMcpRequestInner(req, res) {
         error: { code: -32001, message: "Unauthorized" },
         id: null,
       },
-      mcpAuthChallengeHeaders(req)
+      { ...cors, ...mcpAuthChallengeHeaders(req) }
     );
     return;
   }
@@ -160,7 +187,7 @@ async function handleMcpRequestInner(req, res) {
         error: { code: -32001, message: "Unauthorized" },
         id: null,
       },
-      mcpAuthChallengeHeaders(req)
+      { ...cors, ...mcpAuthChallengeHeaders(req) }
     );
     return;
   }
@@ -168,7 +195,7 @@ async function handleMcpRequestInner(req, res) {
   const gate = await assertMcpUserActive(auth.userId);
   if (!gate.ok) {
     const status = gate.status || 403;
-    const challenge = mcpAuthChallengeHeaders(req);
+    const challenge = { ...cors, ...mcpAuthChallengeHeaders(req) };
     if (req.method === "GET") {
       sendJson(
         res,
@@ -195,29 +222,47 @@ async function handleMcpRequestInner(req, res) {
     return;
   }
 
-  if (req.method === "DELETE") {
-    res.statusCode = 200;
-    res.setHeader("Cache-Control", "no-store");
-    res.end();
-    return;
-  }
-
   if (req.method === "GET") {
-    sendJson(res, 405, {
-      jsonrpc: "2.0",
-      error: { code: -32000, message: "Method Not Allowed" },
-      id: null,
+    if (!clientAcceptsEventStream(req)) {
+      sendJson(
+        res,
+        405,
+        {
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Method Not Allowed" },
+          id: null,
+        },
+        { ...cors, Allow: "GET, POST, DELETE, OPTIONS" }
+      );
+      return;
+    }
+    const sessionId = String(req.headers?.["mcp-session-id"] || req.headers?.["MCP-Session-Id"] || "").trim();
+    console.log("[mcp] GET sse", {
+      userId: auth.userId,
+      sessionId: sessionId || null,
     });
+    startMcpSseStream(res, cors);
     return;
   }
 
   if (req.method !== "POST") {
-    sendJson(res, 405, { ok: false, error: "Method Not Allowed" });
+    sendJson(res, 405, { ok: false, error: "Method Not Allowed" }, { ...cors, Allow: "GET, POST, DELETE, OPTIONS" });
     return;
   }
 
   const body = await readRequestBody(req);
   const messages = Array.isArray(body) ? body : [body];
+  const rpcMethods = messages.map((m) => String(m?.method || "").trim()).filter(Boolean);
+  const hasInitialize = rpcMethods.includes("initialize");
+  const sessionId = hasInitialize ? randomUUID() : "";
+  const sessionHeader = sessionId ? { "Mcp-Session-Id": sessionId } : {};
+  console.log("[mcp] POST", {
+    userId: auth.userId,
+    rpcMethods,
+    sessionId: sessionId || String(req.headers?.["mcp-session-id"] || "").trim() || null,
+    accept: String(req.headers?.accept || "").slice(0, 120),
+  });
+
   const responses = [];
   for (const message of messages) {
     const out = await handleSingleMcpMessage(auth.userId, message);
@@ -227,16 +272,18 @@ async function handleMcpRequestInner(req, res) {
   }
   if (!responses.length) {
     res.statusCode = 202;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    for (const [k, v] of Object.entries({ ...cors, ...sessionHeader })) {
+      res.setHeader(k, v);
+    }
     res.setHeader("Cache-Control", "no-store");
     res.end();
     return;
   }
   if (clientAcceptsEventStream(req)) {
-    sendSseJsonRpcMessages(res, responses);
+    sendSseJsonRpcMessages(res, responses, { ...cors, ...sessionHeader });
     return;
   }
-  sendJson(res, 200, responses.length === 1 ? responses[0] : responses);
+  sendJson(res, 200, responses.length === 1 ? responses[0] : responses, { ...cors, ...sessionHeader });
 }
 
 module.exports = {

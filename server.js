@@ -990,6 +990,8 @@ app.get("/oauth/authorize", (req, res) => void handleOAuthAuthorize(req, res));
 app.post("/oauth/token", (req, res) => void handleOAuthToken(req, res));
 app.get("/mcp", (req, res) => void handleMcpRequest(req, res));
 app.post("/mcp", (req, res) => void handleMcpRequest(req, res));
+app.delete("/mcp", (req, res) => void handleMcpRequest(req, res));
+app.options("/mcp", (req, res) => void handleMcpRequest(req, res));
 app.get("/api/mcp/connection-status", (req, res) => void handleConnectionStatus(req, res));
 app.delete("/api/mcp/connection", (req, res) => void handleConnectionRevoke(req, res));
 

@@ -101,13 +101,68 @@ function sendSseJsonRpcMessages(res, messages, headers = {}) {
   }
   res.statusCode = 200;
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "no-cache, no-store");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   for (const message of messages) {
     res.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
   }
   res.end();
+}
+
+function mcpCorsHeaders(req) {
+  const origin = String(req.headers?.origin || "").trim();
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Session-Id, Last-Event-ID, MCP-Protocol-Version",
+    "Access-Control-Max-Age": "86400",
+  };
+  if (origin) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers.Vary = "Origin";
+  } else {
+    headers["Access-Control-Allow-Origin"] = "*";
+  }
+  return headers;
+}
+
+function sendOptions(res, headers = {}) {
+  for (const [k, v] of Object.entries(headers)) {
+    res.setHeader(k, v);
+  }
+  res.statusCode = 204;
+  res.setHeader("Cache-Control", "no-store");
+  res.end();
+}
+
+function startMcpSseStream(res, headers = {}) {
+  for (const [k, v] of Object.entries(headers)) {
+    res.setHeader(k, v);
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-store");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.write(": ok\n\n");
+
+  const keepAliveMs = 25000;
+  const interval = setInterval(() => {
+    try {
+      if (res.writableEnded) {
+        clearInterval(interval);
+        return;
+      }
+      res.write(": keepalive\n\n");
+    } catch {
+      clearInterval(interval);
+    }
+  }, keepAliveMs);
+
+  const cleanup = () => clearInterval(interval);
+  res.on("close", cleanup);
+  res.on("finish", cleanup);
 }
 
 module.exports = {
@@ -120,4 +175,7 @@ module.exports = {
   escapeHtml,
   clientAcceptsEventStream,
   sendSseJsonRpcMessages,
+  mcpCorsHeaders,
+  sendOptions,
+  startMcpSseStream,
 };
