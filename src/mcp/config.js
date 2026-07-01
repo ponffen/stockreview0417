@@ -120,14 +120,15 @@ function inferOAuthProvider(clientId) {
   return null;
 }
 
-function sqlOAuthClientProviderClause(provider, paramIndex) {
+function sqlOAuthClientProviderClause(provider, defaultClientParamIndex = null) {
   if (provider === "claude") {
+    const clientParam = Number(defaultClientParamIndex) || 3;
     return `(
       provider = 'claude'
       OR (
         COALESCE(provider, '') = ''
         AND (
-          client_id = $${paramIndex}
+          client_id = $${clientParam}
           OR client_id ILIKE '%claude.ai%'
           OR client_id ILIKE '%anthropic.com%'
           OR (

@@ -161,11 +161,18 @@ async function hasActiveOAuthConnection(userId, provider) {
   }
   const pool = await initPool();
   const now = Date.now();
-  const clause = sqlOAuthClientProviderClause(provider, 3);
+  const params = [uid, now];
+  let clause;
+  if (provider === "claude") {
+    clause = sqlOAuthClientProviderClause(provider, 3);
+    params.push(DEFAULT_CLIENT_ID);
+  } else {
+    clause = sqlOAuthClientProviderClause(provider);
+  }
   const { rows } = await pool.query(
     `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
      WHERE user_id = $1 AND expires_at > $2 AND ${clause}`,
-    [uid, now, DEFAULT_CLIENT_ID],
+    params,
   );
   const exp = Number(rows[0]?.exp) || 0;
   return {
@@ -189,11 +196,15 @@ async function revokeOAuthConnection(userId, provider) {
     return;
   }
   const pool = await initPool();
-  const clause = sqlOAuthClientProviderClause(provider, 2);
-  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND ${clause}`, [
-    uid,
-    DEFAULT_CLIENT_ID,
-  ]);
+  const params = [uid];
+  let clause;
+  if (provider === "claude") {
+    clause = sqlOAuthClientProviderClause(provider, 2);
+    params.push(DEFAULT_CLIENT_ID);
+  } else {
+    clause = sqlOAuthClientProviderClause(provider);
+  }
+  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND ${clause}`, params);
 }
 
 async function revokeClaudeConnection(userId) {
