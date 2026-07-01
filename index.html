@@ -654,6 +654,45 @@
                 <p class="ai-provider-examples-item">示例2：西坡GCC这个人top5的持仓是什么？</p>
               </div>
             </article>
+
+            <article class="panel ai-provider-card" data-provider="chatgpt">
+              <h2 class="ai-provider-title">ChatGPT</h2>
+              <div class="ai-provider-status-row">
+                <div id="holdingsAiChatGptStatus" class="ai-provider-status" aria-live="polite">加载中…</div>
+                <button type="button" id="holdingsAiChatGptDisconnectBtn" class="ai-provider-disconnect hidden">断开连接</button>
+              </div>
+              <div class="ai-provider-actions">
+                <button type="button" id="holdingsAiChatGptConnectBtn" class="btn btn-primary full">连接 ChatGPT</button>
+                <a id="holdingsAiOpenChatGptBtn" class="btn btn-primary full hidden" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">在 ChatGPT 中复盘</a>
+              </div>
+              <div class="ai-provider-connector-info" id="holdingsAiChatGptConnectorInfo">
+                <p class="ai-provider-section-lead">连接器信息（新建 ChatGPT 连接器时填写）：</p>
+                <div class="ai-provider-connector-row">
+                  <span class="ai-provider-connector-label">名称</span>
+                  <code id="holdingsAiChatGptConnectorName" class="ai-provider-connector-value">麻雀</code>
+                  <button type="button" class="ai-provider-copy-btn" data-copy-target="holdingsAiChatGptConnectorName">复制</button>
+                </div>
+                <div class="ai-provider-connector-row">
+                  <span class="ai-provider-connector-label">MCP Server URL</span>
+                  <code id="holdingsAiChatGptConnectorUrl" class="ai-provider-connector-value">—</code>
+                  <button type="button" class="ai-provider-copy-btn" data-copy-target="holdingsAiChatGptConnectorUrl">复制</button>
+                </div>
+              </div>
+              <div class="ai-provider-guide">
+                <p class="ai-provider-section-lead">连接步骤：</p>
+                <ol class="ai-provider-steps">
+                  <li>点击下方「连接 ChatGPT」（将复制 MCP Server URL 并打开 ChatGPT）</li>
+                  <li>在 ChatGPT 中进入 <strong>设置 → 连接器 → 新建</strong>，填写上方名称与 MCP Server URL</li>
+                  <li>创建连接器后，按提示完成麻雀账号 OAuth 授权；返回本页，状态显示「已连接 ChatGPT」</li>
+                  <li>点击「在 ChatGPT 中复盘」，在新对话中启用「麻雀」连接器后开始提问</li>
+                </ol>
+              </div>
+              <div class="ai-provider-examples">
+                <p class="ai-provider-section-lead">连接成功后，您可在 ChatGPT 中这样问：</p>
+                <p class="ai-provider-examples-item">示例1：我已经配置了麻雀的mcp，你看看我本人现在持仓的top3。</p>
+                <p class="ai-provider-examples-item">示例2：根据我麻雀里的交易记录，复盘 TSM 持仓历史：买入逻辑、持有过程、哪里可以做得更好。</p>
+              </div>
+            </article>
           </div>
         </div>
       </section>

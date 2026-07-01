@@ -3086,6 +3086,59 @@ body.subscription-expired-mode {
   margin-bottom: 0;
 }
 
+.ai-provider-connector-info {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.ai-provider-connector-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.ai-provider-connector-row:first-of-type {
+  margin-top: 0;
+}
+
+.ai-provider-connector-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ai-provider-connector-value {
+  display: block;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.ai-provider-copy-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--blue);
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-provider-copy-btn.is-copied {
+  color: #047857;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
 .community-card {
   background: var(--panel);
   border-radius: 0;

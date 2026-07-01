@@ -118,33 +118,70 @@ async function findRefreshToken(refreshToken) {
   };
 }
 
-async function hasActiveClaudeConnection(userId) {
+async function hasActiveOAuthConnection(userId, { claudeOnly = false, chatgptOnly = false } = {}) {
   await ensureMcpOAuthSchema();
   const uid = String(userId || "").trim();
   if (!uid) {
     return { connected: false };
   }
   const pool = await initPool();
-  const { rows } = await pool.query(
-    `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
-     WHERE user_id = $1 AND expires_at > $2`,
-    [uid, Date.now()]
-  );
+  const now = Date.now();
+  let sql = `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
+     WHERE user_id = $1 AND expires_at > $2`;
+  const params = [uid, now];
+  if (claudeOnly) {
+    sql += ` AND client_id = $3`;
+    params.push(DEFAULT_CLIENT_ID);
+  } else if (chatgptOnly) {
+    sql += ` AND client_id <> $3`;
+    params.push(DEFAULT_CLIENT_ID);
+  }
+  const { rows } = await pool.query(sql, params);
   const exp = Number(rows[0]?.exp) || 0;
   return {
-    connected: exp > Date.now(),
-    expiresAt: exp > Date.now() ? exp : null,
+    connected: exp > now,
+    expiresAt: exp > now ? exp : null,
   };
 }
 
-async function revokeClaudeConnection(userId) {
+async function hasActiveClaudeConnection(userId) {
+  return hasActiveOAuthConnection(userId, { claudeOnly: true });
+}
+
+async function hasActiveChatGptConnection(userId) {
+  return hasActiveOAuthConnection(userId, { chatgptOnly: true });
+}
+
+async function revokeOAuthConnection(userId, { claudeOnly = false, chatgptOnly = false } = {}) {
   await ensureMcpOAuthSchema();
   const uid = String(userId || "").trim();
   if (!uid) {
     return;
   }
   const pool = await initPool();
+  if (claudeOnly) {
+    await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND client_id = $2`, [
+      uid,
+      DEFAULT_CLIENT_ID,
+    ]);
+    return;
+  }
+  if (chatgptOnly) {
+    await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND client_id <> $2`, [
+      uid,
+      DEFAULT_CLIENT_ID,
+    ]);
+    return;
+  }
   await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1`, [uid]);
+}
+
+async function revokeClaudeConnection(userId) {
+  await revokeOAuthConnection(userId, { claudeOnly: true });
+}
+
+async function revokeChatGptConnection(userId) {
+  await revokeOAuthConnection(userId, { chatgptOnly: true });
 }
 
 function verifyPkce(codeVerifier, codeChallenge) {
@@ -164,8 +201,12 @@ module.exports = {
   consumeAuthCode,
   saveRefreshToken,
   findRefreshToken,
+  hasActiveOAuthConnection,
   hasActiveClaudeConnection,
+  hasActiveChatGptConnection,
+  revokeOAuthConnection,
   revokeClaudeConnection,
+  revokeChatGptConnection,
   verifyPkce,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,

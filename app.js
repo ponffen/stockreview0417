@@ -79,11 +79,21 @@ let sessionProfile = {
 let authSubmitting = false;
 let analysisStockRankHelpListenersBound = false;
 let holdingsAiConnectionLoading = false;
-let holdingsAiConnection = {
-  connected: false,
-  expiresAt: null,
-  installDeepLink: "",
-  claudeNewChatUrl: "https://claude.ai/new",
+const holdingsAiProvidersState = {
+  mcpUrl: "",
+  connectorName: "麻雀",
+  claude: {
+    connected: false,
+    expiresAt: null,
+    installDeepLink: "",
+    newChatUrl: "https://claude.ai/new",
+  },
+  chatgpt: {
+    connected: false,
+    expiresAt: null,
+    connectUrl: "https://chatgpt.com/",
+    newChatUrl: "https://chatgpt.com/",
+  },
 };
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
@@ -525,6 +535,12 @@ const holdingsAiStatus = document.getElementById("holdingsAiStatus");
 const holdingsAiConnectBtn = document.getElementById("holdingsAiConnectBtn");
 const holdingsAiOpenClaudeBtn = document.getElementById("holdingsAiOpenClaudeBtn");
 const holdingsAiDisconnectBtn = document.getElementById("holdingsAiDisconnectBtn");
+const holdingsAiChatGptStatus = document.getElementById("holdingsAiChatGptStatus");
+const holdingsAiChatGptConnectBtn = document.getElementById("holdingsAiChatGptConnectBtn");
+const holdingsAiOpenChatGptBtn = document.getElementById("holdingsAiOpenChatGptBtn");
+const holdingsAiChatGptDisconnectBtn = document.getElementById("holdingsAiChatGptDisconnectBtn");
+const holdingsAiChatGptConnectorName = document.getElementById("holdingsAiChatGptConnectorName");
+const holdingsAiChatGptConnectorUrl = document.getElementById("holdingsAiChatGptConnectorUrl");
 const holdingsGuideDialog = document.getElementById("holdingsGuideDialog");
 const closeHoldingsGuideBtn = document.getElementById("closeHoldingsGuideBtn");
 const holdingsGuideAddTradeBtn = document.getElementById("holdingsGuideAddTradeBtn");
@@ -1103,30 +1119,126 @@ function maybeShowHoldingsGuideDialog() {
   holdingsGuideDialog.showModal();
 }
 
-function renderHoldingsAiConnectionUi() {
-  if (!holdingsAiStatus) {
+function renderHoldingsAiProviderStatus({
+  statusEl,
+  connectBtn,
+  openBtn,
+  disconnectBtn,
+  providerLabel,
+  connected,
+  newChatUrl,
+}) {
+  if (!statusEl) {
     return;
   }
-  holdingsAiStatus.classList.remove("is-connected", "is-error");
+  statusEl.classList.remove("is-connected", "is-error");
   if (holdingsAiConnectionLoading) {
-    holdingsAiStatus.textContent = "加载中…";
-  } else if (holdingsAiConnection.connected) {
-    holdingsAiStatus.textContent = "已连接 Claude";
-    holdingsAiStatus.classList.add("is-connected");
+    statusEl.textContent = "加载中…";
+  } else if (connected) {
+    statusEl.textContent = `已连接 ${providerLabel}`;
+    statusEl.classList.add("is-connected");
   } else {
-    holdingsAiStatus.textContent = "未连接";
+    statusEl.textContent = "未连接";
   }
-  holdingsAiConnectBtn?.classList.toggle("hidden", !!holdingsAiConnection.connected);
-  holdingsAiOpenClaudeBtn?.classList.toggle("hidden", !holdingsAiConnection.connected);
-  holdingsAiDisconnectBtn?.classList.toggle("hidden", !holdingsAiConnection.connected);
-  if (holdingsAiOpenClaudeBtn) {
-    holdingsAiOpenClaudeBtn.href =
-      String(holdingsAiConnection.claudeNewChatUrl || "https://claude.ai/new").trim() || "https://claude.ai/new";
+  connectBtn?.classList.toggle("hidden", !!connected);
+  openBtn?.classList.toggle("hidden", !connected);
+  disconnectBtn?.classList.toggle("hidden", !connected);
+  if (openBtn) {
+    openBtn.href = String(newChatUrl || "").trim() || openBtn.getAttribute("href") || "#";
   }
 }
 
+function renderHoldingsAiConnectionUi() {
+  renderHoldingsAiProviderStatus({
+    statusEl: holdingsAiStatus,
+    connectBtn: holdingsAiConnectBtn,
+    openBtn: holdingsAiOpenClaudeBtn,
+    disconnectBtn: holdingsAiDisconnectBtn,
+    providerLabel: "Claude",
+    connected: !!holdingsAiProvidersState.claude.connected,
+    newChatUrl: holdingsAiProvidersState.claude.newChatUrl,
+  });
+  renderHoldingsAiProviderStatus({
+    statusEl: holdingsAiChatGptStatus,
+    connectBtn: holdingsAiChatGptConnectBtn,
+    openBtn: holdingsAiOpenChatGptBtn,
+    disconnectBtn: holdingsAiChatGptDisconnectBtn,
+    providerLabel: "ChatGPT",
+    connected: !!holdingsAiProvidersState.chatgpt.connected,
+    newChatUrl: holdingsAiProvidersState.chatgpt.newChatUrl,
+  });
+  if (holdingsAiChatGptConnectorName) {
+    holdingsAiChatGptConnectorName.textContent =
+      String(holdingsAiProvidersState.connectorName || "麻雀").trim() || "麻雀";
+  }
+  if (holdingsAiChatGptConnectorUrl) {
+    holdingsAiChatGptConnectorUrl.textContent = String(holdingsAiProvidersState.mcpUrl || "—").trim() || "—";
+  }
+}
+
+function applyHoldingsAiConnectionPayload(data = {}) {
+  const claude = data.claude || {};
+  const chatgpt = data.chatgpt || {};
+  holdingsAiProvidersState.mcpUrl = String(data.mcpUrl || "").trim();
+  holdingsAiProvidersState.connectorName = String(data.connectorName || "麻雀").trim() || "麻雀";
+  holdingsAiProvidersState.claude = {
+    connected: !!(claude.connected ?? data.connected),
+    expiresAt: claude.expiresAt ?? data.expiresAt ?? null,
+    installDeepLink: String(claude.installDeepLink || data.installDeepLink || "").trim(),
+    newChatUrl: String(claude.newChatUrl || data.claudeNewChatUrl || "https://claude.ai/new").trim(),
+  };
+  holdingsAiProvidersState.chatgpt = {
+    connected: !!chatgpt.connected,
+    expiresAt: chatgpt.expiresAt || null,
+    connectUrl: String(chatgpt.connectUrl || "https://chatgpt.com/").trim(),
+    newChatUrl: String(chatgpt.newChatUrl || "https://chatgpt.com/").trim(),
+  };
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return false;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function flashCopyButton(btn, ok) {
+  if (!btn) {
+    return;
+  }
+  const prev = btn.textContent;
+  btn.textContent = ok ? "已复制" : "复制失败";
+  btn.classList.toggle("is-copied", !!ok);
+  window.setTimeout(() => {
+    btn.textContent = prev;
+    btn.classList.remove("is-copied");
+  }, 1600);
+}
+
 async function refreshHoldingsAiConnectionStatus({ force = false } = {}) {
-  if (!holdingsAiStatus || !sessionPhone || sessionSubscriptionExpired) {
+  if ((!holdingsAiStatus && !holdingsAiChatGptStatus) || !sessionPhone || sessionSubscriptionExpired) {
     return;
   }
   if (holdingsAiConnectionLoading && !force) {
@@ -1138,20 +1250,27 @@ async function refreshHoldingsAiConnectionStatus({ force = false } = {}) {
     const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection-status`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload?.ok) {
-      holdingsAiStatus.textContent = payload?.error || "连接状态加载失败";
-      holdingsAiStatus.classList.add("is-error");
+      const message = payload?.error || "连接状态加载失败";
+      holdingsAiStatus?.classList.add("is-error");
+      holdingsAiChatGptStatus?.classList.add("is-error");
+      if (holdingsAiStatus) {
+        holdingsAiStatus.textContent = message;
+      }
+      if (holdingsAiChatGptStatus) {
+        holdingsAiChatGptStatus.textContent = message;
+      }
       return;
     }
-    const data = payload.data || {};
-    holdingsAiConnection = {
-      connected: !!data.connected,
-      expiresAt: data.expiresAt || null,
-      installDeepLink: String(data.installDeepLink || ""),
-      claudeNewChatUrl: String(data.claudeNewChatUrl || "https://claude.ai/new"),
-    };
+    applyHoldingsAiConnectionPayload(payload.data || {});
   } catch {
-    holdingsAiStatus.textContent = "网络错误";
-    holdingsAiStatus.classList.add("is-error");
+    holdingsAiStatus?.classList.add("is-error");
+    holdingsAiChatGptStatus?.classList.add("is-error");
+    if (holdingsAiStatus) {
+      holdingsAiStatus.textContent = "网络错误";
+    }
+    if (holdingsAiChatGptStatus) {
+      holdingsAiChatGptStatus.textContent = "网络错误";
+    }
   } finally {
     holdingsAiConnectionLoading = false;
     renderHoldingsAiConnectionUi();
@@ -3107,7 +3226,7 @@ function bindEvents() {
       return;
     }
     await refreshHoldingsAiConnectionStatus({ force: true });
-    const link = String(holdingsAiConnection.installDeepLink || "").trim();
+    const link = String(holdingsAiProvidersState.claude.installDeepLink || "").trim();
     if (link) {
       window.open(link, "_blank", "noopener,noreferrer");
       return;
@@ -3120,21 +3239,76 @@ function bindEvents() {
       return;
     }
     try {
-      const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection`, { method: "DELETE" });
+      const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection?provider=claude`, {
+        method: "DELETE",
+      });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.ok) {
         holdingsAiStatus.textContent = payload?.error || "断开失败";
         holdingsAiStatus?.classList.add("is-error");
         return;
       }
-      holdingsAiConnection.connected = false;
-      holdingsAiConnection.expiresAt = null;
+      holdingsAiProvidersState.claude.connected = false;
+      holdingsAiProvidersState.claude.expiresAt = null;
       renderHoldingsAiConnectionUi();
       void refreshHoldingsAiConnectionStatus({ force: true });
     } catch {
       holdingsAiStatus.textContent = "网络错误";
       holdingsAiStatus?.classList.add("is-error");
     }
+  });
+  holdingsAiChatGptConnectBtn?.addEventListener("click", async () => {
+    if (!sessionPhone || sessionSubscriptionExpired) {
+      return;
+    }
+    await refreshHoldingsAiConnectionStatus({ force: true });
+    const mcpUrl = String(holdingsAiProvidersState.mcpUrl || "").trim();
+    const connectUrl = String(holdingsAiProvidersState.chatgpt.connectUrl || "https://chatgpt.com/").trim();
+    if (mcpUrl) {
+      const copied = await copyTextToClipboard(mcpUrl);
+      if (!copied && holdingsAiChatGptStatus) {
+        holdingsAiChatGptStatus.textContent = "请手动复制 MCP Server URL";
+        holdingsAiChatGptStatus.classList.add("is-error");
+      }
+    }
+    if (connectUrl) {
+      window.open(connectUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    holdingsAiChatGptStatus.textContent = "无法打开 ChatGPT，请稍后重试";
+    holdingsAiChatGptStatus?.classList.add("is-error");
+  });
+  holdingsAiChatGptDisconnectBtn?.addEventListener("click", async () => {
+    if (!sessionPhone || sessionSubscriptionExpired) {
+      return;
+    }
+    try {
+      const response = await apiFetch(`${getApiBaseForFetch()}/mcp/connection?provider=chatgpt`, {
+        method: "DELETE",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.ok) {
+        holdingsAiChatGptStatus.textContent = payload?.error || "断开失败";
+        holdingsAiChatGptStatus?.classList.add("is-error");
+        return;
+      }
+      holdingsAiProvidersState.chatgpt.connected = false;
+      holdingsAiProvidersState.chatgpt.expiresAt = null;
+      renderHoldingsAiConnectionUi();
+      void refreshHoldingsAiConnectionStatus({ force: true });
+    } catch {
+      holdingsAiChatGptStatus.textContent = "网络错误";
+      holdingsAiChatGptStatus?.classList.add("is-error");
+    }
+  });
+  document.querySelectorAll(".ai-provider-copy-btn[data-copy-target]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const targetId = btn.getAttribute("data-copy-target");
+      const target = targetId ? document.getElementById(targetId) : null;
+      const text = target?.textContent || "";
+      const ok = await copyTextToClipboard(text);
+      flashCopyButton(btn, ok);
+    });
   });
 
   appShell?.addEventListener("click", (e) => {

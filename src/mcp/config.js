@@ -1,5 +1,8 @@
 const DEFAULT_SCOPE = "read:portfolio";
 const DEFAULT_CLIENT_ID = "claude-mcp";
+const MCP_CONNECTOR_NAME = "麻雀";
+const CHATGPT_NEW_CHAT_URL = "https://chatgpt.com/";
+const CHATGPT_CONNECT_URL = "https://chatgpt.com/";
 const ACCESS_TOKEN_TTL_SEC = 60 * 60; // 1h
 const REFRESH_TOKEN_TTL_SEC = 60 * 60 * 24 * 90; // 90d
 const AUTH_CODE_TTL_SEC = 10 * 60;
@@ -44,16 +47,24 @@ function isAllowedOAuthClientId(clientId) {
 function claudeInstallDeepLink(mcpUrl = "https://www.higcc.com/mcp") {
   const params = new URLSearchParams({
     modal: "add-custom-connector",
-    connectorName: "麻雀",
+    connectorName: MCP_CONNECTOR_NAME,
     connectorUrl: mcpUrl,
   });
   return `https://claude.ai/customize/connectors?${params.toString()}`;
 }
 
+function isClaudeOAuthClientId(clientId) {
+  return String(clientId || "").trim() === DEFAULT_CLIENT_ID;
+}
+
 module.exports = {
   DEFAULT_SCOPE,
   DEFAULT_CLIENT_ID,
+  MCP_CONNECTOR_NAME,
+  CHATGPT_NEW_CHAT_URL,
+  CHATGPT_CONNECT_URL,
   isAllowedOAuthClientId,
+  isClaudeOAuthClientId,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,
