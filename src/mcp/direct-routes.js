@@ -1,6 +1,8 @@
 const {
   handleWellKnownProtectedResource,
+  handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
+  handleWellKnownAuthServerMcp,
   handleOAuthAuthorize,
   handleOAuthToken,
 } = require("./oauth-handlers");
@@ -17,8 +19,14 @@ function matchMcpDirectRoute(pathOnly) {
   if (key === "/.well-known/oauth-protected-resource") {
     return "well-known-protected";
   }
+  if (key === "/.well-known/oauth-protected-resource/mcp") {
+    return "well-known-protected-mcp";
+  }
   if (key === "/.well-known/oauth-authorization-server") {
     return "well-known-auth-server";
+  }
+  if (key === "/.well-known/oauth-authorization-server/mcp") {
+    return "well-known-auth-server-mcp";
   }
   if (key === "/oauth/authorize") {
     return "oauth-authorize";
@@ -47,8 +55,16 @@ async function handleMcpDirectRoute(req, res, pathOnly) {
     handleWellKnownProtectedResource(req, res);
     return true;
   }
+  if (route === "well-known-protected-mcp") {
+    handleWellKnownProtectedResourceMcp(req, res);
+    return true;
+  }
   if (route === "well-known-auth-server") {
     handleWellKnownAuthServer(req, res);
+    return true;
+  }
+  if (route === "well-known-auth-server-mcp") {
+    handleWellKnownAuthServerMcp(req, res);
     return true;
   }
   if (route === "oauth-authorize") {

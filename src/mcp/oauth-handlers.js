@@ -76,6 +76,14 @@ function handleWellKnownAuthServer(req, res) {
   });
 }
 
+function handleWellKnownProtectedResourceMcp(req, res) {
+  handleWellKnownProtectedResource(req, res);
+}
+
+function handleWellKnownAuthServerMcp(req, res) {
+  handleWellKnownAuthServer(req, res);
+}
+
 async function handleOAuthAuthorize(req, res) {
   if (req.method !== "GET") {
     sendJson(res, 405, { ok: false, error: "Method Not Allowed" });
@@ -323,7 +331,9 @@ async function handleOAuthToken(req, res) {
 
 module.exports = {
   handleWellKnownProtectedResource,
+  handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
+  handleWellKnownAuthServerMcp,
   handleOAuthAuthorize,
   handleOAuthToken,
   assertOAuthUser,

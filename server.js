@@ -969,7 +969,9 @@ async function collectLiveSymbolsForUser(userId, accountId = "all") {
 
 const {
   handleWellKnownProtectedResource,
+  handleWellKnownProtectedResourceMcp,
   handleWellKnownAuthServer,
+  handleWellKnownAuthServerMcp,
   handleOAuthAuthorize,
   handleOAuthToken,
 } = require("./src/mcp/oauth-handlers");
@@ -977,7 +979,9 @@ const { handleMcpRequest } = require("./src/mcp/protocol");
 const { handleConnectionStatus, handleConnectionRevoke } = require("./src/mcp/connection-api");
 
 app.get("/.well-known/oauth-protected-resource", handleWellKnownProtectedResource);
+app.get("/.well-known/oauth-protected-resource/mcp", handleWellKnownProtectedResourceMcp);
 app.get("/.well-known/oauth-authorization-server", handleWellKnownAuthServer);
+app.get("/.well-known/oauth-authorization-server/mcp", handleWellKnownAuthServerMcp);
 app.get("/oauth/authorize", (req, res) => void handleOAuthAuthorize(req, res));
 app.post("/oauth/token", (req, res) => void handleOAuthToken(req, res));
 app.get("/mcp", (req, res) => void handleMcpRequest(req, res));

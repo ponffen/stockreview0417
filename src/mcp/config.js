@@ -2,7 +2,7 @@ const DEFAULT_SCOPE = "read:portfolio";
 const DEFAULT_CLIENT_ID = "claude-mcp";
 const MCP_CONNECTOR_NAME = "麻雀";
 const CHATGPT_NEW_CHAT_URL = "https://chatgpt.com/";
-const CHATGPT_CONNECT_URL = "https://chatgpt.com/";
+const CHATGPT_CONNECT_URL = "https://chatgpt.com/apps#settings/Connectors";
 const ACCESS_TOKEN_TTL_SEC = 60 * 60; // 1h
 const REFRESH_TOKEN_TTL_SEC = 60 * 60 * 24 * 90; // 90d
 const AUTH_CODE_TTL_SEC = 10 * 60;
@@ -54,7 +54,57 @@ function claudeInstallDeepLink(mcpUrl = "https://www.higcc.com/mcp") {
 }
 
 function isClaudeOAuthClientId(clientId) {
-  return String(clientId || "").trim() === DEFAULT_CLIENT_ID;
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return false;
+  }
+  if (id === DEFAULT_CLIENT_ID) {
+    return true;
+  }
+  const lower = id.toLowerCase();
+  if (/claude\.ai|anthropic\.com/.test(lower)) {
+    return true;
+  }
+  try {
+    const host = new URL(id).hostname.toLowerCase();
+    return /claude\.ai|anthropic\.com/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function isChatGptOAuthClientId(clientId) {
+  const id = String(clientId || "").trim();
+  if (!id || isClaudeOAuthClientId(id)) {
+    return false;
+  }
+  const lower = id.toLowerCase();
+  if (/openai\.com|chatgpt\.com|chat\.openai\.com/.test(lower)) {
+    return true;
+  }
+  try {
+    const host = new URL(id).hostname.toLowerCase();
+    return /openai\.com|chatgpt\.com/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function sqlOAuthClientProviderClause(provider, paramIndex) {
+  if (provider === "claude") {
+    return `(
+      client_id = $${paramIndex}
+      OR client_id ILIKE '%claude.ai%'
+      OR client_id ILIKE '%anthropic.com%'
+    )`;
+  }
+  if (provider === "chatgpt") {
+    return `(
+      client_id ILIKE '%openai.com%'
+      OR client_id ILIKE '%chatgpt.com%'
+    )`;
+  }
+  return "FALSE";
 }
 
 module.exports = {
@@ -65,6 +115,8 @@ module.exports = {
   CHATGPT_CONNECT_URL,
   isAllowedOAuthClientId,
   isClaudeOAuthClientId,
+  isChatGptOAuthClientId,
+  sqlOAuthClientProviderClause,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,

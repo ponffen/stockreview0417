@@ -1,6 +1,12 @@
 const crypto = require("node:crypto");
 const { initPool } = require("../db");
-const { ACCESS_TOKEN_TTL_SEC, REFRESH_TOKEN_TTL_SEC, AUTH_CODE_TTL_SEC, DEFAULT_CLIENT_ID } = require("./config");
+const {
+  ACCESS_TOKEN_TTL_SEC,
+  REFRESH_TOKEN_TTL_SEC,
+  AUTH_CODE_TTL_SEC,
+  DEFAULT_CLIENT_ID,
+  sqlOAuthClientProviderClause,
+} = require("./config");
 
 let schemaReady = false;
 
@@ -118,25 +124,20 @@ async function findRefreshToken(refreshToken) {
   };
 }
 
-async function hasActiveOAuthConnection(userId, { claudeOnly = false, chatgptOnly = false } = {}) {
+async function hasActiveOAuthConnection(userId, provider) {
   await ensureMcpOAuthSchema();
   const uid = String(userId || "").trim();
-  if (!uid) {
+  if (!uid || (provider !== "claude" && provider !== "chatgpt")) {
     return { connected: false };
   }
   const pool = await initPool();
   const now = Date.now();
-  let sql = `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
-     WHERE user_id = $1 AND expires_at > $2`;
-  const params = [uid, now];
-  if (claudeOnly) {
-    sql += ` AND client_id = $3`;
-    params.push(DEFAULT_CLIENT_ID);
-  } else if (chatgptOnly) {
-    sql += ` AND client_id <> $3`;
-    params.push(DEFAULT_CLIENT_ID);
-  }
-  const { rows } = await pool.query(sql, params);
+  const clause = sqlOAuthClientProviderClause(provider, 3);
+  const { rows } = await pool.query(
+    `SELECT MAX(expires_at)::bigint AS exp FROM mcp_oauth_refresh_token
+     WHERE user_id = $1 AND expires_at > $2 AND ${clause}`,
+    [uid, now, DEFAULT_CLIENT_ID],
+  );
   const exp = Number(rows[0]?.exp) || 0;
   return {
     connected: exp > now,
@@ -145,43 +146,33 @@ async function hasActiveOAuthConnection(userId, { claudeOnly = false, chatgptOnl
 }
 
 async function hasActiveClaudeConnection(userId) {
-  return hasActiveOAuthConnection(userId, { claudeOnly: true });
+  return hasActiveOAuthConnection(userId, "claude");
 }
 
 async function hasActiveChatGptConnection(userId) {
-  return hasActiveOAuthConnection(userId, { chatgptOnly: true });
+  return hasActiveOAuthConnection(userId, "chatgpt");
 }
 
-async function revokeOAuthConnection(userId, { claudeOnly = false, chatgptOnly = false } = {}) {
+async function revokeOAuthConnection(userId, provider) {
   await ensureMcpOAuthSchema();
   const uid = String(userId || "").trim();
-  if (!uid) {
+  if (!uid || (provider !== "claude" && provider !== "chatgpt")) {
     return;
   }
   const pool = await initPool();
-  if (claudeOnly) {
-    await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND client_id = $2`, [
-      uid,
-      DEFAULT_CLIENT_ID,
-    ]);
-    return;
-  }
-  if (chatgptOnly) {
-    await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND client_id <> $2`, [
-      uid,
-      DEFAULT_CLIENT_ID,
-    ]);
-    return;
-  }
-  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1`, [uid]);
+  const clause = sqlOAuthClientProviderClause(provider, 2);
+  await pool.query(`DELETE FROM mcp_oauth_refresh_token WHERE user_id = $1 AND ${clause}`, [
+    uid,
+    DEFAULT_CLIENT_ID,
+  ]);
 }
 
 async function revokeClaudeConnection(userId) {
-  await revokeOAuthConnection(userId, { claudeOnly: true });
+  await revokeOAuthConnection(userId, "claude");
 }
 
 async function revokeChatGptConnection(userId) {
-  await revokeOAuthConnection(userId, { chatgptOnly: true });
+  await revokeOAuthConnection(userId, "chatgpt");
 }
 
 function verifyPkce(codeVerifier, codeChallenge) {
