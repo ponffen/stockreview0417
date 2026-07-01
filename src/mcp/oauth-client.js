@@ -84,14 +84,23 @@ function normalizeRedirectUris(value) {
 }
 
 function detectOAuthProvider({ clientId, redirectUris = [] }) {
+  const id = String(clientId || "").trim();
   if (redirectUris.some(isWorkBuddyRedirectUri)) {
     return "workbuddy";
   }
-  if (isChatGptOAuthClientId(clientId) || redirectUris.some(isChatGptRedirectUri)) {
+  if (isChatGptOAuthClientId(id) || /^mcp-/.test(id) || redirectUris.some(isChatGptRedirectUri)) {
     return "chatgpt";
   }
-  if (isClaudeOAuthClientId(clientId) || redirectUris.some(isClaudeRedirectUri)) {
+  if (isClaudeOAuthClientId(id) || redirectUris.some(isClaudeRedirectUri)) {
     return "claude";
+  }
+  try {
+    const u = new URL(id);
+    if (u.pathname.replace(/\/+$/, "") === "/mcp") {
+      return "claude";
+    }
+  } catch {
+    // ignore
   }
   return "other";
 }

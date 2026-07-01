@@ -80,7 +80,7 @@ let authSubmitting = false;
 let analysisStockRankHelpListenersBound = false;
 let holdingsAiConnectionLoading = false;
 const holdingsAiProvidersState = {
-  mcpUrl: "",
+  mcpUrl: "https://www.higcc.com/mcp",
   connectorName: "麻雀",
   claude: {
     connected: false,
@@ -91,10 +91,22 @@ const holdingsAiProvidersState = {
   chatgpt: {
     connected: false,
     expiresAt: null,
-    connectUrl: "https://chatgpt.com/",
+    connectUrl: "https://chatgpt.com/apps#settings/Connectors",
     newChatUrl: "https://chatgpt.com/",
   },
 };
+
+function buildClaudeInstallDeepLink(mcpUrl = "https://www.higcc.com/mcp") {
+  const connectorUrl = String(mcpUrl || "https://www.higcc.com/mcp").trim() || "https://www.higcc.com/mcp";
+  const params = new URLSearchParams({
+    modal: "add-custom-connector",
+    connectorName: "麻雀",
+    connectorUrl,
+  });
+  return `https://claude.ai/customize/connectors?${params.toString()}`;
+}
+
+holdingsAiProvidersState.claude.installDeepLink = buildClaudeInstallDeepLink(holdingsAiProvidersState.mcpUrl);
 
 /** 与 index.html meta[name=stockreview-api-base] 一致；子路径部署时避免仍请求 /api/... 导致 404 */
 function getApiBaseForFetch() {
@@ -1180,18 +1192,22 @@ function renderHoldingsAiConnectionUi() {
 function applyHoldingsAiConnectionPayload(data = {}) {
   const claude = data.claude || {};
   const chatgpt = data.chatgpt || {};
-  holdingsAiProvidersState.mcpUrl = String(data.mcpUrl || "").trim();
+  const mcpUrl = String(data.mcpUrl || holdingsAiProvidersState.mcpUrl || "https://www.higcc.com/mcp").trim()
+    || "https://www.higcc.com/mcp";
+  holdingsAiProvidersState.mcpUrl = mcpUrl;
   holdingsAiProvidersState.connectorName = String(data.connectorName || "麻雀").trim() || "麻雀";
   holdingsAiProvidersState.claude = {
     connected: !!(claude.connected ?? data.connected),
     expiresAt: claude.expiresAt ?? data.expiresAt ?? null,
-    installDeepLink: String(claude.installDeepLink || data.installDeepLink || "").trim(),
+    installDeepLink: String(
+      claude.installDeepLink || data.installDeepLink || buildClaudeInstallDeepLink(mcpUrl),
+    ).trim(),
     newChatUrl: String(claude.newChatUrl || data.claudeNewChatUrl || "https://claude.ai/new").trim(),
   };
   holdingsAiProvidersState.chatgpt = {
     connected: !!chatgpt.connected,
     expiresAt: chatgpt.expiresAt || null,
-    connectUrl: String(chatgpt.connectUrl || "https://chatgpt.com/").trim(),
+    connectUrl: String(chatgpt.connectUrl || "https://chatgpt.com/apps#settings/Connectors").trim(),
     newChatUrl: String(chatgpt.newChatUrl || "https://chatgpt.com/").trim(),
   };
 }
@@ -3226,8 +3242,11 @@ function bindEvents() {
     if (!sessionPhone || sessionSubscriptionExpired) {
       return;
     }
-    await refreshHoldingsAiConnectionStatus({ force: true });
-    const link = String(holdingsAiProvidersState.claude.installDeepLink || "").trim();
+    void refreshHoldingsAiConnectionStatus({ force: true });
+    const link = String(
+      holdingsAiProvidersState.claude.installDeepLink
+        || buildClaudeInstallDeepLink(holdingsAiProvidersState.mcpUrl),
+    ).trim();
     if (link) {
       window.open(link, "_blank", "noopener,noreferrer");
       return;
@@ -3262,9 +3281,11 @@ function bindEvents() {
     if (!sessionPhone || sessionSubscriptionExpired) {
       return;
     }
-    await refreshHoldingsAiConnectionStatus({ force: true });
-    const mcpUrl = String(holdingsAiProvidersState.mcpUrl || "").trim();
-    const connectUrl = String(holdingsAiProvidersState.chatgpt.connectUrl || "https://chatgpt.com/").trim();
+    void refreshHoldingsAiConnectionStatus({ force: true });
+    const mcpUrl = String(holdingsAiProvidersState.mcpUrl || "https://www.higcc.com/mcp").trim();
+    const connectUrl = String(
+      holdingsAiProvidersState.chatgpt.connectUrl || "https://chatgpt.com/apps#settings/Connectors",
+    ).trim();
     if (mcpUrl) {
       const copied = await copyTextToClipboard(mcpUrl);
       if (!copied && holdingsAiChatGptStatus) {
@@ -3302,6 +3323,21 @@ function bindEvents() {
       holdingsAiChatGptStatus?.classList.add("is-error");
     }
   });
+  if (!window.__holdingsAiVisibilityBound) {
+    window.__holdingsAiVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || state.route !== "ai-analysis") {
+        return;
+      }
+      void refreshHoldingsAiConnectionStatus({ force: true });
+    });
+    window.addEventListener("focus", () => {
+      if (state.route !== "ai-analysis") {
+        return;
+      }
+      void refreshHoldingsAiConnectionStatus({ force: true });
+    });
+  }
   document.querySelectorAll(".ai-provider-copy-btn[data-copy-target]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const targetId = btn.getAttribute("data-copy-target");

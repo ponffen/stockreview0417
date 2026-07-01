@@ -90,18 +90,71 @@ function isChatGptOAuthClientId(clientId) {
   }
 }
 
+function isMcpResourceOAuthClientId(clientId) {
+  const id = String(clientId || "").trim();
+  try {
+    const u = new URL(id);
+    return u.pathname.replace(/\/+$/, "") === "/mcp";
+  } catch {
+    return false;
+  }
+}
+
+function inferOAuthProvider(clientId) {
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return null;
+  }
+  if (isClaudeOAuthClientId(id)) {
+    return "claude";
+  }
+  if (isChatGptOAuthClientId(id)) {
+    return "chatgpt";
+  }
+  if (/^mcp-/.test(id)) {
+    return "chatgpt";
+  }
+  if (isMcpResourceOAuthClientId(id)) {
+    return "claude";
+  }
+  return null;
+}
+
 function sqlOAuthClientProviderClause(provider, paramIndex) {
   if (provider === "claude") {
     return `(
-      client_id = $${paramIndex}
-      OR client_id ILIKE '%claude.ai%'
-      OR client_id ILIKE '%anthropic.com%'
+      provider = 'claude'
+      OR (
+        COALESCE(provider, '') = ''
+        AND (
+          client_id = $${paramIndex}
+          OR client_id ILIKE '%claude.ai%'
+          OR client_id ILIKE '%anthropic.com%'
+          OR (
+            client_id ~ '^https://[^/]+/mcp/?$'
+            AND client_id NOT ILIKE '%openai.com%'
+            AND client_id NOT ILIKE '%chatgpt.com%'
+            AND client_id NOT LIKE 'mcp-%'
+          )
+        )
+      )
     )`;
   }
   if (provider === "chatgpt") {
     return `(
-      client_id ILIKE '%openai.com%'
-      OR client_id ILIKE '%chatgpt.com%'
+      provider = 'chatgpt'
+      OR (
+        COALESCE(provider, '') = ''
+        AND (
+          client_id ILIKE '%openai.com%'
+          OR client_id ILIKE '%chatgpt.com%'
+          OR client_id LIKE 'mcp-%'
+          OR EXISTS (
+            SELECT 1 FROM mcp_oauth_client c
+            WHERE c.client_id = mcp_oauth_refresh_token.client_id
+          )
+        )
+      )
     )`;
   }
   return "FALSE";
@@ -116,6 +169,8 @@ module.exports = {
   isAllowedOAuthClientId,
   isClaudeOAuthClientId,
   isChatGptOAuthClientId,
+  isMcpResourceOAuthClientId,
+  inferOAuthProvider,
   sqlOAuthClientProviderClause,
   ACCESS_TOKEN_TTL_SEC,
   REFRESH_TOKEN_TTL_SEC,

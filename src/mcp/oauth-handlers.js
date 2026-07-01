@@ -305,7 +305,7 @@ a.ghost{background:#fff;color:#111;border:1px solid #d1d5db}
   res.end();
 }
 
-async function issueTokens({ userId, clientId, scope, resource }) {
+async function issueTokens({ userId, clientId, scope, resource, provider }) {
   const now = Date.now();
   const accessToken = signAccessToken({
     userId,
@@ -319,6 +319,7 @@ async function issueTokens({ userId, clientId, scope, resource }) {
     userId,
     clientId,
     scope,
+    provider,
     refreshToken,
     expiresAt: now + REFRESH_TOKEN_TTL_SEC * 1000,
   });
@@ -386,6 +387,7 @@ async function handleOAuthToken(req, res) {
       clientId: row.clientId,
       scope: row.scope || DEFAULT_SCOPE,
       resource: row.resource || resourceCheck.resource,
+      provider: clientResolved.client.provider,
     });
     sendJson(res, 200, tokens);
     return;
@@ -424,6 +426,7 @@ async function handleOAuthToken(req, res) {
       clientId: row.clientId,
       scope: row.scope || DEFAULT_SCOPE,
       resource: resourceCheck.resource,
+      provider: row.provider || clientResolved.client.provider,
     });
     sendJson(res, 200, tokens);
     return;

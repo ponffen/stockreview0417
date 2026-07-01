@@ -5,6 +5,7 @@ const {
   REFRESH_TOKEN_TTL_SEC,
   AUTH_CODE_TTL_SEC,
   DEFAULT_CLIENT_ID,
+  inferOAuthProvider,
   sqlOAuthClientProviderClause,
 } = require("./config");
 
@@ -31,6 +32,7 @@ async function ensureMcpOAuthSchema() {
       user_id TEXT NOT NULL,
       client_id TEXT NOT NULL,
       scope TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT '',
       expires_at BIGINT NOT NULL,
       created_at BIGINT NOT NULL
     );
@@ -46,6 +48,7 @@ async function ensureMcpOAuthSchema() {
       created_at BIGINT NOT NULL
     );
     ALTER TABLE mcp_oauth_auth_code ADD COLUMN IF NOT EXISTS resource TEXT NOT NULL DEFAULT '';
+    ALTER TABLE mcp_oauth_refresh_token ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '';
   `);
   schemaReady = true;
 }
@@ -112,14 +115,17 @@ async function consumeAuthCode(code) {
   }
 }
 
-async function saveRefreshToken({ userId, clientId, scope, refreshToken, expiresAt }) {
+async function saveRefreshToken({ userId, clientId, scope, provider, refreshToken, expiresAt }) {
   await ensureMcpOAuthSchema();
   const pool = await initPool();
+  const resolvedProvider = String(provider || "").trim() || inferOAuthProvider(clientId) || "";
   await pool.query(
-    `INSERT INTO mcp_oauth_refresh_token (token_hash, user_id, client_id, scope, expires_at, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (token_hash) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-    [hashToken(refreshToken), userId, clientId, scope, expiresAt, Date.now()]
+    `INSERT INTO mcp_oauth_refresh_token (token_hash, user_id, client_id, scope, provider, expires_at, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (token_hash) DO UPDATE SET
+       expires_at = EXCLUDED.expires_at,
+       provider = CASE WHEN EXCLUDED.provider <> '' THEN EXCLUDED.provider ELSE mcp_oauth_refresh_token.provider END`,
+    [hashToken(refreshToken), userId, clientId, scope, resolvedProvider, expiresAt, Date.now()]
   );
 }
 
@@ -127,7 +133,7 @@ async function findRefreshToken(refreshToken) {
   await ensureMcpOAuthSchema();
   const pool = await initPool();
   const { rows } = await pool.query(
-    `SELECT user_id, client_id, scope, expires_at FROM mcp_oauth_refresh_token WHERE token_hash = $1`,
+    `SELECT user_id, client_id, scope, provider, expires_at FROM mcp_oauth_refresh_token WHERE token_hash = $1`,
     [hashToken(refreshToken)]
   );
   const row = rows[0];
@@ -142,6 +148,7 @@ async function findRefreshToken(refreshToken) {
     userId: row.user_id,
     clientId: row.client_id,
     scope: row.scope,
+    provider: row.provider || inferOAuthProvider(row.client_id) || "",
     expiresAt: Number(row.expires_at),
   };
 }
