@@ -1196,12 +1196,10 @@ function applyHoldingsAiConnectionPayload(data = {}) {
   holdingsAiProvidersState.mcpUrl = mcpUrl;
   holdingsAiProvidersState.connectorName = String(data.connectorName || "麻雀").trim() || "麻雀";
   holdingsAiProvidersState.claude = {
-    connected: !!(claude.connected ?? data.connected),
-    expiresAt: claude.expiresAt ?? data.expiresAt ?? null,
-    installDeepLink: String(
-      claude.installDeepLink || data.installDeepLink || buildClaudeInstallDeepLink(mcpUrl),
-    ).trim(),
-    newChatUrl: String(claude.newChatUrl || data.claudeNewChatUrl || "https://claude.ai/new").trim(),
+    connected: !!claude.connected,
+    expiresAt: claude.expiresAt ?? null,
+    installDeepLink: String(claude.installDeepLink || buildClaudeInstallDeepLink(mcpUrl)).trim(),
+    newChatUrl: String(claude.newChatUrl || "https://claude.ai/new").trim(),
   };
   holdingsAiProvidersState.chatgpt = {
     connected: !!chatgpt.connected,

@@ -2,7 +2,6 @@ const { readUserIdFromRequest } = require("../auth-session");
 const { getUserValidUntil } = require("../db");
 const { isSubscriptionExpired } = require("../user-subscription");
 const {
-  DEFAULT_CLIENT_ID,
   MCP_CONNECTOR_NAME,
   CHATGPT_NEW_CHAT_URL,
   CHATGPT_CONNECT_URL,
@@ -45,11 +44,6 @@ function buildProviderPayload({ claudeStatus, chatgptStatus, mcpUrl }) {
       connectUrl: CHATGPT_CONNECT_URL,
       newChatUrl: CHATGPT_NEW_CHAT_URL,
     },
-    connected: !!claudeStatus.connected,
-    expiresAt: claudeStatus.expiresAt || null,
-    installDeepLink: claudeInstallDeepLink(mcpUrl),
-    oauthClientId: DEFAULT_CLIENT_ID,
-    claudeNewChatUrl: "https://claude.ai/new",
   };
 }
 
