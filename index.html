@@ -623,7 +623,23 @@
 
       <section id="route-ai-analysis" class="route-pane">
         <div class="ai-analysis-page">
-          <article class="panel ai-analysis-intro">
+          <article class="panel ai-mcp-info-card">
+            <h2 class="ai-mcp-info-title">MCP信息</h2>
+            <div class="ai-mcp-info-box">
+              <div class="ai-mcp-info-row">
+                <span class="ai-mcp-info-label">名称</span>
+                <span id="holdingsAiMcpName" class="ai-mcp-info-value">麻雀</span>
+              </div>
+              <div class="ai-mcp-info-row ai-mcp-info-row--url">
+                <span class="ai-mcp-info-label">服务器URL</span>
+                <code id="holdingsAiMcpUrl" class="ai-mcp-info-value ai-mcp-info-url">https://www.higcc.com/mcp</code>
+                <button type="button" class="ai-mcp-info-copy-btn" data-copy-target="holdingsAiMcpUrl">复制</button>
+              </div>
+              <div class="ai-mcp-info-row">
+                <span class="ai-mcp-info-label">身份验证</span>
+                <span class="ai-mcp-info-value">OAuth</span>
+              </div>
+            </div>
             <p class="ai-analysis-lead">连接AI工具后，可读取麻雀所有的数据，在AI工具中深度复盘。</p>
             <p class="ai-analysis-notes">说明：1、只读数据，不会修改数据。2、本人数据是真实数据，其他用户数据已经归一化脱敏。</p>
           </article>
@@ -665,24 +681,11 @@
                 <button type="button" id="holdingsAiChatGptConnectBtn" class="btn btn-primary full">连接 ChatGPT</button>
                 <a id="holdingsAiOpenChatGptBtn" class="btn btn-primary full hidden" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">在 ChatGPT 中复盘</a>
               </div>
-              <div class="ai-provider-connector-info" id="holdingsAiChatGptConnectorInfo">
-                <p class="ai-provider-section-lead">连接器信息（新建 ChatGPT 连接器时填写）：</p>
-                <div class="ai-provider-connector-row">
-                  <span class="ai-provider-connector-label">名称</span>
-                  <code id="holdingsAiChatGptConnectorName" class="ai-provider-connector-value">麻雀</code>
-                  <button type="button" class="ai-provider-copy-btn" data-copy-target="holdingsAiChatGptConnectorName">复制</button>
-                </div>
-                <div class="ai-provider-connector-row">
-                  <span class="ai-provider-connector-label">MCP Server URL</span>
-                  <code id="holdingsAiChatGptConnectorUrl" class="ai-provider-connector-value">https://www.higcc.com/mcp</code>
-                  <button type="button" class="ai-provider-copy-btn" data-copy-target="holdingsAiChatGptConnectorUrl">复制</button>
-                </div>
-              </div>
               <div class="ai-provider-guide">
                 <p class="ai-provider-section-lead">连接步骤：</p>
                 <ol class="ai-provider-steps">
                   <li>点击上方「连接 ChatGPT」按钮</li>
-                  <li>在打开的 ChatGPT 页面中，进入 <strong>设置 → 应用 → 创建应用</strong>，填写上方名称与 MCP Server URL（需要打开开发人员模式）</li>
+                  <li>在打开的 ChatGPT 页面中，进入 <strong>设置 → 应用 → 创建应用</strong>，填写上方 MCP 信息中的名称与服务器 URL（需要打开开发人员模式）</li>
                   <li>创建连接器后，按提示完成麻雀账号 OAuth 授权；返回本页，状态显示「已连接 ChatGPT」</li>
                   <li>点击「在 ChatGPT 中复盘」，在新对话中启用「麻雀」连接器后开始提问</li>
                 </ol>

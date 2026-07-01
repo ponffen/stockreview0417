@@ -2934,9 +2934,74 @@ body.subscription-expired-mode {
   padding: 0 0 20px;
 }
 
-.ai-analysis-intro {
+.ai-mcp-info-card {
   margin: 16px 12px 12px;
   padding: 18px 16px 20px;
+}
+
+.ai-mcp-info-title {
+  margin: 0 0 14px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ai-mcp-info-box {
+  margin: 0 0 16px;
+  padding: 14px 14px 4px;
+  border-radius: 10px;
+  background: #f3f6fb;
+  border: 1px solid #e8edf5;
+}
+
+.ai-mcp-info-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: start;
+  padding: 0 0 12px;
+}
+
+.ai-mcp-info-row--url {
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.ai-mcp-info-label {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ai-mcp-info-value {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.ai-mcp-info-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+}
+
+.ai-mcp-info-copy-btn {
+  flex-shrink: 0;
+  border: 1px solid #dbe4f0;
+  background: #fff;
+  color: var(--blue);
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ai-mcp-info-copy-btn.is-copied {
+  color: #047857;
+  border-color: #a7f3d0;
+  background: #ecfdf5;
 }
 
 .ai-analysis-lead {
@@ -2951,6 +3016,11 @@ body.subscription-expired-mode {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.65;
+}
+
+.ai-analysis-intro {
+  margin: 16px 12px 12px;
+  padding: 18px 16px 20px;
 }
 
 .ai-analysis-providers {

@@ -551,8 +551,8 @@ const holdingsAiChatGptStatus = document.getElementById("holdingsAiChatGptStatus
 const holdingsAiChatGptConnectBtn = document.getElementById("holdingsAiChatGptConnectBtn");
 const holdingsAiOpenChatGptBtn = document.getElementById("holdingsAiOpenChatGptBtn");
 const holdingsAiChatGptDisconnectBtn = document.getElementById("holdingsAiChatGptDisconnectBtn");
-const holdingsAiChatGptConnectorName = document.getElementById("holdingsAiChatGptConnectorName");
-const holdingsAiChatGptConnectorUrl = document.getElementById("holdingsAiChatGptConnectorUrl");
+const holdingsAiMcpName = document.getElementById("holdingsAiMcpName");
+const holdingsAiMcpUrl = document.getElementById("holdingsAiMcpUrl");
 const holdingsGuideDialog = document.getElementById("holdingsGuideDialog");
 const closeHoldingsGuideBtn = document.getElementById("closeHoldingsGuideBtn");
 const holdingsGuideAddTradeBtn = document.getElementById("holdingsGuideAddTradeBtn");
@@ -1179,12 +1179,11 @@ function renderHoldingsAiConnectionUi() {
     connected: !!holdingsAiProvidersState.chatgpt.connected,
     newChatUrl: holdingsAiProvidersState.chatgpt.newChatUrl,
   });
-  if (holdingsAiChatGptConnectorName) {
-    holdingsAiChatGptConnectorName.textContent =
-      String(holdingsAiProvidersState.connectorName || "麻雀").trim() || "麻雀";
+  if (holdingsAiMcpName) {
+    holdingsAiMcpName.textContent = String(holdingsAiProvidersState.connectorName || "麻雀").trim() || "麻雀";
   }
-  if (holdingsAiChatGptConnectorUrl) {
-    holdingsAiChatGptConnectorUrl.textContent =
+  if (holdingsAiMcpUrl) {
+    holdingsAiMcpUrl.textContent =
       String(holdingsAiProvidersState.mcpUrl || "https://www.higcc.com/mcp").trim() || "https://www.higcc.com/mcp";
   }
 }
@@ -3338,7 +3337,7 @@ function bindEvents() {
       void refreshHoldingsAiConnectionStatus({ force: true });
     });
   }
-  document.querySelectorAll(".ai-provider-copy-btn[data-copy-target]").forEach((btn) => {
+  document.querySelectorAll(".ai-provider-copy-btn[data-copy-target], .ai-mcp-info-copy-btn[data-copy-target]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const targetId = btn.getAttribute("data-copy-target");
       const target = targetId ? document.getElementById(targetId) : null;
