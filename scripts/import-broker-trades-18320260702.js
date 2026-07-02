@@ -188,7 +188,7 @@ function rowToTrade(row, idx, nameMap) {
     quantity,
     amount,
     date,
-    note: "券商导入",
+    note: "基于微博持仓明细推导出的交易记录。",
     createdAt: Date.parse(`${date}T12:00:00+08:00`) + idx,
   });
 }
@@ -230,7 +230,7 @@ async function buildPayload(rows, nameMap, fxByDate) {
         date,
         direction: "in",
         amount: round2(slot.buyCny),
-        note: `券商导入-当日买入汇总`,
+        note: `基于交易记录按当日汇总算出来的出入金。`,
         createdAt: Date.parse(`${date}T08:00:00+08:00`) + cashIdx++,
       });
     }
@@ -241,7 +241,7 @@ async function buildPayload(rows, nameMap, fxByDate) {
         date,
         direction: "out",
         amount: round2(slot.sellCny),
-        note: `券商导入-当日卖出汇总`,
+        note: `基于交易记录按当日汇总算出来的出入金。`,
         createdAt: Date.parse(`${date}T18:00:00+08:00`) + cashIdx++,
       });
     }
