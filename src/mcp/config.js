@@ -1,5 +1,6 @@
 const DEFAULT_SCOPE = "read:portfolio";
 const DEFAULT_CLIENT_ID = "claude-mcp";
+const CLAUDE_CIMD_CLIENT_ID = "https://claude.ai/oauth/mcp-oauth-client-metadata";
 const MCP_CONNECTOR_NAME = "麻雀";
 const CHATGPT_NEW_CHAT_URL = "https://chatgpt.com/";
 const CHATGPT_CONNECT_URL = "https://chatgpt.com/apps#settings/Connectors";
@@ -164,6 +165,7 @@ function sqlOAuthClientProviderClause(provider, defaultClientParamIndex = null) 
 module.exports = {
   DEFAULT_SCOPE,
   DEFAULT_CLIENT_ID,
+  CLAUDE_CIMD_CLIENT_ID,
   MCP_CONNECTOR_NAME,
   CHATGPT_NEW_CHAT_URL,
   CHATGPT_CONNECT_URL,

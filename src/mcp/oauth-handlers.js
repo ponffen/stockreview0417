@@ -92,16 +92,30 @@ function handleWellKnownOpenIdConfiguration(req, res) {
   sendJson(res, 200, authServerMetadata(req));
 }
 
+function normalizeResourceUrl(value) {
+  try {
+    const u = new URL(String(value || "").trim());
+    u.hash = "";
+    if ((u.protocol === "https:" && u.port === "443") || (u.protocol === "http:" && u.port === "80")) {
+      u.port = "";
+    }
+    const path = u.pathname.replace(/\/+$/, "") || "";
+    return `${u.protocol}//${u.hostname.toLowerCase()}${u.port ? `:${u.port}` : ""}${path}`;
+  } catch {
+    return String(value || "").trim().replace(/\/+$/, "");
+  }
+}
+
 function assertResourceParam(resource, req) {
   const expected = mcpResourceUrl(req);
   const actual = String(resource || "").trim();
   if (!actual) {
     return { ok: true, resource: expected };
   }
-  if (actual !== expected) {
+  if (normalizeResourceUrl(actual) !== normalizeResourceUrl(expected)) {
     return { ok: false, error: "invalid_request", description: "resource 参数不匹配" };
   }
-  return { ok: true, resource: actual };
+  return { ok: true, resource: expected };
 }
 
 async function handleOAuthRegister(req, res) {

@@ -1,8 +1,19 @@
 const {
   DEFAULT_CLIENT_ID,
+  CLAUDE_CIMD_CLIENT_ID,
   isClaudeOAuthClientId,
   isChatGptOAuthClientId,
 } = require("./config");
+
+const KNOWN_CLAUDE_CIMD = {
+  clientId: CLAUDE_CIMD_CLIENT_ID,
+  clientName: "Claude",
+  redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+  tokenEndpointAuthMethod: "none",
+  grantTypes: ["authorization_code", "refresh_token"],
+  responseTypes: ["code"],
+  source: "known-cimd",
+};
 
 const CIMD_FETCH_TIMEOUT_MS = 8000;
 const CIMD_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -105,12 +116,48 @@ function detectOAuthProvider({ clientId, redirectUris = [] }) {
   return "other";
 }
 
+function isLoopbackHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+}
+
+/** RFC 8252 §7.3: loopback redirect URIs match with port ignored. */
+function loopbackRedirectUriMatch(redirectUri, allowedUri) {
+  try {
+    const a = new URL(String(redirectUri || ""));
+    const b = new URL(String(allowedUri || ""));
+    if (!isLoopbackHost(a.hostname) || !isLoopbackHost(b.hostname)) {
+      return false;
+    }
+    return (
+      a.protocol === b.protocol &&
+      a.hostname.toLowerCase() === b.hostname.toLowerCase() &&
+      a.pathname === b.pathname &&
+      a.search === b.search
+    );
+  } catch {
+    return false;
+  }
+}
+
 function redirectUriAllowed(redirectUri, allowedUris) {
   const target = String(redirectUri || "").trim();
   if (!target) {
     return false;
   }
-  return allowedUris.some((item) => item === target);
+  return allowedUris.some((item) => item === target || loopbackRedirectUriMatch(target, item));
+}
+
+function buildCimdMetadata(url, json, source = "cimd") {
+  return {
+    clientId: url,
+    clientName: String(json?.client_name || json?.client_id || "OAuth Client").trim() || "OAuth Client",
+    redirectUris: normalizeRedirectUris(json?.redirect_uris),
+    tokenEndpointAuthMethod: String(json?.token_endpoint_auth_method || "none").trim() || "none",
+    grantTypes: Array.isArray(json?.grant_types) ? json.grant_types.map(String) : ["authorization_code", "refresh_token"],
+    responseTypes: Array.isArray(json?.response_types) ? json.response_types.map(String) : ["code"],
+    source,
+  };
 }
 
 async function fetchCimdMetadata(clientIdUrl) {
@@ -118,28 +165,32 @@ async function fetchCimdMetadata(clientIdUrl) {
   if (!isHttpsUrl(url)) {
     return null;
   }
+  if (url === CLAUDE_CIMD_CLIENT_ID) {
+    return { ...KNOWN_CLAUDE_CIMD };
+  }
   const cached = cimdCache.get(url);
   if (cached && Date.now() - cached.at < CIMD_CACHE_TTL_MS) {
     return cached.value;
   }
-  const response = await fetch(url, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(CIMD_FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    return null;
+  let metadata = null;
+  try {
+    const response = await fetch(url, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(CIMD_FETCH_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      const json = await response.json();
+      metadata = buildCimdMetadata(url, json, "cimd");
+    }
+  } catch {
+    // fall through to known-client fallback
   }
-  const json = await response.json();
-  const metadata = {
-    clientId: url,
-    clientName: String(json?.client_name || json?.client_id || "OAuth Client").trim() || "OAuth Client",
-    redirectUris: normalizeRedirectUris(json?.redirect_uris),
-    tokenEndpointAuthMethod: String(json?.token_endpoint_auth_method || "none").trim() || "none",
-    grantTypes: Array.isArray(json?.grant_types) ? json.grant_types.map(String) : ["authorization_code", "refresh_token"],
-    responseTypes: Array.isArray(json?.response_types) ? json.response_types.map(String) : ["code"],
-    source: "cimd",
-  };
-  cimdCache.set(url, { at: Date.now(), value: metadata });
+  if (!metadata && url === CLAUDE_CIMD_CLIENT_ID) {
+    metadata = { ...KNOWN_CLAUDE_CIMD };
+  }
+  if (metadata) {
+    cimdCache.set(url, { at: Date.now(), value: metadata });
+  }
   return metadata;
 }
 
