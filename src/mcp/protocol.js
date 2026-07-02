@@ -17,7 +17,7 @@ const {
   assertMcpUserActive,
   isMcpSubscriptionExpiredError,
 } = require("./subscription-gate");
-const { detectOAuthProvider } = require("./oauth-client");
+const { resolveOAuthProviderForClient } = require("./oauth-client");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
@@ -57,11 +57,11 @@ function extractSessionId(req, hasInitialize) {
   return incoming;
 }
 
-function mcpClientLogFields(auth) {
+async function mcpClientLogFields(auth, req) {
   const clientId = String(auth?.clientId || "").trim();
   return {
     clientId: clientId || null,
-    provider: detectOAuthProvider({ clientId }),
+    provider: await resolveOAuthProviderForClient(clientId, req),
   };
 }
 
@@ -316,7 +316,7 @@ async function handleMcpRequestInner(req, res) {
     const sessionId = String(req.headers?.["mcp-session-id"] || req.headers?.["MCP-Session-Id"] || "").trim();
     console.log("[mcp] GET sse", {
       userId: auth.userId,
-      ...mcpClientLogFields(auth),
+      ...(await mcpClientLogFields(auth, req)),
       sessionId: sessionId || null,
       vercel: !!process.env.VERCEL,
     });
@@ -341,7 +341,7 @@ async function handleMcpRequestInner(req, res) {
   const toolCalls = toolArgs.map((entry) => entry.name);
   console.log("[mcp] POST", {
     userId: auth.userId,
-    ...mcpClientLogFields(auth),
+    ...(await mcpClientLogFields(auth, req)),
     rpcMethods,
     toolCalls: toolCalls.length ? toolCalls : null,
     toolArgs: toolArgs.length ? toolArgs : null,

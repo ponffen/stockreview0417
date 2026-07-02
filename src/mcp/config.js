@@ -112,9 +112,6 @@ function inferOAuthProvider(clientId) {
   if (isChatGptOAuthClientId(id)) {
     return "chatgpt";
   }
-  if (/^mcp-/.test(id)) {
-    return "chatgpt";
-  }
   if (isMcpResourceOAuthClientId(id)) {
     return "claude";
   }

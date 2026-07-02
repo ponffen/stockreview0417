@@ -99,7 +99,7 @@ function detectOAuthProvider({ clientId, redirectUris = [] }) {
   if (redirectUris.some(isWorkBuddyRedirectUri)) {
     return "workbuddy";
   }
-  if (isChatGptOAuthClientId(id) || /^mcp-/.test(id) || redirectUris.some(isChatGptRedirectUri)) {
+  if (isChatGptOAuthClientId(id) || redirectUris.some(isChatGptRedirectUri)) {
     return "chatgpt";
   }
   if (isClaudeOAuthClientId(id) || redirectUris.some(isClaudeRedirectUri)) {
@@ -113,7 +113,55 @@ function detectOAuthProvider({ clientId, redirectUris = [] }) {
   } catch {
     // ignore
   }
+  if (/^mcp-/.test(id)) {
+    return "other";
+  }
   return "other";
+}
+
+const PROVIDER_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
+const providerLookupCache = new Map();
+
+function readRequestUserAgent(req) {
+  return String(req?.headers?.["user-agent"] || req?.headers?.["User-Agent"] || "").trim();
+}
+
+function inferProviderFromUserAgent(userAgent) {
+  const ua = String(userAgent || "").trim();
+  if (!ua) {
+    return "";
+  }
+  if (/workbuddy/i.test(ua)) {
+    return "workbuddy";
+  }
+  return "";
+}
+
+async function resolveOAuthProviderForClient(clientId, req = null) {
+  const id = String(clientId || "").trim();
+  if (!id) {
+    return "other";
+  }
+
+  const cached = providerLookupCache.get(id);
+  if (cached && Date.now() - cached.at < PROVIDER_LOOKUP_CACHE_TTL_MS) {
+    return cached.provider;
+  }
+
+  let redirectUris = [];
+  if (/^mcp-/.test(id)) {
+    const { findRegisteredClient } = require("./oauth-store");
+    const registered = await findRegisteredClient(id);
+    redirectUris = registered?.redirectUris || [];
+  }
+
+  let provider = detectOAuthProvider({ clientId: id, redirectUris });
+  if (provider === "other" && /^mcp-/.test(id)) {
+    provider = inferProviderFromUserAgent(readRequestUserAgent(req)) || "chatgpt";
+  }
+
+  providerLookupCache.set(id, { at: Date.now(), provider });
+  return provider;
 }
 
 function isLoopbackHost(hostname) {
@@ -290,6 +338,7 @@ module.exports = {
   normalizeRedirectUris,
   redirectUriAllowed,
   detectOAuthProvider,
+  resolveOAuthProviderForClient,
   fetchCimdMetadata,
   resolveOAuthClient,
   providerLabel,
