@@ -18,6 +18,7 @@ const {
   upsertSymbolNameMapBatch,
 } = require("../src/db");
 const { fetchSinaForexDayKSeries } = require("./lib/market-fetch");
+const { previousSessionDate } = require("../src/metrics/freeze-calendar");
 
 const PHONE = "18320260702";
 const ACCOUNT_ID = "default";
@@ -220,18 +221,24 @@ async function buildPayload(rows, nameMap, fxByDate) {
 
   const cashTransfers = [];
   const dates = Object.keys(daily).sort();
+  const firstTradeDate = dates[0] || "";
   let cashIdx = 0;
   for (const date of dates) {
     const slot = daily[date];
     if (slot.buyCny > 0) {
+      const inDate = date === firstTradeDate ? previousSessionDate(firstTradeDate) || date : date;
+      const inNote =
+        date === firstTradeDate
+          ? "期初本金（基于交易记录按当日汇总算出来的出入金。）"
+          : "基于交易记录按当日汇总算出来的出入金。";
       cashTransfers.push({
         id: randomUUID(),
         accountId: ACCOUNT_ID,
-        date,
+        date: inDate,
         direction: "in",
         amount: round2(slot.buyCny),
-        note: `基于交易记录按当日汇总算出来的出入金。`,
-        createdAt: Date.parse(`${date}T08:00:00+08:00`) + cashIdx++,
+        note: inNote,
+        createdAt: Date.parse(`${inDate}T08:00:00+08:00`) + cashIdx++,
       });
     }
     if (slot.sellCny > 0) {
