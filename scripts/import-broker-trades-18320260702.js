@@ -39,14 +39,14 @@ const MANUAL_NAME_MAP = {
   "Core Weave": "crwv",
   Coreleave: "crwv",
   "Credo Technology": "crdo",
-  Coherent: "cienn",
+  Coherent: "cohr",
   Marvell: "mrvl",
   美光科技: "mu",
   应用材料公司: "amat",
   "小米集团-W": "hk01810",
   腾讯控股: "hk00700",
   泡泡玛特: "hk09992",
-  XL二南方海力士: "hk07750",
+  XL二南方海力士: "hk07709",
   "华夏沪深三百（港股）": "hk03188",
   "携程集团-S": "hk09961",
   紫金矿业: "sh601899",
@@ -95,7 +95,7 @@ const MANUAL_NAME_MAP = {
   长电科技: "sh600584",
   大普微: "sz301536",
   智谱: "hk02513",
-  SpaceX: "spacex",
+  SpaceX: "spcx",
 };
 
 function round2(n) {
