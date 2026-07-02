@@ -47,7 +47,7 @@ const TOOL_DEFS = [
   },
   {
     name: "get_holdings",
-    description: `当前持仓表：市值、数量、权重、收益等。${OTHER_USER_TARGET_RULE}`,
+    description: `当前持仓表：市值、数量、权重、收益等。查本人持仓（如 TOP3 重仓）请直接调用本工具，无需 search_community_users。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
