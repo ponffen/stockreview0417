@@ -18,9 +18,55 @@ const {
 } = require("./subscription-gate");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
-const PROTOCOL_VERSION = "2024-11-05";
+const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
+const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const { randomUUID } = require("crypto");
 
+function negotiateProtocolVersion(clientRequested) {
+  const requested = String(clientRequested || "").trim();
+  if (requested && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) {
+    return requested;
+  }
+  return DEFAULT_PROTOCOL_VERSION;
+}
+
+function readMcpProtocolVersion(req, messages = []) {
+  const headerVersion = String(req.headers?.["mcp-protocol-version"] || req.headers?.["MCP-Protocol-Version"] || "").trim();
+  if (headerVersion) {
+    return headerVersion;
+  }
+  for (const message of messages) {
+    if (String(message?.method || "") === "initialize") {
+      const bodyVersion = String(message?.params?.protocolVersion || "").trim();
+      if (bodyVersion) {
+        return bodyVersion;
+      }
+    }
+  }
+  return "";
+}
+
+function extractSessionId(req, hasInitialize) {
+  const incoming = String(req.headers?.["mcp-session-id"] || req.headers?.["MCP-Session-Id"] || "").trim();
+  if (hasInitialize) {
+    return incoming || randomUUID();
+  }
+  return incoming;
+}
+
+function normalizeResourceUrl(value) {
+  try {
+    const u = new URL(String(value || "").trim());
+    u.hash = "";
+    if ((u.protocol === "https:" && u.port === "443") || (u.protocol === "http:" && u.port === "80")) {
+      u.port = "";
+    }
+    const path = u.pathname.replace(/\/+$/, "") || "";
+    return `${u.protocol}//${u.hostname.toLowerCase()}${u.port ? `:${u.port}` : ""}${path}`;
+  } catch {
+    return String(value || "").trim().replace(/\/+$/, "");
+  }
+}
 function mcpAuthChallengeHeaders(req) {
   const meta = `${getPublicBaseUrl(req)}/.well-known/oauth-protected-resource/mcp`;
   return {
@@ -47,9 +93,10 @@ function rpcError(id, code, message, data) {
 
 async function dispatchMcpMethod(viewerId, method, params) {
   if (method === "initialize") {
+    const protocolVersion = negotiateProtocolVersion(params?.protocolVersion);
     return {
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: { tools: {} },
+      protocolVersion,
+      capabilities: { tools: { listChanged: false } },
       serverInfo: SERVER_INFO,
     };
   }
@@ -178,7 +225,7 @@ async function handleMcpRequestInner(req, res) {
     );
     return;
   }
-  if (auth.resource && auth.resource !== expectedResource) {
+  if (auth.resource && normalizeResourceUrl(auth.resource) !== normalizeResourceUrl(expectedResource)) {
     sendJson(
       res,
       401,
@@ -254,12 +301,14 @@ async function handleMcpRequestInner(req, res) {
   const messages = Array.isArray(body) ? body : [body];
   const rpcMethods = messages.map((m) => String(m?.method || "").trim()).filter(Boolean);
   const hasInitialize = rpcMethods.includes("initialize");
-  const sessionId = hasInitialize ? randomUUID() : "";
+  const sessionId = extractSessionId(req, hasInitialize);
   const sessionHeader = sessionId ? { "Mcp-Session-Id": sessionId } : {};
+  const protocolVersion = readMcpProtocolVersion(req, messages);
   console.log("[mcp] POST", {
     userId: auth.userId,
     rpcMethods,
-    sessionId: sessionId || String(req.headers?.["mcp-session-id"] || "").trim() || null,
+    sessionId: sessionId || null,
+    protocolVersion: protocolVersion || null,
     accept: String(req.headers?.accept || "").slice(0, 120),
   });
 
