@@ -6,6 +6,7 @@ const {
   readRequestBody,
   sendJson,
   clientAcceptsEventStream,
+  preferSseResponse,
   sendSseJsonRpcMessages,
   mcpCorsHeaders,
   sendOptions,
@@ -20,6 +21,7 @@ const {
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const VERCEL_SSE_MAX_MS = 55_000;
 const { randomUUID } = require("crypto");
 
 function negotiateProtocolVersion(clientRequested) {
@@ -287,8 +289,10 @@ async function handleMcpRequestInner(req, res) {
     console.log("[mcp] GET sse", {
       userId: auth.userId,
       sessionId: sessionId || null,
+      vercel: !!process.env.VERCEL,
     });
-    startMcpSseStream(res, cors);
+    const sseMaxMs = process.env.VERCEL ? VERCEL_SSE_MAX_MS : 0;
+    startMcpSseStream(res, cors, { maxDurationMs: sseMaxMs });
     return;
   }
 
@@ -304,12 +308,18 @@ async function handleMcpRequestInner(req, res) {
   const sessionId = extractSessionId(req, hasInitialize);
   const sessionHeader = sessionId ? { "Mcp-Session-Id": sessionId } : {};
   const protocolVersion = readMcpProtocolVersion(req, messages);
+  const toolCalls = messages
+    .filter((m) => String(m?.method || "") === "tools/call")
+    .map((m) => String(m?.params?.name || "").trim())
+    .filter(Boolean);
   console.log("[mcp] POST", {
     userId: auth.userId,
     rpcMethods,
+    toolCalls: toolCalls.length ? toolCalls : null,
     sessionId: sessionId || null,
     protocolVersion: protocolVersion || null,
     accept: String(req.headers?.accept || "").slice(0, 120),
+    responseMode: preferSseResponse(req) ? "sse" : "json",
   });
 
   const responses = [];
@@ -328,7 +338,7 @@ async function handleMcpRequestInner(req, res) {
     res.end();
     return;
   }
-  if (clientAcceptsEventStream(req)) {
+  if (preferSseResponse(req)) {
     sendSseJsonRpcMessages(res, responses, { ...cors, ...sessionHeader });
     return;
   }

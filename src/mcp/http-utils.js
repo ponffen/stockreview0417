@@ -95,6 +95,15 @@ function clientAcceptsEventStream(req) {
   return accept.includes("text/event-stream");
 }
 
+/** Prefer JSON when client accepts both (Claude/ChatGPT often send both). */
+function preferSseResponse(req) {
+  const accept = String(req.headers?.accept || "").toLowerCase();
+  if (!accept.includes("text/event-stream")) {
+    return false;
+  }
+  return !accept.includes("application/json");
+}
+
 function sendSseJsonRpcMessages(res, messages, headers = {}) {
   for (const [k, v] of Object.entries(headers)) {
     res.setHeader(k, v);
@@ -136,7 +145,8 @@ function sendOptions(res, headers = {}) {
   res.end();
 }
 
-function startMcpSseStream(res, headers = {}) {
+function startMcpSseStream(res, headers = {}, options = {}) {
+  const maxDurationMs = Number(options.maxDurationMs) || 0;
   for (const [k, v] of Object.entries(headers)) {
     res.setHeader(k, v);
   }
@@ -160,7 +170,26 @@ function startMcpSseStream(res, headers = {}) {
     }
   }, keepAliveMs);
 
-  const cleanup = () => clearInterval(interval);
+  let maxTimer = null;
+  if (maxDurationMs > 0) {
+    maxTimer = setTimeout(() => {
+      try {
+        if (!res.writableEnded) {
+          res.write(": closing\n\n");
+          res.end();
+        }
+      } catch {
+        // ignore
+      }
+    }, maxDurationMs);
+  }
+
+  const cleanup = () => {
+    clearInterval(interval);
+    if (maxTimer) {
+      clearTimeout(maxTimer);
+    }
+  };
   res.on("close", cleanup);
   res.on("finish", cleanup);
 }
@@ -174,6 +203,7 @@ module.exports = {
   extractBearerToken,
   escapeHtml,
   clientAcceptsEventStream,
+  preferSseResponse,
   sendSseJsonRpcMessages,
   mcpCorsHeaders,
   sendOptions,
