@@ -289,6 +289,7 @@ module.exports = {
   isAllowedDcrRedirectUri,
   normalizeRedirectUris,
   redirectUriAllowed,
+  detectOAuthProvider,
   fetchCimdMetadata,
   resolveOAuthClient,
   providerLabel,

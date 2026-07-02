@@ -17,6 +17,7 @@ const {
   assertMcpUserActive,
   isMcpSubscriptionExpiredError,
 } = require("./subscription-gate");
+const { detectOAuthProvider } = require("./oauth-client");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
@@ -54,6 +55,33 @@ function extractSessionId(req, hasInitialize) {
     return incoming || randomUUID();
   }
   return incoming;
+}
+
+function mcpClientLogFields(auth) {
+  const clientId = String(auth?.clientId || "").trim();
+  return {
+    clientId: clientId || null,
+    provider: detectOAuthProvider({ clientId }),
+  };
+}
+
+function extractToolCallLogEntries(messages) {
+  return messages
+    .filter((m) => String(m?.method || "") === "tools/call")
+    .map((m) => {
+      const name = String(m?.params?.name || "").trim();
+      if (!name) {
+        return null;
+      }
+      const args = m?.params?.arguments && typeof m.params.arguments === "object" ? m.params.arguments : {};
+      const entry = { name };
+      const query = String(args.query ?? "").trim();
+      if (query) {
+        entry.query = query.slice(0, 200);
+      }
+      return entry;
+    })
+    .filter(Boolean);
 }
 
 function normalizeResourceUrl(value) {
@@ -288,6 +316,7 @@ async function handleMcpRequestInner(req, res) {
     const sessionId = String(req.headers?.["mcp-session-id"] || req.headers?.["MCP-Session-Id"] || "").trim();
     console.log("[mcp] GET sse", {
       userId: auth.userId,
+      ...mcpClientLogFields(auth),
       sessionId: sessionId || null,
       vercel: !!process.env.VERCEL,
     });
@@ -308,14 +337,14 @@ async function handleMcpRequestInner(req, res) {
   const sessionId = extractSessionId(req, hasInitialize);
   const sessionHeader = sessionId ? { "Mcp-Session-Id": sessionId } : {};
   const protocolVersion = readMcpProtocolVersion(req, messages);
-  const toolCalls = messages
-    .filter((m) => String(m?.method || "") === "tools/call")
-    .map((m) => String(m?.params?.name || "").trim())
-    .filter(Boolean);
+  const toolArgs = extractToolCallLogEntries(messages);
+  const toolCalls = toolArgs.map((entry) => entry.name);
   console.log("[mcp] POST", {
     userId: auth.userId,
+    ...mcpClientLogFields(auth),
     rpcMethods,
     toolCalls: toolCalls.length ? toolCalls : null,
+    toolArgs: toolArgs.length ? toolArgs : null,
     sessionId: sessionId || null,
     protocolVersion: protocolVersion || null,
     accept: String(req.headers?.accept || "").slice(0, 120),
