@@ -486,6 +486,9 @@ const publishDynamicsImageInput = document.getElementById("publishDynamicsImageI
 const publishDynamicsPickImageBtn = document.getElementById("publishDynamicsPickImageBtn");
 const publishDynamicsError = document.getElementById("publishDynamicsError");
 const publishDynamicsSubmitBtn = document.getElementById("publishDynamicsSubmitBtn");
+const publishDynamicsDeleteBtn = document.getElementById("publishDynamicsDeleteBtn");
+const publishDynamicsCharCount = document.getElementById("publishDynamicsCharCount");
+const publishDynamicsUserName = document.getElementById("publishDynamicsUserName");
 const closePublishDynamicsBtn = document.getElementById("closePublishDynamicsBtn");
 const dynamicsPostActionsDialog = document.getElementById("dynamicsPostActionsDialog");
 const dynamicsPostEditBtn = document.getElementById("dynamicsPostEditBtn");
@@ -4072,7 +4075,16 @@ function bindEvents() {
 
   appHeaderPublishDynamicsBtn?.addEventListener("click", () => openPublishDynamicsDialog());
   closePublishDynamicsBtn?.addEventListener("click", () => publishDynamicsDialog?.close());
-  publishDynamicsPickImageBtn?.addEventListener("click", () => publishDynamicsImageInput?.click());
+  publishDynamicsContent?.addEventListener("input", () => {
+    syncPublishDynamicsTextareaHeight();
+    syncPublishDynamicsUi();
+  });
+  publishDynamicsPickImageBtn?.addEventListener("click", () => {
+    if (publishDynamicsState.imageUrls.length >= 9) {
+      return;
+    }
+    publishDynamicsImageInput?.click();
+  });
   publishDynamicsImageInput?.addEventListener("change", async () => {
     const files = [...(publishDynamicsImageInput.files || [])];
     publishDynamicsImageInput.value = "";
@@ -4091,6 +4103,7 @@ function bindEvents() {
       }
     }
     renderPublishDynamicsImages();
+    syncPublishDynamicsUi();
   });
   publishDynamicsSymbols?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-remove-symbol]");
@@ -4100,6 +4113,7 @@ function bindEvents() {
     const sym = btn.getAttribute("data-remove-symbol");
     publishDynamicsState.symbols = publishDynamicsState.symbols.filter((s) => s.symbol !== sym);
     renderPublishDynamicsSymbols();
+    syncPublishDynamicsUi();
   });
   publishDynamicsImages?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-remove-image]");
@@ -4112,12 +4126,36 @@ function bindEvents() {
     }
     publishDynamicsState.imageUrls.splice(idx, 1);
     renderPublishDynamicsImages();
+    syncPublishDynamicsUi();
   });
   publishDynamicsAddSymbolBtn?.addEventListener("click", () => {
     state.tradeSearchReturnRoute = state.route === "dynamics" ? "dynamics" : state.route;
     state.route = "trade-search";
     state.tradeSearchPickForDynamics = true;
     renderRoute();
+  });
+  publishDynamicsDeleteBtn?.addEventListener("click", async () => {
+    const postId = publishDynamicsState.editingPostId;
+    if (!postId) {
+      return;
+    }
+    if (publishDynamicsError) {
+      publishDynamicsError.classList.add("hidden");
+      publishDynamicsError.textContent = "";
+    }
+    try {
+      await deleteDynamicsPostById(postId);
+      publishDynamicsDialog?.close();
+      resetDynamicsListState("portfolio-dynamics");
+      if (state.route === "dynamics") {
+        void loadPortfolioDynamics();
+      }
+    } catch (error) {
+      if (publishDynamicsError) {
+        publishDynamicsError.textContent = error?.message || "删除失败";
+        publishDynamicsError.classList.remove("hidden");
+      }
+    }
   });
   publishDynamicsForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4162,9 +4200,7 @@ function bindEvents() {
   closeDynamicsPostActionsBtn?.addEventListener("click", () => dynamicsPostActionsDialog?.close());
   dynamicsPostEditBtn?.addEventListener("click", () => {
     dynamicsPostActionsDialog?.close();
-    if (dynamicsActionsTarget?.cardKind === "post") {
-      openPublishDynamicsDialog(dynamicsActionsTarget);
-    } else if (dynamicsActionsTarget?.cardKind === "trade") {
+    if (dynamicsActionsTarget?.cardKind === "trade") {
       openEditTradeDialog(dynamicsActionsTarget.id);
     }
   });
@@ -5571,6 +5607,10 @@ function handleDynamicsListClick(event, { editable = false } = {}) {
   if (!card) {
     return;
   }
+  if (kind === "post") {
+    openPublishDynamicsDialog(card);
+    return;
+  }
   openDynamicsPostActionsDialog(card);
 }
 
@@ -5678,6 +5718,38 @@ let publishDynamicsState = {
   symbols: [],
 };
 
+function syncPublishDynamicsTextareaHeight() {
+  if (!publishDynamicsContent) {
+    return;
+  }
+  publishDynamicsContent.style.height = "auto";
+  publishDynamicsContent.style.height = `${Math.max(publishDynamicsContent.scrollHeight, 120)}px`;
+}
+
+function syncPublishDynamicsUi() {
+  const contentLen = String(publishDynamicsContent?.value || "").length;
+  const hasContent = contentLen > 0;
+  const hasImages = publishDynamicsState.imageUrls.length > 0;
+  const hasSymbols = publishDynamicsState.symbols.length > 0;
+  const isEditing = Boolean(publishDynamicsState.editingPostId);
+  const canSubmit = isEditing || hasContent || hasImages || hasSymbols;
+
+  if (publishDynamicsSubmitBtn) {
+    publishDynamicsSubmitBtn.disabled = !canSubmit;
+  }
+  if (publishDynamicsPickImageBtn) {
+    publishDynamicsPickImageBtn.disabled = publishDynamicsState.imageUrls.length >= 9;
+  }
+  if (publishDynamicsCharCount) {
+    publishDynamicsCharCount.textContent = `${contentLen} / 2000`;
+    publishDynamicsCharCount.classList.toggle("is-warn", contentLen >= 1800 && contentLen < 2000);
+    publishDynamicsCharCount.classList.toggle("is-limit", contentLen >= 2000);
+  }
+  if (publishDynamicsDeleteBtn) {
+    publishDynamicsDeleteBtn.classList.toggle("hidden", !isEditing);
+  }
+}
+
 function renderPublishDynamicsSymbols() {
   if (!publishDynamicsSymbols) {
     return;
@@ -5688,6 +5760,7 @@ function renderPublishDynamicsSymbols() {
         `<span class="dynamics-symbol-tag" data-symbol="${escapeHtml(s.symbol)}">${escapeHtml(s.name || s.symbol)}<button type="button" data-remove-symbol="${escapeHtml(s.symbol)}" aria-label="移除">×</button></span>`,
     )
     .join("");
+  syncPublishDynamicsUi();
 }
 
 function renderPublishDynamicsImages() {
@@ -5700,6 +5773,7 @@ function renderPublishDynamicsImages() {
         `<div class="dynamics-image-picker-item"><img src="${escapeHtml(url)}" alt="" /><button type="button" class="dynamics-image-picker-remove" data-remove-image="${idx}" aria-label="移除">×</button></div>`,
     )
     .join("");
+  syncPublishDynamicsUi();
 }
 
 function resetPublishDynamicsForm() {
@@ -5717,8 +5791,14 @@ function resetPublishDynamicsForm() {
   if (publishDynamicsSubmitBtn) {
     publishDynamicsSubmitBtn.textContent = "发布";
   }
+  if (publishDynamicsUserName) {
+    const name = String(sessionProfile.displayName || sessionProfile.nickname || "").trim();
+    publishDynamicsUserName.textContent = name || "我";
+  }
   renderPublishDynamicsSymbols();
   renderPublishDynamicsImages();
+  syncPublishDynamicsTextareaHeight();
+  syncPublishDynamicsUi();
 }
 
 function openPublishDynamicsDialog(postCard) {
@@ -5732,15 +5812,14 @@ function openPublishDynamicsDialog(postCard) {
     publishDynamicsState.symbols = Array.isArray(postCard.symbols)
       ? postCard.symbols.map((s) => ({ symbol: s.symbol, name: s.name }))
       : [];
-    if (publishDynamicsDialogTitle) {
-      publishDynamicsDialogTitle.textContent = "编辑动态";
-    }
     if (publishDynamicsSubmitBtn) {
       publishDynamicsSubmitBtn.textContent = "保存";
     }
   }
   renderPublishDynamicsSymbols();
   renderPublishDynamicsImages();
+  syncPublishDynamicsTextareaHeight();
+  syncPublishDynamicsUi();
   publishDynamicsDialog?.showModal();
 }
 

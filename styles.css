@@ -4169,6 +4169,243 @@ body.subscription-expired-mode {
   padding: 8px 12px 0;
 }
 
+.dynamics-compose-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: var(--surface-content);
+}
+
+.dynamics-compose-dialog::backdrop {
+  background: var(--surface-page);
+}
+
+.dynamics-compose-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dynamics-compose-head {
+  display: grid;
+  grid-template-columns: 72px 1fr 72px;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-content);
+}
+
+.dynamics-compose-cancel {
+  justify-self: start;
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.dynamics-compose-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dynamics-compose-submit {
+  justify-self: end;
+  border: none;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 16px;
+  cursor: pointer;
+  min-width: 56px;
+}
+
+.dynamics-compose-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dynamics-compose-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dynamics-compose-editor {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dynamics-compose-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-muted);
+  color: #9aa3b2;
+}
+
+.dynamics-compose-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dynamics-compose-user-name {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.dynamics-compose-textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--text);
+  background: transparent;
+  outline: none;
+  overflow: hidden;
+}
+
+.dynamics-compose-textarea::placeholder {
+  color: #9aa3b2;
+}
+
+.dynamics-compose-symbols {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.dynamics-compose-symbols:empty {
+  display: none;
+}
+
+.dynamics-compose-images {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.dynamics-compose-images:empty {
+  display: none;
+}
+
+.dynamics-compose-error {
+  margin: 12px 0 0;
+}
+
+.dynamics-compose-delete {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  color: var(--up);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+}
+
+.dynamics-compose-delete.hidden {
+  display: none;
+}
+
+.dynamics-compose-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--surface-content);
+}
+
+.dynamics-compose-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dynamics-compose-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+.dynamics-compose-tool:hover:not(:disabled) {
+  background: #eef3fd;
+}
+
+.dynamics-compose-tool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.dynamics-compose-char-count {
+  font-size: 13px;
+  color: #9aa3b2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dynamics-compose-char-count.is-warn {
+  color: #e6a23c;
+}
+
+.dynamics-compose-char-count.is-limit {
+  color: var(--up);
+}
+
+.dynamics-compose-images .dynamics-image-picker-item img {
+  border-radius: 12px;
+}
+
 .dynamics-publish-btn {
   font-size: 14px;
   padding: 6px 14px;

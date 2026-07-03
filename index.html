@@ -866,29 +866,88 @@
       </form>
     </dialog>
 
-    <dialog id="publishDynamicsDialog" class="dialog dynamics-publish-dialog">
-      <form id="publishDynamicsForm">
-        <div class="panel-head">
-          <h2 id="publishDynamicsDialogTitle">发布动态</h2>
-          <button type="button" id="closePublishDynamicsBtn" class="btn btn-ghost">关闭</button>
+    <dialog id="publishDynamicsDialog" class="dialog dynamics-compose-dialog">
+      <form id="publishDynamicsForm" class="dynamics-compose-form">
+        <header class="dynamics-compose-head">
+          <button type="button" id="closePublishDynamicsBtn" class="dynamics-compose-cancel">取消</button>
+          <h2 id="publishDynamicsDialogTitle" class="dynamics-compose-title">发布动态</h2>
+          <button type="submit" id="publishDynamicsSubmitBtn" class="dynamics-compose-submit" disabled>发布</button>
+        </header>
+        <div class="dynamics-compose-body">
+          <div class="dynamics-compose-editor">
+            <div class="dynamics-compose-avatar" aria-hidden="true">
+              <svg class="dynamics-compose-avatar-icon" width="22" height="22" viewBox="0 0 24 24" focusable="false">
+                <circle cx="12" cy="8" r="4" fill="currentColor" />
+                <path fill="currentColor" d="M4 20c0-4 3.6-6 8-6s8 2 8 6v1H4v-1z" />
+              </svg>
+            </div>
+            <div class="dynamics-compose-main">
+              <p id="publishDynamicsUserName" class="dynamics-compose-user-name"></p>
+              <textarea
+                id="publishDynamicsContent"
+                class="dynamics-compose-textarea"
+                rows="1"
+                maxlength="2000"
+                placeholder="分享你的投资观点…"
+                autocomplete="off"
+              ></textarea>
+              <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
+              <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
+            </div>
+          </div>
+          <p id="publishDynamicsError" class="auth-error dynamics-compose-error hidden" role="alert"></p>
+          <button type="button" id="publishDynamicsDeleteBtn" class="dynamics-compose-delete hidden">删除动态</button>
         </div>
-        <div class="form-row">
-          <label for="publishDynamicsContent">正文</label>
-          <textarea id="publishDynamicsContent" rows="6" maxlength="2000" placeholder="分享你的观点…"></textarea>
-        </div>
-        <div class="form-row">
-          <label>关联股票（可选）</label>
-          <div id="publishDynamicsSymbols" class="dynamics-symbol-tags"></div>
-          <button type="button" id="publishDynamicsAddSymbolBtn" class="btn btn-ghost">添加股票</button>
-        </div>
-        <div class="form-row">
-          <label>图片（最多 9 张）</label>
-          <div id="publishDynamicsImages" class="dynamics-image-picker"></div>
-          <input id="publishDynamicsImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" />
-          <button type="button" id="publishDynamicsPickImageBtn" class="btn btn-ghost">选择图片</button>
-        </div>
-        <p id="publishDynamicsError" class="auth-error hidden" role="alert"></p>
-        <button type="submit" id="publishDynamicsSubmitBtn" class="btn btn-primary full">发布</button>
+        <footer class="dynamics-compose-toolbar">
+          <div class="dynamics-compose-tools">
+            <button
+              type="button"
+              id="publishDynamicsPickImageBtn"
+              class="dynamics-compose-tool"
+              aria-label="添加图片"
+              title="图片（最多 9 张）"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <circle cx="8.5" cy="10" r="1.6" fill="currentColor" />
+                <path
+                  d="M3 16l4.5-4 3.5 3 2.5-2L21 17"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              id="publishDynamicsAddSymbolBtn"
+              class="dynamics-compose-tool"
+              aria-label="关联股票"
+              title="关联股票"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M4 18V6l8-3 8 3v12l-8 3-8-3z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+                <path d="M12 3v18M4 6l8 3 8-3" fill="none" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+            </button>
+          </div>
+          <span id="publishDynamicsCharCount" class="dynamics-compose-char-count">0 / 2000</span>
+          <input
+            id="publishDynamicsImageInput"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            class="hidden"
+          />
+        </footer>
       </form>
     </dialog>
 
