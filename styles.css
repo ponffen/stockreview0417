@@ -2423,6 +2423,11 @@ h2 {
   z-index: 100;
 }
 
+.bottom-tabs--holdings,
+.bottom-tabs--profile {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 .bottom-tab-btn {
   border: none;
   background: var(--panel);
@@ -4104,6 +4109,44 @@ body.subscription-expired-mode {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.community-feed-card__actions--end {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.dynamics-list .community-feed-card--stream,
+.community-list.dynamics-list .community-feed-card--stream {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  box-shadow: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.dynamics-list .community-feed-card--stream:last-child {
+  border-bottom: none;
+}
+
+.dynamics-list {
+  padding: 0;
+}
+
+.dynamics-list .empty {
+  padding: 24px 12px;
+}
+
+.app-header-action-btn {
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.app-top-bar-spacer.hidden {
+  display: none;
 }
 
 .dynamics-route-head {

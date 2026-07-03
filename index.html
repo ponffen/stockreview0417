@@ -156,6 +156,7 @@
           <span class="app-menu-icon" aria-hidden="true"></span>
         </button>
         <h1 id="appHeaderTitle" class="app-header-title">组合分析</h1>
+        <button type="button" id="appHeaderPublishDynamicsBtn" class="btn btn-primary app-header-action-btn hidden">发布动态</button>
         <span class="app-top-bar-spacer" aria-hidden="true"></span>
       </header>
 
@@ -360,9 +361,6 @@
       </section>
 
       <section id="route-dynamics" class="route-pane">
-        <div class="dynamics-route-head">
-          <button type="button" id="portfolioDynamicsPublishBtn" class="btn btn-primary dynamics-publish-btn">发布动态</button>
-        </div>
         <div id="portfolioDynamicsList" class="community-list dynamics-list"></div>
       </section>
 
@@ -704,7 +702,7 @@
       </section>
 
       <section id="route-community-feed" class="route-pane">
-        <div id="communityFeedList" class="community-list"></div>
+        <div id="communityFeedList" class="community-list dynamics-list"></div>
       </section>
 
       <section id="route-community-following" class="route-pane">

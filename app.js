@@ -473,7 +473,7 @@ const mineCommunityProfileMsg = document.getElementById("mineCommunityProfileMsg
 const tradeHubCommunityMsg = document.getElementById("tradeHubCommunityMsg");
 const communityFeedList = document.getElementById("communityFeedList");
 const portfolioDynamicsList = document.getElementById("portfolioDynamicsList");
-const portfolioDynamicsPublishBtn = document.getElementById("portfolioDynamicsPublishBtn");
+const appHeaderPublishDynamicsBtn = document.getElementById("appHeaderPublishDynamicsBtn");
 const stockRecordDynamicsList = document.getElementById("stockRecordDynamicsList");
 const publishDynamicsDialog = document.getElementById("publishDynamicsDialog");
 const publishDynamicsForm = document.getElementById("publishDynamicsForm");
@@ -3428,7 +3428,7 @@ function bindEvents() {
         if (sub === "dynamics" && state.communityProfileUserId) {
           unmountCommunityAnalysisRoutePane();
           unmountCommunityTradeRecordsPane();
-          void loadProfileDynamics(state.communityProfileUserId);
+          void loadProfileDynamics(state.communityProfileUserId, { reset: true });
         }
         if (sub === "trade" && state.communityProfileUserId) {
           unmountCommunityAnalysisRoutePane();
@@ -4070,7 +4070,7 @@ function bindEvents() {
     }
   });
 
-  portfolioDynamicsPublishBtn?.addEventListener("click", () => openPublishDynamicsDialog());
+  appHeaderPublishDynamicsBtn?.addEventListener("click", () => openPublishDynamicsDialog());
   closePublishDynamicsBtn?.addEventListener("click", () => publishDynamicsDialog?.close());
   publishDynamicsPickImageBtn?.addEventListener("click", () => publishDynamicsImageInput?.click());
   publishDynamicsImageInput?.addEventListener("change", async () => {
@@ -4657,6 +4657,7 @@ function applyStockSearchPick(symbol, name) {
 
 function renderAll() {
   const prevSnap = previousRenderAllRouteForOverviewSnapshot;
+  const routeChangedForLoad = prevSnap !== state.route;
   if (
     (prevSnap === "earning" && state.route !== "earning") ||
     (state.route === "earning" && prevSnap != null && prevSnap !== "earning")
@@ -4679,7 +4680,7 @@ function renderAll() {
   } else if (state.route === "analysis") {
     void renderAnalysis();
   } else if (state.route === "dynamics") {
-    void loadPortfolioDynamics();
+    void loadPortfolioDynamics({ reset: routeChangedForLoad });
   } else if (state.route === "trade-records" || state.route === "trade-cash") {
     renderTradeTable();
     void ensureTradeListRouteReady();
@@ -4693,7 +4694,7 @@ function renderAll() {
     if (state.communityProfileTab === "earning" && state.communityProfileUserId) {
       void loadPublicEarningTabData(state.communityProfileUserId);
     } else if (state.communityProfileTab === "dynamics" && state.communityProfileUserId) {
-      void loadProfileDynamics(state.communityProfileUserId);
+      void loadProfileDynamics(state.communityProfileUserId, { reset: routeChangedForLoad });
     } else if (state.communityProfileTab === "trade" && state.communityProfileUserId) {
       void loadCommunityPublicTrades(state.communityProfileUserId);
     } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
@@ -5300,6 +5301,7 @@ function dynamicsCardHtml(card, opts = {}) {
   const c = card || {};
   const kind = c.cardKind === "post" ? "post" : "trade";
   const editable = Boolean(opts.editable && c.actions?.canEdit);
+  const linkScope = opts.linkScope === "portfolio" ? "portfolio" : "community";
   const uid = escapeHtml(c.userId || "");
   const symEsc = escapeHtml(String(c.symbol || "").trim());
   const showHeader = c.showHeader !== false && Boolean(c.displayName);
@@ -5313,19 +5315,27 @@ function dynamicsCardHtml(card, opts = {}) {
 
   let headBlock = "";
   if (showHeader) {
+    const stockLink =
+      kind === "trade" && c.symbol
+        ? `<a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>`
+        : "";
+    const portfolioLink =
+      linkScope === "community"
+        ? `<a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-portfolio-analysis data-community-user="${uid}">组合分析</a>`
+        : "";
+    const actionsClass =
+      linkScope === "portfolio"
+        ? "community-feed-card__actions community-feed-card__actions--end"
+        : "community-feed-card__actions";
     headBlock = `
       <div class="community-feed-card__head">
         <div class="community-feed-card__user">
           ${COMMUNITY_FEED_USER_ICON_SVG}
           <span class="community-feed-user-name">${escapeHtml(c.displayName || "用户")}</span>
         </div>
-        <div class="community-feed-card__actions">
-          ${
-            kind === "trade" && c.symbol
-              ? `<a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>`
-              : ""
-          }
-          <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-portfolio-analysis data-community-user="${uid}">组合分析</a>
+        <div class="${actionsClass}">
+          ${stockLink}
+          ${portfolioLink}
         </div>
       </div>`;
   }
@@ -5362,7 +5372,7 @@ function dynamicsCardHtml(card, opts = {}) {
   const footerBlock = `<div class="community-feed-card__footer"><span>${escapeHtml(c.bottomTime || "—")}</span>${footerAccount}</div>`;
 
   return `
-    <article class="community-feed-card" ${attrs}>
+    <article class="community-feed-card community-feed-card--stream" ${attrs}>
       <div class="community-feed-card__inner">
         ${headBlock}
         ${stockBlock}
@@ -5400,7 +5410,7 @@ function resetDynamicsListState(key) {
   st.loading = false;
 }
 
-function renderDynamicsListContainer(container, state, { editable = false } = {}) {
+function renderDynamicsListContainer(container, state, { editable = false, linkScope = "community" } = {}) {
   if (!container) {
     return;
   }
@@ -5409,15 +5419,16 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
     return;
   }
   container.innerHTML =
-    state.items.map((card) => dynamicsCardHtml(card, { editable })).join("") +
+    state.items.map((card) => dynamicsCardHtml(card, { editable, linkScope })).join("") +
     (state.loading ? `<p class="empty">加载中…</p>` : "");
 }
 
-async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText }) {
+async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText, linkScope = "community" }) {
   ensureTradeListScrollListener();
   const listState = getDynamicsListState(key);
   listState.apiPath = apiPath;
   listState.editable = editable;
+  listState.linkScope = linkScope;
   if (emptyText) {
     listState.emptyText = emptyText;
   }
@@ -5432,11 +5443,11 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
   }
   const st = getDynamicsListState(key);
   if (st.loading || (!st.hasMore && !reset && st.items.length)) {
-    renderDynamicsListContainer(container, st, { editable });
+    renderDynamicsListContainer(container, st, { editable, linkScope });
     return;
   }
   st.loading = true;
-  renderDynamicsListContainer(container, st, { editable });
+  renderDynamicsListContainer(container, st, { editable, linkScope });
   try {
     const qs = new URLSearchParams({ limit: "10" });
     if (st.cursor) {
@@ -5470,16 +5481,22 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
     st.hasMore = false;
   } finally {
     st.loading = false;
-    renderDynamicsListContainer(container, st, { editable });
+    renderDynamicsListContainer(container, st, { editable, linkScope: st.linkScope || linkScope });
   }
 }
 
 function maybeLoadMoreDynamicsList(key, container) {
-  const state = getDynamicsListState(key);
-  if (!state.hasMore || state.loading || !isNearDocumentBottom()) {
+  const st = getDynamicsListState(key);
+  if (!st.hasMore || st.loading || !isNearDocumentBottom()) {
     return;
   }
-  void loadDynamicsListPage({ key, container, apiPath: state.apiPath, editable: state.editable });
+  void loadDynamicsListPage({
+    key,
+    container,
+    apiPath: st.apiPath,
+    editable: st.editable,
+    linkScope: st.linkScope || "community",
+  });
 }
 
 function feedRowHtml(t) {
@@ -5575,8 +5592,15 @@ async function loadCommunityFeed() {
   }
 }
 
-async function loadPortfolioDynamics() {
+async function loadPortfolioDynamics({ reset = false } = {}) {
   if (!portfolioDynamicsList || !sessionPhone) {
+    return;
+  }
+  if (!reset && getDynamicsListState("portfolio-dynamics").items.length) {
+    renderDynamicsListContainer(portfolioDynamicsList, getDynamicsListState("portfolio-dynamics"), {
+      editable: true,
+      linkScope: "portfolio",
+    });
     return;
   }
   showRouteLoading("数据正在加载中");
@@ -5587,6 +5611,7 @@ async function loadPortfolioDynamics() {
       apiPath: "/dynamics",
       reset: true,
       editable: true,
+      linkScope: "portfolio",
       emptyText: "暂无动态，点击右上角发布",
     });
   } finally {
@@ -5594,38 +5619,54 @@ async function loadPortfolioDynamics() {
   }
 }
 
-async function loadProfileDynamics(targetId) {
+async function loadProfileDynamics(targetId, { reset = false } = {}) {
   const uid = String(targetId || state.communityProfileUserId || "").trim();
   const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
   if (!uid || !container) {
     return;
   }
+  const listKey = `profile-dynamics:${uid}`;
+  if (!reset && getDynamicsListState(listKey).items.length) {
+    renderDynamicsListContainer(container, getDynamicsListState(listKey), {
+      editable: false,
+      linkScope: "portfolio",
+    });
+    return;
+  }
   await loadDynamicsListPage({
-    key: `profile-dynamics:${uid}`,
+    key: listKey,
     container,
     apiPath: `/public/${encodeURIComponent(uid)}/dynamics`,
     reset: true,
     editable: false,
+    linkScope: "portfolio",
     emptyText: "暂无动态",
   });
 }
 
-async function loadStockRecordDynamics(symbol, usePub, detail) {
+let stockDynamicsSurfaceKey = "";
+
+async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false } = {}) {
   const sym = normalizeSymbol(symbol);
   const container = stockRecordDynamicsList;
   if (!sym || !container) {
     return;
   }
+  const listKey = `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}`;
+  const surfaceKey = `${listKey}|${sym}|${usePub ? "1" : "0"}`;
+  const shouldReset = reset || stockDynamicsSurfaceKey !== surfaceKey;
+  stockDynamicsSurfaceKey = surfaceKey;
   let apiPath = `/dynamics/stock/${encodeURIComponent(sym)}`;
   if (usePub && detail?.userId) {
     apiPath = `/public/${encodeURIComponent(detail.userId)}/dynamics/stock/${encodeURIComponent(sym)}`;
   }
   await loadDynamicsListPage({
-    key: `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}`,
+    key: listKey,
     container,
     apiPath,
-    reset: true,
+    reset: shouldReset,
     editable: !usePub,
+    linkScope: "portfolio",
     emptyText: "暂无个股动态",
   });
 }
@@ -6550,7 +6591,7 @@ async function loadCommunityProfileDetail() {
     if (tab === "earning") {
       void loadPublicEarningTabData(uid);
     } else if (tab === "dynamics") {
-      void loadProfileDynamics(uid);
+      void loadProfileDynamics(uid, { reset: true });
     } else if (tab === "trade") {
       void loadCommunityPublicTrades(uid);
     } else if (tab === "analysis") {
@@ -6768,6 +6809,14 @@ function renderRoute() {
   ]);
   if (appTopBar) {
     appTopBar.style.display = secondaryToplessRoutes.has(state.route) ? "none" : "flex";
+  }
+  const showPublishInHeader = state.route === "dynamics" && state.appModule === "holdings";
+  if (appHeaderPublishDynamicsBtn) {
+    appHeaderPublishDynamicsBtn.classList.toggle("hidden", !showPublishInHeader);
+  }
+  const appTopBarSpacer = document.querySelector(".app-top-bar-spacer");
+  if (appTopBarSpacer) {
+    appTopBarSpacer.classList.toggle("hidden", showPublishInHeader);
   }
   document.querySelectorAll(".bottom-tabs .bottom-tab-btn").forEach((button) => {
     const r = button.dataset.route;
@@ -8701,6 +8750,7 @@ function resetTradeFormImages(urls = []) {
   renderTradeFormImages();
 }
 
+let overviewProfitRefreshSeq = 0;
 let _overviewProfitInflight = null;
 
 const _kpiInFlightByScope = new Map();
