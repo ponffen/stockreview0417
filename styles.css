@@ -2266,6 +2266,18 @@ h2 {
   margin-bottom: 10px;
 }
 
+.stock-record-dynamics-section {
+  padding: 12px 0 0;
+}
+
+.stock-record-dynamics-section__head {
+  padding: 0 14px 10px;
+}
+
+.stock-record-dynamics-section .stock-record-section-title {
+  margin-bottom: 0;
+}
+
 .stock-record-subhead-right {
   display: flex;
   align-items: center;
