@@ -4167,7 +4167,7 @@ body.subscription-expired-mode {
 
 /* dyn-card 母版：槽位间距与图三交易卡一致 */
 .dyn-card__inner {
-  padding: 14px 16px 16px;
+  padding: 12px 16px 16px;
 }
 
 .dyn-card__slot + .dyn-card__slot {
@@ -4186,6 +4186,10 @@ body.subscription-expired-mode {
 
 .dyn-card__slot--stock-tags .dyn-card__stock-tags {
   margin: 0;
+}
+
+.dyn-card .community-feed-card__stock-row {
+  margin-top: 0;
 }
 
 .dyn-card__metrics {
@@ -4217,7 +4221,6 @@ body.subscription-expired-mode {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 0;
   padding-top: 12px;
   border-top: 1px dashed var(--line);
   font-size: 12px;
