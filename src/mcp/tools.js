@@ -14,6 +14,7 @@ const {
 const { getPublicTradesPage } = require("../community-service");
 const { resolveDataAccess } = require("./target-access");
 const { searchCommunityUsers } = require("./community-search");
+const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp } = require("./dynamics-service");
 const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
 
 const OTHER_USER_TARGET_RULE =
@@ -23,7 +24,7 @@ const TOOL_DEFS = [
   {
     name: "search_community_users",
     description:
-      "按昵称或展示名搜索社区用户，返回可查看的公开组合候选人（含 user_id、展示名、收益与重仓提示）。查他人持仓/成交/分析前必须先调用本工具，经用户确认后再用返回的 user_id 作为 target_user_id。",
+      "按昵称或展示名搜索社区用户，返回可查看的公开组合候选人（含 user_id、展示名、收益与重仓提示）。查他人持仓/成交/分析/动态前必须先调用本工具，经用户确认后再用返回的 user_id 作为 target_user_id。",
     inputSchema: {
       type: "object",
       properties: {
@@ -113,6 +114,32 @@ const TOOL_DEFS = [
       },
     },
   },
+  {
+    name: "get_dynamics",
+    description:
+      `组合或个股动态时间线（交易备注 + 观点帖混排，含图片）。不传 symbol=整个人组合动态；传 symbol=该股动态（不含无标的纯观点帖）。查本人直接调用；查他人公开页需 target_user_id。${OTHER_USER_TARGET_RULE}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_user_id: { type: "string", description: "可选。他人用户 ID；仅公开账户可用。" },
+        symbol: { type: "string", description: "可选。个股代码，如 SH600519、AAPL" },
+        limit: { type: "number", description: "默认 20，最大 30" },
+        cursor: { type: "string", description: "分页游标" },
+      },
+    },
+  },
+  {
+    name: "get_community_dynamics_feed",
+    description:
+      "社区关注流动态：仅包含当前用户已关注且已公开的用户动态（交易卡自动出现 + 观点帖），按时间混排。不能代替某一个人的 get_dynamics。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "默认 20，最大 30" },
+        cursor: { type: "string", description: "分页游标" },
+      },
+    },
+  },
 ];
 
 function toolMeta(access, extra = {}) {
@@ -140,6 +167,26 @@ async function callMcpTool(viewerId, name, args = {}) {
 
   if (tool === "search_community_users") {
     return searchCommunityUsers(viewerId, input);
+  }
+
+  if (tool === "get_community_dynamics_feed") {
+    const result = await getCommunityDynamicsFeedForMcp(viewerId, input);
+    if (!result.ok) {
+      const err = new Error(result.error || "forbidden");
+      err.status = result.status || 403;
+      throw err;
+    }
+    return result;
+  }
+
+  if (tool === "get_dynamics") {
+    const result = await getDynamicsForMcp(viewerId, input);
+    if (!result.ok) {
+      const err = new Error(result.error || "forbidden");
+      err.status = result.status || 403;
+      throw err;
+    }
+    return result;
   }
 
   const access = await resolveDataAccess(viewerId, input.target_user_id);
