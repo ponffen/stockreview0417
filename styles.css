@@ -4179,10 +4179,15 @@ body.subscription-expired-mode {
   border-bottom: 1px solid var(--line);
 }
 
-.dynamics-list .community-feed-card--stream .community-feed-card__metrics {
-  margin-left: -16px;
-  margin-right: -16px;
-  width: calc(100% + 32px);
+/* 个股页「个股动态」：灰色指标区铺满区块左右（私有 / 公开同一 DOM） */
+.stock-record-dynamics-section .dynamics-list--stock .community-feed-card--stream {
+  overflow: hidden;
+}
+
+.stock-record-dynamics-section .dynamics-list--stock .community-feed-card--stream .community-feed-card__metrics {
+  margin-left: -30px;
+  margin-right: -30px;
+  width: calc(100% + 60px);
   border-radius: 0;
   box-sizing: border-box;
 }
