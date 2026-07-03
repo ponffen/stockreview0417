@@ -387,7 +387,8 @@ let browserHistorySeeded = false;
 let browserHistoryListenerBound = false;
 let applyingBrowserRoutePopstate = false;
 let lastBrowserRouteKey = "";
-let lastRenderedRouteForScrollReset = "";
+let lastRenderedViewKeyForScrollReset = "";
+let lastRenderedRouteForPaneUnmount = "";
 /** 用于离开/重新进入「收益」时失效首页日快照 UI 缓存 */
 let previousRenderAllRouteForOverviewSnapshot = null;
 
@@ -3437,6 +3438,7 @@ function bindEvents() {
           unmountCommunityAnalysisRoutePane();
           void loadCommunityPublicTrades(state.communityProfileUserId);
         }
+        notifyNavigationViewChanged();
       }
       e.preventDefault();
       return;
@@ -4993,6 +4995,9 @@ function bindBrowserRouteHistory() {
     return;
   }
   browserHistoryListenerBound = true;
+  if (window.history && "scrollRestoration" in window.history) {
+    window.history.scrollRestoration = "manual";
+  }
   window.addEventListener("popstate", (event) => {
     const snapshot = event?.state?.[BROWSER_ROUTE_STATE_KEY];
     if (!snapshot) {
@@ -6835,7 +6840,22 @@ async function saveMineCommunityProfile() {
   }
 }
 
-function resetViewportScrollTop() {
+function buildNavigationViewKey() {
+  const route = String(state.route || "");
+  const parts = [String(state.appModule || ""), route];
+  if (route === "community-profile") {
+    parts.push(String(state.communityProfileTab || "earning"));
+  }
+  if (route === "stock-record") {
+    parts.push(String(state.activeRecordSymbol || ""));
+  }
+  return parts.join("|");
+}
+
+const SCROLL_RESET_INNER_SELECTOR =
+  ".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap, .dynamics-compose-body, .community-profile-tab-panel, .dynamics-list";
+
+function resetAllScrollPositions() {
   try {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   } catch {
@@ -6847,6 +6867,43 @@ function resetViewportScrollTop() {
   if (document.body) {
     document.body.scrollTop = 0;
   }
+  const appShell = document.getElementById("appShell");
+  if (appShell) {
+    appShell.scrollTop = 0;
+  }
+  const shellInner = document.querySelector(".app-shell-inner");
+  if (shellInner) {
+    shellInner.scrollTop = 0;
+  }
+  routePanes.forEach((pane) => {
+    pane.scrollTop = 0;
+    pane.querySelectorAll(SCROLL_RESET_INNER_SELECTOR).forEach((el) => {
+      el.scrollTop = 0;
+    });
+  });
+}
+
+function scheduleNavigationScrollReset() {
+  const run = () => resetAllScrollPositions();
+  run();
+  requestAnimationFrame(() => {
+    run();
+    requestAnimationFrame(run);
+  });
+}
+
+function notifyNavigationViewChanged() {
+  const viewKey = buildNavigationViewKey();
+  if (viewKey === lastRenderedViewKeyForScrollReset) {
+    return false;
+  }
+  lastRenderedViewKeyForScrollReset = viewKey;
+  scheduleNavigationScrollReset();
+  return true;
+}
+
+function resetViewportScrollTop() {
+  resetAllScrollPositions();
 }
 
 function resetRoutePaneScrollTop(route) {
@@ -6855,7 +6912,7 @@ function resetRoutePaneScrollTop(route) {
     return;
   }
   activePane.scrollTop = 0;
-  activePane.querySelectorAll(".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap").forEach((el) => {
+  activePane.querySelectorAll(SCROLL_RESET_INNER_SELECTOR).forEach((el) => {
     el.scrollTop = 0;
   });
 }
@@ -6888,10 +6945,10 @@ function renderRoute() {
           ? "ai-analysis"
           : "earning";
   }
-  const routeChanged = state.route !== lastRenderedRouteForScrollReset;
+  const routeChanged = state.route !== lastRenderedRouteForPaneUnmount;
   if (
     routeChanged &&
-    lastRenderedRouteForScrollReset === "community-profile" &&
+    lastRenderedRouteForPaneUnmount === "community-profile" &&
     state.route !== "community-profile"
   ) {
     unmountCommunityAnalysisRoutePane();
@@ -6991,13 +7048,8 @@ function renderRoute() {
   } else {
     syncBrowserRouteHistory("push");
   }
-  if (routeChanged) {
-    requestAnimationFrame(() => {
-      resetViewportScrollTop();
-      resetRoutePaneScrollTop(state.route);
-    });
-  }
-  lastRenderedRouteForScrollReset = state.route;
+  notifyNavigationViewChanged();
+  lastRenderedRouteForPaneUnmount = state.route;
 }
 
 function invalidateOverviewMetricsUi() {
