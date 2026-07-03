@@ -1270,6 +1270,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
   const marketValue = [];
   const cash = [];
   const cashRatio = [];
+  const principal = [];
   for (const r of rows) {
     if (r.date < start || r.date > end) {
       continue;
@@ -1278,6 +1279,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
     const mvCny = Number(r.marketValue) || 0;
     const cashCny = Number(r.cash) || 0;
     const ratioRaw = Number(r.cashRatio) || 0;
+    const principalBook = Number(r.principal) || 0;
     totalAssets.push({
       date: r.date,
       totalAssets: formatPlainAssetForScope(taCny, scope, book, fxU, fxH),
@@ -1294,6 +1296,10 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
       date: r.date,
       cashRatio: fmtPercentRatio(ratioRaw),
     });
+    principal.push({
+      date: r.date,
+      principal: formatPlainAssetForScope(principalBook, scope, book, fxU, fxH),
+    });
   }
 
   const liveAssets = todayPointForAssets(live, scope, book, fxU, fxH);
@@ -1305,6 +1311,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
       marketValue: mergeSeriesLivePoint(marketValue, liveAssets, "marketValue"),
       cash: mergeSeriesLivePoint(cash, liveAssets, "cash"),
       cashRatio: mergeSeriesLivePoint(cashRatio, liveAssets, "cashRatio"),
+      principal: mergeSeriesLivePoint(principal, liveAssets, "principal"),
     };
   }
 
@@ -1315,6 +1322,7 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
     marketValue,
     cash,
     cashRatio,
+    principal,
   };
 }
 
@@ -1486,6 +1494,7 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
   const ta = liveProfitScalarToBook(live.totalAssetsCny, scope, book, fxU, fxH);
   const mv = liveProfitScalarToBook(live.liveMarketValueCny, scope, book, fxU, fxH);
   const cash = liveProfitScalarToBook(live.cashCny, scope, book, fxU, fxH);
+  const principal = liveProfitScalarToBook(live.principalCny, scope, book, fxU, fxH);
   const ratio = ta > 0 ? cash / ta : Number(live.cashRatio) || 0;
   return {
     date: live.liveDate,
@@ -1493,6 +1502,7 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
     marketValue: formatPlainAssetForScope(mv, scope, book, fxU, fxH),
     cash: formatPlainAssetForScope(cash, scope, book, fxU, fxH),
     cashRatio: fmtPercentRatio(ratio),
+    principal: formatPlainAssetForScope(principal, scope, book, fxU, fxH),
   };
 }
 

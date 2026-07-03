@@ -166,7 +166,7 @@ const STATE_SYNC_KEYS = [
   "analysisPreset",
   "customRangeStart",
   "customRangeEnd",
-  "capitalTrendMode", // total_assets | market | cash | cash_ratio（分析资产图下拉）
+  "capitalTrendMode", // total_assets | market | cash | cash_ratio | principal（分析资产图下拉）
   "capitalAmount",
   "accounts",
   "selectedAccountId",
@@ -335,7 +335,7 @@ const state = {
 let apiReady = false;
 let tradeSearchSuggestController = null;
 let analysisRenderRequestSeq = 0;
-/** 分析页 analysis-bundle 资产四曲线缓存，切换「总资产/市值/现金/占比」仅本地重绘 */
+/** 分析页 analysis-bundle 资产五曲线缓存，切换「总资产/市值/现金/占比/本金」仅本地重绘 */
 let cachedAnalysisAssetChartRows = null;
 /** metrics 分析图：缓存序列与 payload，十字星 onRedraw 不重拉接口 */
 let cachedAnalysisMetricsCharts = null;
@@ -2168,10 +2168,10 @@ async function hydrateState() {
   if (!["preset", "custom", "all"].includes(state.analysisRangeMode)) {
     state.analysisRangeMode = "preset";
   }
-  if (state.capitalTrendMode === "both" || state.capitalTrendMode === "principal") {
+  if (state.capitalTrendMode === "both") {
     state.capitalTrendMode = "total_assets";
   }
-  if (!["total_assets", "market", "cash", "cash_ratio"].includes(state.capitalTrendMode)) {
+  if (!["total_assets", "market", "cash", "cash_ratio", "principal"].includes(state.capitalTrendMode)) {
     state.capitalTrendMode = "total_assets";
   }
   if (state.stockAmountDisplay !== "cny" && state.stockAmountDisplay !== "native") {
@@ -4548,7 +4548,7 @@ function renderControls() {
         : state.customRangeEnd || "";
   }
   if (assetCurveModeSelect) {
-    assetCurveModeSelect.value = ["total_assets", "market", "cash", "cash_ratio"].includes(state.capitalTrendMode)
+    assetCurveModeSelect.value = ["total_assets", "market", "cash", "cash_ratio", "principal"].includes(state.capitalTrendMode)
       ? state.capitalTrendMode
       : "total_assets";
   }
@@ -6601,7 +6601,9 @@ function updateAnalysisChartLatestSummaries() {
         ? "cash"
         : state.capitalTrendMode === "cash_ratio"
           ? "cashRatio"
-          : "totalAssets";
+          : state.capitalTrendMode === "principal"
+            ? "principal"
+            : "totalAssets";
   const lastAssetRow = cachedAnalysisAssetChartRows?.at(-1);
   const lastAssetVal = lastAssetRow != null ? Number(lastAssetRow[assetKey]) : null;
   if (lastAssetVal != null && Number.isFinite(lastAssetVal)) {
@@ -8683,7 +8685,7 @@ function analysisAssetChartRowsFromSeries(series, opts = {}) {
   }
   const normalized = opts.normalizedAmounts === true;
   const dateSet = new Set();
-  for (const key of ["totalAssets", "marketValue", "cash", "cashRatio"]) {
+  for (const key of ["totalAssets", "marketValue", "cash", "cashRatio", "principal"]) {
     for (const p of series[key] || []) {
       if (p?.date) {
         dateSet.add(String(p.date).slice(0, 10));
@@ -8712,6 +8714,7 @@ function analysisAssetChartRowsFromSeries(series, opts = {}) {
       market: pick("marketValue", date),
       cash: pick("cash", date),
       cashRatio: pick("cashRatio", date),
+      principal: pick("principal", date),
     }));
 }
 
@@ -10258,7 +10261,9 @@ function drawAssetChart(assetSeries, canvas, trendMode, chartOpts = {}) {
         ? { key: "cash", label: "现金", color: "#27ae60", fmt: fmtAmount }
         : mode === "cash_ratio"
           ? { key: "cashRatio", label: "现金占比", color: "#9b59b6", fmt: (v) => `${formatNumber(v, 2)}%` }
-          : { key: "totalAssets", label: "总资产", color: "#5f6c82", fmt: fmtAmount };
+          : mode === "principal"
+            ? { key: "principal", label: "本金", color: "#e67e22", fmt: fmtAmount }
+            : { key: "totalAssets", label: "总资产", color: "#5f6c82", fmt: fmtAmount };
   const series = assetSeries.map((item) => ({
     date: item.date,
     value: Number(item[cfg.key]) || 0,
