@@ -8,7 +8,7 @@ const {
   updateCommunityPost,
   deleteCommunityPost,
 } = require("./community-posts-db");
-const { uploadDynamicsImage, isBlobConfigured } = require("./blob-images");
+const { uploadDynamicsImage, isBlobConfigured, streamDynamicsImage } = require("./blob-images");
 const Busboy = require("busboy");
 
 function parseLimit(raw) {
@@ -102,8 +102,12 @@ async function handleUploadDynamicsImage(req, userId) {
     throw err;
   }
   const { buffer, mimeType } = await parseDynamicsImageUpload(req);
-  const url = await uploadDynamicsImage(userId, buffer, mimeType);
-  return { url };
+  const uploaded = await uploadDynamicsImage(userId, buffer, mimeType);
+  return uploaded;
+}
+
+async function handleViewDynamicsImage(req, res) {
+  await streamDynamicsImage(req, res);
 }
 
 module.exports = {
@@ -114,6 +118,7 @@ module.exports = {
   handleSelfStockDynamics,
   handlePublicStockDynamics,
   handleUploadDynamicsImage,
+  handleViewDynamicsImage,
   createCommunityPost,
   updateCommunityPost,
   deleteCommunityPost,

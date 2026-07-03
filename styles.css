@@ -4116,22 +4116,36 @@ body.subscription-expired-mode {
   justify-content: flex-end;
 }
 
+/* 动态流：白底通栏卡片 + 灰色间隔条（社区首页 / 组合动态 / 个股动态 / 他人主页） */
+#route-dynamics,
+#route-community-feed,
+.community-profile-tab-panel[data-profile-panel="dynamics"] {
+  background: var(--surface-content);
+}
+
+.dynamics-list {
+  background: var(--surface-content);
+  padding: 0 0 24px;
+}
+
+.community-list.dynamics-list {
+  padding: 0 0 24px;
+}
+
 .dynamics-list .community-feed-card--stream,
 .community-list.dynamics-list .community-feed-card--stream {
-  background: transparent;
+  background: var(--surface-content);
   border: none;
   border-radius: 0;
   margin: 0;
   box-shadow: none;
-  border-bottom: 1px solid var(--line);
 }
 
-.dynamics-list .community-feed-card--stream:last-child {
-  border-bottom: none;
-}
-
-.dynamics-list {
-  padding: 0;
+.dynamics-list-gap {
+  height: 8px;
+  background: var(--surface-page);
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .dynamics-list .empty {
@@ -4158,10 +4172,6 @@ body.subscription-expired-mode {
 .dynamics-publish-btn {
   font-size: 14px;
   padding: 6px 14px;
-}
-
-.dynamics-list {
-  padding-bottom: 24px;
 }
 
 .community-feed-card__footer {
@@ -4317,7 +4327,11 @@ body.subscription-expired-mode {
 }
 
 .community-profile-tab-panel [data-profile-dynamics-list] {
-  padding: 0 12px 24px;
+  padding: 0 0 24px;
+}
+
+.stock-record-dynamics-section .dynamics-list {
+  background: var(--surface-content);
 }
 
 .trade-search-panel {

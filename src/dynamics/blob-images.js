@@ -2,7 +2,7 @@
  * Vercel Blob helpers for dynamics images.
  */
 
-const { put, del } = require("@vercel/blob");
+const { put, del, get } = require("@vercel/blob");
 const { randomUUID } = require("crypto");
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -15,6 +15,24 @@ const EXT_BY_MIME = {
 
 function getBlobToken() {
   return String(process.env.BLOB_READ_WRITE_TOKEN || "").trim();
+}
+
+function getBlobStoreAccess() {
+  const raw = String(process.env.BLOB_STORE_ACCESS || "private").trim().toLowerCase();
+  return raw === "public" ? "public" : "private";
+}
+
+function isPrivateBlobStore() {
+  return getBlobStoreAccess() === "private";
+}
+
+function getStoreIdFromToken() {
+  const token = getBlobToken();
+  if (!token) {
+    return "";
+  }
+  const parts = token.split("_");
+  return parts[3] || "";
 }
 
 function assertBlobConfigured() {
@@ -44,13 +62,104 @@ function parseImageUrlsField(raw) {
 }
 
 function serializeImageUrls(urls) {
-  const list = parseImageUrlsField(urls);
+  const list = normalizeStoredImageUrls(urls);
   return JSON.stringify(list);
 }
 
 function isBlobUrl(url) {
   const u = String(url || "").trim();
-  return u.includes("blob.vercel-storage.com") || u.includes(".public.blob.vercel-storage.com");
+  return u.includes("blob.vercel-storage.com");
+}
+
+function pathnameToBlobUrl(pathname) {
+  const path = String(pathname || "").trim().replace(/^\/+/, "");
+  if (!path) {
+    return "";
+  }
+  const storeId = getStoreIdFromToken();
+  if (!storeId) {
+    return "";
+  }
+  return `https://${storeId}.${getBlobStoreAccess()}.blob.vercel-storage.com/${path}`;
+}
+
+function extractPathnameFromBlobUrl(url) {
+  try {
+    const u = new URL(String(url || "").trim());
+    return u.pathname.replace(/^\/+/, "");
+  } catch {
+    return "";
+  }
+}
+
+function parseClientImageViewUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = raw.startsWith("/") ? new URL(raw, "http://local") : new URL(raw);
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (!path.endsWith("/api/dynamics/images/view")) {
+      return null;
+    }
+    const blobPath = parsed.searchParams.get("path");
+    if (blobPath) {
+      return { pathname: blobPath.replace(/^\/+/, "") };
+    }
+    const encoded = parsed.searchParams.get("u");
+    if (encoded) {
+      const blobUrl = Buffer.from(encoded, "base64url").toString("utf8");
+      return { blobUrl };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function normalizeStoredImageUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) {
+    return "";
+  }
+  if (isBlobUrl(u)) {
+    return u;
+  }
+  const view = parseClientImageViewUrl(u);
+  if (!view) {
+    return u;
+  }
+  if (view.blobUrl && isBlobUrl(view.blobUrl)) {
+    return view.blobUrl;
+  }
+  if (view.pathname) {
+    return pathnameToBlobUrl(view.pathname);
+  }
+  return u;
+}
+
+function normalizeStoredImageUrls(urls) {
+  return parseImageUrlsField(urls).map(normalizeStoredImageUrl).filter(Boolean).slice(0, 9);
+}
+
+function toClientImageUrl(storedUrl) {
+  const url = normalizeStoredImageUrl(storedUrl);
+  if (!url) {
+    return "";
+  }
+  if (!isPrivateBlobStore() || !isBlobUrl(url)) {
+    return url;
+  }
+  const pathname = extractPathnameFromBlobUrl(url);
+  if (!pathname) {
+    return url;
+  }
+  return `/api/dynamics/images/view?path=${encodeURIComponent(pathname)}`;
+}
+
+function toClientImageUrls(urls) {
+  return parseImageUrlsField(urls).map(toClientImageUrl).filter(Boolean);
 }
 
 async function uploadDynamicsImage(userId, buffer, contentType) {
@@ -66,13 +175,83 @@ async function uploadDynamicsImage(userId, buffer, contentType) {
   const uid = String(userId || "").trim() || "anon";
   const ext = EXT_BY_MIME[mime] || "jpg";
   const pathname = `dynamics/${uid}/${randomUUID()}.${ext}`;
+  const access = getBlobStoreAccess();
   const blob = await put(pathname, buf, {
-    access: "public",
+    access,
     token: getBlobToken(),
     contentType: mime,
     addRandomSuffix: false,
   });
-  return blob.url;
+  return {
+    url: toClientImageUrl(blob.url),
+    storageUrl: blob.url,
+  };
+}
+
+async function streamDynamicsImage(req, res) {
+  assertBlobConfigured();
+  const query = req.query || {};
+  let blobUrl = "";
+  const pathParam = query.path != null ? String(query.path).trim() : "";
+  const encoded = query.u != null ? String(query.u).trim() : "";
+  if (pathParam) {
+    blobUrl = pathnameToBlobUrl(pathParam);
+  } else if (encoded) {
+    try {
+      blobUrl = Buffer.from(encoded, "base64url").toString("utf8");
+    } catch {
+      blobUrl = "";
+    }
+  }
+  const sendJson = (status, payload) => {
+    if (typeof res.status === "function") {
+      res.status(status).json(payload);
+      return;
+    }
+    res.statusCode = status;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(payload));
+  };
+  if (!blobUrl || !isBlobUrl(blobUrl)) {
+    sendJson(400, { ok: false, error: "invalid image path" });
+    return;
+  }
+  const pathname = extractPathnameFromBlobUrl(blobUrl);
+  if (!pathname.startsWith("dynamics/")) {
+    sendJson(403, { ok: false, error: "forbidden" });
+    return;
+  }
+  const result = await get(blobUrl, {
+    access: getBlobStoreAccess(),
+    token: getBlobToken(),
+  });
+  if (!result || !result.stream) {
+    sendJson(404, { ok: false, error: "not found" });
+    return;
+  }
+  const contentType = result.blob?.contentType || "application/octet-stream";
+  const { Readable } = require("stream");
+  const nodeStream = Readable.fromWeb(result.stream);
+  const chunks = [];
+  for await (const chunk of nodeStream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const body = Buffer.concat(chunks);
+  if (typeof res.status === "function") {
+    res.set("Cache-Control", "public, max-age=31536000, immutable");
+    if (result.blob?.etag) {
+      res.set("ETag", result.blob.etag);
+    }
+    res.type(contentType).send(body);
+    return;
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  if (result.blob?.etag) {
+    res.setHeader("ETag", result.blob.etag);
+  }
+  res.end(body);
 }
 
 async function deleteBlobUrls(urls) {
@@ -80,7 +259,7 @@ async function deleteBlobUrls(urls) {
   if (!token) {
     return;
   }
-  const list = parseImageUrlsField(urls);
+  const list = normalizeStoredImageUrls(urls);
   await Promise.all(
     list.map(async (url) => {
       if (!isBlobUrl(url)) {
@@ -96,8 +275,8 @@ async function deleteBlobUrls(urls) {
 }
 
 function diffRemovedImageUrls(before, after) {
-  const prev = new Set(parseImageUrlsField(before));
-  const next = new Set(parseImageUrlsField(after));
+  const prev = new Set(normalizeStoredImageUrls(before));
+  const next = new Set(normalizeStoredImageUrls(after));
   return [...prev].filter((u) => !next.has(u));
 }
 
@@ -106,8 +285,14 @@ module.exports = {
   ALLOWED_MIME,
   parseImageUrlsField,
   serializeImageUrls,
+  normalizeStoredImageUrl,
+  normalizeStoredImageUrls,
+  toClientImageUrl,
+  toClientImageUrls,
   uploadDynamicsImage,
+  streamDynamicsImage,
   deleteBlobUrls,
   diffRemovedImageUrls,
   isBlobConfigured: () => Boolean(getBlobToken()),
+  getBlobStoreAccess,
 };

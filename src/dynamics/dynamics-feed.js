@@ -6,6 +6,7 @@ const { initPool, dbQuery, normalizeSymbol, getAccounts, getUserCommunityRow } =
 const { enrichRowsWithSymbolNames } = require("../symbol-name-resolve");
 const { buildCardFromFeedRow } = require("./dynamics-card-build");
 const { applyDynamicsRedaction, SCENES } = require("./dynamics-redact");
+const { toClientImageUrls } = require("./blob-images");
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 30;
@@ -239,7 +240,13 @@ async function listDynamicsFeed(options = {}) {
   }
 
   const ctx = { accountNameById, nameBySymbol };
-  const data = slice.map((row) => applyDynamicsRedaction(buildCardFromFeedRow(row, ctx), scene, { isSelf }));
+  const data = slice.map((row) => {
+    const card = applyDynamicsRedaction(buildCardFromFeedRow(row, ctx), scene, { isSelf });
+    if (Array.isArray(card.imageUrls) && card.imageUrls.length) {
+      card.imageUrls = toClientImageUrls(card.imageUrls);
+    }
+    return card;
+  });
 
   let nextCursor = null;
   if (hasMore && slice.length) {

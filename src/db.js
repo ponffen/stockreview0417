@@ -886,6 +886,8 @@ async function resolveAmountShareRatioForTrade(userId, trade) {
 
 async function upsertTrade(trade, userId) {
   const safe = normalizeTrade(trade);
+  const { normalizeStoredImageUrls } = require("./dynamics/blob-images");
+  safe.imageUrls = normalizeStoredImageUrls(safe.imageUrls);
   const amountShareRatio =
     safe.type === "trade" ? await resolveAmountShareRatioForTrade(userId, safe) : null;
   const row = tradeToRow({ ...safe, amountShareRatio }, userId);
@@ -965,6 +967,8 @@ async function importTrades(trades, mode = "append", userId = null) {
     }
     for (const trade of list) {
       const safe = normalizeTrade(trade);
+      const { normalizeStoredImageUrls } = require("./dynamics/blob-images");
+      safe.imageUrls = normalizeStoredImageUrls(safe.imageUrls);
       const amountShareRatio =
         safe.type === "trade" ? await resolveAmountShareRatioForTrade(uid, safe) : null;
       const row = tradeToRow({ ...safe, amountShareRatio }, uid);

@@ -5418,8 +5418,9 @@ function renderDynamicsListContainer(container, state, { editable = false, linkS
     container.innerHTML = `<p class="empty">${escapeHtml(state.emptyText || "暂无动态")}</p>`;
     return;
   }
+  const gap = '<div class="dynamics-list-gap" aria-hidden="true"></div>';
   container.innerHTML =
-    state.items.map((card) => dynamicsCardHtml(card, { editable, linkScope })).join("") +
+    state.items.map((card) => dynamicsCardHtml(card, { editable, linkScope })).join(gap) +
     (state.loading ? `<p class="empty">加载中…</p>` : "");
 }
 

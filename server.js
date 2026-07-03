@@ -1288,6 +1288,15 @@ app.get("/api/public/:targetId/dynamics/stock/:symbol", requireAuth, async (req,
   }
 });
 
+app.get("/api/dynamics/images/view", async (req, res) => {
+  try {
+    const { handleViewDynamicsImage } = require("./src/dynamics/dynamics-api");
+    await handleViewDynamicsImage(req, res);
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "image view failed" });
+  }
+});
+
 app.post("/api/dynamics/images", requireAuth, async (req, res) => {
   try {
     const data = await handleUploadDynamicsImage(req, req.userId);

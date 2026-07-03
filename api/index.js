@@ -490,6 +490,25 @@ module.exports = async function handler(req, res, context) {
   const publicDynamicsStockMatch = pathKey.match(/^\/api\/public\/([^/]+)\/dynamics\/stock\/([^/]+)$/);
   const publicDynamicsMatch = pathKey.match(/^\/api\/public\/([^/]+)\/dynamics$/);
   const communityPostMatch = pathKey.match(/^\/api\/community\/posts\/([^/]+)$/);
+
+  if (req.method === "GET" && pathKey === "/api/dynamics/images/view") {
+    try {
+      const { handleViewDynamicsImage } = require("../src/dynamics/dynamics-api");
+      const viewReq = {
+        query: {
+          path: getSearchParam(req, "path"),
+          u: getSearchParam(req, "u"),
+        },
+      };
+      await handleViewDynamicsImage(viewReq, res);
+    } catch (error) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ ok: false, error: error?.message || "image view failed" }));
+    }
+    return;
+  }
+
   const isDynamicsDirect =
     (req.method === "GET" && (pathKey === "/api/dynamics" || !!dynamicsStockMatch || !!publicDynamicsMatch || !!publicDynamicsStockMatch || pathKey === "/api/community/feed")) ||
     (req.method === "POST" && (pathKey === "/api/dynamics/images" || pathKey === "/api/community/posts")) ||

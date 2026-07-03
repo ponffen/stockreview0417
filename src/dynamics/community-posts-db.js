@@ -10,6 +10,7 @@ const {
   serializeImageUrls,
   deleteBlobUrls,
   diffRemovedImageUrls,
+  normalizeStoredImageUrls,
 } = require("./blob-images");
 
 const CONTENT_MAX = 2000;
@@ -54,7 +55,7 @@ function normalizePostInput(body) {
   if (content.length > CONTENT_MAX) {
     throw new Error(`正文最长 ${CONTENT_MAX} 个字符`);
   }
-  const imageUrls = parseImageUrlsField(raw.imageUrls ?? raw.image_urls);
+  const imageUrls = normalizeStoredImageUrls(raw.imageUrls ?? raw.image_urls);
   if (imageUrls.length > 9) {
     throw new Error("最多 9 张图片");
   }
