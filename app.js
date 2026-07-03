@@ -5330,15 +5330,26 @@ function dynamicsMetricsBlockHtml(metrics) {
     .join("")}</div></div>`;
 }
 
+function dynamicsCardStockAnalysisSymbol(card) {
+  if (card?.cardKind === "trade") {
+    return String(card.symbol || "").trim();
+  }
+  if (card?.cardKind === "post" && Array.isArray(card.symbols) && card.symbols.length) {
+    return String(card.symbols[0]?.symbol || "").trim();
+  }
+  return "";
+}
+
 function dynamicsCardHeaderHtml(card, view) {
   if (!view.slots.header || !card.displayName) {
     return "";
   }
   const uid = escapeHtml(card.userId || "");
-  const symEsc = escapeHtml(String(card.symbol || "").trim());
+  const stockSym = dynamicsCardStockAnalysisSymbol(card);
+  const symEsc = escapeHtml(stockSym);
   const links = Array.isArray(view.headerLinks) ? view.headerLinks : [];
   const linkBits = [];
-  if (links.includes("stockAnalysis") && card.cardKind === "trade" && card.symbol) {
+  if (links.includes("stockAnalysis") && stockSym) {
     linkBits.push(
       `<a href="javascript:void(0)" class="dyn-card__action-link community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>`,
     );

@@ -34,10 +34,10 @@ function defaultSlots(cardKind) {
 }
 
 function headerLinksForScene(scene) {
-  if (scene === SCENES.COMMUNITY || scene === SCENES.PUBLIC) {
+  if (scene === SCENES.COMMUNITY) {
     return ["stockAnalysis", "portfolioAnalysis"];
   }
-  if (scene === SCENES.SELF) {
+  if (scene === SCENES.PUBLIC || scene === SCENES.SELF) {
     return ["stockAnalysis"];
   }
   return [];
