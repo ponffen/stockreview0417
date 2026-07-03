@@ -359,6 +359,13 @@
         </article>
       </section>
 
+      <section id="route-dynamics" class="route-pane">
+        <div class="dynamics-route-head">
+          <button type="button" id="portfolioDynamicsPublishBtn" class="btn btn-primary dynamics-publish-btn">发布动态</button>
+        </div>
+        <div id="portfolioDynamicsList" class="community-list dynamics-list"></div>
+      </section>
+
       <section id="route-trade" class="route-pane">
         <div class="trade-hub-stack">
           <div class="trade-hub-actions">
@@ -728,6 +735,9 @@
         <button class="bottom-tab-btn" data-route="analysis" data-module="holdings">
           <span class="tab-ico">◔</span><span>分析</span>
         </button>
+        <button class="bottom-tab-btn" data-route="dynamics" data-module="holdings">
+          <span class="tab-ico">≋</span><span>动态</span>
+        </button>
         <button class="bottom-tab-btn" data-route="trade" data-module="holdings">
           <span class="tab-ico">¥</span><span>交易</span>
         </button>
@@ -735,7 +745,7 @@
 
       <nav class="bottom-tabs bottom-tabs--community" aria-label="社区广场导航">
         <button class="bottom-tab-btn" data-route="community-feed" data-module="community">
-          <span class="tab-ico">≋</span><span>最新交易</span>
+          <span class="tab-ico">≋</span><span>动态</span>
         </button>
         <button class="bottom-tab-btn" data-route="community-following" data-module="community">
           <span class="tab-ico">◎</span><span>关注的人</span>
@@ -751,6 +761,9 @@
         </button>
         <button type="button" class="bottom-tab-btn" data-profile-subtab="analysis">
           <span class="tab-ico">◔</span><span>分析</span>
+        </button>
+        <button type="button" class="bottom-tab-btn" data-profile-subtab="dynamics">
+          <span class="tab-ico">≋</span><span>动态</span>
         </button>
         <button type="button" class="bottom-tab-btn" data-profile-subtab="trade">
           <span class="tab-ico">¥</span><span>交易</span>
@@ -854,6 +867,48 @@
         </button>
       </form>
     </dialog>
+
+    <dialog id="publishDynamicsDialog" class="dialog dynamics-publish-dialog">
+      <form id="publishDynamicsForm">
+        <div class="panel-head">
+          <h2 id="publishDynamicsDialogTitle">发布动态</h2>
+          <button type="button" id="closePublishDynamicsBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <div class="form-row">
+          <label for="publishDynamicsContent">正文</label>
+          <textarea id="publishDynamicsContent" rows="6" maxlength="2000" placeholder="分享你的观点…"></textarea>
+        </div>
+        <div class="form-row">
+          <label>关联股票（可选）</label>
+          <div id="publishDynamicsSymbols" class="dynamics-symbol-tags"></div>
+          <button type="button" id="publishDynamicsAddSymbolBtn" class="btn btn-ghost">添加股票</button>
+        </div>
+        <div class="form-row">
+          <label>图片（最多 9 张）</label>
+          <div id="publishDynamicsImages" class="dynamics-image-picker"></div>
+          <input id="publishDynamicsImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" />
+          <button type="button" id="publishDynamicsPickImageBtn" class="btn btn-ghost">选择图片</button>
+        </div>
+        <p id="publishDynamicsError" class="auth-error hidden" role="alert"></p>
+        <button type="submit" id="publishDynamicsSubmitBtn" class="btn btn-primary full">发布</button>
+      </form>
+    </dialog>
+
+    <dialog id="dynamicsPostActionsDialog" class="dialog">
+      <div class="panel-head">
+        <h2>动态</h2>
+        <button type="button" id="closeDynamicsPostActionsBtn" class="btn btn-ghost">关闭</button>
+      </div>
+      <div class="dynamics-post-actions-body">
+        <button type="button" id="dynamicsPostEditBtn" class="btn btn-ghost full">编辑</button>
+        <button type="button" id="dynamicsPostDeleteBtn" class="btn btn-ghost full">删除</button>
+      </div>
+    </dialog>
+
+    <div id="dynamicsLightbox" class="dynamics-lightbox hidden" role="dialog" aria-modal="true">
+      <button type="button" id="dynamicsLightboxClose" class="dynamics-lightbox-close" aria-label="关闭">×</button>
+      <img id="dynamicsLightboxImg" class="dynamics-lightbox-img" alt="" />
+    </div>
 
     <dialog id="tradeDialog" class="dialog">
       <form id="tradeForm" method="dialog">
@@ -1101,23 +1156,9 @@
 
           <div class="stock-record-section-gap" aria-hidden="true"></div>
 
-          <div class="stock-record-trades-section">
-            <h4 class="stock-record-section-title">交易记录</h4>
-            <div class="stock-record-table-wrap">
-              <table class="stock-record-table">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>类型</th>
-                    <th>价格</th>
-                    <th>数量</th>
-                    <th>发生金额</th>
-                    <th>股票账户</th>
-                  </tr>
-                </thead>
-                <tbody id="stockRecordListBody"></tbody>
-              </table>
-            </div>
+          <div class="stock-record-trades-section stock-record-dynamics-section">
+            <h4 class="stock-record-section-title">个股动态</h4>
+            <div id="stockRecordDynamicsList" class="community-list dynamics-list dynamics-list--stock"></div>
           </div>
         </div>
       </div>

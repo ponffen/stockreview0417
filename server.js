@@ -787,6 +787,17 @@ const {
   getMetricsStockRecordBundle,
   getMetricsPublicStockRecordBundle,
 } = require("./src/metrics-api-service");
+const {
+  handleCommunityFeed,
+  handleSelfDynamics,
+  handlePublicDynamics,
+  handleSelfStockDynamics,
+  handlePublicStockDynamics,
+  handleUploadDynamicsImage,
+  createCommunityPost,
+  updateCommunityPost,
+  deleteCommunityPost,
+} = require("./src/dynamics/dynamics-api");
 
 function sendMetricsJson(res, data) {
   res.setHeader("Cache-Control", "no-store");
@@ -1218,10 +1229,103 @@ app.get("/api/community/following", requireAuth, async (req, res) => {
 
 app.get("/api/community/feed", requireAuth, async (req, res) => {
   try {
-    const rows = await getFeedTrades(req.userId);
-    res.json({ ok: true, data: rows });
+    const result = await handleCommunityFeed(req, req.userId);
+    if (result.error === "hidden") {
+      res.json({ ok: true, data: [], pagination: result.pagination });
+      return;
+    }
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "feed failed" });
+  }
+});
+
+app.get("/api/dynamics", requireAuth, async (req, res) => {
+  try {
+    const result = await handleSelfDynamics(req, req.userId);
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "dynamics failed" });
+  }
+});
+
+app.get("/api/dynamics/stock/:symbol", requireAuth, async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim();
+    const result = await handleSelfStockDynamics(req, req.userId, symbol);
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "stock dynamics failed" });
+  }
+});
+
+app.get("/api/public/:targetId/dynamics", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const result = await handlePublicDynamics(req, req.userId, targetId);
+    if (result.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public dynamics failed" });
+  }
+});
+
+app.get("/api/public/:targetId/dynamics/stock/:symbol", requireAuth, async (req, res) => {
+  try {
+    const targetId = String(req.params.targetId || "").trim();
+    const symbol = String(req.params.symbol || "").trim();
+    const result = await handlePublicStockDynamics(req, req.userId, targetId, symbol);
+    if (result.error === "hidden") {
+      res.status(404).json({ ok: false, error: "用户未公开或不可见" });
+      return;
+    }
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public stock dynamics failed" });
+  }
+});
+
+app.post("/api/dynamics/images", requireAuth, async (req, res) => {
+  try {
+    const data = await handleUploadDynamicsImage(req, req.userId);
+    res.json({ ok: true, data });
+  } catch (error) {
+    const code = error?.code === "BLOB_NOT_CONFIGURED" ? 503 : 400;
+    res.status(code).json({ ok: false, error: error?.message || "upload failed" });
+  }
+});
+
+app.post("/api/community/posts", requireAuth, async (req, res) => {
+  try {
+    const data = await createCommunityPost(req.userId, req.body || {});
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "create post failed" });
+  }
+});
+
+app.patch("/api/community/posts/:id", requireAuth, async (req, res) => {
+  try {
+    const data = await updateCommunityPost(req.userId, req.params.id, req.body || {});
+    if (!data) {
+      res.status(404).json({ ok: false, error: "帖子不存在" });
+      return;
+    }
+    res.json({ ok: true, data });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || "update post failed" });
+  }
+});
+
+app.delete("/api/community/posts/:id", requireAuth, async (req, res) => {
+  try {
+    const result = await deleteCommunityPost(req.userId, req.params.id);
+    res.json({ ok: true, deleted: !!result.deleted });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "delete post failed" });
   }
 });
 

@@ -15,6 +15,7 @@
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
     "backfill:trade-amount-share": "node scripts/backfill-trade-amount-share-ratio.js",
+    "db:ensure-dynamics": "node scripts/ensure-dynamics-schema.js",
     "rebuild:symbol-pnl": "node scripts/rebuild-all-symbol-pnl.js",
     "backfill:daily-close:akshare": "python3 scripts/akshare_fill_symbol_daily_close.py",
     "rebuild:performance": "VERCEL=1 node scripts/rebuild-all-performance.js",
@@ -38,7 +39,9 @@
   "homepage": "https://github.com/ponffen/stockreview0417#readme",
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.5.0",
     "@vercel/functions": "^3.7.3",
+    "busboy": "^1.6.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

@@ -266,6 +266,28 @@ function normalizeNoteText(raw) {
   return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
 }
 
+function parseJsonStringArray(raw, maxLen = 9) {
+  if (raw == null || raw === "") {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw.map((v) => String(v || "").trim()).filter(Boolean).slice(0, maxLen);
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((v) => String(v || "").trim()).filter(Boolean).slice(0, maxLen);
+  } catch {
+    return [];
+  }
+}
+
+function serializeJsonStringArray(list, maxLen = 9) {
+  return JSON.stringify(parseJsonStringArray(list, maxLen));
+}
+
 function normalizeTrade(input) {
   const raw = input || {};
   const type = parseType(raw.type || raw.tradeType || raw["类型"]);
@@ -320,6 +342,7 @@ function normalizeTrade(input) {
     amountShareRatioRaw == null || amountShareRatioRaw === ""
       ? null
       : Number(amountShareRatioRaw);
+  const imageUrls = parseJsonStringArray(raw.imageUrls ?? raw.image_urls);
 
   return {
     id: String(raw.id || raw.tradeId || raw.ts_id || randomUUID()),
@@ -335,6 +358,7 @@ function normalizeTrade(input) {
     note,
     createdAt,
     amountShareRatio: Number.isFinite(amountShareRatio) ? amountShareRatio : null,
+    imageUrls,
   };
 }
 
@@ -358,6 +382,7 @@ function tradeToRow(trade, userId) {
     created_at: safe.createdAt,
     updated_at: updatedAt,
     amount_share_ratio: ratio == null || !Number.isFinite(Number(ratio)) ? null : Number(ratio),
+    image_urls: serializeJsonStringArray(safe.imageUrls),
   };
 }
 
@@ -379,6 +404,7 @@ function rowToTrade(row) {
     note: row.note || "",
     createdAt: Number(row.created_at),
     amountShareRatio: Number.isFinite(amountShareRatio) ? amountShareRatio : null,
+    imageUrls: parseJsonStringArray(row.image_urls),
   };
 }
 
@@ -498,6 +524,8 @@ module.exports = {
   normalizedSide,
   parseSide,
   parseType,
+  parseJsonStringArray,
+  serializeJsonStringArray,
   normalizeTrade,
   tradeToRow,
   rowToTrade,

@@ -320,6 +320,7 @@ const state = {
   stockRecordFromPublicProfile: false,
   /** 进入「搜索股票」页面前的 route，用于返回 */
   tradeSearchReturnRoute: "trade",
+  tradeSearchPickForDynamics: false,
   /** 从「我的」子页返回时的父路由：从交易页打开 mine-algo / mine-accounts 时为 "trade" */
   mineReturnRoute: null,
   /** 首页 metrics a/b/f：齐套后才展示，避免本地 portfolio 占位闪屏 */
@@ -471,6 +472,28 @@ const mineCommunitySaveBtn = document.getElementById("mineCommunitySaveBtn");
 const mineCommunityProfileMsg = document.getElementById("mineCommunityProfileMsg");
 const tradeHubCommunityMsg = document.getElementById("tradeHubCommunityMsg");
 const communityFeedList = document.getElementById("communityFeedList");
+const portfolioDynamicsList = document.getElementById("portfolioDynamicsList");
+const portfolioDynamicsPublishBtn = document.getElementById("portfolioDynamicsPublishBtn");
+const stockRecordDynamicsList = document.getElementById("stockRecordDynamicsList");
+const publishDynamicsDialog = document.getElementById("publishDynamicsDialog");
+const publishDynamicsForm = document.getElementById("publishDynamicsForm");
+const publishDynamicsDialogTitle = document.getElementById("publishDynamicsDialogTitle");
+const publishDynamicsContent = document.getElementById("publishDynamicsContent");
+const publishDynamicsSymbols = document.getElementById("publishDynamicsSymbols");
+const publishDynamicsAddSymbolBtn = document.getElementById("publishDynamicsAddSymbolBtn");
+const publishDynamicsImages = document.getElementById("publishDynamicsImages");
+const publishDynamicsImageInput = document.getElementById("publishDynamicsImageInput");
+const publishDynamicsPickImageBtn = document.getElementById("publishDynamicsPickImageBtn");
+const publishDynamicsError = document.getElementById("publishDynamicsError");
+const publishDynamicsSubmitBtn = document.getElementById("publishDynamicsSubmitBtn");
+const closePublishDynamicsBtn = document.getElementById("closePublishDynamicsBtn");
+const dynamicsPostActionsDialog = document.getElementById("dynamicsPostActionsDialog");
+const dynamicsPostEditBtn = document.getElementById("dynamicsPostEditBtn");
+const dynamicsPostDeleteBtn = document.getElementById("dynamicsPostDeleteBtn");
+const closeDynamicsPostActionsBtn = document.getElementById("closeDynamicsPostActionsBtn");
+const dynamicsLightbox = document.getElementById("dynamicsLightbox");
+const dynamicsLightboxImg = document.getElementById("dynamicsLightboxImg");
+const dynamicsLightboxClose = document.getElementById("dynamicsLightboxClose");
 const communityFollowingList = document.getElementById("communityFollowingList");
 const communityLeaderboardList = document.getElementById("communityLeaderboardList");
 const communityProfileBody = document.getElementById("communityProfileBody");
@@ -529,7 +552,6 @@ const stockRecordToggleMarketValue = document.getElementById("stockRecordToggleM
 const stockRecordInterval = document.getElementById("stockRecordInterval");
 const stockRecordRangeRow = document.getElementById("stockRecordRangeRow");
 const stockRecordAccountSelect = document.getElementById("stockRecordAccountSelect");
-const stockRecordListBody = document.getElementById("stockRecordListBody");
 const stockRecordLoading = document.getElementById("stockRecordLoading");
 const stockRecordBody = document.getElementById("stockRecordBody");
 const stockRecordChartsLoading = document.getElementById("stockRecordChartsLoading");
@@ -2841,8 +2863,20 @@ function ensureTradeListScrollListener() {
         void maybeLoadMoreTradeListPage();
       } else if (state.route === "trade-cash") {
         void maybeLoadMoreCashListPage();
-      } else if (state.route === "stock-record") {
-        void maybeLoadMoreStockRecordTradesPage();
+      } else if (state.route === "community-feed") {
+        maybeLoadMoreDynamicsList("community-feed", communityFeedList);
+      } else if (state.route === "dynamics") {
+        maybeLoadMoreDynamicsList("portfolio-dynamics", portfolioDynamicsList);
+      } else if (state.route === "community-profile" && state.communityProfileTab === "dynamics") {
+        const uid = state.communityProfileUserId || "";
+        const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
+        maybeLoadMoreDynamicsList(`profile-dynamics:${uid}`, container);
+      } else if (state.route === "stock-record" && state.activeRecordSymbol) {
+        const usePub = useCommunityPublicStockRecord();
+        const detail = state.lastPublicProfileDetail;
+        const sym = normalizeSymbol(state.activeRecordSymbol);
+        const key = `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}`;
+        maybeLoadMoreDynamicsList(key, stockRecordDynamicsList);
       } else if (state.route === "community-profile" && state.communityProfileTab === "trade") {
         void maybeLoadMoreCommunityPublicTradesPage();
       }
@@ -3387,6 +3421,11 @@ function bindEvents() {
         if (sub === "earning" && state.communityProfileUserId) {
           unmountCommunityTradeRecordsPane();
           void loadPublicEarningTabData(state.communityProfileUserId);
+        }
+        if (sub === "dynamics" && state.communityProfileUserId) {
+          unmountCommunityAnalysisRoutePane();
+          unmountCommunityTradeRecordsPane();
+          void loadProfileDynamics(state.communityProfileUserId);
         }
         if (sub === "trade" && state.communityProfileUserId) {
           unmountCommunityAnalysisRoutePane();
@@ -3979,17 +4018,149 @@ function bindEvents() {
     openTradeRecordActionsSheet(id);
   });
 
-  stockRecordListBody?.addEventListener("click", (event) => {
-    const row = event.target.closest("tr[data-record-id]");
-    if (!row) {
-      return;
-    }
-    const id = row.dataset.recordId;
-    if (!id) {
-      return;
-    }
-    openTradeRecordActionsSheet(id);
+  stockRecordDynamicsList?.addEventListener("click", (event) => {
+    handleDynamicsListClick(event, { editable: !useCommunityPublicStockRecord() });
   });
+
+  portfolioDynamicsList?.addEventListener("click", (event) => {
+    handleDynamicsListClick(event, { editable: true });
+  });
+
+  communityFeedList?.addEventListener("click", (event) => {
+    handleDynamicsListClick(event, { editable: false });
+  });
+
+  communityProfileBody?.addEventListener("click", (event) => {
+    if (state.route === "community-profile" && state.communityProfileTab === "dynamics") {
+      handleDynamicsListClick(event, { editable: false });
+    }
+  });
+
+  portfolioDynamicsPublishBtn?.addEventListener("click", () => openPublishDynamicsDialog());
+  closePublishDynamicsBtn?.addEventListener("click", () => publishDynamicsDialog?.close());
+  publishDynamicsPickImageBtn?.addEventListener("click", () => publishDynamicsImageInput?.click());
+  publishDynamicsImageInput?.addEventListener("change", async () => {
+    const files = [...(publishDynamicsImageInput.files || [])];
+    publishDynamicsImageInput.value = "";
+    for (const file of files) {
+      if (publishDynamicsState.imageUrls.length >= 9) {
+        break;
+      }
+      try {
+        const url = await uploadDynamicsImageFile(file);
+        publishDynamicsState.imageUrls.push(url);
+      } catch (error) {
+        if (publishDynamicsError) {
+          publishDynamicsError.textContent = error?.message || "图片上传失败";
+          publishDynamicsError.classList.remove("hidden");
+        }
+      }
+    }
+    renderPublishDynamicsImages();
+  });
+  publishDynamicsSymbols?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-remove-symbol]");
+    if (!btn) {
+      return;
+    }
+    const sym = btn.getAttribute("data-remove-symbol");
+    publishDynamicsState.symbols = publishDynamicsState.symbols.filter((s) => s.symbol !== sym);
+    renderPublishDynamicsSymbols();
+  });
+  publishDynamicsImages?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-remove-image]");
+    if (!btn) {
+      return;
+    }
+    const idx = Number(btn.getAttribute("data-remove-image"));
+    if (!Number.isFinite(idx)) {
+      return;
+    }
+    publishDynamicsState.imageUrls.splice(idx, 1);
+    renderPublishDynamicsImages();
+  });
+  publishDynamicsAddSymbolBtn?.addEventListener("click", () => {
+    state.tradeSearchReturnRoute = state.route === "dynamics" ? "dynamics" : state.route;
+    state.route = "trade-search";
+    state.tradeSearchPickForDynamics = true;
+    renderRoute();
+  });
+  publishDynamicsForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (publishDynamicsError) {
+      publishDynamicsError.classList.add("hidden");
+      publishDynamicsError.textContent = "";
+    }
+    const body = {
+      content: publishDynamicsContent?.value || "",
+      imageUrls: publishDynamicsState.imageUrls,
+      symbols: publishDynamicsState.symbols.map((s) => s.symbol),
+    };
+    try {
+      const base = getApiBaseForFetch();
+      const editingId = publishDynamicsState.editingPostId;
+      const r = await apiFetch(
+        editingId
+          ? `${base}/community/posts/${encodeURIComponent(editingId)}`
+          : `${base}/community/posts`,
+        {
+          method: editingId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || "保存失败");
+      }
+      publishDynamicsDialog?.close();
+      resetDynamicsListState("portfolio-dynamics");
+      if (state.route === "dynamics") {
+        void loadPortfolioDynamics();
+      }
+    } catch (error) {
+      if (publishDynamicsError) {
+        publishDynamicsError.textContent = error?.message || "保存失败";
+        publishDynamicsError.classList.remove("hidden");
+      }
+    }
+  });
+  closeDynamicsPostActionsBtn?.addEventListener("click", () => dynamicsPostActionsDialog?.close());
+  dynamicsPostEditBtn?.addEventListener("click", () => {
+    dynamicsPostActionsDialog?.close();
+    if (dynamicsActionsTarget?.cardKind === "post") {
+      openPublishDynamicsDialog(dynamicsActionsTarget);
+    } else if (dynamicsActionsTarget?.cardKind === "trade") {
+      openEditTradeDialog(dynamicsActionsTarget.id);
+    }
+  });
+  dynamicsPostDeleteBtn?.addEventListener("click", async () => {
+    const target = dynamicsActionsTarget;
+    dynamicsPostActionsDialog?.close();
+    if (!target?.id) {
+      return;
+    }
+    try {
+      if (target.cardKind === "post") {
+        await deleteDynamicsPostById(target.id);
+      } else if (target.cardKind === "trade") {
+        await removeTradeById(target.id);
+      }
+      resetDynamicsListState("portfolio-dynamics");
+      if (state.route === "dynamics") {
+        void loadPortfolioDynamics();
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  });
+  dynamicsLightbox?.addEventListener("click", (event) => {
+    if (event.target === dynamicsLightbox || event.target === dynamicsLightboxClose) {
+      hideDynamicsLightbox();
+    }
+  });
+  dynamicsLightboxClose?.addEventListener("click", hideDynamicsLightbox);
+
 
   closeRecordTradeActionsBtn?.addEventListener("click", () => closeTradeRecordActionsSheet());
 
@@ -4419,6 +4590,23 @@ async function runTradeSearchSuggestQuery(raw) {
 function applyStockSearchPick(symbol, name) {
   const sym = normalizeSymbol(String(symbol || "").trim());
   const n = String(name || "").trim() || sym;
+  if (state.tradeSearchPickForDynamics) {
+    state.tradeSearchPickForDynamics = false;
+    if (!publishDynamicsState.symbols.some((s) => s.symbol === sym)) {
+      publishDynamicsState.symbols.push({ symbol: sym, name: n });
+    }
+    if (tradeStockSearchInput) {
+      tradeStockSearchInput.value = "";
+    }
+    clearTradeSearchResults();
+    state.route = state.tradeSearchReturnRoute || "dynamics";
+    state.appModule = "holdings";
+    persistState();
+    renderRoute();
+    renderPublishDynamicsSymbols();
+    publishDynamicsDialog?.showModal();
+    return;
+  }
   state.appModule = "holdings";
   state.route = "trade";
   state.tradeSearchReturnRoute = "trade";
@@ -4455,6 +4643,8 @@ function renderAll() {
     renderOverviewAndStockTable();
   } else if (state.route === "analysis") {
     void renderAnalysis();
+  } else if (state.route === "dynamics") {
+    void loadPortfolioDynamics();
   } else if (state.route === "trade-records" || state.route === "trade-cash") {
     renderTradeTable();
     void ensureTradeListRouteReady();
@@ -4467,6 +4657,8 @@ function renderAll() {
   } else if (state.route === "community-profile") {
     if (state.communityProfileTab === "earning" && state.communityProfileUserId) {
       void loadPublicEarningTabData(state.communityProfileUserId);
+    } else if (state.communityProfileTab === "dynamics" && state.communityProfileUserId) {
+      void loadProfileDynamics(state.communityProfileUserId);
     } else if (state.communityProfileTab === "trade" && state.communityProfileUserId) {
       void loadCommunityPublicTrades(state.communityProfileUserId);
     } else if (state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
@@ -4673,7 +4865,7 @@ function applyBrowserRouteSnapshot(snapshot) {
   state.communityProfileUserId = snapshot.communityProfileUserId
     ? String(snapshot.communityProfileUserId)
     : null;
-  state.communityProfileTab = ["earning", "analysis", "trade"].includes(snapshot.communityProfileTab)
+  state.communityProfileTab = ["earning", "analysis", "dynamics", "trade"].includes(snapshot.communityProfileTab)
     ? snapshot.communityProfileTab
     : "earning";
   state.activeRecordSymbol = snapshot.activeRecordSymbol ? normalizeSymbol(snapshot.activeRecordSymbol) : null;
@@ -5005,69 +5197,264 @@ function formatCommunityFeedTradeDate(dateStr) {
 
 const COMMUNITY_FEED_USER_ICON_SVG = `<svg class="community-feed-user-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" fill="currentColor"/><path fill="currentColor" d="M4 20c0-4 3.6-6 8-6s8 2 8 6v1H4v-1z"/></svg>`;
 
-function feedRowHtml(t) {
-  const side = t.side === "sell" ? "sell" : "buy";
-  const sideLabel = t.side === "sell" ? "卖出" : "买入";
-  const uid = escapeHtml(t.userId);
-  const symEsc = escapeHtml(String(t.symbol || "").trim());
-  const priceStr =
-    t.price != null && Number.isFinite(Number(t.price)) ? formatNumber(Number(t.price), 3) : "—";
-  const shareRaw = t.amount_share_ratio ?? t.amountShareOfCurrentTotalMv;
-  const shareNum = Number(shareRaw);
-  const shareStr =
-    shareRaw != null && Number.isFinite(shareNum) ? formatPercent(shareNum) : "—";
-  const dateDisplay = formatCommunityFeedTradeDate(t.date);
-  const stockIdentity = buildCommunityStockIdentityHtml({
-    marketTag: t.marketTag,
-    symbol: t.symbol || t.displayCode || "",
-    name: t.name,
-    variant: "feed",
-  });
-  const noteText = normalizeNoteInput(t.note);
-  const noteBlock = noteText
-    ? `<p class="community-feed-note"><span class="community-feed-dt">备注：</span><span class="community-feed-dd">${escapeHtml(noteText)}</span></p>`
+function linkifyDynamicsText(text) {
+  const safe = escapeHtml(String(text || ""));
+  return safe.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`,
+  );
+}
+
+function dynamicsImageGridHtml(urls) {
+  const list = Array.isArray(urls) ? urls.filter(Boolean).slice(0, 9) : [];
+  if (!list.length) {
+    return "";
+  }
+  return `<div class="dynamics-image-grid">${list
+    .map(
+      (url, idx) =>
+        `<img src="${escapeHtml(url)}" alt="" data-dynamics-image="${idx}" data-dynamics-image-url="${escapeHtml(url)}" loading="lazy" />`,
+    )
+    .join("")}</div>`;
+}
+
+function buildDynamicsStockTagsHtml(symbols) {
+  const list = Array.isArray(symbols) ? symbols : [];
+  if (!list.length) {
+    return "";
+  }
+  return `<div class="community-feed-card__stock-tags">${list
+    .map((s) => {
+      const sym = escapeHtml(s.symbol || "");
+      const identity = buildCommunityStockIdentityHtml({
+        marketTag: s.marketTag,
+        symbol: s.symbol || "",
+        name: s.name,
+        variant: "feed",
+      });
+      return `<div class="community-feed-card__stock-tag-item">${identity}</div>`;
+    })
+    .join("")}</div>`;
+}
+
+function dynamicsTradeMetricsHtml(card) {
+  const cols = [];
+  cols.push({ label: "交易价格", value: card.price, help: false });
+  if (card.quantity != null && card.quantity !== undefined) {
+    cols.push({ label: "交易数量", value: card.quantity, help: false });
+  }
+  if (card.amount != null && card.amount !== undefined) {
+    cols.push({ label: "交易金额", value: card.amount, help: false });
+  } else if (card.amountShareRatio != null && card.amountShareRatio !== undefined) {
+    cols.push({ label: "金额", value: card.amountShareRatio, help: true });
+  }
+  cols.push({ label: "交易日期", value: card.tradeDate, help: false });
+  const colClass =
+    cols.length >= 4 ? "community-feed-card__metrics community-feed-card__metrics--4" : "community-feed-card__metrics";
+  return `<div class="${colClass}">${cols
+    .map((col) => {
+      const help = col.help
+        ? `<span class="stock-rank-help-wrap community-feed-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div></span>`
+        : "";
+      return `<div class="community-feed-metric"><span class="community-feed-metric-label${col.help ? " community-feed-metric-label--with-help" : ""}"><span>${col.label}</span>${help}</span><span class="community-feed-metric-value">${escapeHtml(col.value || "—")}</span></div>`;
+    })
+    .join("")}</div>`;
+}
+
+function dynamicsCardHtml(card, opts = {}) {
+  const c = card || {};
+  const kind = c.cardKind === "post" ? "post" : "trade";
+  const editable = Boolean(opts.editable && c.actions?.canEdit);
+  const uid = escapeHtml(c.userId || "");
+  const symEsc = escapeHtml(String(c.symbol || "").trim());
+  const showHeader = c.showHeader !== false && Boolean(c.displayName);
+  const attrs = [
+    `data-dynamics-card="${kind}"`,
+    `data-dynamics-id="${escapeHtml(c.id || "")}"`,
+    editable ? `data-dynamics-editable="1"` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  let headBlock = "";
+  if (showHeader) {
+    headBlock = `
+      <div class="community-feed-card__head">
+        <div class="community-feed-card__user">
+          ${COMMUNITY_FEED_USER_ICON_SVG}
+          <span class="community-feed-user-name">${escapeHtml(c.displayName || "用户")}</span>
+        </div>
+        <div class="community-feed-card__actions">
+          ${
+            kind === "trade" && c.symbol
+              ? `<a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>`
+              : ""
+          }
+          <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-portfolio-analysis data-community-user="${uid}">组合分析</a>
+        </div>
+      </div>`;
+  }
+
+  let stockBlock = "";
+  if (kind === "trade" && c.symbol) {
+    const side = c.side === "sell" ? "sell" : "buy";
+    const sideLabel = c.side === "sell" ? "卖出" : "买入";
+    stockBlock = `
+      <div class="community-feed-card__stock-row">
+        ${buildCommunityStockIdentityHtml({
+          marketTag: c.marketTag,
+          symbol: c.symbol || "",
+          name: c.name,
+          variant: "feed",
+        })}
+        <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
+      </div>`;
+  } else if (kind === "post" && Array.isArray(c.symbols) && c.symbols.length) {
+    stockBlock = buildDynamicsStockTagsHtml(c.symbols);
+  }
+
+  const metricsBlock = kind === "trade" ? dynamicsTradeMetricsHtml(c) : "";
+  const opinionText =
+    kind === "trade" ? String(c.note || "").trim() : String(c.content || "").trim();
+  const opinionBlock = opinionText
+    ? `<p class="community-feed-note community-feed-card__content">${linkifyDynamicsText(opinionText)}</p>`
     : "";
+  const imagesBlock = dynamicsImageGridHtml(c.imageUrls);
+  const footerAccount =
+    c.accountName && kind === "trade"
+      ? `<span class="community-feed-card__footer-account">${escapeHtml(c.accountName)}</span>`
+      : "<span></span>";
+  const footerBlock = `<div class="community-feed-card__footer"><span>${escapeHtml(c.bottomTime || "—")}</span>${footerAccount}</div>`;
+
   return `
-    <article class="community-feed-card">
+    <article class="community-feed-card" ${attrs}>
       <div class="community-feed-card__inner">
-        <div class="community-feed-card__head">
-          <div class="community-feed-card__user">
-            ${COMMUNITY_FEED_USER_ICON_SVG}
-            <span class="community-feed-user-name">${escapeHtml(t.displayName)}</span>
-          </div>
-          <div class="community-feed-card__actions">
-            <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-stock-analysis data-community-user="${uid}" data-community-symbol="${symEsc}">个股分析</a>
-            <a href="javascript:void(0)" class="community-feed-card__action-link" data-community-feed-portfolio-analysis data-community-user="${uid}">组合分析</a>
-          </div>
-        </div>
-        <div class="community-feed-card__stock-row">
-          ${stockIdentity}
-          <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
-        </div>
-        <div class="community-feed-card__metrics">
-          <div class="community-feed-metric">
-            <span class="community-feed-metric-label">交易价格</span>
-            <span class="community-feed-metric-value">${escapeHtml(priceStr)}</span>
-          </div>
-          <div class="community-feed-metric">
-            <span class="community-feed-metric-label community-feed-metric-label--with-help">
-              <span>金额</span>
-              <span class="stock-rank-help-wrap community-feed-amt-help-wrap">
-                <button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button>
-                <div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div>
-              </span>
-            </span>
-            <span class="community-feed-metric-value">${escapeHtml(shareStr)}</span>
-          </div>
-          <div class="community-feed-metric">
-            <span class="community-feed-metric-label">交易日期</span>
-            <span class="community-feed-metric-value">${escapeHtml(dateDisplay)}</span>
-          </div>
-        </div>
-        ${noteBlock}
+        ${headBlock}
+        ${stockBlock}
+        ${metricsBlock}
+        ${opinionBlock}
+        ${imagesBlock}
+        ${footerBlock}
       </div>
-    </article>
-  `;
+    </article>`;
+}
+
+const dynamicsListStore = new Map();
+
+function getDynamicsListState(key) {
+  if (!dynamicsListStore.has(key)) {
+    dynamicsListStore.set(key, {
+      key,
+      items: [],
+      cursor: null,
+      hasMore: true,
+      loading: false,
+      apiPath: "",
+      editable: false,
+      emptyText: "暂无动态",
+    });
+  }
+  return dynamicsListStore.get(key);
+}
+
+function resetDynamicsListState(key) {
+  const st = getDynamicsListState(key);
+  st.items = [];
+  st.cursor = null;
+  st.hasMore = true;
+  st.loading = false;
+}
+
+function renderDynamicsListContainer(container, state, { editable = false } = {}) {
+  if (!container) {
+    return;
+  }
+  if (!state.items.length && !state.loading) {
+    container.innerHTML = `<p class="empty">${escapeHtml(state.emptyText || "暂无动态")}</p>`;
+    return;
+  }
+  container.innerHTML =
+    state.items.map((card) => dynamicsCardHtml(card, { editable })).join("") +
+    (state.loading ? `<p class="empty">加载中…</p>` : "");
+}
+
+async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText }) {
+  ensureTradeListScrollListener();
+  const listState = getDynamicsListState(key);
+  listState.apiPath = apiPath;
+  listState.editable = editable;
+  if (emptyText) {
+    listState.emptyText = emptyText;
+  }
+  if (reset) {
+    resetDynamicsListState(key);
+  }
+  if (!container || !apiReady || !sessionPhone) {
+    if (container && !apiReady) {
+      container.innerHTML = `<p class="empty">连接服务端后可查看动态</p>`;
+    }
+    return;
+  }
+  const st = getDynamicsListState(key);
+  if (st.loading || (!st.hasMore && !reset && st.items.length)) {
+    renderDynamicsListContainer(container, st, { editable });
+    return;
+  }
+  st.loading = true;
+  renderDynamicsListContainer(container, st, { editable });
+  try {
+    const qs = new URLSearchParams({ limit: "10" });
+    if (st.cursor) {
+      qs.set("cursor", st.cursor);
+    }
+    const r = await apiFetch(`${getApiBaseForFetch()}${apiPath}?${qs}`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      if (!st.items.length) {
+        container.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      }
+      st.hasMore = false;
+      return;
+    }
+    const rows = Array.isArray(j.data) ? j.data : [];
+    const seen = new Set(st.items.map((it) => `${it.cardKind}:${it.id}`));
+    for (const row of rows) {
+      const sig = `${row.cardKind}:${row.id}`;
+      if (!seen.has(sig)) {
+        st.items.push(row);
+        seen.add(sig);
+      }
+    }
+    const pagination = j.pagination || {};
+    st.cursor = pagination.cursor || null;
+    st.hasMore = pagination.hasMore === true;
+  } catch {
+    if (!st.items.length) {
+      container.innerHTML = `<p class="empty">网络错误</p>`;
+    }
+    st.hasMore = false;
+  } finally {
+    st.loading = false;
+    renderDynamicsListContainer(container, st, { editable });
+  }
+}
+
+function maybeLoadMoreDynamicsList(key, container) {
+  const state = getDynamicsListState(key);
+  if (!state.hasMore || state.loading || !isNearDocumentBottom()) {
+    return;
+  }
+  void loadDynamicsListPage({ key, container, apiPath: state.apiPath, editable: state.editable });
+}
+
+function feedRowHtml(t) {
+  return dynamicsCardHtml({
+    cardKind: "trade",
+    ...t,
+    userId: t.userId,
+    displayName: t.displayName,
+    showHeader: true,
+  });
 }
 
 
@@ -5098,32 +5485,228 @@ async function toggleFollowCommunity(userId, btnEl) {
   }
 }
 
+function handleDynamicsListClick(event, { editable = false } = {}) {
+  if (
+    event.target.closest("[data-community-feed-stock-analysis]") ||
+    event.target.closest("[data-community-feed-portfolio-analysis]")
+  ) {
+    return;
+  }
+  const imgHit = event.target.closest("[data-dynamics-image-url]");
+  if (imgHit) {
+    event.preventDefault();
+    showDynamicsLightbox(imgHit.getAttribute("data-dynamics-image-url"));
+    return;
+  }
+  if (!editable) {
+    return;
+  }
+  const cardEl = event.target.closest("[data-dynamics-card]");
+  if (!cardEl) {
+    return;
+  }
+  const id = cardEl.getAttribute("data-dynamics-id");
+  const kind = cardEl.getAttribute("data-dynamics-card");
+  let storeKey = "portfolio-dynamics";
+  if (state.route === "stock-record" && state.activeRecordSymbol) {
+    const usePub = useCommunityPublicStockRecord();
+    const sym = normalizeSymbol(state.activeRecordSymbol);
+    storeKey = `stock-dynamics:${usePub ? state.lastPublicProfileDetail?.userId || "pub" : "self"}:${sym}`;
+  }
+  const st = getDynamicsListState(storeKey);
+  const card = st.items.find((item) => item.id === id && item.cardKind === kind);
+  if (!card) {
+    return;
+  }
+  openDynamicsPostActionsDialog(card);
+}
+
 async function loadCommunityFeed() {
   if (!communityFeedList || !sessionPhone) {
     return;
   }
-  if (!apiReady) {
-    communityFeedList.innerHTML = `<p class="empty">连接服务端后可查看社区动态</p>`;
+  showRouteLoading("数据正在加载中");
+  try {
+    await loadDynamicsListPage({
+      key: "community-feed",
+      container: communityFeedList,
+      apiPath: "/community/feed",
+      reset: true,
+      editable: false,
+      emptyText: "暂无已关注用户的动态，可在「排行」或他人主页关注用户后查看",
+    });
+  } finally {
+    hideRouteLoading();
+  }
+}
+
+async function loadPortfolioDynamics() {
+  if (!portfolioDynamicsList || !sessionPhone) {
     return;
   }
   showRouteLoading("数据正在加载中");
   try {
-    const r = await apiFetch(`${getApiBaseForFetch()}/community/feed`, { cache: "no-store" });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j?.ok) {
-      communityFeedList.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
-      return;
-    }
-    const rows = Array.isArray(j.data) ? j.data : [];
-    if (!rows.length) {
-      communityFeedList.innerHTML = `<p class="empty">暂无已关注用户的交易动态，可在「排行」或他人主页关注用户后查看</p>`;
-      return;
-    }
-    communityFeedList.innerHTML = rows.map((t) => feedRowHtml(t)).join("");
-  } catch {
-    communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
+    await loadDynamicsListPage({
+      key: "portfolio-dynamics",
+      container: portfolioDynamicsList,
+      apiPath: "/dynamics",
+      reset: true,
+      editable: true,
+      emptyText: "暂无动态，点击右上角发布",
+    });
   } finally {
     hideRouteLoading();
+  }
+}
+
+async function loadProfileDynamics(targetId) {
+  const uid = String(targetId || state.communityProfileUserId || "").trim();
+  const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
+  if (!uid || !container) {
+    return;
+  }
+  await loadDynamicsListPage({
+    key: `profile-dynamics:${uid}`,
+    container,
+    apiPath: `/public/${encodeURIComponent(uid)}/dynamics`,
+    reset: true,
+    editable: false,
+    emptyText: "暂无动态",
+  });
+}
+
+async function loadStockRecordDynamics(symbol, usePub, detail) {
+  const sym = normalizeSymbol(symbol);
+  const container = stockRecordDynamicsList;
+  if (!sym || !container) {
+    return;
+  }
+  let apiPath = `/dynamics/stock/${encodeURIComponent(sym)}`;
+  if (usePub && detail?.userId) {
+    apiPath = `/public/${encodeURIComponent(detail.userId)}/dynamics/stock/${encodeURIComponent(sym)}`;
+  }
+  await loadDynamicsListPage({
+    key: `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}`,
+    container,
+    apiPath,
+    reset: true,
+    editable: !usePub,
+    emptyText: "暂无个股动态",
+  });
+}
+
+let publishDynamicsState = {
+  editingPostId: null,
+  imageUrls: [],
+  symbols: [],
+};
+
+function renderPublishDynamicsSymbols() {
+  if (!publishDynamicsSymbols) {
+    return;
+  }
+  publishDynamicsSymbols.innerHTML = publishDynamicsState.symbols
+    .map(
+      (s) =>
+        `<span class="dynamics-symbol-tag" data-symbol="${escapeHtml(s.symbol)}">${escapeHtml(s.name || s.symbol)}<button type="button" data-remove-symbol="${escapeHtml(s.symbol)}" aria-label="移除">×</button></span>`,
+    )
+    .join("");
+}
+
+function renderPublishDynamicsImages() {
+  if (!publishDynamicsImages) {
+    return;
+  }
+  publishDynamicsImages.innerHTML = publishDynamicsState.imageUrls
+    .map(
+      (url, idx) =>
+        `<div class="dynamics-image-picker-item"><img src="${escapeHtml(url)}" alt="" /><button type="button" class="dynamics-image-picker-remove" data-remove-image="${idx}" aria-label="移除">×</button></div>`,
+    )
+    .join("");
+}
+
+function resetPublishDynamicsForm() {
+  publishDynamicsState = { editingPostId: null, imageUrls: [], symbols: [] };
+  if (publishDynamicsContent) {
+    publishDynamicsContent.value = "";
+  }
+  if (publishDynamicsError) {
+    publishDynamicsError.classList.add("hidden");
+    publishDynamicsError.textContent = "";
+  }
+  if (publishDynamicsDialogTitle) {
+    publishDynamicsDialogTitle.textContent = "发布动态";
+  }
+  if (publishDynamicsSubmitBtn) {
+    publishDynamicsSubmitBtn.textContent = "发布";
+  }
+  renderPublishDynamicsSymbols();
+  renderPublishDynamicsImages();
+}
+
+function openPublishDynamicsDialog(postCard) {
+  resetPublishDynamicsForm();
+  if (postCard) {
+    publishDynamicsState.editingPostId = postCard.id;
+    if (publishDynamicsContent) {
+      publishDynamicsContent.value = String(postCard.content || "");
+    }
+    publishDynamicsState.imageUrls = Array.isArray(postCard.imageUrls) ? [...postCard.imageUrls] : [];
+    publishDynamicsState.symbols = Array.isArray(postCard.symbols)
+      ? postCard.symbols.map((s) => ({ symbol: s.symbol, name: s.name }))
+      : [];
+    if (publishDynamicsDialogTitle) {
+      publishDynamicsDialogTitle.textContent = "编辑动态";
+    }
+    if (publishDynamicsSubmitBtn) {
+      publishDynamicsSubmitBtn.textContent = "保存";
+    }
+  }
+  renderPublishDynamicsSymbols();
+  renderPublishDynamicsImages();
+  publishDynamicsDialog?.showModal();
+}
+
+async function uploadDynamicsImageFile(file) {
+  const base = getApiBaseForFetch();
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await apiFetch(`${base}/dynamics/images`, { method: "POST", body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.ok || !j?.data?.url) {
+    throw new Error(j?.error || "图片上传失败");
+  }
+  return j.data.url;
+}
+
+let dynamicsActionsTarget = null;
+
+function openDynamicsPostActionsDialog(card) {
+  dynamicsActionsTarget = card;
+  dynamicsPostActionsDialog?.showModal();
+}
+
+async function deleteDynamicsPostById(postId) {
+  const base = getApiBaseForFetch();
+  const r = await apiFetch(`${base}/community/posts/${encodeURIComponent(postId)}`, { method: "DELETE" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.ok) {
+    throw new Error(j?.error || "删除失败");
+  }
+}
+
+function showDynamicsLightbox(url) {
+  if (!dynamicsLightbox || !dynamicsLightboxImg) {
+    return;
+  }
+  dynamicsLightboxImg.src = url;
+  dynamicsLightbox.classList.remove("hidden");
+}
+
+function hideDynamicsLightbox() {
+  dynamicsLightbox?.classList.add("hidden");
+  if (dynamicsLightboxImg) {
+    dynamicsLightboxImg.src = "";
   }
 }
 
@@ -5773,6 +6356,7 @@ function renderCommunityProfilePageHtml(d) {
   return `
     <div class="community-profile-tab-panel ${tab === "earning" ? "is-active" : ""}" data-profile-panel="earning">${earningInner}</div>
     <div class="community-profile-tab-panel ${tab === "analysis" ? "is-active" : ""}" data-profile-panel="analysis"></div>
+    <div class="community-profile-tab-panel ${tab === "dynamics" ? "is-active" : ""}" data-profile-panel="dynamics"><div data-profile-dynamics-list class="community-list dynamics-list"></div></div>
     <div class="community-profile-tab-panel ${tab === "trade" ? "is-active" : ""}" data-profile-panel="trade"></div>
   `;
 }
@@ -5930,6 +6514,8 @@ async function loadCommunityProfileDetail() {
     const tab = state.communityProfileTab || "earning";
     if (tab === "earning") {
       void loadPublicEarningTabData(uid);
+    } else if (tab === "dynamics") {
+      void loadProfileDynamics(uid);
     } else if (tab === "trade") {
       void loadCommunityPublicTrades(uid);
     } else if (tab === "analysis") {
@@ -6087,6 +6673,7 @@ function renderRoute() {
   const validRoutes = new Set([
     "earning",
     "analysis",
+    "dynamics",
     "trade",
     "trade-records",
     "trade-cash",
@@ -9247,53 +9834,7 @@ async function renderStockRecordPage(symbol) {
   }
   syncStockRecordRangeChipUi();
 
-  const recTable = stockRecordListBody?.closest("table");
-  const headRow = recTable?.querySelector("thead tr");
-  if (recTable) {
-    recTable.classList.toggle("stock-record-table--pub", usePub);
-  }
-  if (headRow) {
-    headRow.innerHTML = usePub
-      ? `<th>日期</th><th>类型</th><th>价格</th><th class="num stock-record-amt-th"><span class="stock-record-amt-th-inner">金额<span class="stock-rank-help-wrap stock-record-amt-help-wrap"><button type="button" class="stock-rank-help-btn" aria-expanded="false" aria-label="金额占比说明">?</button><div class="stock-rank-help-bubble" role="tooltip">本次交易金额占当前总资产比例</div></span></span></th><th>股票账户</th>`
-      : "<th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>发生金额</th><th>股票账户</th>";
-  }
-
-  const noteColspan = usePub ? 5 : 6;
-  const tradeRowsHtml = symbolTrades
-    .map((trade) => {
-      const id = escapeHtml(String(trade.id));
-      const rowCore = `
-      <tr class="stock-record-trade-row trade-row--clickable" data-record-id="${id}">
-        <td>${trade.date.replace(/-/g, "/")}</td>
-        <td>${trade.side === "buy" ? "买入" : "卖出"}</td>
-        <td>${formatNumber(trade.price, 3)}</td>`;
-      const accCell = `<td class="trade-account-cell">${formatTradeAccountCellHtml(trade, usePub ? detail : null)}</td>`;
-      if (usePub) {
-        const share = publicTradeAmountShare(trade);
-        const shareCell =
-          share != null && Number.isFinite(share) ? formatPercent(share) : "—";
-        return `${rowCore}
-        <td class="num">${shareCell}</td>
-        ${accCell}
-      </tr>
-      ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}`;
-      }
-      return `${rowCore}
-        <td>${formatNumber(trade.quantity, 0)}</td>
-        <td class="${trade.side === "buy" ? "down" : "up"}">${trade.side === "buy" ? "-" : "+"}${formatNumber(
-          trade.amount,
-          2,
-        )}</td>
-        ${accCell}
-      </tr>
-      ${tradeRecordNoteSubrowHtml(trade.note, noteColspan, { "data-record-id": trade.id })}`;
-    })
-    .join("");
-  const loadingFooter =
-    !usePub && stockRecordTradesPager.loading
-      ? tradeListLoadingRowHtml(noteColspan)
-      : "";
-  stockRecordListBody.innerHTML = tradeRowsHtml + loadingFooter;
+  void loadStockRecordDynamics(symbol, usePub, detail);
 
   drawStockRecordCharts(symbol, symbolTrades);
 }

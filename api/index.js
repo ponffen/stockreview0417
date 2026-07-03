@@ -477,6 +477,170 @@ module.exports = async function handler(req, res, context) {
     }
   }
 
+  function dynamicsReq(req) {
+    return {
+      query: {
+        limit: getSearchParam(req, "limit"),
+        cursor: getSearchParam(req, "cursor"),
+      },
+    };
+  }
+
+  const dynamicsStockMatch = pathKey.match(/^\/api\/dynamics\/stock\/([^/]+)$/);
+  const publicDynamicsStockMatch = pathKey.match(/^\/api\/public\/([^/]+)\/dynamics\/stock\/([^/]+)$/);
+  const publicDynamicsMatch = pathKey.match(/^\/api\/public\/([^/]+)\/dynamics$/);
+  const communityPostMatch = pathKey.match(/^\/api\/community\/posts\/([^/]+)$/);
+  const isDynamicsDirect =
+    (req.method === "GET" && (pathKey === "/api/dynamics" || !!dynamicsStockMatch || !!publicDynamicsMatch || !!publicDynamicsStockMatch || pathKey === "/api/community/feed")) ||
+    (req.method === "POST" && (pathKey === "/api/dynamics/images" || pathKey === "/api/community/posts")) ||
+    ((req.method === "PATCH" || req.method === "DELETE") && !!communityPostMatch);
+
+  if (isDynamicsDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
+        return;
+      }
+      const {
+        handleCommunityFeed,
+        handleSelfDynamics,
+        handlePublicDynamics,
+        handleSelfStockDynamics,
+        handlePublicStockDynamics,
+        handleUploadDynamicsImage,
+        createCommunityPost,
+        updateCommunityPost,
+        deleteCommunityPost,
+      } = require("../src/dynamics/dynamics-api");
+
+      const readRawBody = () =>
+        new Promise((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => (data += chunk));
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+
+      if (req.method === "GET" && pathKey === "/api/community/feed") {
+        const result = await handleCommunityFeed(dynamicsReq(req), userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+
+      if (req.method === "GET" && pathKey === "/api/dynamics") {
+        const result = await handleSelfDynamics(dynamicsReq(req), userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+
+      if (req.method === "GET" && dynamicsStockMatch) {
+        const symbol = String(dynamicsStockMatch[1] || "").trim();
+        const result = await handleSelfStockDynamics(dynamicsReq(req), userId, symbol);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+
+      if (req.method === "GET" && publicDynamicsMatch) {
+        const targetId = String(publicDynamicsMatch[1] || "").trim();
+        const result = await handlePublicDynamics(dynamicsReq(req), userId, targetId);
+        if (result.error === "hidden") {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
+          return;
+        }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+
+      if (req.method === "GET" && publicDynamicsStockMatch) {
+        const targetId = String(publicDynamicsStockMatch[1] || "").trim();
+        const symbol = String(publicDynamicsStockMatch[2] || "").trim();
+        const result = await handlePublicStockDynamics(dynamicsReq(req), userId, targetId, symbol);
+        if (result.error === "hidden") {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
+          return;
+        }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+
+      if (req.method === "POST" && pathKey === "/api/dynamics/images") {
+        try {
+          const data = await handleUploadDynamicsImage(req, userId);
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (error) {
+          const code = error?.code === "BLOB_NOT_CONFIGURED" ? 503 : 400;
+          res.statusCode = code;
+          res.end(JSON.stringify({ ok: false, error: error?.message || "upload failed" }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && pathKey === "/api/community/posts") {
+        let body = {};
+        const raw = await readRawBody();
+        if (raw) {
+          try {
+            body = JSON.parse(raw);
+          } catch (_) {}
+        }
+        const data = await createCommunityPost(userId, body);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (communityPostMatch) {
+        const postId = String(communityPostMatch[1] || "").trim();
+        if (req.method === "PATCH") {
+          let body = {};
+          const raw = await readRawBody();
+          if (raw) {
+            try {
+              body = JSON.parse(raw);
+            } catch (_) {}
+          }
+          const data = await updateCommunityPost(userId, postId, body);
+          if (!data) {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ ok: false, error: "帖子不存在" }));
+            return;
+          }
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data }));
+          return;
+        }
+        if (req.method === "DELETE") {
+          const result = await deleteCommunityPost(userId, postId);
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, deleted: !!result.deleted }));
+          return;
+        }
+      }
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "dynamics direct failed" }));
+      return;
+    }
+  }
+
   const publicTradesMatch = pathKey.match(/^\/api\/public\/([^/]+)\/trades$/);
   if (req.method === "GET" && publicTradesMatch) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -720,8 +884,7 @@ module.exports = async function handler(req, res, context) {
   const communityFollowMatch = pathOnly.match(/^\/api\/community\/follow\/([^/]+)$/) || null;
   const isStateOrCommunityDirect =
     (req.method === "GET" &&
-      (pathOnly === "/api/community/feed" ||
-        pathOnly === "/api/community/following" ||
+      (pathOnly === "/api/community/following" ||
         pathOnly === "/api/community/leaderboard")) ||
     (req.method === "GET" && communityProfileMatch) ||
     (req.method === "PATCH" && pathOnly === "/api/me/community-profile") ||
@@ -1399,13 +1562,6 @@ module.exports = async function handler(req, res, context) {
           req.on("end", () => resolve(data));
           req.on("error", reject);
         });
-
-      if (req.method === "GET" && pathOnly === "/api/community/feed") {
-        const rows = await getFeedTrades(userId);
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: rows }));
-        return;
-      }
 
       if (req.method === "GET" && pathOnly === "/api/community/following") {
         const cards = await getFollowingCards(userId);

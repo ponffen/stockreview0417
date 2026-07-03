@@ -387,6 +387,16 @@ const DDL = [
     PRIMARY KEY (follower_id, followee_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_community_follows_followee ON community_follows (followee_id)`,
+  `CREATE TABLE IF NOT EXISTS community_posts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    image_urls TEXT NOT NULL DEFAULT '[]',
+    symbols TEXT NOT NULL DEFAULT '[]',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_community_posts_user_created ON community_posts (user_id, created_at DESC)`,
   `CREATE TABLE IF NOT EXISTS community_leaderboard_cache (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     payload TEXT NOT NULL,
@@ -718,7 +728,7 @@ async function getTrades(userId) {
     return [];
   }
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio, image_urls
      FROM trades WHERE user_id = $1
      ORDER BY trade_date ASC, created_at ASC`,
     [uid]
@@ -747,7 +757,7 @@ async function getTradesForSymbol(userId, symbol, opts = {}) {
   const params = [uid, sym];
   const accountClause = ledgerListAccountFilterClause(opts.accountId, params);
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio, image_urls
      FROM trades WHERE user_id = $1 AND symbol = $2${accountClause}
      ORDER BY trade_date DESC, created_at DESC`,
     params
@@ -773,7 +783,7 @@ async function getTradesPageForSymbol(userId, symbol, opts = {}) {
   const total = Number(countRows[0]?.n) || 0;
   const dataParams = [...params, limit, offset];
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio, image_urls
      FROM trades WHERE ${where}
      ORDER BY trade_date DESC, created_at DESC
      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
@@ -808,7 +818,7 @@ async function getTradesPage(userId, opts = {}) {
   const total = Number(countRows[0]?.n) || 0;
   const dataParams = [...params, limit, offset];
   const { rows } = await q(
-    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio
+    `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, amount_share_ratio, image_urls
      FROM trades WHERE ${where}
      ORDER BY trade_date DESC, created_at DESC
      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
@@ -882,15 +892,26 @@ async function upsertTrade(trade, userId) {
   if (!row.user_id) {
     throw new Error("userId required");
   }
+  let priorImageUrls = [];
+  if (safe.id) {
+    const { rows: priorRows } = await q(
+      `SELECT image_urls FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
+      [row.user_id, row.id],
+    );
+    if (priorRows.length) {
+      const { parseImageUrlsField } = require("./dynamics/blob-images");
+      priorImageUrls = parseImageUrlsField(priorRows[0].image_urls);
+    }
+  }
   await q(
     `INSERT INTO trades (
-      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio, image_urls
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
     ON CONFLICT (id) DO UPDATE SET
       user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
       name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
       amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-      amount_share_ratio = EXCLUDED.amount_share_ratio`,
+      amount_share_ratio = EXCLUDED.amount_share_ratio, image_urls = EXCLUDED.image_urls`,
     [
       row.id,
       row.user_id,
@@ -907,8 +928,16 @@ async function upsertTrade(trade, userId) {
       row.created_at,
       row.updated_at,
       row.amount_share_ratio,
+      row.image_urls,
     ],
   );
+  if (priorImageUrls.length) {
+    const { diffRemovedImageUrls, deleteBlobUrls } = require("./dynamics/blob-images");
+    const removed = diffRemovedImageUrls(priorImageUrls, safe.imageUrls);
+    if (removed.length) {
+      await deleteBlobUrls(removed);
+    }
+  }
   // Reset clearing flags so the next cron re-evaluates this user/account
   const tradeNow = nowMs();
   await q(
@@ -941,13 +970,13 @@ async function importTrades(trades, mode = "append", userId = null) {
       const row = tradeToRow({ ...safe, amountShareRatio }, uid);
       await client.query(
         `INSERT INTO trades (
-          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio, image_urls
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         ON CONFLICT (id) DO UPDATE SET
           user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
           name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
           amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-          amount_share_ratio = EXCLUDED.amount_share_ratio`,
+          amount_share_ratio = EXCLUDED.amount_share_ratio, image_urls = EXCLUDED.image_urls`,
         [
           row.id,
           row.user_id,
@@ -964,6 +993,7 @@ async function importTrades(trades, mode = "append", userId = null) {
           row.created_at,
           row.updated_at,
           row.amount_share_ratio,
+          row.image_urls,
         ],
       );
     }
@@ -1002,11 +1032,16 @@ async function getTradeByIdForUser(tradeId, userId) {
 async function deleteTradeById(tradeId, userId) {
   const uid = String(userId || "").trim();
   const tid = String(tradeId || "");
-  const prior = await getTradeByIdForUser(tid, uid);
-  // Get account_id before delete so we can reset that account's clearing flag
-  let deletedAccountId = prior?.accountId || null;
+  const { rows: priorRows } = await q(
+    `SELECT account_id, trade_date::text AS date, image_urls FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
+    [uid, tid],
+  );
+  const prior = priorRows[0] || null;
+  let deletedAccountId = prior?.account_id || null;
   const { rowCount } = await q("DELETE FROM trades WHERE user_id = $1 AND id = $2", [uid, tid]);
   if (rowCount > 0) {
+    const { deleteBlobUrls, parseImageUrlsField } = require("./dynamics/blob-images");
+    await deleteBlobUrls(parseImageUrlsField(prior?.image_urls));
     const delNow = nowMs();
     await q(`UPDATE user_metrics_meta SET is_cleared = FALSE, updated_at = $2 WHERE user_id = $1`, [uid, delNow]).catch(() => {});
     if (deletedAccountId) {
@@ -2567,6 +2602,22 @@ async function ensurePerformanceSchemaV2() {
       `ALTER TABLE analysis_daily_snapshot ADD COLUMN IF NOT EXISTS cash_ratio DOUBLE PRECISION NOT NULL DEFAULT 0`
     ).catch(() => {});
     await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS amount_share_ratio DOUBLE PRECISION`).catch(() => {});
+    await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS image_urls TEXT NOT NULL DEFAULT '[]'`).catch(() => {});
+    await q(`
+      CREATE TABLE IF NOT EXISTS community_posts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        image_urls TEXT NOT NULL DEFAULT '[]',
+        symbols TEXT NOT NULL DEFAULT '[]',
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      )
+    `).catch(() => {});
+    await q(`
+      CREATE INDEX IF NOT EXISTS idx_community_posts_user_created
+        ON community_posts (user_id, created_at DESC)
+    `).catch(() => {});
 
     const { rows } = await q(
       `SELECT 1 FROM information_schema.columns
@@ -3165,7 +3216,7 @@ async function getCommunityFeedTradesRecent(viewerId, limit = 50) {
   const lim = Math.min(2000, Math.max(1, Number(limit) || 50));
   const { rows } = await q(
     `SELECT t.id, t.user_id, t.symbol, t.name, t.price, t.quantity, t.amount, t.trade_date, t.note, t.side, t.created_at,
-            t.amount_share_ratio, u.nickname, u.phone
+            t.amount_share_ratio, t.image_urls, t.account_id, u.nickname, u.phone
      FROM trades t
      INNER JOIN users u ON u.id = t.user_id
      INNER JOIN community_follows f ON f.followee_id = t.user_id AND f.follower_id = $2
@@ -3331,4 +3382,5 @@ module.exports = {
   setSnapshotWatermark,
   pingDatabase,
   initPool,
+  dbQuery: q,
 };

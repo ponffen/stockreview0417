@@ -702,6 +702,7 @@ async function enrichLeaderboardPayloadWithViewer(payload, viewerId) {
 module.exports = {
   maskPhone,
   displayNameForUser,
+  displayStockMeta,
   getNormalizationMeta,
   getLeaderboard,
   buildUserCard,
