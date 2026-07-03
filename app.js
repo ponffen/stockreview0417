@@ -5207,8 +5207,8 @@ function communityTop3WeightHtml(weight) {
   return `<span class="community-top3-pct">${escapeHtml(text)}</span>`;
 }
 
-function buildCommunityStockIdentityHtml({ marketTag, symbol, name, variant = "feed" }) {
-  const code = escapeHtml(formatSymbolForDisplay(symbol || ""));
+function buildCommunityStockIdentityHtml({ marketTag, symbol, name, stockCode, displayCode, variant = "feed" }) {
+  const code = escapeHtml(String(stockCode || displayCode || "").trim() || formatSymbolForDisplay(symbol || ""));
   const tag = escapeHtml(marketTag || "OT");
   const tagLower = String(marketTag || "ot").toLowerCase();
   const stockName = escapeHtml(getDisplayName(symbol, name));
@@ -5233,6 +5233,7 @@ function buildTop3ListHtml(topPositions) {
         marketTag: p.marketTag,
         symbol: p.symbol || p.displayCode || "",
         name: p.name,
+        stockCode: p.stockCode || p.displayCode,
         variant: "top3",
       });
       return `<div class="community-top3-row">
@@ -5393,6 +5394,7 @@ function dynamicsCardStockHtml(card, view) {
           marketTag: card.marketTag,
           symbol: card.symbol || "",
           name: card.name,
+          stockCode: card.stockCode || card.displayCode,
           variant: "feed",
         })}
         <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
@@ -5511,6 +5513,7 @@ function buildDynamicsStockTagsHtml(symbols) {
         marketTag: s.marketTag,
         symbol: s.symbol || "",
         name: s.name,
+        stockCode: s.stockCode || s.displayCode,
         variant: "feed",
       });
       return `<div class="community-feed-card__stock-tag-item">${identity}</div>`;
@@ -9526,7 +9529,7 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
   const attr = ` data-stock-col="${col}"`;
   switch (col) {
     case 0:
-      return `<td${attr} class="stock-name"><strong>${escapeHtml(getDisplayName(sym, row.name))}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || formatSymbolForDisplay(sym))}</span></td>`;
+      return `<td${attr} class="stock-name"><strong>${escapeHtml(getDisplayName(sym, row.name))}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || "")}</span></td>`;
     case 1:
       return `<td${attr} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>`;
     case 2:
@@ -10128,7 +10131,7 @@ async function renderStockRecordPage(symbol) {
   const headline = bundle?.headline || null;
   const positionName = headline?.name || "-";
 
-  stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${formatSymbolForDisplay(symbol)})`;
+  stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${bundle?.headline?.code || formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = headline?.quoteTime ?? "—";
   stockRecordPrice.textContent = headline?.price ?? "—";
   const priceUp = headline?.changePct ? !String(headline.changePct).startsWith("-") : false;

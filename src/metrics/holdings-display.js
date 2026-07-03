@@ -1,11 +1,10 @@
 /**
  * f 持仓表：symbol_daily_pnl 冻结日行（v3 stage_*）+ computeLiveMetrics（今日/现价）。
  */
-const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
+const { resolveDisplayNameFromMap, resolveMetaFromMap } = require("../symbol-name-resolve");
 const {
   normalizeSymbol,
-  formatSymbolForDisplay,
-  getSymbolNameMap,
+  getSymbolMetaMap,
   resolveBookCurrencyForAccountScope,
   getSymbolDailyPnl,
 } = require("../db");
@@ -42,6 +41,20 @@ function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope,
     return 0;
   }
   return stockBook / overviewBook;
+}
+
+function marketFromMetaTag(marketTag) {
+  const tag = String(marketTag || "").toUpperCase();
+  if (tag === "CN") {
+    return "A股";
+  }
+  if (tag === "HK") {
+    return "港股";
+  }
+  if (tag === "US") {
+    return "美股";
+  }
+  return "其他";
 }
 
 function inferMarket(symbol) {
@@ -185,7 +198,7 @@ async function buildHoldingsPayload({
       keys.add(sym);
     }
   }
-  const nameMap = await getSymbolNameMap([...keys]);
+  const nameMap = await getSymbolMetaMap([...keys]);
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
   const scopeId = String(accountScope || "all").trim() || "all";
   const frozenThrough = String(
@@ -226,7 +239,8 @@ async function buildHoldingsPayload({
       continue;
     }
     const ccy = String(snap?.currency || liveP?.currency || "CNY").toUpperCase();
-    const market = inferMarket(sym);
+    const meta = resolveMetaFromMap(sym, nameMap);
+    const market = marketFromMetaTag(meta.marketTag);
     const isCnyStock = ccy === "CNY" || market === "A股";
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
@@ -287,8 +301,8 @@ async function buildHoldingsPayload({
       market,
       currency: ccy,
       isCnyStock,
-      marketTag: marketTag(market),
-      stockCode: formatSymbolForDisplay(sym),
+      marketTag: meta.marketTag,
+      stockCode: meta.displayCode,
       price: Number.isFinite(current) ? current.toFixed(3) : "—",
       dayChange: fmtSignedPercentRatio(dayChg),
       marketValue: fmtPlainAmount(mvNat),

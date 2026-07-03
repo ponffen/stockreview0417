@@ -1,7 +1,7 @@
 /**
  * 个股分析页 bundle：headline + charts.points（格式化字符串，按区间全量返回）。
  */
-const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
+const { resolveDisplayNameFromMap, resolveMetaFromMap } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSettings,
@@ -10,8 +10,7 @@ const {
   getSymbolDailyCloseRange,
   getSymbolDailyPnlChartSeriesDateRange,
   getSymbolDailyPnlRowOnOrBefore,
-  getSymbolNameMap,
-  formatSymbolForDisplay,
+  getSymbolMetaMap,
   normalizeSymbol,
   resolveBookCurrencyForAccountScope,
   addCalendarDays,
@@ -620,7 +619,7 @@ async function buildStockRecordBundlePayload({
   const includeLive = true;
   const anchorAsOf = frozenThrough || endDate;
 
-  const [anchorPnlRow, headlineCloseRows, frozenProfitRow, nameMap] = await Promise.all([
+  const [anchorPnlRow, headlineCloseRows, frozenProfitRow, metaMap] = await Promise.all([
     getSymbolDailyPnlRowOnOrBefore({ accountId: accountIdForPnl, symbol: sym, asOf: anchorAsOf }, uid),
     getSymbolDailyCloseRange(sym, addCalendarDays(endDate || frozenThrough || "1970-01-01", -90), endDate || "9999-12-31"),
     includeLive && live.tradingDay && livePos && Math.abs(Number(livePos.quantity) || 0) > POSITION_EPS
@@ -629,7 +628,7 @@ async function buildStockRecordBundlePayload({
           uid,
         )
       : Promise.resolve(null),
-    getSymbolNameMap([sym]),
+    getSymbolMetaMap([sym]),
   ]);
 
   const clearedStable = isSymbolClearedStable({
@@ -708,7 +707,8 @@ async function buildStockRecordBundlePayload({
   const prev = headlineQuote.prevClose;
   const changeAbs = current - prev;
   const changePct = prev > 0 ? changeAbs / prev : 0;
-  const displayName = resolveDisplayNameFromMap(sym, nameMap);
+  const displayName = resolveDisplayNameFromMap(sym, metaMap);
+  const headlineMeta = resolveMetaFromMap(sym, metaMap);
   const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current);
 
   const payload = {
@@ -734,7 +734,7 @@ async function buildStockRecordBundlePayload({
     },
     headline: {
       name: displayName,
-      code: formatSymbolForDisplay(sym),
+      code: headlineMeta.displayCode,
       price: formatClosePrice(current),
       change: fmtPlainSignedAmount(changeAbs),
       changePct: fmtSignedPercentRatio(changePct),

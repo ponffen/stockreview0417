@@ -39,15 +39,30 @@ function toTencentQuoteKey(rawSymbol) {
 function marketTagFromTencentFirstField(first) {
   const f = String(first || "").trim();
   if (f === "1" || f === "51") {
-    return "CN";
+    return "cn";
   }
   if (f === "100") {
-    return "HK";
+    return "hk";
   }
   if (f === "200") {
-    return "US";
+    return "us";
   }
   return null;
+}
+
+/** 库内小写 cn/hk/us → 对外 API 大写 CN/HK/US */
+function marketTagForApi(stored) {
+  const v = String(stored || "").trim().toLowerCase();
+  if (v === "cn") {
+    return "CN";
+  }
+  if (v === "hk") {
+    return "HK";
+  }
+  if (v === "us") {
+    return "US";
+  }
+  return "OT";
 }
 
 function displayCodeFromTencentParts2(parts2) {
@@ -71,8 +86,9 @@ function parseTencentTildeRecord(payload) {
   if (!name) {
     return null;
   }
-  const tag = marketTagFromTencentFirstField(parts[0]) || "OT";
-  return { name, marketTag: tag };
+  const tag = marketTagFromTencentFirstField(parts[0]) || "ot";
+  const displayCode = displayCodeFromTencentParts2(parts[2]);
+  return { name, marketTag: tag, displayCode };
 }
 
 const CHUNK = 55;
@@ -130,11 +146,11 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
       }
       const originals = keyToOriginals.get(sourceKey) || [];
       for (const orig of originals) {
-        const displayCode = formatSymbolForDisplay(orig);
+        const fallbackCode = formatSymbolForDisplay(orig);
         out.set(orig, {
           name: parsed.name,
           marketTag: parsed.marketTag,
-          displayCode: displayCode || displayCodeFromTencentParts2(sourceKey),
+          displayCode: parsed.displayCode || fallbackCode || displayCodeFromTencentParts2(sourceKey),
         });
       }
     }
@@ -144,5 +160,7 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
 
 module.exports = {
   toTencentQuoteKey,
+  marketTagFromTencentFirstField,
+  marketTagForApi,
   fetchTencentQuoteMetaForSymbols,
 };

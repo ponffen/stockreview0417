@@ -3,7 +3,7 @@
  */
 
 const { initPool, dbQuery, normalizeSymbol, getAccounts, getUserCommunityRow } = require("../db");
-const { enrichRowsWithSymbolNames } = require("../symbol-name-resolve");
+const { enrichDynamicsCards } = require("../symbol-name-resolve");
 const { buildCardFromFeedRow } = require("./dynamics-card-build");
 const { applyDynamicsRedaction, SCENES } = require("./dynamics-redact");
 const { toClientImageUrls } = require("./blob-images");
@@ -228,37 +228,15 @@ async function listDynamicsFeed(options = {}) {
     accountNameById[acc.id] = acc.name || acc.id;
   }
 
-  const nameRows = [];
-  for (const row of slice) {
-    if (row.symbol) {
-      nameRows.push({ symbol: row.symbol, name: row.name });
+  const ctx = { accountNameById };
+  const cards = slice.map((row) => buildCardFromFeedRow(row, ctx));
+  await enrichDynamicsCards(cards);
+  const data = cards.map((card) => {
+    const out = applyDynamicsRedaction(card, scene, { isSelf });
+    if (Array.isArray(out.imageUrls) && out.imageUrls.length) {
+      out.imageUrls = toClientImageUrls(out.imageUrls);
     }
-    const syms = (() => {
-      try {
-        return JSON.parse(row.symbols || "[]");
-      } catch {
-        return [];
-      }
-    })();
-    for (const sym of syms) {
-      nameRows.push({ symbol: sym, name: sym });
-    }
-  }
-  await enrichRowsWithSymbolNames(nameRows);
-  const nameBySymbol = {};
-  for (const r of nameRows) {
-    if (r.symbol) {
-      nameBySymbol[r.symbol] = r.name || r.symbol;
-    }
-  }
-
-  const ctx = { accountNameById, nameBySymbol };
-  const data = slice.map((row) => {
-    const card = applyDynamicsRedaction(buildCardFromFeedRow(row, ctx), scene, { isSelf });
-    if (Array.isArray(card.imageUrls) && card.imageUrls.length) {
-      card.imageUrls = toClientImageUrls(card.imageUrls);
-    }
-    return card;
+    return out;
   });
 
   let nextCursor = null;

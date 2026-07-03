@@ -23,11 +23,12 @@ const {
   getAccounts,
   getTradesPage,
   getTradesPageForSymbol,
-  getSymbolNameMap,
+  getSymbolMetaMap,
 } = require("./db");
 const {
   resolveDisplayNameFromMap,
-  enrichRowsWithSymbolNames,
+  resolveMetaFromMap,
+  enrichRowsWithSymbolMeta,
   enrichTopPositionsOnCards,
   enrichTradesWithSymbolNames,
 } = require("./symbol-name-resolve");
@@ -327,8 +328,7 @@ async function buildTopPositions(userId, factor) {
     const mvNat = Math.abs(Number(rawQty)) * px;
     const ccy = bookCurrencyForSymbolNorm(symNorm);
     const mvCny = mvNativeToCny(mvNat, ccy, fxUsd, fxHkd);
-    const meta = displayStockMeta(symNorm);
-    scored.push({ symNorm, rawQty: Number(rawQty), mvNat, mvCny, meta, ccy });
+    scored.push({ symNorm, rawQty: Number(rawQty), mvNat, mvCny, ccy });
   }
 
   if (!scored.length) {
@@ -337,19 +337,22 @@ async function buildTopPositions(userId, factor) {
   const denom = scored.reduce((s, x) => s + x.mvCny, 0);
   scored.sort((a, b) => b.mvCny - a.mvCny);
   const top = scored.slice(0, 3);
-  const nameMap = await getSymbolNameMap(top.map((x) => x.symNorm));
+  const metaMap = await getSymbolMetaMap(top.map((x) => x.symNorm));
 
-  return top.map((x) => ({
-    symbol: x.symNorm,
-    name: resolveDisplayNameFromMap(x.symNorm, nameMap),
-    weight: denom > 0 ? x.mvCny / denom : 0,
-    quantity: x.rawQty * factor,
-    marketValue: x.mvNat * factor,
-    currency: x.ccy,
-    dayPnl: 0,
-    displayCode: x.meta.displayCode,
-    marketTag: x.meta.marketTag,
-  }));
+  return top.map((x) => {
+    const meta = resolveMetaFromMap(x.symNorm, metaMap);
+    return {
+      symbol: x.symNorm,
+      name: meta.nameCn,
+      weight: denom > 0 ? x.mvCny / denom : 0,
+      quantity: x.rawQty * factor,
+      marketValue: x.mvNat * factor,
+      currency: x.ccy,
+      dayPnl: 0,
+      displayCode: meta.displayCode,
+      marketTag: meta.marketTag,
+    };
+  });
 }
 
 function parseBundleRateRatio(value) {
@@ -383,13 +386,12 @@ function topPositionsFromPublicHomeBundle(bundle) {
   const rows = Array.isArray(bundle?.holdings?.rows) ? bundle.holdings.rows : [];
   return rows.slice(0, 3).map((row) => {
     const sym = String(row?.symbol || "").trim();
-    const meta = displayStockMeta(sym);
     return {
       symbol: sym,
-      name: String(row?.name || sym).trim() || sym,
+      name: String(row?.name || "-").trim() || "-",
       weight: row?.weight ?? null,
-      displayCode: String(row?.stockCode || meta.displayCode || "").trim() || meta.displayCode,
-      marketTag: String(row?.marketTag || meta.marketTag || "OT").trim() || meta.marketTag,
+      displayCode: String(row?.stockCode || "").trim(),
+      marketTag: String(row?.marketTag || "OT").trim() || "OT",
     };
   });
 }
@@ -647,28 +649,24 @@ async function getFeedTrades(viewerId) {
   const out = [];
   for (const t of raw) {
     const note = String(t.note || "");
-    const meta = displayStockMeta(t.symbol);
     const ratio = t.amountShareRatio;
     out.push({
       id: t.id,
       userId: t.userId,
       displayName: displayNameForUser({ nickname: t.nickname, phone: t.phone }),
       symbol: t.symbol,
-      name: t.name || t.symbol,
       price: t.price,
       side: t.side,
       date: t.date,
       note: note.length > 300 ? `${note.slice(0, 300)}…` : note,
       createdAt: t.createdAt,
-      marketTag: meta.marketTag,
-      displayCode: meta.displayCode,
       amount_share_ratio: ratio != null && Number.isFinite(Number(ratio)) ? Number(ratio) : null,
     });
     if (out.length >= 50) {
       break;
     }
   }
-  await enrichRowsWithSymbolNames(out);
+  await enrichRowsWithSymbolMeta(out);
   return out;
 }
 

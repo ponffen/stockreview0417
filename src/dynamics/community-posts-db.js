@@ -5,6 +5,7 @@
 const { randomUUID } = require("crypto");
 const { dbQuery, normalizeSymbol } = require("../db");
 const { nowMs } = require("../db-pure");
+const { ensureSymbolNameMapForSymbols } = require("../symbol-name-resolve");
 const {
   parseImageUrlsField,
   serializeImageUrls,
@@ -98,6 +99,7 @@ async function createCommunityPost(userId, body) {
       now,
     ],
   );
+  await ensureSymbolNameMapForSymbols(input.symbols, { source: "tencent" });
   return getCommunityPostByIdForUser(id, uid);
 }
 
@@ -127,6 +129,7 @@ async function updateCommunityPost(userId, postId, body) {
   if (removed.length) {
     await deleteBlobUrls(removed);
   }
+  await ensureSymbolNameMapForSymbols(input.symbols, { source: "tencent" });
   return getCommunityPostByIdForUser(pid, uid);
 }
 

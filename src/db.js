@@ -375,6 +375,8 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS symbol_name_map (
     symbol TEXT PRIMARY KEY,
     name_cn TEXT NOT NULL,
+    market_tag TEXT NOT NULL DEFAULT 'ot',
+    display_code TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'unknown',
     updated_at BIGINT NOT NULL,
     last_seen_at BIGINT NOT NULL
@@ -2316,6 +2318,15 @@ async function getSymbolDailyCloseBounds(symbol, fromDate, toDate) {
   };
 }
 
+async function ensureSymbolNameMapColumns() {
+  await q(
+    `ALTER TABLE symbol_name_map ADD COLUMN IF NOT EXISTS market_tag TEXT NOT NULL DEFAULT 'ot'`
+  );
+  await q(
+    `ALTER TABLE symbol_name_map ADD COLUMN IF NOT EXISTS display_code TEXT NOT NULL DEFAULT ''`
+  );
+}
+
 async function ensureSymbolNameMapTable() {
   if (symbolNameMapTableReadyPromise) {
     return symbolNameMapTableReadyPromise;
@@ -2324,6 +2335,7 @@ async function ensureSymbolNameMapTable() {
     try {
       const { rows } = await q("SELECT to_regclass('public.symbol_name_map') AS t");
       if (rows[0]?.t) {
+        await ensureSymbolNameMapColumns();
         return;
       }
     } catch {
@@ -2335,6 +2347,8 @@ async function ensureSymbolNameMapTable() {
       CREATE TABLE IF NOT EXISTS symbol_name_map (
         symbol TEXT PRIMARY KEY,
         name_cn TEXT NOT NULL,
+        market_tag TEXT NOT NULL DEFAULT 'ot',
+        display_code TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'unknown',
         updated_at BIGINT NOT NULL,
         last_seen_at BIGINT NOT NULL
@@ -2444,33 +2458,74 @@ async function createSymbolNameMapTableNow() {
   }
 }
 
-function normalizeSymbolNameEntry(entry = {}) {
+function normalizeMarketTagStored(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "cn" || v === "hk" || v === "us" || v === "ot") {
+    return v;
+  }
+  if (v === "a股" || v === "a") {
+    return "cn";
+  }
+  if (v === "港股" || v === "hk") {
+    return "hk";
+  }
+  if (v === "美股" || v === "us") {
+    return "us";
+  }
+  return "";
+}
+
+function normalizeSymbolMetaEntry(entry = {}) {
   const symbol = normalizeSymbol(entry.symbol);
+  if (!symbol) {
+    return null;
+  }
   let nameCn = String(entry.nameCn ?? entry.name ?? "").trim();
   const source = String(entry.source || "unknown").trim().slice(0, 32) || "unknown";
-  if (!symbol || !nameCn) {
-    return null;
+  const marketTag = normalizeMarketTagStored(entry.marketTag ?? entry.market_tag ?? "");
+  let displayCode = String(entry.displayCode ?? entry.display_code ?? "").trim();
+  if (!displayCode) {
+    displayCode = formatSymbolForDisplay(symbol) || symbol.toUpperCase();
+  }
+  if (displayCode.length > 32) {
+    displayCode = displayCode.slice(0, 32);
   }
   if (nameCn.length > 64) {
     nameCn = nameCn.slice(0, 64);
   }
   const loweredName = nameCn.toLowerCase();
-  if (loweredName === symbol.toLowerCase()) {
-    return null;
-  }
   if (
-    /^(sh|sz)\d{6}$/i.test(loweredName) ||
-    /^hk\d{5}$/i.test(loweredName) ||
-    /^gb_[a-z0-9._-]+$/i.test(loweredName) ||
-    /^us_[a-z0-9._-]+$/i.test(loweredName)
+    nameCn &&
+    (loweredName === symbol.toLowerCase() ||
+      /^(sh|sz)\d{6}$/i.test(loweredName) ||
+      /^hk\d{5}$/i.test(loweredName) ||
+      /^gb_[a-z0-9._-]+$/i.test(loweredName) ||
+      /^us_[a-z0-9._-]+$/i.test(loweredName))
   ) {
+    nameCn = "";
+  }
+  if (!nameCn && !marketTag && !displayCode) {
     return null;
   }
-  return { symbol, nameCn, source };
+  return {
+    symbol,
+    nameCn: nameCn || "-",
+    marketTag: marketTag || "ot",
+    displayCode,
+    source,
+  };
+}
+
+function normalizeSymbolNameEntry(entry = {}) {
+  const parsed = normalizeSymbolMetaEntry(entry);
+  if (!parsed || !parsed.nameCn || parsed.nameCn === "-") {
+    return null;
+  }
+  return parsed;
 }
 
 async function upsertSymbolNameMapBatch(rows = []) {
-  const list = Array.isArray(rows) ? rows.map(normalizeSymbolNameEntry).filter(Boolean) : [];
+  const list = Array.isArray(rows) ? rows.map(normalizeSymbolMetaEntry).filter(Boolean) : [];
   if (!list.length) {
     return 0;
   }
@@ -2483,26 +2538,35 @@ async function upsertSymbolNameMapBatch(rows = []) {
   const deduped = [...latestBySymbol.values()];
   const now = nowMs();
   await q(
-    `INSERT INTO symbol_name_map (symbol, name_cn, source, updated_at, last_seen_at)
-     SELECT src.symbol, src.name_cn, src.source, $4, $4
-     FROM UNNEST($1::text[], $2::text[], $3::text[]) AS src(symbol, name_cn, source)
+    `INSERT INTO symbol_name_map (symbol, name_cn, market_tag, display_code, source, updated_at, last_seen_at)
+     SELECT src.symbol, src.name_cn, src.market_tag, src.display_code, src.source, $6, $6
+     FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS src(symbol, name_cn, market_tag, display_code, source)
      ON CONFLICT (symbol) DO UPDATE SET
        name_cn = CASE
-         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.name_cn
+         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 AND EXCLUDED.name_cn <> '-' THEN EXCLUDED.name_cn
          ELSE symbol_name_map.name_cn
        END,
+       market_tag = CASE
+         WHEN EXCLUDED.market_tag IS NOT NULL AND length(trim(EXCLUDED.market_tag)) > 0 AND EXCLUDED.market_tag <> 'ot' THEN EXCLUDED.market_tag
+         WHEN symbol_name_map.market_tag IS NULL OR symbol_name_map.market_tag = '' OR symbol_name_map.market_tag = 'ot' THEN EXCLUDED.market_tag
+         ELSE symbol_name_map.market_tag
+       END,
+       display_code = CASE
+         WHEN EXCLUDED.display_code IS NOT NULL AND length(trim(EXCLUDED.display_code)) > 0 THEN EXCLUDED.display_code
+         ELSE symbol_name_map.display_code
+       END,
        source = CASE
-         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.source
+         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 AND EXCLUDED.name_cn <> '-' THEN EXCLUDED.source
+         WHEN EXCLUDED.market_tag IS NOT NULL AND EXCLUDED.market_tag <> 'ot' THEN EXCLUDED.source
          ELSE symbol_name_map.source
        END,
-       updated_at = CASE
-         WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 THEN EXCLUDED.updated_at
-         ELSE symbol_name_map.updated_at
-       END,
-       last_seen_at = EXCLUDED.last_seen_at`,
+       updated_at = $6,
+       last_seen_at = $6`,
     [
       deduped.map((x) => x.symbol),
       deduped.map((x) => x.nameCn),
+      deduped.map((x) => x.marketTag),
+      deduped.map((x) => x.displayCode),
       deduped.map((x) => x.source),
       now,
     ]
@@ -2524,16 +2588,15 @@ async function hasSymbolNameMapEntry(symbol) {
   return (rows || []).length > 0;
 }
 
-async function getSymbolNameMap(symbols = []) {
+async function getSymbolMetaMap(symbols = []) {
   await ensureSymbolNameMapTable();
-  /** 读路径不跑 gb_ 别名整理：该步骤会扫表 INSERT/DELETE，多 Serverless 实例并发时易锁表，导致 symbol-name-map / home-summary / 行情等大面积 pending。整理仍在 upsertSymbolNameMapBatch 写入时执行。 */
   const uniq = [...new Set((symbols || []).map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
   if (!uniq.length) {
     return {};
   }
   const candidates = [...new Set(uniq.flatMap((symbol) => symbolQueryCandidates(symbol)))];
   const { rows } = await q(
-    `SELECT symbol, name_cn, updated_at
+    `SELECT symbol, name_cn, market_tag, display_code, updated_at
      FROM symbol_name_map
      WHERE symbol = ANY($1::text[])
      ORDER BY updated_at DESC`,
@@ -2542,12 +2605,25 @@ async function getSymbolNameMap(symbols = []) {
   const out = {};
   for (const row of rows || []) {
     const symbol = normalizeSymbol(row.symbol);
-    const nameCn = String(row.name_cn || "").trim();
-    if (!symbol || !nameCn) {
+    if (!symbol || out[symbol]) {
       continue;
     }
-    if (!out[symbol]) {
-      out[symbol] = nameCn;
+    out[symbol] = {
+      nameCn: String(row.name_cn || "").trim() || "-",
+      marketTag: normalizeMarketTagStored(row.market_tag) || "ot",
+      displayCode: String(row.display_code || "").trim() || formatSymbolForDisplay(symbol) || symbol.toUpperCase(),
+    };
+  }
+  return out;
+}
+
+async function getSymbolNameMap(symbols = []) {
+  const metaMap = await getSymbolMetaMap(symbols);
+  const out = {};
+  for (const [symbol, meta] of Object.entries(metaMap)) {
+    const name = String(meta?.nameCn || "").trim();
+    if (name) {
+      out[symbol] = name;
     }
   }
   return out;
@@ -3339,6 +3415,7 @@ module.exports = {
   getLatestSymbolDailyClose,
   getSymbolDailyCloseBounds,
   getSymbolNameMap,
+  getSymbolMetaMap,
   hasSymbolNameMapEntry,
   upsertSymbolNameMapBatch,
   createSymbolNameMapTableNow,

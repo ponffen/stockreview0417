@@ -2,7 +2,7 @@
  * Build unified dynamics cards from raw feed rows.
  */
 
-const { displayNameForUser, displayStockMeta } = require("../community-service");
+const { displayNameForUser } = require("../community-service");
 const { parseImageUrlsField } = require("./blob-images");
 const { parseSymbolsField } = require("./community-posts-db");
 const { normalizeSymbol } = require("../db");
@@ -76,21 +76,12 @@ function formatDynamicsDateTime(ms) {
   return `${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
 
-function buildSymbolTags(symbols, nameBySymbol) {
+function buildSymbolTags(symbols) {
   const list = parseSymbolsField(symbols);
-  return list.map((sym) => {
-    const meta = displayStockMeta(sym);
-    return {
-      symbol: sym,
-      name: nameBySymbol?.[sym] || sym,
-      marketTag: meta.marketTag,
-      displayCode: meta.displayCode,
-    };
-  });
+  return list.map((sym) => ({ symbol: sym }));
 }
 
 function buildTradeCard(row, ctx) {
-  const meta = displayStockMeta(row.symbol);
   const accountId = String(row.account_id || "default").trim() || "default";
   const accountName = ctx.accountNameById?.[accountId] || accountId;
   const ratioRaw = row.amount_share_ratio;
@@ -102,10 +93,7 @@ function buildTradeCard(row, ctx) {
     displayName: displayNameForUser({ nickname: row.nickname, phone: row.phone }),
     createdAt: Number(row.created_at),
     sortMs: tradeSortMs(row.trade_date),
-    symbol: row.symbol,
-    name: row.name || row.symbol,
-    marketTag: meta.marketTag,
-    displayCode: meta.displayCode,
+    symbol: normalizeSymbol(row.symbol),
     side: row.side === "sell" ? "sell" : "buy",
     tradeDate: formatDynamicsTradeDate(row.trade_date),
     price: formatDynamicsPrice(row.price),
@@ -120,8 +108,8 @@ function buildTradeCard(row, ctx) {
   };
 }
 
-function buildPostCard(row, ctx) {
-  const symbols = buildSymbolTags(row.symbols, ctx.nameBySymbol);
+function buildPostCard(row) {
+  const symbols = buildSymbolTags(row.symbols);
   return {
     cardKind: "post",
     id: row.id,
@@ -138,7 +126,7 @@ function buildPostCard(row, ctx) {
 
 function buildCardFromFeedRow(row, ctx) {
   if (row.card_kind === "post") {
-    return buildPostCard(row, ctx);
+    return buildPostCard(row);
   }
   return buildTradeCard(row, ctx);
 }
