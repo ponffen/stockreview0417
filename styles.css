@@ -4152,6 +4152,13 @@ body.subscription-expired-mode {
   padding: 24px 12px;
 }
 
+/* 动态卡片正文：对齐 X/Twitter 帖子正文（15px / 1.33）— 交易备注 note、观点 content */
+.dynamics-list .community-feed-card--stream .community-feed-card__content {
+  font-size: 15px;
+  line-height: 1.33;
+  color: var(--text);
+}
+
 .app-header-action-btn {
   flex-shrink: 0;
   font-size: 13px;
