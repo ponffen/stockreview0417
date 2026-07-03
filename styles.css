@@ -3814,7 +3814,7 @@ body.subscription-expired-mode {
 }
 
 .community-feed-card__inner {
-  padding: 14px 16px 16px;
+  padding: 12px 16px;
 }
 
 .community-feed-card__head {
@@ -3868,7 +3868,6 @@ body.subscription-expired-mode {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 14px;
 }
 
 .community-feed-side-pill {
@@ -4137,11 +4136,11 @@ body.subscription-expired-mode {
 
 .dynamics-list {
   background: var(--surface-content);
-  padding: 0 0 24px;
+  padding: 0 0 12px;
 }
 
 .community-list.dynamics-list {
-  padding: 0 0 24px;
+  padding: 0 0 12px;
 }
 
 .dynamics-list .community-feed-card--stream,
@@ -4167,10 +4166,15 @@ body.subscription-expired-mode {
 
 /* dyn-card 母版：槽位间距与图三交易卡一致 */
 .dyn-card__inner {
-  padding: 12px 16px 16px;
+  padding: 12px 16px;
 }
 
-.dyn-card__slot + .dyn-card__slot {
+/* 槽位间距只由 slot 兄弟规则控制，覆盖 legacy community-feed-card__* 的 margin */
+.dyn-card__inner > .dyn-card__slot {
+  margin-top: 0;
+}
+
+.dyn-card__inner > .dyn-card__slot + .dyn-card__slot {
   margin-top: 12px;
 }
 
@@ -4186,10 +4190,6 @@ body.subscription-expired-mode {
 
 .dyn-card__slot--stock-tags .dyn-card__stock-tags {
   margin: 0;
-}
-
-.dyn-card .community-feed-card__stock-row {
-  margin-top: 0;
 }
 
 .dyn-card__metrics {
@@ -4531,7 +4531,6 @@ html.dynamics-compose-open body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
   padding-top: 12px;
   border-top: 1px dashed var(--line);
   font-size: 12px;
@@ -4679,7 +4678,7 @@ html.dynamics-compose-open body {
 }
 
 .community-profile-tab-panel [data-profile-dynamics-list] {
-  padding: 0 0 24px;
+  padding: 0 0 12px;
 }
 
 .stock-record-dynamics-section .dynamics-list {
