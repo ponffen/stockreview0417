@@ -4133,7 +4133,8 @@ body.subscription-expired-mode {
 }
 
 .dynamics-list .community-feed-card--stream,
-.community-list.dynamics-list .community-feed-card--stream {
+.community-list.dynamics-list .community-feed-card--stream,
+.dynamics-list .dyn-card {
   background: var(--surface-content);
   border: none;
   border-radius: 0;
@@ -4152,44 +4153,70 @@ body.subscription-expired-mode {
   padding: 24px 12px;
 }
 
-/* 动态流正文：交易 note、观点 content */
-.dynamics-list .community-feed-card--stream .community-feed-note {
-  margin: 0;
-  padding-top: 0;
-  border-top: none;
-  color: var(--text);
+/* dyn-card 母版：槽位间距与图三交易卡一致 */
+.dyn-card__inner {
+  padding: 14px 16px 16px;
 }
 
-.dynamics-list .community-feed-card--stream .community-feed-card__content {
+.dyn-card__slot + .dyn-card__slot {
+  margin-top: 12px;
+}
+
+.dyn-card__slot--header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dyn-card__slot--stock-tags {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dyn-card__slot--stock-tags .dyn-card__stock-tags {
+  margin: 0;
+}
+
+.dyn-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 10px 0;
+  background: #f3f4f6;
+  border-radius: 10px;
+}
+
+.dyn-card__metrics--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dyn-card__body,
+.dynamics-list .dyn-card .community-feed-card__content {
+  margin: 0;
+  padding: 0;
+  border: none;
   font-size: 18px;
   line-height: 1.5;
   color: var(--text);
 }
 
-.dynamics-list .community-feed-card--stream .community-feed-card__content--post-only,
-.dynamics-list .community-feed-card--stream .community-feed-card__content--after-stock,
-.dynamics-list .community-feed-card--stream .community-feed-card__content--after-metrics {
-  margin-top: 12px;
+.dyn-card__slot--footer,
+.dyn-card .community-feed-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  color: #8a94a3;
 }
 
-.dynamics-list .community-feed-card--stream .community-feed-card__stock-tags {
-  margin-top: 12px;
-  margin-bottom: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-/* 个股页「个股动态」：灰色指标区铺满区块左右（私有 / 公开同一 DOM） */
-.stock-record-dynamics-section .dynamics-list--stock .community-feed-card--stream {
-  overflow: hidden;
-}
-
-.stock-record-dynamics-section .dynamics-list--stock .community-feed-card--stream .community-feed-card__metrics {
-  margin-left: -30px;
-  margin-right: -30px;
-  width: calc(100% + 60px);
-  border-radius: 0;
-  box-sizing: border-box;
+.dynamics-list .dyn-card .community-feed-note {
+  margin: 0;
+  padding-top: 0;
+  border-top: none;
+  color: var(--text);
 }
 
 .app-header-action-btn {
