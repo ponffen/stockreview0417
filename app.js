@@ -5411,8 +5411,18 @@ function dynamicsCardHtml(card, opts = {}) {
   const metricsBlock = kind === "trade" ? dynamicsTradeMetricsHtml(c) : "";
   const opinionText =
     kind === "trade" ? String(c.note || "").trim() : String(c.content || "").trim();
+  let opinionContentClass = "community-feed-card__content";
+  if (opinionText) {
+    if (kind === "post") {
+      opinionContentClass += Array.isArray(c.symbols) && c.symbols.length
+        ? " community-feed-card__content--after-stock"
+        : " community-feed-card__content--post-only";
+    } else {
+      opinionContentClass += " community-feed-card__content--after-metrics";
+    }
+  }
   const opinionBlock = opinionText
-    ? `<p class="community-feed-note community-feed-card__content">${linkifyDynamicsText(opinionText)}</p>`
+    ? `<p class="community-feed-note ${opinionContentClass}">${linkifyDynamicsText(opinionText)}</p>`
     : "";
   const imagesBlock = dynamicsImageGridHtml(c.imageUrls);
   const footerAccount =

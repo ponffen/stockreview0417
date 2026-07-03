@@ -4152,11 +4152,39 @@ body.subscription-expired-mode {
   padding: 24px 12px;
 }
 
-/* 动态卡片正文：对齐 X/Twitter 帖子正文（15px / 1.33）— 交易备注 note、观点 content */
-.dynamics-list .community-feed-card--stream .community-feed-card__content {
-  font-size: 15px;
-  line-height: 1.33;
+/* 动态流正文：交易 note、观点 content */
+.dynamics-list .community-feed-card--stream .community-feed-note {
+  margin: 0;
+  padding-top: 0;
+  border-top: none;
   color: var(--text);
+}
+
+.dynamics-list .community-feed-card--stream .community-feed-card__content {
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.dynamics-list .community-feed-card--stream .community-feed-card__content--post-only,
+.dynamics-list .community-feed-card--stream .community-feed-card__content--after-stock,
+.dynamics-list .community-feed-card--stream .community-feed-card__content--after-metrics {
+  margin-top: 12px;
+}
+
+.dynamics-list .community-feed-card--stream .community-feed-card__stock-tags {
+  margin-top: 12px;
+  margin-bottom: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dynamics-list .community-feed-card--stream .community-feed-card__metrics {
+  margin-left: -16px;
+  margin-right: -16px;
+  width: calc(100% + 32px);
+  border-radius: 0;
+  box-sizing: border-box;
 }
 
 .app-header-action-btn {
@@ -4230,6 +4258,16 @@ html.dynamics-compose-open body {
   font-weight: 500;
   padding: 6px 0;
   cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: none;
+}
+
+.dynamics-compose-cancel:focus,
+.dynamics-compose-cancel:focus-visible,
+.dynamics-compose-cancel:active {
+  outline: none;
+  box-shadow: none;
 }
 
 .dynamics-compose-title {
@@ -4413,7 +4451,7 @@ html.dynamics-compose-open body {
 
 .dynamics-compose-tool-dollar {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1;
 }
 

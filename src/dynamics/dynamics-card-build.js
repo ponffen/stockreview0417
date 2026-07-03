@@ -64,12 +64,16 @@ function formatDynamicsDateTime(ms) {
   if (!Number.isFinite(n) || n <= 0) {
     return "—";
   }
-  const d = new Date(n);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${mm}-${dd} ${hh}:${mi}`;
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(n));
+  const pick = (type) => parts.find((p) => p.type === type)?.value || "";
+  return `${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
 
 function buildSymbolTags(symbols, nameBySymbol) {
