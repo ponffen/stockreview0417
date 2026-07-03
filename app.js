@@ -4075,6 +4075,9 @@ function bindEvents() {
 
   appHeaderPublishDynamicsBtn?.addEventListener("click", () => openPublishDynamicsDialog());
   closePublishDynamicsBtn?.addEventListener("click", () => publishDynamicsDialog?.close());
+  publishDynamicsDialog?.addEventListener("close", () => {
+    document.documentElement.classList.remove("dynamics-compose-open");
+  });
   publishDynamicsContent?.addEventListener("input", () => {
     syncPublishDynamicsTextareaHeight();
     syncPublishDynamicsUi();
@@ -4130,9 +4133,13 @@ function bindEvents() {
   });
   publishDynamicsAddSymbolBtn?.addEventListener("click", () => {
     state.tradeSearchReturnRoute = state.route === "dynamics" ? "dynamics" : state.route;
-    state.route = "trade-search";
     state.tradeSearchPickForDynamics = true;
+    publishDynamicsDialog?.close();
+    state.route = "trade-search";
     renderRoute();
+    requestAnimationFrame(() => {
+      tradeStockSearchInput?.focus();
+    });
   });
   publishDynamicsDeleteBtn?.addEventListener("click", async () => {
     const postId = publishDynamicsState.editingPostId;
@@ -4585,11 +4592,18 @@ function openTradeStockSearch() {
 }
 
 function goBackFromTradeStockSearch() {
+  const wasDynamicsPick = state.tradeSearchPickForDynamics;
   const back = state.tradeSearchReturnRoute || "trade";
+  if (wasDynamicsPick) {
+    state.tradeSearchPickForDynamics = false;
+  }
   state.route = back;
   clearTradeSearchResults();
   persistState();
   renderRoute();
+  if (wasDynamicsPick) {
+    reopenPublishDynamicsDialog();
+  }
 }
 
 async function runTradeSearchSuggestQuery(raw) {
@@ -4675,7 +4689,7 @@ function applyStockSearchPick(symbol, name) {
     persistState();
     renderRoute();
     renderPublishDynamicsSymbols();
-    publishDynamicsDialog?.showModal();
+    reopenPublishDynamicsDialog();
     return;
   }
   state.appModule = "holdings";
@@ -5723,7 +5737,20 @@ function syncPublishDynamicsTextareaHeight() {
     return;
   }
   publishDynamicsContent.style.height = "auto";
-  publishDynamicsContent.style.height = `${Math.max(publishDynamicsContent.scrollHeight, 120)}px`;
+  publishDynamicsContent.style.height = `${Math.max(publishDynamicsContent.scrollHeight, 48)}px`;
+}
+
+function reopenPublishDynamicsDialog() {
+  if (!publishDynamicsDialog) {
+    return;
+  }
+  publishDynamicsDialog.showModal();
+  document.documentElement.classList.add("dynamics-compose-open");
+  requestAnimationFrame(() => {
+    syncPublishDynamicsTextareaHeight();
+    syncPublishDynamicsUi();
+    requestAnimationFrame(syncPublishDynamicsTextareaHeight);
+  });
 }
 
 function syncPublishDynamicsUi() {
@@ -5818,9 +5845,7 @@ function openPublishDynamicsDialog(postCard) {
   }
   renderPublishDynamicsSymbols();
   renderPublishDynamicsImages();
-  syncPublishDynamicsTextareaHeight();
-  syncPublishDynamicsUi();
-  publishDynamicsDialog?.showModal();
+  reopenPublishDynamicsDialog();
 }
 
 async function uploadDynamicsImageFile(file) {

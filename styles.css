@@ -4181,10 +4181,17 @@ body.subscription-expired-mode {
   border-radius: 0;
   padding: 0;
   background: var(--surface-content);
+  z-index: 1200;
 }
 
 .dynamics-compose-dialog::backdrop {
-  background: var(--surface-page);
+  background: var(--surface-content);
+  opacity: 1;
+}
+
+html.dynamics-compose-open,
+html.dynamics-compose-open body {
+  overflow: hidden;
 }
 
 .dynamics-compose-form {
@@ -4254,12 +4261,16 @@ body.subscription-expired-mode {
   overflow-y: auto;
   padding: 16px 14px 12px;
   -webkit-overflow-scrolling: touch;
+  background: var(--surface-content);
+  overscroll-behavior: contain;
+  isolation: isolate;
 }
 
 .dynamics-compose-editor {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  background: var(--surface-content);
 }
 
 .dynamics-compose-avatar {
@@ -4277,6 +4288,7 @@ body.subscription-expired-mode {
 .dynamics-compose-main {
   flex: 1;
   min-width: 0;
+  background: var(--surface-content);
 }
 
 .dynamics-compose-user-name {
@@ -4290,7 +4302,7 @@ body.subscription-expired-mode {
 .dynamics-compose-textarea {
   display: block;
   width: 100%;
-  min-height: 120px;
+  min-height: 48px;
   border: none;
   border-radius: 0;
   padding: 0;
@@ -4299,9 +4311,10 @@ body.subscription-expired-mode {
   font-size: 17px;
   line-height: 1.5;
   color: var(--text);
-  background: transparent;
+  background: var(--surface-content);
   outline: none;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .dynamics-compose-textarea::placeholder {
@@ -4385,6 +4398,16 @@ body.subscription-expired-mode {
 .dynamics-compose-tool:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.dynamics-compose-tool--dollar {
+  font-family: inherit;
+}
+
+.dynamics-compose-tool-dollar {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .dynamics-compose-char-count {

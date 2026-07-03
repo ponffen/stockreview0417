@@ -188,21 +188,38 @@ async function uploadDynamicsImage(userId, buffer, contentType) {
   };
 }
 
+async function readBlobStreamToBuffer(stream) {
+  if (!stream) {
+    return null;
+  }
+  if (typeof stream.getReader === "function") {
+    const reader = stream.getReader();
+    const chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        chunks.push(Buffer.from(value));
+      }
+    }
+    return Buffer.concat(chunks);
+  }
+  const { Readable } = require("stream");
+  const nodeStream = Readable.fromWeb(stream);
+  const chunks = [];
+  for await (const chunk of nodeStream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 async function streamDynamicsImage(req, res) {
   assertBlobConfigured();
   const query = req.query || {};
-  let blobUrl = "";
-  const pathParam = query.path != null ? String(query.path).trim() : "";
+  const pathParam = query.path != null ? String(query.path).trim().replace(/^\/+/, "") : "";
   const encoded = query.u != null ? String(query.u).trim() : "";
-  if (pathParam) {
-    blobUrl = pathnameToBlobUrl(pathParam);
-  } else if (encoded) {
-    try {
-      blobUrl = Buffer.from(encoded, "base64url").toString("utf8");
-    } catch {
-      blobUrl = "";
-    }
-  }
   const sendJson = (status, payload) => {
     if (typeof res.status === "function") {
       res.status(status).json(payload);
@@ -212,31 +229,50 @@ async function streamDynamicsImage(req, res) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(payload));
   };
-  if (!blobUrl || !isBlobUrl(blobUrl)) {
+  let getArg = "";
+  if (pathParam) {
+    if (!pathParam.startsWith("dynamics/")) {
+      sendJson(403, { ok: false, error: "forbidden" });
+      return;
+    }
+    getArg = pathParam;
+  } else if (encoded) {
+    try {
+      getArg = Buffer.from(encoded, "base64url").toString("utf8");
+    } catch {
+      getArg = "";
+    }
+  }
+  if (!getArg) {
     sendJson(400, { ok: false, error: "invalid image path" });
     return;
   }
-  const pathname = extractPathnameFromBlobUrl(blobUrl);
-  if (!pathname.startsWith("dynamics/")) {
-    sendJson(403, { ok: false, error: "forbidden" });
+  let result;
+  try {
+    result = await get(getArg, {
+      access: getBlobStoreAccess(),
+      token: getBlobToken(),
+    });
+  } catch (error) {
+    sendJson(500, { ok: false, error: error?.message || "image fetch failed" });
     return;
   }
-  const result = await get(blobUrl, {
-    access: getBlobStoreAccess(),
-    token: getBlobToken(),
-  });
   if (!result || !result.stream) {
     sendJson(404, { ok: false, error: "not found" });
     return;
   }
   const contentType = result.blob?.contentType || "application/octet-stream";
-  const { Readable } = require("stream");
-  const nodeStream = Readable.fromWeb(result.stream);
-  const chunks = [];
-  for await (const chunk of nodeStream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let body;
+  try {
+    body = await readBlobStreamToBuffer(result.stream);
+  } catch (error) {
+    sendJson(500, { ok: false, error: error?.message || "image stream failed" });
+    return;
   }
-  const body = Buffer.concat(chunks);
+  if (!body || !body.length) {
+    sendJson(404, { ok: false, error: "not found" });
+    return;
+  }
   if (typeof res.status === "function") {
     res.set("Cache-Control", "public, max-age=31536000, immutable");
     if (result.blob?.etag) {
