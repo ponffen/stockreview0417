@@ -3,7 +3,7 @@
  * 规则与浏览器端 toTencentQuoteSymbol 一致：sh/sz/hk、美股 usTICKER、gb_ → us。
  */
 
-const { normalizeSymbol, formatSymbolForDisplay } = require("./db");
+const { normalizeSymbol } = require("./db");
 
 function toTencentQuoteKey(rawSymbol) {
   const normalized =
@@ -65,15 +65,6 @@ function marketTagForApi(stored) {
   return "OT";
 }
 
-function displayCodeFromTencentParts2(parts2) {
-  let c = String(parts2 || "").trim().replace(/,/g, "");
-  c = c.replace(/\.(OQ|N)$/i, "");
-  if (!c) {
-    return "";
-  }
-  return c.toUpperCase();
-}
-
 function parseTencentTildeRecord(payload) {
   if (!payload || typeof payload !== "string") {
     return null;
@@ -87,15 +78,14 @@ function parseTencentTildeRecord(payload) {
     return null;
   }
   const tag = marketTagFromTencentFirstField(parts[0]) || "ot";
-  const displayCode = displayCodeFromTencentParts2(parts[2]);
-  return { name, marketTag: tag, displayCode };
+  return { name, marketTag: tag };
 }
 
 const CHUNK = 55;
 
 /**
  * @param {string[]} symbols 库内 symbol（可混用 sh/hk/gb 等）
- * @returns {Promise<Map<string, { name: string, marketTag: string, displayCode: string }>>}
+ * @returns {Promise<Map<string, { name: string, marketTag: string }>>}
  */
 async function fetchTencentQuoteMetaForSymbols(symbols) {
   const out = new Map();
@@ -146,11 +136,9 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
       }
       const originals = keyToOriginals.get(sourceKey) || [];
       for (const orig of originals) {
-        const fallbackCode = formatSymbolForDisplay(orig);
         out.set(orig, {
           name: parsed.name,
           marketTag: parsed.marketTag,
-          displayCode: parsed.displayCode || fallbackCode || displayCodeFromTencentParts2(sourceKey),
         });
       }
     }

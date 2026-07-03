@@ -1,7 +1,7 @@
 /**
  * 个股分析页 bundle：headline + charts.points（格式化字符串，按区间全量返回）。
  */
-const { resolveDisplayNameFromMap, resolveMetaFromMap } = require("../symbol-name-resolve");
+const { resolveDisplayNameFromMap, stockCodeForDisplay } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSettings,
@@ -708,7 +708,6 @@ async function buildStockRecordBundlePayload({
   const changeAbs = current - prev;
   const changePct = prev > 0 ? changeAbs / prev : 0;
   const displayName = resolveDisplayNameFromMap(sym, metaMap);
-  const headlineMeta = resolveMetaFromMap(sym, metaMap);
   const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current);
 
   const payload = {
@@ -734,7 +733,7 @@ async function buildStockRecordBundlePayload({
     },
     headline: {
       name: displayName,
-      code: headlineMeta.displayCode,
+      code: stockCodeForDisplay(sym),
       price: formatClosePrice(current),
       change: fmtPlainSignedAmount(changeAbs),
       changePct: fmtSignedPercentRatio(changePct),

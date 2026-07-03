@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Backfill symbol_name_map: name_cn, market_tag, display_code via Tencent realtime quotes.
+ * Backfill symbol_name_map: name_cn, market_tag via Tencent realtime quotes.
  * Usage: node scripts/backfill-symbol-name-map.js [--force-all]
  */
 require("dotenv").config();
 
-const { initPool, dbQuery, upsertSymbolNameMapBatch, normalizeSymbol, formatSymbolForDisplay, getSymbolMetaMap } = require("../src/db");
+const { initPool, dbQuery, upsertSymbolNameMapBatch, normalizeSymbol, getSymbolMetaMap } = require("../src/db");
 const { fetchTencentQuoteMetaForSymbols } = require("../src/tencent-quote-meta");
 
 const CHUNK = 50;
@@ -60,7 +60,7 @@ async function loadExistingMap(symbols) {
     return new Map();
   }
   const { rows } = await dbQuery(
-    `SELECT symbol, name_cn, market_tag, display_code
+    `SELECT symbol, name_cn, market_tag
      FROM symbol_name_map
      WHERE symbol = ANY($1::text[])`,
     [symbols]
@@ -82,14 +82,10 @@ function needsBackfill(sym, existing) {
   }
   const name = String(row.name_cn || "").trim();
   const tag = String(row.market_tag || "").trim().toLowerCase();
-  const code = String(row.display_code || "").trim();
   if (!name || name === "-") {
     return true;
   }
   if (!tag || tag === "ot") {
-    return true;
-  }
-  if (!code) {
     return true;
   }
   return false;
@@ -128,7 +124,6 @@ async function main() {
         symbol: sym,
         nameCn: hit.name,
         marketTag: hit.marketTag || "ot",
-        displayCode: hit.displayCode || formatSymbolForDisplay(sym),
         source: "backfill",
       });
     }

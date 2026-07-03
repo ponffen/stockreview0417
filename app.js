@@ -5207,8 +5207,8 @@ function communityTop3WeightHtml(weight) {
   return `<span class="community-top3-pct">${escapeHtml(text)}</span>`;
 }
 
-function buildCommunityStockIdentityHtml({ marketTag, symbol, name, stockCode, displayCode, variant = "feed" }) {
-  const code = escapeHtml(String(stockCode || displayCode || "").trim() || formatSymbolForDisplay(symbol || ""));
+function buildCommunityStockIdentityHtml({ marketTag, symbol, name, stockCode, variant = "feed" }) {
+  const code = escapeHtml(String(stockCode || "").trim() || formatSymbolForDisplay(symbol || ""));
   const tag = escapeHtml(marketTag || "OT");
   const tagLower = String(marketTag || "ot").toLowerCase();
   const stockName = escapeHtml(getDisplayName(symbol, name));
@@ -5231,9 +5231,9 @@ function buildTop3ListHtml(topPositions) {
       const right = communityTop3WeightHtml(p.weight);
       const identity = buildCommunityStockIdentityHtml({
         marketTag: p.marketTag,
-        symbol: p.symbol || p.displayCode || "",
+        symbol: p.symbol || "",
         name: p.name,
-        stockCode: p.stockCode || p.displayCode,
+        stockCode: p.stockCode || p.displayCode || formatSymbolForDisplay(p.symbol || ""),
         variant: "top3",
       });
       return `<div class="community-top3-row">
@@ -5394,7 +5394,7 @@ function dynamicsCardStockHtml(card, view) {
           marketTag: card.marketTag,
           symbol: card.symbol || "",
           name: card.name,
-          stockCode: card.stockCode || card.displayCode,
+          stockCode: card.stockCode || formatSymbolForDisplay(card.symbol || ""),
           variant: "feed",
         })}
         <span class="community-feed-side-pill community-feed-side-pill--${side}">${sideLabel}</span>
@@ -5513,7 +5513,7 @@ function buildDynamicsStockTagsHtml(symbols) {
         marketTag: s.marketTag,
         symbol: s.symbol || "",
         name: s.name,
-        stockCode: s.stockCode || s.displayCode,
+        stockCode: s.stockCode || formatSymbolForDisplay(s.symbol || ""),
         variant: "feed",
       });
       return `<div class="community-feed-card__stock-tag-item">${identity}</div>`;

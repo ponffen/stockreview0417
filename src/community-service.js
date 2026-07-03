@@ -349,7 +349,7 @@ async function buildTopPositions(userId, factor) {
       marketValue: x.mvNat * factor,
       currency: x.ccy,
       dayPnl: 0,
-      displayCode: meta.displayCode,
+      displayCode: meta.stockCode,
       marketTag: meta.marketTag,
     };
   });
@@ -390,7 +390,7 @@ function topPositionsFromPublicHomeBundle(bundle) {
       symbol: sym,
       name: String(row?.name || "-").trim() || "-",
       weight: row?.weight ?? null,
-      displayCode: String(row?.stockCode || "").trim(),
+      displayCode: String(row?.stockCode || "").trim() || formatSymbolForDisplay(sym),
       marketTag: String(row?.marketTag || "OT").trim() || "OT",
     };
   });

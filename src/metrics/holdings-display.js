@@ -302,7 +302,7 @@ async function buildHoldingsPayload({
       currency: ccy,
       isCnyStock,
       marketTag: meta.marketTag,
-      stockCode: meta.displayCode,
+      stockCode: meta.stockCode,
       price: Number.isFinite(current) ? current.toFixed(3) : "—",
       dayChange: fmtSignedPercentRatio(dayChg),
       marketValue: fmtPlainAmount(mvNat),

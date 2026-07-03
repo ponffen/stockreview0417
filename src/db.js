@@ -376,7 +376,6 @@ const DDL = [
     symbol TEXT PRIMARY KEY,
     name_cn TEXT NOT NULL,
     market_tag TEXT NOT NULL DEFAULT 'ot',
-    display_code TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'unknown',
     updated_at BIGINT NOT NULL,
     last_seen_at BIGINT NOT NULL
@@ -2322,9 +2321,7 @@ async function ensureSymbolNameMapColumns() {
   await q(
     `ALTER TABLE symbol_name_map ADD COLUMN IF NOT EXISTS market_tag TEXT NOT NULL DEFAULT 'ot'`
   );
-  await q(
-    `ALTER TABLE symbol_name_map ADD COLUMN IF NOT EXISTS display_code TEXT NOT NULL DEFAULT ''`
-  );
+  await q(`ALTER TABLE symbol_name_map DROP COLUMN IF EXISTS display_code`);
 }
 
 async function ensureSymbolNameMapTable() {
@@ -2348,7 +2345,6 @@ async function ensureSymbolNameMapTable() {
         symbol TEXT PRIMARY KEY,
         name_cn TEXT NOT NULL,
         market_tag TEXT NOT NULL DEFAULT 'ot',
-        display_code TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'unknown',
         updated_at BIGINT NOT NULL,
         last_seen_at BIGINT NOT NULL
@@ -2483,13 +2479,6 @@ function normalizeSymbolMetaEntry(entry = {}) {
   let nameCn = String(entry.nameCn ?? entry.name ?? "").trim();
   const source = String(entry.source || "unknown").trim().slice(0, 32) || "unknown";
   const marketTag = normalizeMarketTagStored(entry.marketTag ?? entry.market_tag ?? "");
-  let displayCode = String(entry.displayCode ?? entry.display_code ?? "").trim();
-  if (!displayCode) {
-    displayCode = formatSymbolForDisplay(symbol) || symbol.toUpperCase();
-  }
-  if (displayCode.length > 32) {
-    displayCode = displayCode.slice(0, 32);
-  }
   if (nameCn.length > 64) {
     nameCn = nameCn.slice(0, 64);
   }
@@ -2504,14 +2493,13 @@ function normalizeSymbolMetaEntry(entry = {}) {
   ) {
     nameCn = "";
   }
-  if (!nameCn && !marketTag && !displayCode) {
+  if (!nameCn && !marketTag) {
     return null;
   }
   return {
     symbol,
     nameCn: nameCn || "-",
     marketTag: marketTag || "ot",
-    displayCode,
     source,
   };
 }
@@ -2538,9 +2526,9 @@ async function upsertSymbolNameMapBatch(rows = []) {
   const deduped = [...latestBySymbol.values()];
   const now = nowMs();
   await q(
-    `INSERT INTO symbol_name_map (symbol, name_cn, market_tag, display_code, source, updated_at, last_seen_at)
-     SELECT src.symbol, src.name_cn, src.market_tag, src.display_code, src.source, $6, $6
-     FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS src(symbol, name_cn, market_tag, display_code, source)
+    `INSERT INTO symbol_name_map (symbol, name_cn, market_tag, source, updated_at, last_seen_at)
+     SELECT src.symbol, src.name_cn, src.market_tag, src.source, $5, $5
+     FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS src(symbol, name_cn, market_tag, source)
      ON CONFLICT (symbol) DO UPDATE SET
        name_cn = CASE
          WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 AND EXCLUDED.name_cn <> '-' THEN EXCLUDED.name_cn
@@ -2551,22 +2539,17 @@ async function upsertSymbolNameMapBatch(rows = []) {
          WHEN symbol_name_map.market_tag IS NULL OR symbol_name_map.market_tag = '' OR symbol_name_map.market_tag = 'ot' THEN EXCLUDED.market_tag
          ELSE symbol_name_map.market_tag
        END,
-       display_code = CASE
-         WHEN EXCLUDED.display_code IS NOT NULL AND length(trim(EXCLUDED.display_code)) > 0 THEN EXCLUDED.display_code
-         ELSE symbol_name_map.display_code
-       END,
        source = CASE
          WHEN EXCLUDED.name_cn IS NOT NULL AND length(trim(EXCLUDED.name_cn)) > 0 AND EXCLUDED.name_cn <> '-' THEN EXCLUDED.source
          WHEN EXCLUDED.market_tag IS NOT NULL AND EXCLUDED.market_tag <> 'ot' THEN EXCLUDED.source
          ELSE symbol_name_map.source
        END,
-       updated_at = $6,
-       last_seen_at = $6`,
+       updated_at = $5,
+       last_seen_at = $5`,
     [
       deduped.map((x) => x.symbol),
       deduped.map((x) => x.nameCn),
       deduped.map((x) => x.marketTag),
-      deduped.map((x) => x.displayCode),
       deduped.map((x) => x.source),
       now,
     ]
@@ -2596,7 +2579,7 @@ async function getSymbolMetaMap(symbols = []) {
   }
   const candidates = [...new Set(uniq.flatMap((symbol) => symbolQueryCandidates(symbol)))];
   const { rows } = await q(
-    `SELECT symbol, name_cn, market_tag, display_code, updated_at
+    `SELECT symbol, name_cn, market_tag, updated_at
      FROM symbol_name_map
      WHERE symbol = ANY($1::text[])
      ORDER BY updated_at DESC`,
@@ -2611,7 +2594,6 @@ async function getSymbolMetaMap(symbols = []) {
     out[symbol] = {
       nameCn: String(row.name_cn || "").trim() || "-",
       marketTag: normalizeMarketTagStored(row.market_tag) || "ot",
-      displayCode: String(row.display_code || "").trim() || formatSymbolForDisplay(symbol) || symbol.toUpperCase(),
     };
   }
   return out;

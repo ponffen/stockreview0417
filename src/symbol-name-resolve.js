@@ -9,6 +9,14 @@ const { fetchTencentQuoteMetaForSymbols, marketTagForApi } = require("./tencent-
 
 const SYMBOL_NAME_MAP_MISSING = "-";
 
+function stockCodeForDisplay(symbol) {
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    return "";
+  }
+  return formatSymbolForDisplay(sym) || sym.toUpperCase();
+}
+
 function resolveDisplayNameFromMap(symbol, nameMap) {
   const sym = normalizeSymbol(symbol);
   const raw = nameMap?.[sym];
@@ -21,11 +29,8 @@ function resolveMetaFromMap(symbol, metaMap) {
   const meta = metaMap?.[sym] || {};
   const nameCn = String(meta.nameCn || meta.name || "").trim() || SYMBOL_NAME_MAP_MISSING;
   const marketTag = marketTagForApi(meta.marketTag || "ot");
-  const displayCode =
-    String(meta.displayCode || meta.display_code || "").trim() ||
-    formatSymbolForDisplay(sym) ||
-    sym.toUpperCase();
-  return { nameCn, marketTag, displayCode };
+  const stockCode = stockCodeForDisplay(sym);
+  return { nameCn, marketTag, stockCode };
 }
 
 function collectSymbolsFromRows(rows) {
@@ -58,8 +63,7 @@ function applyMetaToRow(row, metaMap) {
   const meta = resolveMetaFromMap(sym, metaMap);
   row.name = meta.nameCn;
   row.marketTag = meta.marketTag;
-  row.stockCode = meta.displayCode;
-  row.displayCode = meta.displayCode;
+  row.stockCode = meta.stockCode;
   return row;
 }
 
@@ -84,8 +88,7 @@ async function enrichRowsWithSymbolMeta(rows) {
           symbol: sym,
           name: meta.nameCn,
           marketTag: meta.marketTag,
-          displayCode: meta.displayCode,
-          stockCode: meta.displayCode,
+          stockCode: meta.stockCode,
         };
       });
     }
@@ -123,8 +126,7 @@ function applyMetaToDynamicsCard(card, metaMap) {
     const meta = resolveMetaFromMap(card.symbol, metaMap);
     card.name = meta.nameCn;
     card.marketTag = meta.marketTag;
-    card.displayCode = meta.displayCode;
-    card.stockCode = meta.displayCode;
+    card.stockCode = meta.stockCode;
     return card;
   }
   if (card.cardKind === "post" && Array.isArray(card.symbols)) {
@@ -138,8 +140,7 @@ function applyMetaToDynamicsCard(card, metaMap) {
         symbol: sym,
         name: meta.nameCn,
         marketTag: meta.marketTag,
-        displayCode: meta.displayCode,
-        stockCode: meta.displayCode,
+        stockCode: meta.stockCode,
       };
     });
   }
@@ -182,7 +183,6 @@ async function ensureSymbolNameMapForSymbols(symbols, { source = "tencent" } = {
       symbol: sym,
       nameCn: hit.name,
       marketTag: hit.marketTag || "ot",
-      displayCode: hit.displayCode || formatSymbolForDisplay(sym),
       source,
     });
   }
@@ -202,6 +202,7 @@ async function ensureSymbolNameMapOnNewTrade(symbol, _tradeName) {
 
 module.exports = {
   SYMBOL_NAME_MAP_MISSING,
+  stockCodeForDisplay,
   resolveDisplayNameFromMap,
   resolveMetaFromMap,
   enrichRowsWithSymbolMeta,
