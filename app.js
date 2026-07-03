@@ -535,6 +535,9 @@ const tradeSideInput = document.getElementById("tradeSide");
 const tradeAmountInput = document.getElementById("tradeAmount");
 const tradeDialogTitle = document.getElementById("tradeDialogTitle");
 const tradeSubmitBtn = document.getElementById("tradeSubmitBtn");
+const tradeFormImages = document.getElementById("tradeFormImages");
+const tradeFormImageInput = document.getElementById("tradeFormImageInput");
+const tradeFormPickImageBtn = document.getElementById("tradeFormPickImageBtn");
 const capitalDialog = document.getElementById("capitalDialog");
 const closeCapitalDialogBtn = document.getElementById("closeCapitalDialogBtn");
 const closeStockRecordDialogBtn = document.getElementById("closeStockRecordDialogBtn");
@@ -3926,6 +3929,36 @@ function bindEvents() {
   tradePriceInput?.addEventListener("input", syncTradeAmountFromPriceQuantity);
   tradeQuantityInput?.addEventListener("input", syncTradeAmountFromPriceQuantity);
 
+  tradeFormPickImageBtn?.addEventListener("click", () => tradeFormImageInput?.click());
+  tradeFormImageInput?.addEventListener("change", async () => {
+    const files = [...(tradeFormImageInput.files || [])];
+    tradeFormImageInput.value = "";
+    for (const file of files) {
+      if (tradeFormImageUrls.length >= 9) {
+        break;
+      }
+      try {
+        const url = await uploadDynamicsImageFile(file);
+        tradeFormImageUrls.push(url);
+      } catch (error) {
+        console.error("trade image upload failed", error);
+      }
+    }
+    renderTradeFormImages();
+  });
+  tradeFormImages?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-trade-remove-image]");
+    if (!btn) {
+      return;
+    }
+    const idx = Number(btn.getAttribute("data-trade-remove-image"));
+    if (!Number.isFinite(idx)) {
+      return;
+    }
+    tradeFormImageUrls.splice(idx, 1);
+    renderTradeFormImages();
+  });
+
   tradeForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(tradeForm);
@@ -3957,6 +3990,7 @@ function bindEvents() {
       amount,
       date: String(formData.get("date") || toDateKey(new Date())),
       note: normalizeNoteInput(formData.get("note")),
+      imageUrls: tradeFormImageUrls,
       createdAt: Date.now(),
     });
 
@@ -4480,6 +4514,7 @@ function openNewTradeDialog(prefill) {
     }
   }
   hideLedgerNoteSuggest(tradeNoteSuggest);
+  resetTradeFormImages();
   tradeDialog.showModal();
   resetLedgerNoteTextarea(tradeNoteInput);
   syncTradeAmountFromPriceQuantity();
@@ -8599,6 +8634,7 @@ function openEditTradeDialog(tradeId) {
   if (tradeAccountInput) {
     tradeAccountInput.value = trade.accountId || DEFAULT_ACCOUNT.id;
   }
+  resetTradeFormImages(trade.imageUrls);
   applyTradeTypePreset();
   tradeDialog.showModal();
   syncTradeAmountFromPriceQuantity();
@@ -8646,7 +8682,25 @@ async function removeTradeById(tradeId) {
   void refreshMarketData();
 }
 
-let overviewProfitRefreshSeq = 0;
+let tradeFormImageUrls = [];
+
+function renderTradeFormImages() {
+  if (!tradeFormImages) {
+    return;
+  }
+  tradeFormImages.innerHTML = tradeFormImageUrls
+    .map(
+      (url, idx) =>
+        `<div class="dynamics-image-picker-item"><img src="${escapeHtml(url)}" alt="" /><button type="button" class="dynamics-image-picker-remove" data-trade-remove-image="${idx}" aria-label="移除">×</button></div>`,
+    )
+    .join("");
+}
+
+function resetTradeFormImages(urls = []) {
+  tradeFormImageUrls = Array.isArray(urls) ? [...urls].slice(0, 9) : [];
+  renderTradeFormImages();
+}
+
 let _overviewProfitInflight = null;
 
 const _kpiInFlightByScope = new Map();
