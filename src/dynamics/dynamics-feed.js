@@ -11,6 +11,13 @@ const { toClientImageUrls } = require("./blob-images");
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 30;
 
+/** 交易卡：trade_date 与 created_at 是否同一天（Asia/Shanghai 日历日） */
+const TRADE_SAME_DAY_EXPR = `t.trade_date::date = (to_timestamp(t.created_at / 1000.0) AT TIME ZONE 'Asia/Shanghai')::date`;
+/** 异天补录：按成交日末排序 */
+const TRADE_DATE_END_MS = `((EXTRACT(EPOCH FROM (t.trade_date::date + TIME '23:59:59')) * 1000)::bigint + 999)`;
+/** 交易卡有效排序键：同天用 created_at，异天用 trade_date 日末 */
+const TRADE_SORT_KEY_EXPR = `CASE WHEN ${TRADE_SAME_DAY_EXPR} THEN t.created_at::bigint ELSE ${TRADE_DATE_END_MS} END`;
+
 function encodeCursor(cursor) {
   if (!cursor) {
     return null;
@@ -124,12 +131,18 @@ async function listDynamicsFeed(options = {}) {
   const includePosts = !isStockScene || Boolean(symbol);
 
   let cursorClause = "";
-  if (cursor && cursor.sortMs != null && cursor.createdAt != null && cursor.id) {
-    params.push(Number(cursor.sortMs), Number(cursor.createdAt), String(cursor.id));
+  const cursorSortKey =
+    cursor && cursor.sortKey != null
+      ? Number(cursor.sortKey)
+      : cursor && cursor.sortMs != null
+        ? Number(cursor.sortMs)
+        : null;
+  if (cursorSortKey != null && cursor.createdAt != null && cursor.id) {
+    params.push(cursorSortKey, Number(cursor.createdAt), String(cursor.id));
     const a = params.length - 2;
     const b = params.length - 1;
     const c = params.length;
-    cursorClause = `WHERE (sort_ms, created_at, id) < ($${a}, $${b}, $${c})`;
+    cursorClause = `WHERE (sort_key, created_at, id) < ($${a}, $${b}, $${c})`;
   }
 
   const tradeSelect = `
@@ -137,7 +150,7 @@ async function listDynamicsFeed(options = {}) {
       'trade'::text AS card_kind,
       t.id,
       t.user_id,
-      ((EXTRACT(EPOCH FROM (t.trade_date::date + TIME '23:59:59')) * 1000)::bigint + 999) AS sort_ms,
+      ${TRADE_SORT_KEY_EXPR} AS sort_key,
       t.created_at,
       t.symbol,
       t.name,
@@ -166,7 +179,7 @@ async function listDynamicsFeed(options = {}) {
       'post'::text AS card_kind,
       p.id,
       p.user_id,
-      p.created_at AS sort_ms,
+      p.created_at::bigint AS sort_key,
       p.created_at,
       NULL::text AS symbol,
       NULL::text AS name,
@@ -198,7 +211,7 @@ async function listDynamicsFeed(options = {}) {
       ${postSelect}
     ) feed
     ${cursorClause}
-    ORDER BY sort_ms DESC, created_at DESC, id DESC
+    ORDER BY sort_key DESC, created_at DESC, id DESC
     LIMIT $${limitIdx}
   `;
 
@@ -252,7 +265,7 @@ async function listDynamicsFeed(options = {}) {
   if (hasMore && slice.length) {
     const last = slice[slice.length - 1];
     nextCursor = encodeCursor({
-      sortMs: Number(last.sort_ms),
+      sortKey: Number(last.sort_key),
       createdAt: Number(last.created_at),
       id: String(last.id),
       cardKind: String(last.card_kind),
