@@ -14,7 +14,7 @@ const {
 const { getPublicTradesPage } = require("../community-service");
 const { resolveDataAccess } = require("./target-access");
 const { searchCommunityUsers } = require("./community-search");
-const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp } = require("./dynamics-service");
+const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp, MCP_MAX_TOTAL_ITEMS } = require("./dynamics-service");
 const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
 
 const OTHER_USER_TARGET_RULE =
@@ -117,26 +117,38 @@ const TOOL_DEFS = [
   {
     name: "get_dynamics",
     description:
-      `组合或个股动态时间线（交易备注 + 观点帖混排，含图片）。不传 symbol=整个人组合动态；传 symbol=该股动态（不含无标的纯观点帖）。查本人直接调用；查他人公开页需 target_user_id。${OTHER_USER_TARGET_RULE}`,
+      `组合或个股动态时间线（交易备注 + 观点帖混排，含图片）。不传 symbol=整个人组合动态；传 symbol=该股动态（不含无标的纯观点帖）。查本人直接调用；查他人公开页需 target_user_id。默认自动翻页返回全部历史（最多 ${MCP_MAX_TOTAL_ITEMS} 条）；传 cursor 则只取一页；fetch_all=false 可强制单页。分析某段时间请配合 from/to（YYYY-MM-DD）。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
         target_user_id: { type: "string", description: "可选。他人用户 ID；仅公开账户可用。" },
         symbol: { type: "string", description: "可选。个股代码，如 SH600519、AAPL" },
-        limit: { type: "number", description: "默认 20，最大 30" },
-        cursor: { type: "string", description: "分页游标" },
+        from: { type: "string", description: "可选。起始日期 YYYY-MM-DD（含）" },
+        to: { type: "string", description: "可选。结束日期 YYYY-MM-DD（含）" },
+        fetch_all: {
+          type: "boolean",
+          description: "默认 true（无 cursor 时自动翻页取全量）；false 则只返回一页",
+        },
+        limit: { type: "number", description: "单页条数（fetch_all=false 时生效），默认 20，最大 30" },
+        cursor: { type: "string", description: "分页游标；传入后仅取该页，不自动翻页" },
       },
     },
   },
   {
     name: "get_community_dynamics_feed",
     description:
-      "社区关注流动态：仅包含当前用户已关注且已公开的用户动态（交易卡自动出现 + 观点帖），按时间混排。不能代替某一个人的 get_dynamics。",
+      `社区关注流动态：仅包含当前用户已关注且已公开的用户动态（交易卡自动出现 + 观点帖），按时间混排。不能代替某一个人的 get_dynamics。默认自动翻页返回全部（最多 ${MCP_MAX_TOTAL_ITEMS} 条）；传 cursor 则只取一页。`,
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "默认 20，最大 30" },
-        cursor: { type: "string", description: "分页游标" },
+        from: { type: "string", description: "可选。起始日期 YYYY-MM-DD（含）" },
+        to: { type: "string", description: "可选。结束日期 YYYY-MM-DD（含）" },
+        fetch_all: {
+          type: "boolean",
+          description: "默认 true（无 cursor 时自动翻页取全量）；false 则只返回一页",
+        },
+        limit: { type: "number", description: "单页条数（fetch_all=false 时生效），默认 20，最大 30" },
+        cursor: { type: "string", description: "分页游标；传入后仅取该页，不自动翻页" },
       },
     },
   },

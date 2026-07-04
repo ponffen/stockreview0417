@@ -10,6 +10,8 @@ const { getPublicBaseUrl } = require("./config");
 
 const MCP_DEFAULT_LIMIT = 20;
 const MCP_MAX_LIMIT = 30;
+const MCP_PAGE_SIZE = 30;
+const MCP_MAX_TOTAL_ITEMS = 1000;
 
 function parseDynamicsLimit(raw) {
   const n = Number(raw);
@@ -17,6 +19,130 @@ function parseDynamicsLimit(raw) {
     return MCP_DEFAULT_LIMIT;
   }
   return Math.min(MCP_MAX_LIMIT, Math.max(1, Math.floor(n)));
+}
+
+function parseDateKey(raw) {
+  const s = String(raw || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
+function msToDateKey(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) {
+    return "";
+  }
+  const d = new Date(n);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function cardSortDateKey(card) {
+  const ms = Number(card?.sortMs ?? card?.createdAt);
+  return msToDateKey(ms);
+}
+
+function cardInDateRange(card, fromKey, toKey) {
+  const dk = cardSortDateKey(card);
+  if (!dk) {
+    return true;
+  }
+  if (fromKey && dk < fromKey) {
+    return false;
+  }
+  if (toKey && dk > toKey) {
+    return false;
+  }
+  return true;
+}
+
+function shouldFetchAllMcpDynamics(input = {}) {
+  const cursor = input.cursor != null ? String(input.cursor).trim() : "";
+  if (cursor) {
+    return false;
+  }
+  if (input.fetch_all === false || input.fetch_all === "false") {
+    return false;
+  }
+  return true;
+}
+
+async function collectDynamicsFeedPages(feedOptions, input = {}) {
+  const fromKey = parseDateKey(input.from);
+  const toKey = parseDateKey(input.to);
+  const fetchAll = shouldFetchAllMcpDynamics(input);
+  const singleLimit = parseDynamicsLimit(input.limit);
+
+  if (!fetchAll) {
+    const result = await listDynamicsFeed({
+      ...feedOptions,
+      limit: singleLimit,
+      cursor: input.cursor != null ? String(input.cursor) : "",
+    });
+    if (fromKey || toKey) {
+      result.data = (result.data || []).filter((card) => cardInDateRange(card, fromKey, toKey));
+    }
+    return result;
+  }
+
+  const allCards = [];
+  let cursor = "";
+  let truncated = false;
+  let resumeCursor = null;
+
+  while (allCards.length < MCP_MAX_TOTAL_ITEMS) {
+    const result = await listDynamicsFeed({
+      ...feedOptions,
+      limit: MCP_PAGE_SIZE,
+      cursor,
+    });
+    if (result.error) {
+      return result;
+    }
+
+    const pageCards = result.data || [];
+    const filtered = fromKey || toKey
+      ? pageCards.filter((card) => cardInDateRange(card, fromKey, toKey))
+      : pageCards;
+    allCards.push(...filtered);
+
+    if (!result.pagination?.hasMore) {
+      break;
+    }
+
+    const lastRaw = pageCards[pageCards.length - 1];
+    if (fromKey && lastRaw) {
+      const oldestKey = cardSortDateKey(lastRaw);
+      if (oldestKey && oldestKey < fromKey) {
+        break;
+      }
+    }
+
+    cursor = result.pagination.cursor;
+    if (!cursor) {
+      break;
+    }
+
+    if (allCards.length >= MCP_MAX_TOTAL_ITEMS) {
+      truncated = true;
+      resumeCursor = cursor;
+      break;
+    }
+  }
+
+  return {
+    data: allCards.slice(0, MCP_MAX_TOTAL_ITEMS),
+    pagination: {
+      limit: allCards.length,
+      hasMore: truncated,
+      cursor: truncated ? resumeCursor : null,
+      fetchAll: true,
+      truncated,
+      totalReturned: allCards.length,
+      maxTotal: MCP_MAX_TOTAL_ITEMS,
+    },
+  };
 }
 
 function resolveDynamicsScene(viewerId, dataUserId, symbol) {
@@ -59,6 +185,7 @@ function serializeMcpDynamicsCard(card, mode) {
   const c = card || {};
   const kind = c.cardKind === "post" ? "post" : "trade";
   const isPrivate = mode === "private";
+  const sortAt = msToDateKey(c.sortMs ?? c.createdAt) || null;
   const out = {
     cardKind: kind,
     id: c.id,
@@ -66,6 +193,7 @@ function serializeMcpDynamicsCard(card, mode) {
     displayName: c.displayName,
     createdAt: c.createdAt,
     publishedAt: c.bottomTime,
+    sortAt,
   };
 
   if (kind === "trade") {
@@ -130,17 +258,16 @@ async function getDynamicsForMcp(viewerId, input = {}) {
 
   const symbolInput = input.symbol ? normalizeSymbol(String(input.symbol)) : "";
   const { scene, scope, symbol } = resolveDynamicsScene(viewerId, access.dataUserId, symbolInput);
-  const limit = parseDynamicsLimit(input.limit);
-  const cursor = input.cursor != null ? String(input.cursor) : "";
 
-  const result = await listDynamicsFeed({
-    viewerId: access.viewerId,
-    targetUserId: access.dataUserId,
-    scene,
-    symbol: symbol || "",
-    limit,
-    cursor,
-  });
+  const result = await collectDynamicsFeedPages(
+    {
+      viewerId: access.viewerId,
+      targetUserId: access.dataUserId,
+      scene,
+      symbol: symbol || "",
+    },
+    input,
+  );
 
   if (result.error === "hidden") {
     return { ok: false, status: 403, error: "用户未公开或不可见" };
@@ -154,7 +281,13 @@ async function getDynamicsForMcp(viewerId, input = {}) {
 
   return {
     ok: true,
-    meta: toolMeta(access, { scope, symbol: symbol || null }),
+    meta: toolMeta(access, {
+      scope,
+      symbol: symbol || null,
+      from: parseDateKey(input.from) || null,
+      to: parseDateKey(input.to) || null,
+      fetchAll: shouldFetchAllMcpDynamics(input),
+    }),
     data,
     pagination: result.pagination,
   };
@@ -166,15 +299,13 @@ async function getCommunityDynamicsFeedForMcp(viewerId, input = {}) {
     return { ok: false, status: 401, error: "unauthorized" };
   }
 
-  const limit = parseDynamicsLimit(input.limit);
-  const cursor = input.cursor != null ? String(input.cursor) : "";
-
-  const result = await listDynamicsFeed({
-    viewerId: viewer,
-    scene: SCENES.COMMUNITY,
-    limit,
-    cursor,
-  });
+  const result = await collectDynamicsFeedPages(
+    {
+      viewerId: viewer,
+      scene: SCENES.COMMUNITY,
+    },
+    input,
+  );
 
   const baseUrl = getPublicBaseUrl();
   const data = attachAbsoluteImageUrls(
@@ -188,6 +319,9 @@ async function getCommunityDynamicsFeedForMcp(viewerId, input = {}) {
       viewerId: viewer,
       scope: "community_following",
       mode: "public",
+      from: parseDateKey(input.from) || null,
+      to: parseDateKey(input.to) || null,
+      fetchAll: shouldFetchAllMcpDynamics(input),
     },
     data,
     pagination: result.pagination,
@@ -197,4 +331,6 @@ async function getCommunityDynamicsFeedForMcp(viewerId, input = {}) {
 module.exports = {
   getDynamicsForMcp,
   getCommunityDynamicsFeedForMcp,
+  shouldFetchAllMcpDynamics,
+  MCP_MAX_TOTAL_ITEMS,
 };
