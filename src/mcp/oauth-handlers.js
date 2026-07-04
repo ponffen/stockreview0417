@@ -126,7 +126,7 @@ async function handleOAuthRegister(req, res) {
   const body = await readRequestBody(req);
   const redirectUris = normalizeRedirectUris(body.redirect_uris);
   if (!redirectUris.length) {
-    oauthError(res, 400, "invalid_client_metadata", "redirect_uris 必须为 https 或 workbuddy 协议且非空");
+    oauthError(res, 400, "invalid_client_metadata", "redirect_uris 必须为 https、workbuddy、loopback 或 trae 域名且非空");
     return;
   }
   if (!redirectUris.every((uri) => isAllowedDcrRedirectUri(uri))) {

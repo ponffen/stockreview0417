@@ -79,12 +79,59 @@ function isWorkBuddyRedirectUri(uri) {
   }
 }
 
+function isLoopbackHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+}
+
+/** RFC 8252 loopback redirect for native MCP clients (Trae / VS Code / Claude Code, etc.). */
+function isLoopbackRedirectUri(uri) {
+  try {
+    const u = new URL(String(uri || ""));
+    if (u.protocol !== "http:") {
+      return false;
+    }
+    return isLoopbackHost(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** TRAE Work / TRAE IDE cloud OAuth callback on trae.cn / trae.ai. */
+function isTraeHttpsRedirectUri(uri) {
+  try {
+    const u = new URL(String(uri || ""));
+    if (u.protocol !== "https:") {
+      return false;
+    }
+    const host = u.hostname.toLowerCase();
+    if (!/(^|\.)trae\.(cn|ai)$/.test(host)) {
+      return false;
+    }
+    const path = u.pathname.toLowerCase();
+    return path.includes("oauth") || path.includes("mcp") || path.includes("callback");
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedOAuthRedirectUri(uri) {
-  return isHttpsUrl(uri) || isWorkBuddyRedirectUri(uri);
+  return (
+    isHttpsUrl(uri) ||
+    isWorkBuddyRedirectUri(uri) ||
+    isLoopbackRedirectUri(uri) ||
+    isTraeHttpsRedirectUri(uri)
+  );
 }
 
 function isAllowedDcrRedirectUri(uri) {
-  return isChatGptRedirectUri(uri) || isClaudeRedirectUri(uri) || isWorkBuddyRedirectUri(uri);
+  return (
+    isChatGptRedirectUri(uri) ||
+    isClaudeRedirectUri(uri) ||
+    isWorkBuddyRedirectUri(uri) ||
+    isLoopbackRedirectUri(uri) ||
+    isTraeHttpsRedirectUri(uri)
+  );
 }
 
 function normalizeRedirectUris(value) {
@@ -98,6 +145,9 @@ function detectOAuthProvider({ clientId, redirectUris = [] }) {
   const id = String(clientId || "").trim();
   if (redirectUris.some(isWorkBuddyRedirectUri)) {
     return "workbuddy";
+  }
+  if (redirectUris.some(isTraeHttpsRedirectUri)) {
+    return "trae";
   }
   if (isChatGptOAuthClientId(id) || redirectUris.some(isChatGptRedirectUri)) {
     return "chatgpt";
@@ -134,6 +184,9 @@ function inferProviderFromUserAgent(userAgent) {
   if (/workbuddy/i.test(ua)) {
     return "workbuddy";
   }
+  if (/trae/i.test(ua)) {
+    return "trae";
+  }
   return "";
 }
 
@@ -157,16 +210,14 @@ async function resolveOAuthProviderForClient(clientId, req = null) {
 
   let provider = detectOAuthProvider({ clientId: id, redirectUris });
   if (provider === "other" && /^mcp-/.test(id)) {
-    provider = inferProviderFromUserAgent(readRequestUserAgent(req)) || "chatgpt";
+    provider = inferProviderFromUserAgent(readRequestUserAgent(req)) || provider;
+  }
+  if (provider === "other" && redirectUris.some(isLoopbackRedirectUri)) {
+    provider = inferProviderFromUserAgent(readRequestUserAgent(req)) || "trae";
   }
 
   providerLookupCache.set(id, { at: Date.now(), provider });
   return provider;
-}
-
-function isLoopbackHost(hostname) {
-  const host = String(hostname || "").toLowerCase();
-  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
 }
 
 /** RFC 8252 §7.3: loopback redirect URIs match with port ignored. */
@@ -324,6 +375,9 @@ function providerLabel(provider) {
   }
   if (provider === "workbuddy") {
     return "WorkBuddy";
+  }
+  if (provider === "trae") {
+    return "TRAE";
   }
   return "客户端";
 }
