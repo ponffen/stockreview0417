@@ -68,10 +68,12 @@ const MANUAL_NAME_MAP = {
   半导体设备ETF: "sh562590",
   世纪华通: "sz002602",
   中证500ETF: "sh510500",
+  中证500ETF易方达: "sh510580",
   兆易创新: "sh603986",
   洛阳钼业: "sh603993",
   亨通光电: "sh600487",
   五洲新春: "sh603667",
+  鸣志电器: "sh603728",
   四方股份: "sh601126",
   标普500ETF博时: "sh513500",
   江丰电子: "sz300666",
@@ -194,7 +196,8 @@ function rowToTrade(row, idx, nameMap) {
   });
 }
 
-async function buildPayload(rows, nameMap, fxByDate) {
+async function buildPayload(rows, nameMap, fxByDate, opts = {}) {
+  const incremental = opts.incremental === true;
   const trades = [];
   const unmapped = [];
   for (let i = 0; i < rows.length; i += 1) {
@@ -226,9 +229,12 @@ async function buildPayload(rows, nameMap, fxByDate) {
   for (const date of dates) {
     const slot = daily[date];
     if (slot.buyCny > 0) {
-      const inDate = date === firstTradeDate ? previousSessionDate(firstTradeDate) || date : date;
+      const inDate =
+        !incremental && date === firstTradeDate
+          ? previousSessionDate(firstTradeDate) || date
+          : date;
       const inNote =
-        date === firstTradeDate
+        !incremental && date === firstTradeDate
           ? "期初本金（基于交易记录按当日汇总算出来的出入金。）"
           : "基于交易记录按当日汇总算出来的出入金。";
       cashTransfers.push({
@@ -260,9 +266,18 @@ async function buildPayload(rows, nameMap, fxByDate) {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const doImport = process.argv.includes("--import");
+  const incremental = process.argv.includes("--incremental");
+  const dateIdx = process.argv.indexOf("--date");
+  const filterDate =
+    dateIdx >= 0 ? String(process.argv[dateIdx + 1] || "").slice(0, 10) : "";
   if (!dryRun && !doImport) {
-    console.log("Usage: node scripts/import-broker-trades-18320260702.js --dry-run|--import");
+    console.log(
+      "Usage: node scripts/import-broker-trades-18320260702.js --dry-run|--import [--incremental] [--date YYYY-MM-DD]",
+    );
     process.exit(1);
+  }
+  if (incremental && !filterDate) {
+    throw new Error("--incremental requires --date YYYY-MM-DD");
   }
 
   const filePath = path.join(__dirname, "../data/import-18320260702.tsv");
@@ -275,7 +290,14 @@ async function main() {
 
   const pool = await initPool();
   const nameMap = await loadNameMap(pool);
-  const rows = parseTsv(filePath);
+  let rows = parseTsv(filePath);
+  if (incremental) {
+    rows = rows.filter((r) => String(r["日期"] || "").slice(0, 10) === filterDate);
+    console.log(`Incremental filter date=${filterDate}, rows=${rows.length}`);
+    if (!rows.length) {
+      throw new Error(`No rows for date ${filterDate}`);
+    }
+  }
   console.log(`Parsed ${rows.length} rows from TSV`);
 
   console.log("Fetching FX rates (USD/HKD)...");
@@ -292,7 +314,7 @@ async function main() {
   }
   const fxByDate = { USD: usdSeries, HKD: hkdSeries };
 
-  const { trades, cashTransfers } = await buildPayload(rows, nameMap, fxByDate);
+  const { trades, cashTransfers } = await buildPayload(rows, nameMap, fxByDate, { incremental });
 
   const symBatch = [...new Set(trades.map((t) => ({ symbol: t.symbol, nameCn: t.name })).map(JSON.stringify))].map(
     (s) => JSON.parse(s),
@@ -313,12 +335,14 @@ async function main() {
     return;
   }
 
-  await importTrades(trades, "replace", user.id);
-  await importCashTransfers(cashTransfers, "replace", user.id);
+  const tradeMode = incremental ? "append" : "replace";
+  const cashMode = incremental ? "append" : "replace";
+  await importTrades(trades, tradeMode, user.id);
+  await importCashTransfers(cashTransfers, cashMode, user.id);
   await upsertSymbolNameMapBatch(
     symBatch.map((x) => ({ symbol: x.symbol, nameCn: x.nameCn, source: "import" })),
   );
-  console.log(`Imported for user ${user.id} (${PHONE})`);
+  console.log(`Imported for user ${user.id} (${PHONE}) mode trades=${tradeMode} cash=${cashMode}`);
 }
 
 main().catch((e) => {
