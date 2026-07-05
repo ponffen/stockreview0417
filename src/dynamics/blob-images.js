@@ -215,13 +215,17 @@ async function readBlobStreamToBuffer(stream) {
   return Buffer.concat(chunks);
 }
 
+function isExpressResponse(res) {
+  return typeof res.set === "function" && typeof res.send === "function";
+}
+
 async function streamDynamicsImage(req, res) {
   assertBlobConfigured();
   const query = req.query || {};
   const pathParam = query.path != null ? String(query.path).trim().replace(/^\/+/, "") : "";
   const encoded = query.u != null ? String(query.u).trim() : "";
   const sendJson = (status, payload) => {
-    if (typeof res.status === "function") {
+    if (isExpressResponse(res) && typeof res.json === "function") {
       res.status(status).json(payload);
       return;
     }
@@ -273,7 +277,7 @@ async function streamDynamicsImage(req, res) {
     sendJson(404, { ok: false, error: "not found" });
     return;
   }
-  if (typeof res.status === "function") {
+  if (isExpressResponse(res)) {
     res.set("Cache-Control", "public, max-age=31536000, immutable");
     if (result.blob?.etag) {
       res.set("ETag", result.blob.etag);
