@@ -66,6 +66,7 @@ function formatDynamicsDateTime(ms) {
   }
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -73,7 +74,7 @@ function formatDynamicsDateTime(ms) {
     hour12: false,
   }).formatToParts(new Date(n));
   const pick = (type) => parts.find((p) => p.type === type)?.value || "";
-  return `${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
+  return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
 
 function buildSymbolTags(symbols) {
