@@ -4196,10 +4196,7 @@ function bindEvents() {
   });
   closeDynamicsPostActionsBtn?.addEventListener("click", () => dynamicsPostActionsDialog?.close());
   dynamicsPostEditBtn?.addEventListener("click", () => {
-    dynamicsPostActionsDialog?.close();
-    if (dynamicsActionsTarget?.cardKind === "trade") {
-      openEditTradeDialog(dynamicsActionsTarget.id);
-    }
+    void onDynamicsPostEditClick();
   });
   dynamicsPostDeleteBtn?.addEventListener("click", async () => {
     const target = dynamicsActionsTarget;
@@ -8769,6 +8766,59 @@ function findTradeById(tradeId) {
   );
 }
 
+async function fetchTradeForEdit(tradeId, symbolHint) {
+  const id = String(tradeId || "");
+  const sym = normalizeSymbol(symbolHint || "");
+  if (!id || !sym || !apiReady || !sessionPhone) {
+    return null;
+  }
+  try {
+    const qs = new URLSearchParams({ symbol: sym, limit: "100", offset: "0" });
+    const res = await apiFetch(`${API_BASE}/trades?${qs}`, { cache: "no-store", timeoutMs: 15_000 });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.ok !== true || !Array.isArray(body.data)) {
+      return null;
+    }
+    const found = body.data.map(normalizeTrade).find((row) => String(row.id) === id);
+    if (!found) {
+      return null;
+    }
+    const seen = new Set(state.trades.map((t) => String(t.id)));
+    if (!seen.has(String(found.id))) {
+      state.trades.push(found);
+    }
+    return found;
+  } catch {
+    return null;
+  }
+}
+
+async function onDynamicsPostEditClick() {
+  const target = dynamicsActionsTarget;
+  if (!target?.id || target.cardKind !== "trade") {
+    return;
+  }
+  const tradeId = target.id;
+  const symbolHint = target.symbol;
+  const dialog = dynamicsPostActionsDialog;
+  const openEditor = async () => {
+    let trade = findTradeById(tradeId);
+    if (!trade) {
+      trade = await fetchTradeForEdit(tradeId, symbolHint);
+    }
+    if (!trade) {
+      return;
+    }
+    openEditTradeDialog(tradeId, trade);
+  };
+  if (dialog?.open) {
+    dialog.addEventListener("close", () => void openEditor(), { once: true });
+    dialog.close();
+    return;
+  }
+  await openEditor();
+}
+
 function openTradeRecordActionsSheet(tradeId) {
   if (!recordTradeActionsDialog || !tradeId) {
     return;
@@ -8926,9 +8976,9 @@ function invalidateCashListAfterMutation() {
   }
 }
 
-function openEditTradeDialog(tradeId) {
+function openEditTradeDialog(tradeId, tradeOverride) {
   closeTradeRecordActionsSheet();
-  const trade = findTradeById(tradeId);
+  const trade = tradeOverride || findTradeById(tradeId);
   if (!trade) {
     return;
   }
