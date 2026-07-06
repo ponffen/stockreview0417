@@ -37,6 +37,10 @@ const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
+const {
+  getPositionDayTradeContext,
+  computeTodayProfitNative,
+} = require("../position-today-pnl");
 
 const POSITION_EPS = 1e-6;
 
@@ -410,16 +414,72 @@ function todayProfitNativeFromLive(livePosition, ccy, live) {
   return fx > 0 ? todayProfitBook / fx : 0;
 }
 
-function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLive, frozenStageProfit }) {
+function frozenMvNatFromPnlRow(row) {
+  if (!row) {
+    return 0;
+  }
+  const mv = Number(row.eodMarketValueNative ?? row.eod_market_value_native);
+  if (Number.isFinite(mv) && mv > 0) {
+    return mv;
+  }
+  const sh = Number(row.eodShares ?? row.eod_shares) || 0;
+  const px = Number(row.eodPrice ?? row.eod_price) || 0;
+  return sh > 0 && px > 0 ? sh * px : 0;
+}
+
+/** 交易日最后一个点：按实时状态必画（含当日盘中清仓、不在 live.positions 内）。 */
+async function applyLiveChartPoint(raw, {
+  sym,
+  symbolTrades,
+  live,
+  livePosition,
+  ccy,
+  endDate,
+  includeLive,
+  frozenStageProfit,
+  frozenMvNat,
+  closeLookup,
+}) {
   const list = Array.isArray(raw) ? raw : [];
   const end = String(endDate || "").slice(0, 10);
-  const liveQty = Number(livePosition?.quantity) || 0;
-  if (!includeLive || !live?.tradingDay || !livePosition || !hasOpenPositionQuantity(liveQty) || !end) {
+  if (!includeLive || !live?.tradingDay || !end) {
     return list;
   }
   const liveDate = String(live.liveDate || "").slice(0, 10);
-  const current = Number(livePosition.current) || 0;
-  const mvNat = liveQty * current;
+  if (!liveDate || liveDate > end) {
+    return list;
+  }
+
+  const dayCtx = getPositionDayTradeContext(sym, liveDate, symbolTrades);
+  const liveQty =
+    livePosition != null && Number.isFinite(Number(livePosition.quantity))
+      ? Number(livePosition.quantity)
+      : dayCtx.endQuantity;
+
+  let current = Number(livePosition?.current) || 0;
+  let prevClose = Number(livePosition?.prevClose) || 0;
+  let quote = null;
+  if (!(current > 0)) {
+    const quoteKey = toTencentQuoteKey(sym);
+    if (quoteKey) {
+      const req = await fetchTencentQuotePayloadMap([quoteKey]);
+      quote = parseSymbolLiveQuote(sym, req.payloadMap?.get(String(quoteKey).toLowerCase()));
+      if (quote?.current > 0) {
+        current = quote.current;
+        prevClose = quote.prevClose || current;
+        quote = { ...quote, marketDate: liveDate, quoteDate: liveDate };
+      }
+    }
+  }
+  if (!(current > 0) && closeLookup) {
+    const fallbackClose = closeLookup.closeOn(liveDate);
+    if (fallbackClose > 0) {
+      current = fallbackClose;
+      prevClose = fallbackClose;
+    }
+  }
+
+  const mvNat = liveQty * (current > 0 ? current : 0);
   const totalAssetsCny = Number(live.totalAssetsCny) || 0;
   const rate =
     ccy === "USD"
@@ -432,10 +492,29 @@ function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLiv
     (ccy === "CNY" ? mvNat : rate > 0 ? mvNat * rate : 0);
   const weight = totalAssetsCny > 0 ? mvCny / totalAssetsCny : 0;
   const frozenProfit = Number.isFinite(Number(frozenStageProfit)) ? Number(frozenStageProfit) : 0;
-  const profitNat = frozenProfit + todayProfitNativeFromLive(livePosition, ccy, live);
+  let todayNat = 0;
+  if (
+    livePosition &&
+    (livePosition.todayProfitNative != null || livePosition.todayProfitCny != null)
+  ) {
+    todayNat = todayProfitNativeFromLive(livePosition, ccy, live);
+  } else {
+    todayNat = computeTodayProfitNative({
+      quote: quote || { marketDate: liveDate, quoteDate: liveDate },
+      symbol: sym,
+      prevClose: prevClose > 0 ? prevClose : current,
+      current: current > 0 ? current : prevClose,
+      trades: symbolTrades,
+      todayKey: liveDate,
+      frozenMvNat: Number(frozenMvNat) || 0,
+      endQuantity: liveQty,
+    });
+  }
+  const profitNat = frozenProfit + todayNat;
+  const lastClose = list.length ? Number(list[list.length - 1].close) : 0;
   const row = {
     date: liveDate,
-    close: current > 0 ? current : list.length ? list[list.length - 1].close : 0,
+    close: current > 0 ? current : lastClose > 0 ? lastClose : 0,
     shares: liveQty,
     mvNat,
     weight,
@@ -447,10 +526,7 @@ function applyLiveChartPoint(raw, { live, livePosition, ccy, endDate, includeLiv
     next[hit] = row;
     return next;
   }
-  if (liveDate <= end) {
-    return [...list, row].sort((a, b) => a.date.localeCompare(b.date));
-  }
-  return list;
+  return [...list, row].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /** 在已有点基础上，为历史清仓段补工作日点（股数/市值/占比 0，收益拉平仓日 EOD 直线）。 */
@@ -491,7 +567,9 @@ function appendClearedSegmentChartPoints(raw, { clearedSegments, chartFrom, endD
   return out;
 }
 
-function buildChartPointsForPage({
+async function buildChartPointsForPage({
+  sym,
+  symbolTrades,
   pnlRows,
   closeLookup,
   live,
@@ -501,6 +579,7 @@ function buildChartPointsForPage({
   includeLive,
   profitOf,
   frozenStageProfit,
+  frozenMvNat,
   clearedSegments,
   chartFrom,
 }) {
@@ -533,13 +612,17 @@ function buildChartPointsForPage({
     profitOf,
   });
 
-  raw = applyLiveChartPoint(raw, {
+  raw = await applyLiveChartPoint(raw, {
+    sym,
+    symbolTrades,
     live,
     livePosition,
     ccy,
     endDate: end,
     includeLive,
     frozenStageProfit,
+    frozenMvNat,
+    closeLookup,
   });
 
   return mapRawChartPoints(raw);
@@ -622,7 +705,7 @@ async function buildStockRecordBundlePayload({
   const [anchorPnlRow, headlineCloseRows, frozenProfitRow, metaMap] = await Promise.all([
     getSymbolDailyPnlRowOnOrBefore({ accountId: accountIdForPnl, symbol: sym, asOf: anchorAsOf }, uid),
     getSymbolDailyCloseRange(sym, addCalendarDays(endDate || frozenThrough || "1970-01-01", -90), endDate || "9999-12-31"),
-    includeLive && live.tradingDay && livePos && Math.abs(Number(livePos.quantity) || 0) > POSITION_EPS
+    includeLive && live.tradingDay
       ? getSymbolDailyPnlRowOnOrBefore(
           { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough || endDate },
           uid,
@@ -687,7 +770,9 @@ async function buildStockRecordBundlePayload({
       anchorPnlRow,
     });
   } else {
-    points = buildChartPointsForPage({
+    points = await buildChartPointsForPage({
+      sym,
+      symbolTrades,
       pnlRows,
       closeLookup: pageCloseLookup,
       live,
@@ -697,6 +782,7 @@ async function buildStockRecordBundlePayload({
       includeLive,
       profitOf,
       frozenStageProfit,
+      frozenMvNat: frozenMvNatFromPnlRow(frozenProfitRow),
       clearedSegments,
       chartFrom,
     });
