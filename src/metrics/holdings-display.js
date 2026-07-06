@@ -7,6 +7,7 @@ const {
   getSymbolMetaMap,
   resolveBookCurrencyForAccountScope,
   getSymbolDailyPnl,
+  getSymbolDailyPnlRowOnOrBefore,
 } = require("../db");
 const {
   fmtPlainAmount,
@@ -136,6 +137,35 @@ function symbolPnlToValueFlowPoints(pnlRows) {
   return pts;
 }
 
+/** 取单标的在 frozenThrough 当日及之前的最后一条 symbol_daily_pnl（与个股分析一致）。 */
+function resolveFrozenProfitNatives(frozenRow, { freshMonth, freshYear, frozenThrough, sessionAsOf }) {
+  const monthStart = monthStartKeyShanghai(sessionAsOf);
+  const yearStart = yearStartKeyShanghai(sessionAsOf);
+  const rowDate = frozenRow ? String(frozenRow.date || "").slice(0, 10) : "";
+  let monthFrozenNative = 0;
+  if (!freshMonth && frozenRow && rowDate >= monthStart) {
+    monthFrozenNative = Number(frozenRow.stageMtdProfit) || 0;
+  }
+  let yearFrozenNative = 0;
+  if (!freshYear && frozenRow && rowDate >= yearStart) {
+    yearFrozenNative = Number(frozenRow.stageYtdProfit) || 0;
+  }
+  const totalFrozenNative = frozenRow ? Number(frozenRow.stageInceptionProfit) || 0 : 0;
+  return { monthFrozenNative, yearFrozenNative, totalFrozenNative };
+}
+
+function frozenRowToRateSnap(frozenRow, frozenThrough, packSnap) {
+  if (!frozenRow) {
+    return packSnap;
+  }
+  const rate = Number(frozenRow.stageInceptionRateTwr);
+  return {
+    ...(packSnap || {}),
+    total_rate_twr: Number.isFinite(rate) ? rate : packSnap?.total_rate_twr,
+    frozen_through: frozenThrough,
+  };
+}
+
 function symbolTotalRates({
   snap,
   liveP,
@@ -230,23 +260,47 @@ async function buildHoldingsPayload({
     pnlBySym.get(sym).push(r);
   }
 
+  const accountIdForPnl = scopeId === "all" ? "all" : scopeId;
+  const activeSyms = [...keys].filter((sym) =>
+    hasOpenPositionQuantity(Number(liveBySym.get(sym)?.quantity) || 0),
+  );
+  const frozenRowBySym = new Map();
+  if (userId && frozenThrough && activeSyms.length) {
+    const frozenRows = await Promise.all(
+      activeSyms.map((sym) =>
+        getSymbolDailyPnlRowOnOrBefore(
+          { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough },
+          userId,
+        ),
+      ),
+    );
+    activeSyms.forEach((sym, i) => {
+      if (frozenRows[i]) {
+        frozenRowBySym.set(sym, frozenRows[i]);
+      }
+    });
+  }
+
   const rowsOut = [];
   for (const sym of keys) {
     const liveP = liveBySym.get(sym);
     const snap = snapBySym.get(sym);
+    const frozenRow = frozenRowBySym.get(sym) || null;
     const qty = Number(liveP?.quantity) || 0;
     if (!hasOpenPositionQuantity(qty)) {
       continue;
     }
-    const ccy = String(snap?.currency || liveP?.currency || "CNY").toUpperCase();
+    const ccy = String(frozenRow?.currency || snap?.currency || liveP?.currency || "CNY").toUpperCase();
     const meta = resolveMetaFromMap(sym, nameMap);
     const market = marketFromMetaTag(meta.marketTag);
     const isCnyStock = ccy === "CNY" || market === "A股";
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
-    const monthFrozenNative = freshMonth ? 0 : Number(snap?.month_profit_native) || 0;
-    const yearFrozenNative = freshYear ? 0 : Number(snap?.ytd_profit_native) || 0;
-    const totalFrozenNative = Number(snap?.total_profit_native) || 0;
+    const { monthFrozenNative, yearFrozenNative, totalFrozenNative } = resolveFrozenProfitNatives(
+      frozenRow,
+      { freshMonth, freshYear, frozenThrough, sessionAsOf },
+    );
+    const rateSnap = frozenRowToRateSnap(frozenRow, frozenThrough, snap);
     const current = Number(liveP?.current) || 0;
     const prev = Number(liveP?.prevClose) || current;
     const todayProfitBook = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
@@ -274,12 +328,12 @@ async function buildHoldingsPayload({
     const mvNat = qty * current;
     const mvCny = Number(liveP?.marketValueCny) || mvNat * (isCnyStock ? 1 : fx);
     const costNat =
-      Math.abs(totalFrozenNative) > 0 && Number(snap?.total_rate_twr)
+      Math.abs(totalFrozenNative) > 0 && Number(rateSnap?.total_rate_twr)
         ? mvNat - totalNative
         : mvNat;
     const sigma = qty > 0 ? costNat / qty : 0;
     const { totalRate, rateTwr, rateMwr } = symbolTotalRates({
-      snap,
+      snap: rateSnap,
       liveP,
       live,
       trades,
@@ -336,15 +390,16 @@ async function buildHoldingsPayload({
   for (const row of rowsOut) {
     const sym = normalizeSymbol(row.symbol);
     const liveP = liveBySym.get(sym);
-    const snap = snapBySym.get(sym);
+    const frozenRow = frozenRowBySym.get(sym) || null;
     const ccy = String(row.currency || "").toUpperCase();
     const isCn = row.isCnyStock === true;
     const fx =
       ccy === "USD" && fxU > 0 ? fxU : ccy === "HKD" && fxH > 0 ? fxH : 1;
     const todayProfitBook = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
-    const monthNative = freshMonth ? 0 : Number(snap?.month_profit_native) || 0;
-    const yearNative = freshYear ? 0 : Number(snap?.ytd_profit_native) || 0;
-    const totalNative = Number(snap?.total_profit_native) || 0;
+    const { monthFrozenNative, yearFrozenNative, totalFrozenNative } = resolveFrozenProfitNatives(
+      frozenRow,
+      { freshMonth, freshYear, frozenThrough, sessionAsOf },
+    );
     const todayProfitNative =
       liveP?.todayProfitNative != null && Number.isFinite(Number(liveP.todayProfitNative))
         ? Number(liveP.todayProfitNative)
@@ -353,20 +408,23 @@ async function buildHoldingsPayload({
           : fx > 0
             ? todayProfitBook / fx
             : 0;
+    const monthNative = monthFrozenNative + todayProfitNative;
+    const yearNative = yearFrozenNative + todayProfitNative;
+    const totalNative = totalFrozenNative + todayProfitNative;
     const monthCny = isAggregateScope(accountScope)
-      ? monthNative * (isCn ? 1 : fx) + todayProfitBook
-      : monthNative + todayProfitNative;
+      ? monthFrozenNative * (isCn ? 1 : fx) + todayProfitBook
+      : monthNative;
     const yearCny = isAggregateScope(accountScope)
-      ? yearNative * (isCn ? 1 : fx) + todayProfitBook
-      : yearNative + todayProfitNative;
+      ? yearFrozenNative * (isCn ? 1 : fx) + todayProfitBook
+      : yearNative;
     const totalCny = isAggregateScope(accountScope)
-      ? totalNative * (isCn ? 1 : fx) + todayProfitBook
-      : totalNative + todayProfitNative;
+      ? totalFrozenNative * (isCn ? 1 : fx) + todayProfitBook
+      : totalNative;
     const mv = Number(liveP?.marketValueCny) || 0;
     const weight = totalAssets > 0 ? mv / totalAssets : 0;
-    const monthStock = isAggregateScope(accountScope) ? monthCny : monthNative + todayProfitNative;
-    const yearStock = isAggregateScope(accountScope) ? yearCny : yearNative + todayProfitNative;
-    const totalStock = isAggregateScope(accountScope) ? totalCny : totalNative + todayProfitNative;
+    const monthStock = isAggregateScope(accountScope) ? monthCny : monthNative;
+    const yearStock = isAggregateScope(accountScope) ? yearCny : yearNative;
+    const totalStock = isAggregateScope(accountScope) ? totalCny : totalNative;
     const monthW = profitShareRatio(monthStock, overviewMonthCny, accountScope, book, fxU, fxH);
     const yearW = profitShareRatio(yearStock, overviewYearCny, accountScope, book, fxU, fxH);
     const totalW = profitShareRatio(totalStock, overviewTotalCny, accountScope, book, fxU, fxH);

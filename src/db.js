@@ -1622,6 +1622,8 @@ async function getSymbolDailyPnlChartSeries(query = {}, userId = null) {
     positionWeight: row.position_weight == null ? null : Number(row.position_weight),
     stageInceptionProfit:
       row.stage_inception_profit == null ? null : Number(row.stage_inception_profit),
+    stageInceptionRateTwr:
+      row.stage_inception_rate_twr == null ? null : Number(row.stage_inception_rate_twr),
     currency: row.currency,
     bookCurrency: row.book_currency,
     dayClosePrice: row.day_close_price == null ? null : Number(row.day_close_price),
@@ -1644,6 +1646,8 @@ function mapSymbolDailyPnlChartRow(row) {
     stageYtdProfit: row.stage_ytd_profit == null ? null : Number(row.stage_ytd_profit),
     stageInceptionProfit:
       row.stage_inception_profit == null ? null : Number(row.stage_inception_profit),
+    stageInceptionRateTwr:
+      row.stage_inception_rate_twr == null ? null : Number(row.stage_inception_rate_twr),
     stageLast7dProfit: row.stage_last_7d_profit == null ? null : Number(row.stage_last_7d_profit),
     stageLast30dProfit: row.stage_last_30d_profit == null ? null : Number(row.stage_last_30d_profit),
     stageLast90dProfit: row.stage_last_90d_profit == null ? null : Number(row.stage_last_90d_profit),
@@ -1825,7 +1829,7 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
   }
   const { rows } = await q(
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            stage_mtd_profit, stage_ytd_profit, stage_inception_profit,
+            stage_mtd_profit, stage_ytd_profit, stage_inception_profit, stage_inception_rate_twr,
             stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
             daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
             stage_inception_trade_count, stage_last_7d_trade_count,
