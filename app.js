@@ -565,6 +565,8 @@ const stockRecordChartsLoading = document.getElementById("stockRecordChartsLoadi
 const analysisChartsLoading = document.getElementById("analysisChartsLoading");
 const recordTradeActionsDialog = document.getElementById("recordTradeActionsDialog");
 const closeRecordTradeActionsBtn = document.getElementById("closeRecordTradeActionsBtn");
+const recordCashActionsDialog = document.getElementById("recordCashActionsDialog");
+const closeRecordCashActionsBtn = document.getElementById("closeRecordCashActionsBtn");
 const accountManageDialog = document.getElementById("accountManageDialog");
 const closeAccountManageBtn = document.getElementById("closeAccountManageBtn");
 const accountManageName = document.getElementById("accountManageName");
@@ -3815,7 +3817,7 @@ function bindEvents() {
     if (!tr) {
       return;
     }
-    openEditCashTransferDialog(tr.getAttribute("data-cash-id"));
+    openCashRecordActionsSheet(tr.getAttribute("data-cash-id"));
   });
   closeCashTransferDialogBtn?.addEventListener("click", () => {
     state.editingCashTransferId = null;
@@ -3869,22 +3871,8 @@ function bindEvents() {
     if (!id) {
       return;
     }
-    if (!window.confirm("确定删除该条资金记录？")) {
-      return;
-    }
-    try {
-      await deleteCashTransferFromApi(id);
-    } catch {
-      // continue local delete
-    }
-    state.cashTransfers = state.cashTransfers.filter((x) => x.id !== id);
-    bumpLedgerCount("cashTransfers", -1);
-    state.editingCashTransferId = null;
+    await removeCashTransferById(id);
     cashTransferDialog?.close();
-    persistState();
-    renderAll();
-    invalidateCashListAfterMutation();
-    scheduleMetricsRebuildUiRefresh();
   });
   tradeSearchBackBtn?.addEventListener("click", () => goBackFromTradeStockSearch());
   tradeStockSearchInput?.addEventListener("input", (e) => {
@@ -4260,6 +4248,28 @@ function bindEvents() {
     }
     if (action === "delete") {
       void removeTradeById(tradeId);
+    }
+  });
+
+  closeRecordCashActionsBtn?.addEventListener("click", () => closeCashRecordActionsSheet());
+
+  recordCashActionsDialog?.addEventListener("click", (event) => {
+    const actionBtn = event.target.closest("button[data-action]");
+    if (!actionBtn) {
+      return;
+    }
+    const action = actionBtn.dataset.action;
+    const cashId = recordCashActionsDialog.dataset.cashId;
+    closeCashRecordActionsSheet();
+    if (!cashId) {
+      return;
+    }
+    if (action === "edit") {
+      openEditCashTransferDialog(cashId);
+      return;
+    }
+    if (action === "delete") {
+      void removeCashTransferById(cashId);
     }
   });
 
@@ -8773,6 +8783,44 @@ function closeTradeRecordActionsSheet() {
   }
   recordTradeActionsDialog.close();
   recordTradeActionsDialog.dataset.tradeId = "";
+}
+
+function openCashRecordActionsSheet(cashId) {
+  if (!recordCashActionsDialog || !cashId) {
+    return;
+  }
+  recordCashActionsDialog.dataset.cashId = String(cashId);
+  recordCashActionsDialog.showModal();
+}
+
+function closeCashRecordActionsSheet() {
+  if (!recordCashActionsDialog) {
+    return;
+  }
+  recordCashActionsDialog.close();
+  recordCashActionsDialog.dataset.cashId = "";
+}
+
+async function removeCashTransferById(rawId) {
+  const id = String(rawId || "");
+  if (!id) {
+    return;
+  }
+  if (!window.confirm("确定删除该条资金记录？")) {
+    return;
+  }
+  try {
+    await deleteCashTransferFromApi(id);
+  } catch {
+    // continue local delete
+  }
+  state.cashTransfers = state.cashTransfers.filter((x) => String(x.id) !== id);
+  bumpLedgerCount("cashTransfers", -1);
+  state.editingCashTransferId = null;
+  persistState();
+  renderAll();
+  invalidateCashListAfterMutation();
+  scheduleMetricsRebuildUiRefresh();
 }
 
 function openAccountManageDialog(accountId) {

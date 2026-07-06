@@ -942,14 +942,17 @@
       </form>
     </dialog>
 
-    <dialog id="dynamicsPostActionsDialog" class="dialog">
-      <div class="panel-head">
-        <h2>动态</h2>
-        <button type="button" id="closeDynamicsPostActionsBtn" class="btn btn-ghost">关闭</button>
-      </div>
-      <div class="dynamics-post-actions-body">
-        <button type="button" id="dynamicsPostEditBtn" class="btn btn-ghost full">编辑</button>
-        <button type="button" id="dynamicsPostDeleteBtn" class="btn btn-ghost full">删除</button>
+    <dialog id="dynamicsPostActionsDialog" class="dialog record-actions-dialog">
+      <div class="record-actions-dialog__inner">
+        <div class="panel-head">
+          <h2>动态</h2>
+          <button type="button" id="closeDynamicsPostActionsBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <p class="record-actions-hint">修改或删除本条动态</p>
+        <div class="record-actions-btns">
+          <button type="button" id="dynamicsPostEditBtn" class="btn btn-primary full">编辑</button>
+          <button type="button" id="dynamicsPostDeleteBtn" class="btn btn-ghost full record-actions-delete-btn">删除</button>
+        </div>
       </div>
     </dialog>
 
@@ -1050,15 +1053,31 @@
       </p>
     </dialog>
 
-    <dialog id="recordTradeActionsDialog" class="dialog record-trade-actions-dialog">
-      <div class="panel-head">
-        <h2>交易记录</h2>
-        <button type="button" id="closeRecordTradeActionsBtn" class="btn btn-ghost">关闭</button>
+    <dialog id="recordTradeActionsDialog" class="dialog record-actions-dialog">
+      <div class="record-actions-dialog__inner">
+        <div class="panel-head">
+          <h2>交易记录</h2>
+          <button type="button" id="closeRecordTradeActionsBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <p class="record-actions-hint">修改或删除本条交易</p>
+        <div class="record-actions-btns">
+          <button type="button" class="btn btn-primary full" data-action="edit">修改</button>
+          <button type="button" class="btn btn-ghost full record-actions-delete-btn" data-action="delete">删除</button>
+        </div>
       </div>
-      <p class="form-hint record-trade-actions-hint">修改或删除本条交易</p>
-      <div class="record-trade-actions-btns">
-        <button type="button" class="btn btn-primary full" data-action="edit">修改</button>
-        <button type="button" class="btn btn-ghost full record-trade-delete-btn" data-action="delete">删除</button>
+    </dialog>
+
+    <dialog id="recordCashActionsDialog" class="dialog record-actions-dialog">
+      <div class="record-actions-dialog__inner">
+        <div class="panel-head">
+          <h2>资金记录</h2>
+          <button type="button" id="closeRecordCashActionsBtn" class="btn btn-ghost">关闭</button>
+        </div>
+        <p class="record-actions-hint">修改或删除本条资金记录</p>
+        <div class="record-actions-btns">
+          <button type="button" class="btn btn-primary full" data-action="edit">修改</button>
+          <button type="button" class="btn btn-ghost full record-actions-delete-btn" data-action="delete">删除</button>
+        </div>
       </div>
     </dialog>
 

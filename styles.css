@@ -1819,17 +1819,29 @@ h2 {
   cursor: pointer;
 }
 
-.record-trade-actions-hint {
+.record-actions-dialog__inner {
+  padding: 16px;
+}
+
+.record-actions-hint {
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 13px;
 }
 
-.record-trade-actions-btns {
+.record-actions-btns {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 4px;
+}
+
+.record-actions-btns .btn {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.record-actions-delete-btn {
+  color: var(--up);
 }
 
 .holdings-guide-dialog {
@@ -4668,13 +4680,6 @@ html.dynamics-compose-open body {
   color: #fff;
   font-size: 32px;
   cursor: pointer;
-}
-
-.dynamics-post-actions-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 0 4px;
 }
 
 .community-profile-tab-panel [data-profile-dynamics-list] {
