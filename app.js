@@ -10211,31 +10211,12 @@ async function renderStockRecordPage(symbol) {
   const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
     (item) => normalizeSymbol(item.symbol) === symKey,
   );
-  const portfolio = computePortfolio(scopeTrades, []);
-  const position = portfolio.positions.find((item) => normalizeSymbol(item.symbol) === symKey);
   const symbolTrades = [...scopeTrades].sort(sortTradeDesc);
-  if (
-    !position &&
-    !symbolTrades.length &&
-    !usePub &&
-    activeAccountId === "all" &&
-    !state.stockRecordTradesLoading &&
-    stockRecordTradesPager.loaded
-  ) {
-    if (state.route === "stock-record" && state.activeRecordSymbol === symbol) {
-      state.route = state.previousRoute || "earning";
-      state.activeRecordSymbol = null;
-      persistState();
-      renderRoute();
-      renderOverviewAndStockTable();
-    }
-    return;
-  }
   const bundle = state.stockRecordBundle;
-  const headline = bundle?.headline || null;
+  const headline = bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol);
   const positionName = headline?.name || "-";
 
-  stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${bundle?.headline?.code || formatSymbolForDisplay(symbol)})`;
+  stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${headline?.code || formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = headline?.quoteTime ?? "—";
   stockRecordPrice.textContent = headline?.price ?? "—";
   const priceUp = headline?.changePct ? !String(headline.changePct).startsWith("-") : false;
@@ -10370,6 +10351,52 @@ function stockRecordVisibleSlice(source) {
   });
 }
 
+function stockRecordHeadlineFromLocalQuote(symbol) {
+  const quote = getQuoteBySymbol(symbol);
+  if (!quote || !(Number(quote.current) > 0)) {
+    return null;
+  }
+  const current = Number(quote.current);
+  const prev = Number(quote.prevClose) > 0 ? Number(quote.prevClose) : current;
+  const changeAbs = current - prev;
+  const changePct = prev > 0 ? changeAbs / prev : 0;
+  const timeRaw = quote.time || state.quoteTime || "";
+  return {
+    name: getDisplayName(symbol, ""),
+    code: formatSymbolForDisplay(symbol),
+    price: formatNumber(current, 3),
+    change: formatSignedMoney(changeAbs, 3),
+    changePct: formatPercent(changePct),
+    quoteTime: timeRaw ? formatQuoteTimeForStatus(timeRaw) : "—",
+    tradingInterval: "—",
+  };
+}
+
+function drawStockRecordChartEmptyHint(canvas, message) {
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#8f99a9";
+  ctx.font = "15px system-ui,sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(message || ""), width / 2, height / 2);
+}
+
+function drawStockRecordChartsEmptyHint(message) {
+  clearStockRecordLatestSummaries();
+  for (const canvas of [stockRecordChart, stockRecordProfitChart, stockRecordWeightChart]) {
+    drawStockRecordChartEmptyHint(canvas, message);
+  }
+}
+
 function drawStockRecordCharts(symbol, symbolTrades) {
   const bundlePoints = stockRecordChartPointsFromBundle(state.stockRecordBundle);
   drawStockRecordChartsFromBundle(symbol, symbolTrades, bundlePoints);
@@ -10389,7 +10416,13 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
   const fmtProfit = (value) => (isPubChart ? formatNumber(value, 4) : formatSignedMoney(value, 2));
   const { visible, totalCount } = stockRecordVisibleSlice(points);
   if (!visible.length) {
-    clearStockRecordChart();
+    const showNoTrades =
+      state.stockRecordBundle?.charts?.noTrades === true || !symbolTrades.length;
+    if (showNoTrades) {
+      drawStockRecordChartsEmptyHint("无历史交易");
+    } else {
+      clearStockRecordChart();
+    }
     return;
   }
   updateStockRecordChartLatestSummaries(visible, isPubChart);

@@ -670,7 +670,68 @@ async function buildStockRecordBundlePayload({
   const ccy = getSymbolCurrency(sym);
   const symbolTrades = filterTradesForScope(trades, scope, sym);
   if (!symbolTrades.length) {
-    throw new Error("no trades for symbol");
+    const frozenThrough = String(live.frozenThrough || um?.frozenThrough || "").slice(0, 10);
+    const endDate = live.tradingDay
+      ? String(live.liveDate || liveDateKeyShanghai()).slice(0, 10)
+      : frozenThrough;
+    const { range } = parseStockRecordChartRequest(chartOpts);
+    const rangePreset = range;
+    const stageKey = stockRecordRangeChipToStage(rangePreset);
+    const [headlineCloseRows, metaMap] = await Promise.all([
+      getSymbolDailyCloseRange(
+        sym,
+        addCalendarDays(endDate || frozenThrough || "1970-01-01", -90),
+        endDate || "9999-12-31",
+      ),
+      getSymbolMetaMap([sym]),
+    ]);
+    const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);
+    const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
+    const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
+    const current = headlineQuote.current;
+    const prev = headlineQuote.prevClose;
+    const changeAbs = current - prev;
+    const changePct = prev > 0 ? changeAbs / prev : 0;
+    const displayName = resolveDisplayNameFromMap(sym, metaMap);
+    const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current);
+    const payload = {
+      meta: {
+        accountId: scope,
+        symbol: sym,
+        bookCurrency: book,
+        currency: ccy,
+        frozenThrough: frozenThrough || null,
+        liveDate: live.tradingDay ? live.liveDate : null,
+        tradingDay: !!live.tradingDay,
+        dataVersion: Number(um?.dataVersion) || 0,
+        rebuilding: !!um?.rebuilding,
+        quoteTime: headlineQuote.quoteTime ?? null,
+        stage: stageKey,
+        positionStatus: "none",
+        clearedSegments: [],
+        noTrades: true,
+      },
+      headline: {
+        name: displayName,
+        code: stockCodeForDisplay(sym),
+        price: formatClosePrice(current),
+        change: fmtPlainSignedAmount(changeAbs),
+        changePct: fmtSignedPercentRatio(changePct),
+        quoteTime: formatQuoteTimeDisplay(headlineQuote.quoteTime),
+        tradingInterval,
+      },
+      charts: {
+        points: [],
+        noTrades: true,
+        range: chartRangeMetaFromPoints(rangePreset, stageKey, [], endDate, null),
+        defaults: {
+          showClose: true,
+          showShares: true,
+          showMarketValue: false,
+        },
+      },
+    };
+    return finalizeMetricsBundlePayload(payload);
   }
 
   const frozenThrough = String(live.frozenThrough || um?.frozenThrough || "").slice(0, 10);
