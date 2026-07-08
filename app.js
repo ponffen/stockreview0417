@@ -4495,7 +4495,8 @@ function bindAnalysisStockRankHelpOnce() {
   );
 }
 
-function applyTradeTypePreset() {
+function applyTradeTypePreset(options = {}) {
+  const preserveAmount = options.preserveAmount === true;
   const type = tradeTypeInput.value;
   if (type === "dividend") {
     tradeSideInput.value = "sell";
@@ -4505,17 +4506,23 @@ function applyTradeTypePreset() {
   } else if (type === "bonus" || type === "split") {
     tradeSideInput.value = "buy";
     tradePriceInput.value = "0";
-    tradeAmountInput.value = "0";
+    if (!preserveAmount) {
+      tradeAmountInput.value = "0";
+    }
     tradeAmountInput.placeholder = "默认为0";
   } else if (type === "merge") {
     tradeSideInput.value = "sell";
     tradePriceInput.value = "0";
-    tradeAmountInput.value = "0";
+    if (!preserveAmount) {
+      tradeAmountInput.value = "0";
+    }
     tradeAmountInput.placeholder = "默认为0";
   } else {
     tradeAmountInput.placeholder = "不填则默认价格*数量";
   }
-  syncTradeAmountFromPriceQuantity();
+  if (!preserveAmount) {
+    syncTradeAmountFromPriceQuantity();
+  }
 }
 
 /** 买入卖出：发生金额 = 价格×数量，随输入实时更新（与提交时默认金额口径一致） */
@@ -9004,9 +9011,8 @@ function openEditTradeDialog(tradeId, tradeOverride) {
     tradeAccountInput.value = trade.accountId || DEFAULT_ACCOUNT.id;
   }
   resetTradeFormImages(trade.imageUrls);
-  applyTradeTypePreset();
+  applyTradeTypePreset({ preserveAmount: true });
   tradeDialog.showModal();
-  syncTradeAmountFromPriceQuantity();
 }
 
 function clearEditState() {
