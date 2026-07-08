@@ -6,8 +6,13 @@ const {
   getTrades,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseBounds,
+  getSymbolDailyCloseRange,
 } = require("./db");
-const { fetchRemoteDailyClosesForSymbol } = require("./daily-close-backfill");
+const {
+  fetchRemoteDailyClosesForSymbol,
+  diffMissingCloseDates,
+  summarizeGapRanges,
+} = require("./daily-close-backfill");
 
 const POSITION_EPSILON = 1e-6;
 const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
@@ -146,6 +151,104 @@ async function buildGlobalDailyClosePlan(asOfDate) {
   return [...bySymbol.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
+async function auditDailyCloseGapsForSymbol(symbol, fromDate, toDate) {
+  const sym = normalizeSymbol(symbol);
+  const from = String(fromDate || "").slice(0, 10);
+  const to = String(toDate || "").slice(0, 10);
+  if (!sym || !from || !to || from > to) {
+    return {
+      symbol: sym,
+      from,
+      to,
+      localCount: 0,
+      remoteCount: 0,
+      missingCount: 0,
+      missingRanges: [],
+      error: "invalid range",
+    };
+  }
+  const local = await getSymbolDailyCloseRange(sym, from, to);
+  let remote = [];
+  let error = "";
+  try {
+    remote = await fetchRemoteDailyClosesForSymbol(sym, from, to);
+  } catch (e) {
+    error = String(e?.message || e || "fetch failed");
+  }
+  const missingDates = diffMissingCloseDates(local, remote, from, to);
+  return {
+    symbol: sym,
+    from,
+    to,
+    localCount: local.length,
+    remoteCount: remote.length,
+    missingCount: missingDates.length,
+    missingRanges: summarizeGapRanges(missingDates),
+    missingSample: missingDates.slice(0, 5),
+    error,
+  };
+}
+
+async function auditDailyCloseGapsForPlan(plan, options = {}) {
+  const list = Array.isArray(plan) ? plan : [];
+  const onlyMissing = options.onlyMissing === true;
+  const symbolFilter = new Set(
+    (Array.isArray(options.symbols) ? options.symbols : [])
+      .map((s) => normalizeSymbol(String(s || "")))
+      .filter(Boolean),
+  );
+  const targets = symbolFilter.size ? list.filter((item) => symbolFilter.has(item.symbol)) : list;
+  const audits = [];
+  for (const item of targets) {
+    const audit = await auditDailyCloseGapsForSymbol(item.symbol, item.from, item.to);
+    if (!onlyMissing || audit.missingCount > 0 || audit.error) {
+      audits.push(audit);
+    }
+  }
+  audits.sort((a, b) => (b.missingCount || 0) - (a.missingCount || 0));
+  return audits;
+}
+
+async function symbolDailyCloseNeedsSync(item) {
+  if (item.active) {
+    const local = await getSymbolDailyCloseRange(item.symbol, item.from, item.to);
+    let remote = [];
+    try {
+      remote = await fetchRemoteDailyClosesForSymbol(item.symbol, item.from, item.to);
+    } catch {
+      return { shouldSync: true, reason: "active-fetch-failed" };
+    }
+    const missing = diffMissingCloseDates(local, remote, item.from, item.to);
+    if (missing.length > 0) {
+      return { shouldSync: true, reason: "active-missing", missingCount: missing.length };
+    }
+    return { shouldSync: false, reason: "active-complete" };
+  }
+  const bounds = await getSymbolDailyCloseBounds(item.symbol, item.from, item.to);
+  const edgeCovered = !!(
+    bounds &&
+    bounds.minDate &&
+    bounds.maxDate &&
+    bounds.minDate <= item.from &&
+    bounds.maxDate >= item.to
+  );
+  if (!edgeCovered) {
+    return { shouldSync: true, reason: "dormant-backfill" };
+  }
+  const local = await getSymbolDailyCloseRange(item.symbol, item.from, item.to);
+  let remote = [];
+  try {
+    remote = await fetchRemoteDailyClosesForSymbol(item.symbol, item.from, item.to);
+  } catch {
+    return { shouldSync: true, reason: "dormant-fetch-failed" };
+  }
+  const missing = diffMissingCloseDates(local, remote, item.from, item.to);
+  if (missing.length > 0) {
+    return { shouldSync: true, reason: "dormant-gap", missingCount: missing.length };
+  }
+  return { shouldSync: false, reason: "dormant-complete" };
+}
+
 async function runDailyCloseSync(options = {}) {
   const logger = options.logger || console;
   const asOfDate = toDateKey(options.asOfDate || new Date());
@@ -162,20 +265,9 @@ async function runDailyCloseSync(options = {}) {
   let failedSymbols = 0;
   let skippedSymbols = 0;
   for (const item of targets) {
-    let shouldSync = item.active;
-    let reason = item.active ? "active" : "dormant-complete";
-    if (!item.active) {
-      const bounds = await getSymbolDailyCloseBounds(item.symbol, item.from, item.to);
-      const covered = !!(
-        bounds &&
-        bounds.minDate &&
-        bounds.maxDate &&
-        bounds.minDate <= item.from &&
-        bounds.maxDate >= item.to
-      );
-      shouldSync = !covered;
-      reason = shouldSync ? "dormant-backfill" : "dormant-complete";
-    }
+    const syncDecision = await symbolDailyCloseNeedsSync(item);
+    const shouldSync = syncDecision.shouldSync;
+    const reason = syncDecision.reason;
     if (!shouldSync) {
       skippedSymbols += 1;
       perSymbol.push({
@@ -242,5 +334,7 @@ async function runDailyCloseSync(options = {}) {
 
 module.exports = {
   buildGlobalDailyClosePlan,
+  auditDailyCloseGapsForSymbol,
+  auditDailyCloseGapsForPlan,
   runDailyCloseSync,
 };
