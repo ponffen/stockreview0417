@@ -108,6 +108,7 @@ async function listDynamicsFeed(options = {}) {
   const scene = resolveScene(options.scene);
   const symbol = options.symbol ? normalizeSymbol(options.symbol) : "";
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(options.limit) || DEFAULT_LIMIT));
+  const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
   const cursor = decodeCursor(options.cursor);
   const isSelf = viewerId && targetUserId && viewerId === targetUserId;
 
@@ -202,6 +203,11 @@ async function listDynamicsFeed(options = {}) {
   `
     : "";
 
+  let offsetClause = "";
+  if (offset > 0 && !cursorClause) {
+    params.push(offset);
+    offsetClause = `OFFSET $${params.length}`;
+  }
   params.push(limit + 1);
   const limitIdx = params.length;
 
@@ -212,6 +218,7 @@ async function listDynamicsFeed(options = {}) {
     ) feed
     ${cursorClause}
     ORDER BY sort_key DESC, created_at DESC, id DESC
+    ${offsetClause}
     LIMIT $${limitIdx}
   `;
 

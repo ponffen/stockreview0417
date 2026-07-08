@@ -277,18 +277,21 @@ module.exports = async function handler(req, res, context) {
     const { getUserCommunityRow } = require("../src/db");
     const viewerId = readUserIdFromRequest(req);
     if (!viewerId) {
-      return { ok: false, status: 401, error: "请先登录" };
-    }
-    const subExpired = await getSubscriptionExpiredPayload(viewerId);
-    if (subExpired) {
-      return subExpired;
+      if (!publicPath) {
+        return { ok: false, status: 401, error: "请先登录" };
+      }
+    } else {
+      const subExpired = await getSubscriptionExpiredPayload(viewerId);
+      if (subExpired) {
+        return subExpired;
+      }
     }
     if (!publicPath) {
       return { ok: true, userId: viewerId };
     }
     const targetId = pathKey.split("/")[3];
     const tid = String(targetId || "").trim();
-    if (viewerId === tid) {
+    if (viewerId && viewerId === tid) {
       return { ok: true, userId: tid };
     }
     const row = await getUserCommunityRow(tid);
@@ -299,6 +302,21 @@ module.exports = async function handler(req, res, context) {
       return { ok: false, status: 403, error: "未公开持仓" };
     }
     return { ok: true, userId: tid };
+  }
+
+  if (req.method === "GET" && pathKey === "/api/guest/community/feed-preview") {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { handleGuestFeedPreview } = require("../src/dynamics/dynamics-api");
+      const result = await handleGuestFeedPreview();
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "guest feed preview failed" }));
+    }
+    return;
   }
 
   // home-bundle：直连 metrics，不 require server.js（避免冷启动 50s+ pending）
@@ -1544,15 +1562,20 @@ module.exports = async function handler(req, res, context) {
     try {
       const { readUserIdFromRequest } = require("../src/auth-session");
       const userId = readUserIdFromRequest(req);
-      if (!userId) {
+      const isGuestReadable =
+        req.method === "GET" &&
+        (pathOnly === "/api/community/leaderboard" || !!communityProfileMatch);
+      if (!userId && !isGuestReadable) {
         res.statusCode = 401;
         res.end(JSON.stringify({ ok: false, error: "请先登录" }));
         return;
       }
-      const subExpired = await getSubscriptionExpiredPayload(userId);
-      if (subExpired) {
-        endJsonPayload(res, subExpired, subExpired.status);
-        return;
+      if (userId) {
+        const subExpired = await getSubscriptionExpiredPayload(userId);
+        if (subExpired) {
+          endJsonPayload(res, subExpired, subExpired.status);
+          return;
+        }
       }
 
       console.log("[api/index.js] direct-handle community path=%s method=%s", pathOnly, req.method);
@@ -1602,11 +1625,6 @@ module.exports = async function handler(req, res, context) {
       if (req.method === "GET" && communityProfileMatch) {
         const targetId = String(communityProfileMatch[1] || "").trim();
         const detail = await getPublicProfileDetail(userId, targetId);
-        if (detail.error === "unauthorized") {
-          res.statusCode = 401;
-          res.end(JSON.stringify({ ok: false, error: "未登录" }));
-          return;
-        }
         if (detail.error === "hidden") {
           res.statusCode = 404;
           res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));

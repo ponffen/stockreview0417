@@ -1897,6 +1897,34 @@ h2 {
   margin-top: 14px;
 }
 
+.guest-feed-login-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.guest-feed-login-banner__text {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+  color: #93a0b4;
+  line-height: 1.45;
+}
+
+.guest-feed-login-btn {
+  flex-shrink: 0;
+  min-width: 72px;
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 .account-manage-delete {
   margin-top: 8px;
   color: var(--down);
@@ -2722,6 +2750,12 @@ body.subscription-expired-mode {
   border-radius: 14px;
   padding: 22px 18px;
   box-shadow: 0 8px 28px rgb(0 0 0 / 8%);
+}
+
+.auth-card__toolbar {
+  display: flex;
+  justify-content: flex-start;
+  margin: -6px 0 10px;
 }
 
 .product-brand {

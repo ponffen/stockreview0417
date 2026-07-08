@@ -3,6 +3,10 @@
  */
 
 const { listDynamicsFeed, SCENES } = require("./dynamics-feed");
+const { findUserByPhone, SEED_USER_PHONE } = require("../db");
+
+const GUEST_FEED_PREVIEW_OFFSET = 9;
+const GUEST_FEED_PREVIEW_LIMIT = 6;
 const {
   createCommunityPost,
   updateCommunityPost,
@@ -53,6 +57,32 @@ async function handlePublicStockDynamics(req, userId, targetId, symbol) {
     targetUserId: targetId,
     symbol,
   });
+}
+
+/** 访客预览：种子用户西坡第 10～15 条动态（offset 9, limit 6）。 */
+async function handleGuestFeedPreview() {
+  const seed = await findUserByPhone(SEED_USER_PHONE);
+  if (!seed?.id) {
+    return {
+      data: [],
+      pagination: { limit: GUEST_FEED_PREVIEW_LIMIT, hasMore: false, cursor: null },
+    };
+  }
+  const result = await listDynamicsFeed({
+    viewerId: "",
+    targetUserId: seed.id,
+    scene: SCENES.PUBLIC,
+    limit: GUEST_FEED_PREVIEW_LIMIT,
+    offset: GUEST_FEED_PREVIEW_OFFSET,
+  });
+  return {
+    data: result.data || [],
+    pagination: {
+      limit: GUEST_FEED_PREVIEW_LIMIT,
+      hasMore: false,
+      cursor: null,
+    },
+  };
 }
 
 function parseDynamicsImageUpload(req) {
@@ -117,6 +147,7 @@ module.exports = {
   handlePublicDynamics,
   handleSelfStockDynamics,
   handlePublicStockDynamics,
+  handleGuestFeedPreview,
   handleUploadDynamicsImage,
   handleViewDynamicsImage,
   createCommunityPost,

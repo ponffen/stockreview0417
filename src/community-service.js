@@ -532,8 +532,15 @@ function overviewBookCurrencyFromSettings(settings) {
 async function assertPublicCommunityTarget(viewerId, targetId) {
   const vid = String(viewerId || "").trim();
   const tid = String(targetId || "").trim();
-  if (!vid || !tid) {
+  if (!tid) {
     return { error: "unauthorized" };
+  }
+  if (!vid) {
+    const row = await getUserCommunityRow(tid);
+    if (!row || !Number(row.community_public)) {
+      return { error: "hidden" };
+    }
+    return { ok: true, userId: tid, isSelf: false, guest: true };
   }
   const isSelf = vid === tid;
   const row = await getUserCommunityRow(tid);

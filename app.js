@@ -77,6 +77,91 @@ let sessionProfile = {
   phoneMasked: "",
 };
 let authSubmitting = false;
+let guestBrowsingMode = false;
+
+function isGuest() {
+  return !sessionPhone;
+}
+
+const GUEST_ALLOWED_ROUTES = new Set([
+  "community-feed",
+  "community-rank",
+  "community-profile",
+  "earning",
+]);
+
+function isGuestAllowedRoute(route, options = {}) {
+  const r = String(route || "");
+  if (options.profileTab && r === "community-profile") {
+    return options.profileTab === "earning";
+  }
+  if (options.module === "ai" || r === "ai-analysis") {
+    return false;
+  }
+  if (isMineModuleRoute(r) || r === "mine") {
+    return false;
+  }
+  if (r === "community-following") {
+    return false;
+  }
+  if (
+    r === "analysis" ||
+    r === "dynamics" ||
+    r === "trade" ||
+    r === "trade-records" ||
+    r === "trade-cash" ||
+    r === "trade-search" ||
+    r === "stock-record"
+  ) {
+    return false;
+  }
+  return GUEST_ALLOWED_ROUTES.has(r);
+}
+
+function guardGuestNavigation(route, options = {}) {
+  if (!isGuest()) {
+    return true;
+  }
+  if (isGuestAllowedRoute(route, options)) {
+    return true;
+  }
+  openLoginPage();
+  return false;
+}
+
+function normalizeGuestRoute() {
+  if (!isGuest()) {
+    return;
+  }
+  if (!isGuestAllowedRoute(state.route, { profileTab: state.communityProfileTab })) {
+    state.appModule = "community";
+    state.route = "community-feed";
+    state.communityProfileUserId = null;
+  }
+  if (state.route === "community-profile" && state.communityProfileTab !== "earning") {
+    state.communityProfileTab = "earning";
+  }
+  if (state.route === "earning") {
+    state.appModule = "holdings";
+  }
+  if (state.route === "community-feed" || state.route === "community-rank" || state.route === "community-profile") {
+    state.appModule = "community";
+  }
+}
+
+function openLoginPage() {
+  guestBrowsingMode = true;
+  authGuestBackBtn?.classList.remove("hidden");
+  showAuthShell();
+}
+
+function closeLoginPageReturnBrowse() {
+  guestBrowsingMode = false;
+  authGuestBackBtn?.classList.add("hidden");
+  authLoginForm?.classList.remove("hidden");
+  authRegisterForm?.classList.add("hidden");
+  showAppShell();
+}
 let analysisStockRankHelpListenersBound = false;
 let holdingsAiConnectionLoading = false;
 const holdingsAiProvidersState = {
@@ -514,6 +599,7 @@ const authLoginError = document.getElementById("authLoginError");
 const authRegisterError = document.getElementById("authRegisterError");
 const authShowRegister = document.getElementById("authShowRegister");
 const authShowLogin = document.getElementById("authShowLogin");
+const authGuestBackBtn = document.getElementById("authGuestBackBtn");
 const changePasswordDialog = document.getElementById("changePasswordDialog");
 const changePasswordForm = document.getElementById("changePasswordForm");
 const closeChangePasswordBtn = document.getElementById("closeChangePasswordBtn");
@@ -589,6 +675,7 @@ const closeHoldingsGuideBtn = document.getElementById("closeHoldingsGuideBtn");
 const holdingsGuideAddTradeBtn = document.getElementById("holdingsGuideAddTradeBtn");
 const holdingsGuideAddCashBtn = document.getElementById("holdingsGuideAddCashBtn");
 const holdingsGuideAddAccountBtn = document.getElementById("holdingsGuideAddAccountBtn");
+const holdingsGuideLoginBtn = document.getElementById("holdingsGuideLoginBtn");
 const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
@@ -797,6 +884,10 @@ function enterAuthedShellAfterAuth(user) {
 }
 
 function bindAuthUi() {
+  authGuestBackBtn?.addEventListener("click", () => {
+    closeLoginPageReturnBrowse();
+  });
+
   authShowRegister?.addEventListener("click", () => {
     authLoginForm?.classList.add("hidden");
     authRegisterForm?.classList.remove("hidden");
@@ -844,6 +935,8 @@ function bindAuthUi() {
         return;
       }
       enterAuthedShellAfterAuth({ ...j.user, phone: j.user?.phone || phone });
+      guestBrowsingMode = false;
+      authGuestBackBtn?.classList.add("hidden");
       if (!sessionSubscriptionExpired) {
         ledgerBootstrapCompleteForUid = "";
         await startAppAfterAuth();
@@ -895,6 +988,8 @@ function bindAuthUi() {
         return;
       }
       enterAuthedShellAfterAuth({ ...j.user, phone: j.user?.phone || phone });
+      guestBrowsingMode = false;
+      authGuestBackBtn?.classList.add("hidden");
       if (!sessionSubscriptionExpired) {
         ledgerBootstrapCompleteForUid = "";
         await startAppAfterAuth();
@@ -1024,8 +1119,12 @@ async function initialize() {
   bindBrowserRouteHistory();
   const authed = await tryRestoreSession();
   if (!authed) {
-    showAuthShell();
-    dismissAppBootLoading();
+    showAppShell();
+    try {
+      await startGuestApp();
+    } finally {
+      dismissAppBootLoading();
+    }
     return;
   }
   if (sessionSubscriptionExpired) {
@@ -1039,6 +1138,12 @@ async function initialize() {
   } finally {
     dismissAppBootLoading();
   }
+}
+
+async function startGuestApp() {
+  normalizeGuestRoute();
+  await hydrateState();
+  renderAll();
 }
 
 function normalizeAccounts(rawAccounts) {
@@ -1153,13 +1258,26 @@ function bumpLedgerCount(field, delta = 1) {
 }
 
 function maybeShowHoldingsGuideDialog() {
-  if (!isLedgerEmpty() || !holdingsGuideDialog) {
+  if (!holdingsGuideDialog) {
+    return;
+  }
+  const showForGuest = isGuest() && state.route === "earning" && state.appModule === "holdings";
+  if (!showForGuest && !isLedgerEmpty()) {
     return;
   }
   if (holdingsGuideDialog.open) {
     return;
   }
+  syncHoldingsGuideGuestUi();
   holdingsGuideDialog.showModal();
+}
+
+function syncHoldingsGuideGuestUi() {
+  const guest = isGuest();
+  holdingsGuideAddTradeBtn?.classList.toggle("hidden", guest);
+  holdingsGuideAddCashBtn?.classList.toggle("hidden", guest);
+  holdingsGuideAddAccountBtn?.classList.toggle("hidden", guest);
+  holdingsGuideLoginBtn?.classList.toggle("hidden", !guest);
 }
 
 function renderHoldingsAiProviderStatus({
@@ -2873,7 +2991,9 @@ function ensureTradeListScrollListener() {
       } else if (state.route === "trade-cash") {
         void maybeLoadMoreCashListPage();
       } else if (state.route === "community-feed") {
-        maybeLoadMoreDynamicsList("community-feed", communityFeedList);
+        if (!isGuest()) {
+          maybeLoadMoreDynamicsList("community-feed", communityFeedList);
+        }
       } else if (state.route === "dynamics") {
         maybeLoadMoreDynamicsList("portfolio-dynamics", portfolioDynamicsList);
       } else if (state.route === "community-profile" && state.communityProfileTab === "dynamics") {
@@ -3238,6 +3358,10 @@ function bindEvents() {
     btn.addEventListener("click", () => {
       const a = btn.getAttribute("data-drawer-action");
       if (a === "holdings") {
+        if (!guardGuestNavigation("earning", { module: "holdings" })) {
+          closeAppDrawer();
+          return;
+        }
         state.appModule = "holdings";
         state.route = "earning";
         closeAppDrawer();
@@ -3247,12 +3371,24 @@ function bindEvents() {
         return;
       }
       if (a === "community") {
+        if (!guardGuestNavigation("community-feed", { module: "community" })) {
+          closeAppDrawer();
+          return;
+        }
         state.appModule = "community";
         state.route = "community-feed";
       } else if (a === "ai-analysis") {
+        if (!guardGuestNavigation("ai-analysis", { module: "ai" })) {
+          closeAppDrawer();
+          return;
+        }
         state.appModule = "ai";
         state.route = "ai-analysis";
       } else if (a === "mine") {
+        if (!guardGuestNavigation("mine")) {
+          closeAppDrawer();
+          return;
+        }
         state.route = "mine";
       }
       closeAppDrawer();
@@ -3261,16 +3397,35 @@ function bindEvents() {
     });
   });
 
+  holdingsGuideLoginBtn?.addEventListener("click", () => {
+    holdingsGuideDialog?.close();
+    openLoginPage();
+  });
   closeHoldingsGuideBtn?.addEventListener("click", () => holdingsGuideDialog?.close());
   holdingsGuideAddTradeBtn?.addEventListener("click", () => {
+    if (isGuest()) {
+      holdingsGuideDialog?.close();
+      openLoginPage();
+      return;
+    }
     holdingsGuideDialog?.close();
     openTradeStockSearch();
   });
   holdingsGuideAddCashBtn?.addEventListener("click", () => {
+    if (isGuest()) {
+      holdingsGuideDialog?.close();
+      openLoginPage();
+      return;
+    }
     holdingsGuideDialog?.close();
     openNewCashTransferDialog();
   });
   holdingsGuideAddAccountBtn?.addEventListener("click", () => {
+    if (isGuest()) {
+      holdingsGuideDialog?.close();
+      openLoginPage();
+      return;
+    }
     holdingsGuideDialog?.close();
     state.mineReturnRoute = "earning";
     state.route = "mine-accounts";
@@ -3414,6 +3569,10 @@ function bindEvents() {
     if (profileTabHit && appShell.contains(profileTabHit) && state.route === "community-profile") {
       const sub = profileTabHit.getAttribute("data-profile-subtab");
       if (sub) {
+        if (!guardGuestNavigation("community-profile", { profileTab: sub })) {
+          e.preventDefault();
+          return;
+        }
         state.communityProfileTab = sub;
         document.querySelectorAll(".bottom-tabs--profile .bottom-tab-btn").forEach((b) => {
           b.classList.toggle("active", b.getAttribute("data-profile-subtab") === sub);
@@ -3452,6 +3611,10 @@ function bindEvents() {
       if (!r) {
         return;
       }
+      if (!guardGuestNavigation(r, { module: mod })) {
+        e.preventDefault();
+        return;
+      }
       if (state.route !== "stock-record") {
         state.previousRoute = state.route;
       }
@@ -3466,14 +3629,28 @@ function bindEvents() {
       return;
     }
     const fb = e.target.closest(".community-follow-btn");
-    if (fb && appShell.contains(fb) && sessionUserId) {
+    if (fb && appShell.contains(fb)) {
+      if (isGuest()) {
+        openLoginPage();
+        return;
+      }
       const uid = fb.getAttribute("data-user-id");
       void toggleFollowCommunity(uid, fb);
+      return;
+    }
+    const guestLoginHit = e.target.closest("[data-guest-login-btn]");
+    if (guestLoginHit && appShell.contains(guestLoginHit)) {
+      e.preventDefault();
+      openLoginPage();
       return;
     }
     const feedStockAnalysis = e.target.closest("[data-community-feed-stock-analysis]");
     if (feedStockAnalysis && appShell.contains(feedStockAnalysis)) {
       e.preventDefault();
+      if (isGuest()) {
+        openLoginPage();
+        return;
+      }
       const uid = feedStockAnalysis.getAttribute("data-community-user");
       const sym = feedStockAnalysis.getAttribute("data-community-symbol");
       if (uid && sym) {
@@ -3484,6 +3661,10 @@ function bindEvents() {
     const feedPortfolioAnalysis = e.target.closest("[data-community-feed-portfolio-analysis]");
     if (feedPortfolioAnalysis && appShell.contains(feedPortfolioAnalysis)) {
       e.preventDefault();
+      if (isGuest()) {
+        openLoginPage();
+        return;
+      }
       const uid = feedPortfolioAnalysis.getAttribute("data-community-user");
       if (uid) {
         openCommunityProfile(uid);
@@ -4336,6 +4517,10 @@ function bindEvents() {
     if (state.route !== "community-profile") {
       return;
     }
+    if (isGuest()) {
+      openLoginPage();
+      return;
+    }
     const sym = link.getAttribute("data-stock-record");
     if (sym) {
       void openStockRecordDialog(sym, { fromPublicProfile: true });
@@ -4743,6 +4928,9 @@ function renderAll() {
   clearHoldingsTradePaneDomIfHiddenRoute();
   if (state.route === "earning") {
     renderOverviewAndStockTable();
+    if (isGuest()) {
+      requestAnimationFrame(() => maybeShowHoldingsGuideDialog());
+    }
   } else if (state.route === "analysis") {
     void renderAnalysis();
   } else if (state.route === "dynamics") {
@@ -5108,12 +5296,9 @@ function openCommunityProfile(userId) {
 }
 
 function communityFollowButtonHtml(card) {
-  if (!sessionUserId) {
-    return "";
-  }
   const uid = escapeHtml(card.userId);
-  const fo = card.following ? "已关注" : "关注";
-  const followCls = card.following ? "community-follow-btn is-on" : "community-follow-btn";
+  const fo = card.following && !isGuest() ? "已关注" : "关注";
+  const followCls = card.following && !isGuest() ? "community-follow-btn is-on" : "community-follow-btn";
   return `<button type="button" class="${followCls}" data-user-id="${uid}">${escapeHtml(fo)}</button>`;
 }
 
@@ -5718,7 +5903,7 @@ function handleDynamicsListClick(event, { editable = false } = {}) {
 }
 
 async function loadCommunityFeed() {
-  if (!communityFeedList || !sessionPhone) {
+  if (!communityFeedList || isGuest()) {
     return;
   }
   showRouteLoading("数据正在加载中");
@@ -5731,6 +5916,45 @@ async function loadCommunityFeed() {
       editable: false,
       emptyText: "暂无已关注用户的动态，可在「排行」或他人主页关注用户后查看",
     });
+  } finally {
+    hideRouteLoading();
+  }
+}
+
+function guestFeedLoginBannerHtml(position) {
+  const isTop = position === "top";
+  const text = isTop ? "登录后才能查看最新的动态" : "登录后才能查看更多动态";
+  return `<div class="guest-feed-login-banner guest-feed-login-banner--${position}">
+    <p class="guest-feed-login-banner__text">${escapeHtml(text)}</p>
+    <button type="button" class="btn btn-primary guest-feed-login-btn" data-guest-login-btn>登录</button>
+  </div>`;
+}
+
+async function loadGuestCommunityFeed() {
+  if (!communityFeedList || !isGuest()) {
+    return;
+  }
+  if (!apiReady) {
+    communityFeedList.innerHTML = `<p class="empty">连接服务端后可查看动态</p>`;
+    return;
+  }
+  showRouteLoading("数据正在加载中");
+  try {
+    const r = await apiFetch(`${getApiBaseForFetch()}/guest/community/feed-preview`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      communityFeedList.innerHTML = `<p class="empty">${escapeHtml(j?.error || "加载失败")}</p>`;
+      return;
+    }
+    const rows = Array.isArray(j.data) ? j.data : [];
+    const gap = '<div class="dynamics-list-gap" aria-hidden="true"></div>';
+    const cardsHtml = rows.length
+      ? rows.map((card) => dynamicsCardHtml(card, { editable: false })).join(gap)
+      : `<p class="empty">暂无预览动态</p>`;
+    communityFeedList.innerHTML =
+      guestFeedLoginBannerHtml("top") + cardsHtml + guestFeedLoginBannerHtml("bottom");
+  } catch {
+    communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
   } finally {
     hideRouteLoading();
   }
@@ -6005,7 +6229,7 @@ async function loadCommunityFollowing() {
 }
 
 async function loadCommunityLeaderboard() {
-  if (!communityLeaderboardList || !sessionPhone) {
+  if (!communityLeaderboardList) {
     return;
   }
   if (!apiReady) {
@@ -6762,16 +6986,12 @@ async function loadCommunityProfileDetail() {
       communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
     }
     if (communityProfileFollowSlot) {
-      if (sessionUserId) {
-        const uidEsc = escapeHtml(d.userId);
-        const fu = d.following ? "已关注" : "关注";
-        const cl = d.following ? "community-follow-btn is-on" : "community-follow-btn";
-        communityProfileFollowSlot.innerHTML = `<button type="button" class="${cl}" data-user-id="${uidEsc}">${escapeHtml(
-          fu,
-        )}</button>`;
-      } else {
-        communityProfileFollowSlot.innerHTML = "";
-      }
+      const uidEsc = escapeHtml(d.userId);
+      const fu = d.following && sessionUserId ? "已关注" : "关注";
+      const cl = d.following && sessionUserId ? "community-follow-btn is-on" : "community-follow-btn";
+      communityProfileFollowSlot.innerHTML = `<button type="button" class="${cl}" data-user-id="${uidEsc}">${escapeHtml(
+        fu,
+      )}</button>`;
     }
     communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
     mountPublicCommunityStockTableHead();
@@ -6794,23 +7014,27 @@ async function loadCommunityProfileDetail() {
 }
 
 function scheduleCommunityDataLoad() {
-  if (!sessionPhone) {
-    return;
-  }
   if (state.appModule !== "community") {
     lastCommunityDataKey = "";
     return;
   }
   const uid = state.communityProfileUserId || "";
-  const key = `${state.route}|${uid}`;
+  const guestKey = isGuest() ? "guest" : "auth";
+  const key = `${guestKey}|${state.route}|${uid}`;
   if (key === lastCommunityDataKey) {
     return;
   }
   lastCommunityDataKey = key;
   if (state.route === "community-feed") {
-    void loadCommunityFeed();
+    if (isGuest()) {
+      void loadGuestCommunityFeed();
+    } else {
+      void loadCommunityFeed();
+    }
   } else if (state.route === "community-following") {
-    void loadCommunityFollowing();
+    if (!isGuest()) {
+      void loadCommunityFollowing();
+    }
   } else if (state.route === "community-rank") {
     void loadCommunityLeaderboard();
   } else if (state.route === "community-profile" && state.communityProfileUserId) {
@@ -6987,6 +7211,7 @@ function resetRoutePaneScrollTop(route) {
 }
 
 function renderRoute() {
+  normalizeGuestRoute();
   const validRoutes = new Set([
     "earning",
     "analysis",
@@ -7589,6 +7814,12 @@ function clearAnalysisChartsToEmpty() {
 
 function renderOverviewAndStockTable() {
   if (!isEarningHomeRoute()) {
+    return;
+  }
+  if (isGuest()) {
+    setOverviewProfitKpisDash();
+    setOverviewAssetsGridDash();
+    paintOverviewStockTableFromMetricsRows([]);
     return;
   }
   const aid = String(state.selectedAccountId === "all" ? "all" : resolveValidAccountFilter(state.selectedAccountId));

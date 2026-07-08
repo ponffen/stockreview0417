@@ -793,6 +793,7 @@ const {
   handlePublicDynamics,
   handleSelfStockDynamics,
   handlePublicStockDynamics,
+  handleGuestFeedPreview,
   handleUploadDynamicsImage,
   createCommunityPost,
   updateCommunityPost,
@@ -897,6 +898,27 @@ async function requireAuth(req, res, next) {
     const userId = readUserIdFromRequest(req);
     if (!userId) {
       res.status(401).json({ ok: false, error: "请先登录" });
+      return;
+    }
+    const validUntil = await getUserValidUntil(userId);
+    if (isSubscriptionExpired(validUntil)) {
+      res.status(403).json({ ok: false, error: "免费使用已结束", code: "subscription_expired" });
+      return;
+    }
+    req.userId = userId;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/** 可选登录：有 session 则校验并写入 req.userId，无 session 也放行（访客读公开数据）。 */
+async function optionalAuth(req, res, next) {
+  try {
+    const userId = readUserIdFromRequest(req);
+    if (!userId) {
+      req.userId = null;
+      next();
       return;
     }
     const validUntil = await getUserValidUntil(userId);
@@ -1206,7 +1228,7 @@ app.patch("/api/me/community-profile", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/community/leaderboard", requireAuth, async (req, res) => {
+app.get("/api/community/leaderboard", optionalAuth, async (req, res) => {
   try {
     const data = await getLeaderboard();
     await enrichLeaderboardPayloadWithViewer(data, req.userId);
@@ -1224,6 +1246,16 @@ app.get("/api/community/following", requireAuth, async (req, res) => {
     res.json({ ok: true, data: cards });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "following failed" });
+  }
+});
+
+app.get("/api/guest/community/feed-preview", async (req, res) => {
+  try {
+    const result = await handleGuestFeedPreview();
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, data: result.data, pagination: result.pagination });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "guest feed preview failed" });
   }
 });
 
@@ -1338,14 +1370,10 @@ app.delete("/api/community/posts/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/community/users/:targetId/profile", requireAuth, async (req, res) => {
+app.get("/api/community/users/:targetId/profile", optionalAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
     const detail = await getPublicProfileDetail(req.userId, targetId);
-    if (detail.error === "unauthorized") {
-      res.status(401).json({ ok: false, error: "未登录" });
-      return;
-    }
     if (detail.error === "hidden") {
       res.status(404).json({ ok: false, error: "用户未公开或不可见" });
       return;
@@ -1638,8 +1666,8 @@ async function handlePublicHomeBundle(req, res) {
   }
 }
 
-app.get("/api/public/:targetId/home-bundle", requireAuth, handlePublicHomeBundle);
-app.get("/api/public/:targetId/metrics/home-bundle", requireAuth, handlePublicHomeBundle);
+app.get("/api/public/:targetId/home-bundle", optionalAuth, handlePublicHomeBundle);
+app.get("/api/public/:targetId/metrics/home-bundle", optionalAuth, handlePublicHomeBundle);
 
 app.get("/api/ops/cron-runs", requireAuth, async (req, res) => {
   try {
