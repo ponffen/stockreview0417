@@ -18,6 +18,7 @@ const {
   isMcpSubscriptionExpiredError,
 } = require("./subscription-gate");
 const { McpValidationError } = require("./ledger-write");
+const { resolveOAuthProviderForClient } = require("./oauth-client");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
