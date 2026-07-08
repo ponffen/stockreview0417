@@ -3654,7 +3654,11 @@ function bindEvents() {
       const uid = feedStockAnalysis.getAttribute("data-community-user");
       const sym = feedStockAnalysis.getAttribute("data-community-symbol");
       if (uid && sym) {
-        void openStockRecordDialog(sym, { fromPublicProfile: true, publicOwnerUserId: uid });
+        if (feedStockAnalysis.closest("#portfolioDynamicsList")) {
+          void openStockRecordDialog(sym);
+        } else {
+          void openStockRecordDialog(sym, { fromPublicProfile: true, publicOwnerUserId: uid });
+        }
       }
       return;
     }
