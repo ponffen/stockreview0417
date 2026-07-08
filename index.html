@@ -32,6 +32,9 @@
     </div>
 
     <div id="authGate" class="auth-gate hidden" aria-hidden="true">
+      <header class="auth-gate__topbar">
+        <button type="button" id="authGuestBackBtn" class="btn btn-ghost auth-gate__back-btn hidden">返回浏览</button>
+      </header>
       <div class="auth-screen">
         <section class="product-brand" aria-label="产品介绍">
           <img class="product-brand__icon" src="./public/icon.png" width="72" height="72" alt="麻雀" />
@@ -44,9 +47,6 @@
           </div>
         </section>
         <div class="auth-card">
-        <div class="auth-card__toolbar">
-          <button type="button" id="authGuestBackBtn" class="btn btn-ghost hidden">返回浏览</button>
-        </div>
         <form id="authLoginForm" class="auth-form">
           <div class="form-row">
             <label for="authLoginPhone">手机号</label>
@@ -785,6 +785,17 @@
         <button type="button" class="app-drawer-item" data-drawer-action="mine">我的</button>
       </nav>
     </aside>
+
+    <dialog id="guestLoginRequiredDialog" class="dialog guest-login-required-dialog" aria-labelledby="guestLoginRequiredDialogTitle">
+      <div class="guest-login-required-dialog__inner">
+        <h2 id="guestLoginRequiredDialogTitle" class="guest-login-required-dialog__title">提示</h2>
+        <p class="guest-login-required-dialog__text">此功能需要需要登录后才能使用</p>
+        <div class="guest-login-required-dialog__actions">
+          <button type="button" id="guestLoginRequiredCancelBtn" class="btn btn-ghost full">取消</button>
+          <button type="button" id="guestLoginRequiredConfirmBtn" class="btn btn-primary full">登录</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="holdingsGuideDialog" class="dialog holdings-guide-dialog" aria-labelledby="holdingsGuideDialogTitle">
       <div class="holdings-guide-dialog__inner">

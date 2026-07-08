@@ -149,10 +149,18 @@ function normalizeGuestRoute() {
   }
 }
 
-function openLoginPage() {
+function openLoginPageDirect() {
   guestBrowsingMode = true;
   authGuestBackBtn?.classList.remove("hidden");
   showAuthShell();
+}
+
+function openLoginPage() {
+  if (!guestLoginRequiredDialog) {
+    openLoginPageDirect();
+    return;
+  }
+  guestLoginRequiredDialog.showModal();
 }
 
 function closeLoginPageReturnBrowse() {
@@ -600,6 +608,9 @@ const authRegisterError = document.getElementById("authRegisterError");
 const authShowRegister = document.getElementById("authShowRegister");
 const authShowLogin = document.getElementById("authShowLogin");
 const authGuestBackBtn = document.getElementById("authGuestBackBtn");
+const guestLoginRequiredDialog = document.getElementById("guestLoginRequiredDialog");
+const guestLoginRequiredCancelBtn = document.getElementById("guestLoginRequiredCancelBtn");
+const guestLoginRequiredConfirmBtn = document.getElementById("guestLoginRequiredConfirmBtn");
 const changePasswordDialog = document.getElementById("changePasswordDialog");
 const changePasswordForm = document.getElementById("changePasswordForm");
 const closeChangePasswordBtn = document.getElementById("closeChangePasswordBtn");
@@ -886,6 +897,18 @@ function enterAuthedShellAfterAuth(user) {
 function bindAuthUi() {
   authGuestBackBtn?.addEventListener("click", () => {
     closeLoginPageReturnBrowse();
+  });
+
+  guestLoginRequiredCancelBtn?.addEventListener("click", () => {
+    guestLoginRequiredDialog?.close();
+  });
+  guestLoginRequiredConfirmBtn?.addEventListener("click", () => {
+    guestLoginRequiredDialog?.close();
+    openLoginPageDirect();
+  });
+  guestLoginRequiredDialog?.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    guestLoginRequiredDialog?.close();
   });
 
   authShowRegister?.addEventListener("click", () => {
@@ -5925,9 +5948,15 @@ async function loadCommunityFeed() {
   }
 }
 
+function guestFeedLoginSeparatorHtml() {
+  return `<div class="guest-feed-login-separator" aria-hidden="true"></div>`;
+}
+
 function guestFeedLoginBannerHtml(position) {
   const isTop = position === "top";
-  const text = isTop ? "登录后才能查看最新的动态" : "登录后才能查看更多动态";
+  const text = isTop
+    ? "下面是较旧的动态，登录后才能查看最新的动态"
+    : "登录后才能查看更多动态";
   return `<div class="guest-feed-login-banner guest-feed-login-banner--${position}">
     <p class="guest-feed-login-banner__text">${escapeHtml(text)}</p>
     <button type="button" class="btn btn-primary guest-feed-login-btn" data-guest-login-btn>登录</button>
@@ -5956,7 +5985,11 @@ async function loadGuestCommunityFeed() {
       ? rows.map((card) => dynamicsCardHtml(card, { editable: false })).join(gap)
       : `<p class="empty">暂无预览动态</p>`;
     communityFeedList.innerHTML =
-      guestFeedLoginBannerHtml("top") + cardsHtml + guestFeedLoginBannerHtml("bottom");
+      guestFeedLoginBannerHtml("top") +
+      guestFeedLoginSeparatorHtml() +
+      cardsHtml +
+      guestFeedLoginSeparatorHtml() +
+      guestFeedLoginBannerHtml("bottom");
   } catch {
     communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
   } finally {

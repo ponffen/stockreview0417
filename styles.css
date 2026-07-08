@@ -1909,6 +1909,21 @@ h2 {
   background: rgb(255 255 255 / 4%);
 }
 
+.guest-feed-login-banner--top {
+  margin-bottom: 0;
+}
+
+.guest-feed-login-banner--bottom {
+  margin-top: 0;
+}
+
+.guest-feed-login-separator {
+  height: 10px;
+  width: 100%;
+  margin: 0;
+  background: #e8ecf1;
+}
+
 .guest-feed-login-banner__text {
   margin: 0;
   flex: 1;
@@ -2729,12 +2744,31 @@ body.subscription-expired-mode {
 }
 
 .auth-gate {
+  position: relative;
   min-height: 100vh;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 20px 16px 24px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0 16px 24px;
   overflow-y: auto;
+}
+
+.auth-gate__topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 48px;
+  padding: max(8px, env(safe-area-inset-top, 0px)) 0 4px;
+  background: var(--bg, #f5f7fa);
+}
+
+.auth-gate__back-btn {
+  margin: 0;
+  padding: 8px 4px;
 }
 
 .auth-screen {
@@ -2742,6 +2776,7 @@ body.subscription-expired-mode {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  align-self: center;
 }
 
 .auth-card {
@@ -2752,10 +2787,34 @@ body.subscription-expired-mode {
   box-shadow: 0 8px 28px rgb(0 0 0 / 8%);
 }
 
-.auth-card__toolbar {
+.guest-login-required-dialog {
+  width: min(92vw, 320px);
+  border: none;
+  border-radius: 14px;
+  padding: 0;
+}
+
+.guest-login-required-dialog__inner {
+  padding: 20px 18px 16px;
+}
+
+.guest-login-required-dialog__title {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.guest-login-required-dialog__text {
+  margin: 0 0 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.guest-login-required-dialog__actions {
   display: flex;
-  justify-content: flex-start;
-  margin: -6px 0 10px;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .product-brand {
