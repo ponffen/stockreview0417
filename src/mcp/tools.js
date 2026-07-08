@@ -16,6 +16,8 @@ const { resolveDataAccess } = require("./target-access");
 const { searchCommunityUsers } = require("./community-search");
 const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp, MCP_MAX_TOTAL_ITEMS } = require("./dynamics-service");
 const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
+const { assertMcpScope, WRITE_LEDGER_SCOPE } = require("./scope");
+const { upsertTradesViaMcp, upsertCashTransfersViaMcp } = require("./ledger-write");
 
 const OTHER_USER_TARGET_RULE =
   "查他人时：若用户只给昵称/称呼，必须先调用 search_community_users，展示候选人并请用户确认后，再将确认的 user_id 作为 target_user_id；禁止把昵称当作 target_user_id。";
@@ -152,6 +154,40 @@ const TOOL_DEFS = [
       },
     },
   },
+  {
+    name: "upsert_trades",
+    description:
+      "新增或更新本人交易记录（单笔 trade 或批量 trades，最多 50 条）。需要 scope write:ledger。symbol 可多种写法，服务端 normalize 后存库。校验失败返回 errors 与 format_spec。date=YYYY-MM-DD；price 最多3位小数；quantity 最多4位；amount 最多2位。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        trade: { type: "object", description: "单笔交易" },
+        trades: {
+          type: "array",
+          items: { type: "object" },
+          description: "批量交易，最多 50 条",
+        },
+        strict: { type: "boolean", description: "默认 true：任一校验失败则整批不写入" },
+      },
+    },
+  },
+  {
+    name: "upsert_cash_transfers",
+    description:
+      "新增或更新本人银证转账/资金记录（单笔 cash_transfer 或批量 cash_transfers，最多 50 条）。需要 scope write:ledger。date=YYYY-MM-DD；direction=in|out；amount>0 最多2位小数。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cash_transfer: { type: "object", description: "单笔资金记录" },
+        cash_transfers: {
+          type: "array",
+          items: { type: "object" },
+          description: "批量资金记录，最多 50 条",
+        },
+        strict: { type: "boolean", description: "默认 true：任一校验失败则整批不写入" },
+      },
+    },
+  },
 ];
 
 function toolMeta(access, extra = {}) {
@@ -163,9 +199,10 @@ function toolMeta(access, extra = {}) {
   };
 }
 
-async function callMcpTool(viewerId, name, args = {}) {
+async function callMcpTool(viewerId, name, args = {}, opts = {}) {
   const tool = String(name || "").trim();
   const input = args && typeof args === "object" ? args : {};
+  const tokenScope = opts.scope || "";
 
   const subGate = await assertMcpUserActive(viewerId);
   if (!subGate.ok) {
@@ -175,6 +212,19 @@ async function callMcpTool(viewerId, name, args = {}) {
     const err = new Error(subGate.error || "forbidden");
     err.status = subGate.status || 403;
     throw err;
+  }
+
+  if (tool === "upsert_trades" || tool === "upsert_cash_transfers") {
+    assertMcpScope(tokenScope, WRITE_LEDGER_SCOPE);
+    if (input.target_user_id != null && String(input.target_user_id).trim()) {
+      const err = new Error("写操作不支持 target_user_id");
+      err.status = 403;
+      throw err;
+    }
+    if (tool === "upsert_trades") {
+      return upsertTradesViaMcp(viewerId, input);
+    }
+    return upsertCashTransfersViaMcp(viewerId, input);
   }
 
   if (tool === "search_community_users") {

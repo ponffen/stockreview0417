@@ -1,4 +1,5 @@
 const DEFAULT_SCOPE = "read:portfolio";
+const WRITE_LEDGER_SCOPE = "write:ledger";
 const DEFAULT_CLIENT_ID = "claude-mcp";
 const CLAUDE_CIMD_CLIENT_ID = "https://claude.ai/oauth/mcp-oauth-client-metadata";
 const MCP_CONNECTOR_NAME = "麻雀";
@@ -161,6 +162,7 @@ function sqlOAuthClientProviderClause(provider, defaultClientParamIndex = null) 
 
 module.exports = {
   DEFAULT_SCOPE,
+  WRITE_LEDGER_SCOPE,
   DEFAULT_CLIENT_ID,
   CLAUDE_CIMD_CLIENT_ID,
   MCP_CONNECTOR_NAME,

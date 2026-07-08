@@ -8,6 +8,7 @@ const { maskPhone } = require("../community-service");
 const { getAuthSessionUserPayload } = require("../db");
 const {
   DEFAULT_SCOPE,
+  WRITE_LEDGER_SCOPE,
   DEFAULT_CLIENT_ID,
   getPublicBaseUrl,
   mcpResourceUrl,
@@ -62,7 +63,7 @@ function authServerMetadata(req) {
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
     client_id_metadata_document_supported: true,
-    scopes_supported: [DEFAULT_SCOPE],
+    scopes_supported: [DEFAULT_SCOPE, WRITE_LEDGER_SCOPE],
   };
 }
 
@@ -71,7 +72,7 @@ function handleWellKnownProtectedResource(req, res) {
   sendJson(res, 200, {
     resource: mcpResourceUrl(req),
     authorization_servers: [base],
-    scopes_supported: [DEFAULT_SCOPE],
+    scopes_supported: [DEFAULT_SCOPE, WRITE_LEDGER_SCOPE],
     bearer_methods_supported: ["header"],
   });
 }
@@ -261,6 +262,15 @@ a.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;paddi
     const user = await getAuthSessionUserPayload(gate.userId);
     const display = escapeHtml(user?.displayName || maskPhone(user?.phone || "") || "用户");
     const actionUrl = escapeHtml(String(req.url || "").split("?")[0] + "?" + q.toString() + "&confirm=1");
+    const wantsWrite = String(scope || "")
+      .split(/\s+/)
+      .includes(WRITE_LEDGER_SCOPE);
+    const writeBullet = wantsWrite
+      ? "<li>新增或修改本人交易记录与银证转账</li>"
+      : "";
+    const accessNote = wantsWrite
+      ? "读取持仓数据，并可写入本人交易记录与资金记录。"
+      : "只读访问，不会修改你的账户或交易记录。";
     sendHtml(
       res,
       200,
@@ -277,14 +287,15 @@ ul{color:#6b7280;padding-left:18px;margin:0 0 18px}
 a.btn,button.btn{display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;border:none;font-size:14px;cursor:pointer}
 a.ghost{background:#fff;color:#111;border:1px solid #d1d5db}
 </style></head><body><div class="card">
-<h1>授权 ${escapeHtml(providerName)} 读取数据</h1>
-<p><strong>${display}</strong>，${escapeHtml(providerName)} 将通过「麻雀」连接器读取：</p>
+<h1>授权 ${escapeHtml(providerName)} 访问数据</h1>
+<p><strong>${display}</strong>，${escapeHtml(providerName)} 将通过「麻雀」连接器：</p>
 <ul>
 <li>持仓与资产摘要</li>
 <li>成交与银证转账（本人）</li>
 <li>分析图表与个股排名</li>
+${writeBullet}
 </ul>
-<p>只读访问，不会修改你的账户或交易记录。</p>
+<p>${accessNote}</p>
 <div class="actions">
 <a class="btn" href="${actionUrl}">确认授权</a>
 <a class="ghost btn" href="/">取消</a>

@@ -1,6 +1,6 @@
 const { verifyAccessToken } = require("./oauth-tokens");
 const { TOOL_DEFS, callMcpTool } = require("./tools");
-const { mcpResourceUrl, DEFAULT_SCOPE } = require("./config");
+const { mcpResourceUrl, DEFAULT_SCOPE, WRITE_LEDGER_SCOPE } = require("./config");
 const {
   extractBearerToken,
   readRequestBody,
@@ -17,7 +17,7 @@ const {
   assertMcpUserActive,
   isMcpSubscriptionExpiredError,
 } = require("./subscription-gate");
-const { resolveOAuthProviderForClient } = require("./oauth-client");
+const { McpValidationError } = require("./ledger-write");
 
 const SERVER_INFO = { name: "麻雀", version: "1.0.0" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
@@ -100,7 +100,7 @@ function normalizeResourceUrl(value) {
 function mcpAuthChallengeHeaders(req) {
   const meta = `${getPublicBaseUrl(req)}/.well-known/oauth-protected-resource/mcp`;
   return {
-    "WWW-Authenticate": `Bearer realm="maque", resource_metadata="${meta}", scope="${DEFAULT_SCOPE}"`,
+    "WWW-Authenticate": `Bearer realm="maque", resource_metadata="${meta}", scope="${DEFAULT_SCOPE} ${WRITE_LEDGER_SCOPE}"`,
   };
 }
 
@@ -121,7 +121,7 @@ function rpcError(id, code, message, data) {
   return out;
 }
 
-async function dispatchMcpMethod(viewerId, method, params) {
+async function dispatchMcpMethod(viewerId, method, params, ctx = {}) {
   if (method === "initialize") {
     const protocolVersion = negotiateProtocolVersion(params?.protocolVersion);
     return {
@@ -140,12 +140,18 @@ async function dispatchMcpMethod(viewerId, method, params) {
     const name = String(params?.name || "").trim();
     const args = params?.arguments && typeof params.arguments === "object" ? params.arguments : {};
     try {
-      const data = await callMcpTool(viewerId, name, args);
+      const data = await callMcpTool(viewerId, name, args, { scope: ctx.scope || "" });
       return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         isError: false,
       };
     } catch (error) {
+      if (error instanceof McpValidationError) {
+        return {
+          content: [{ type: "text", text: JSON.stringify(error.payload, null, 2) }],
+          isError: true,
+        };
+      }
       if (isMcpSubscriptionExpiredError(error)) {
         return {
           content: [{ type: "text", text: MCP_SUBSCRIPTION_EXPIRED_MESSAGE }],
@@ -175,7 +181,7 @@ async function dispatchMcpMethod(viewerId, method, params) {
   throw err;
 }
 
-async function handleSingleMcpMessage(viewerId, message) {
+async function handleSingleMcpMessage(viewerId, message, ctx = {}) {
   if (!message || typeof message !== "object") {
     return rpcError(null, -32600, "Invalid Request");
   }
@@ -185,14 +191,14 @@ async function handleSingleMcpMessage(viewerId, message) {
   }
   if (id == null) {
     try {
-      await dispatchMcpMethod(viewerId, method, params);
+      await dispatchMcpMethod(viewerId, method, params, ctx);
     } catch {
       // notifications: no response
     }
     return null;
   }
   try {
-    const result = await dispatchMcpMethod(viewerId, method, params);
+    const result = await dispatchMcpMethod(viewerId, method, params, ctx);
     if (result == null && (method === "notifications/initialized" || method === "initialized")) {
       return null;
     }
@@ -353,7 +359,7 @@ async function handleMcpRequestInner(req, res) {
 
   const responses = [];
   for (const message of messages) {
-    const out = await handleSingleMcpMessage(auth.userId, message);
+    const out = await handleSingleMcpMessage(auth.userId, message, { scope: auth.scope || "" });
     if (out != null) {
       responses.push(out);
     }
