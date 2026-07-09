@@ -99,6 +99,11 @@ const MANUAL_NAME_MAP = {
   大普微: "sz301536",
   智谱: "hk02513",
   SpaceX: "spcx",
+  Palantir: "pltr",
+  恒生科技BTF华夏: "sh513180",
+  机器人ETF易方达: "sz159530",
+  长川科技: "sz300604",
+  鸣志甩器: "sh603728",
 };
 
 function round2(n) {
