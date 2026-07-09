@@ -15,6 +15,7 @@
     "backfill:daily": "node scripts/backfill-daily-tables.js",
     "backfill:daily-close": "node scripts/backfill-symbol-daily-close.js",
     "backfill:daily-close:gaps": "node scripts/audit-and-backfill-daily-close.js",
+    "backfill:daily-close:range": "node scripts/backfill-daily-close-date-range.js",
     "backfill:symbol-name-map": "node scripts/backfill-symbol-name-map.js",
     "backfill:trade-amount-share": "node scripts/backfill-trade-amount-share-ratio.js",
     "db:ensure-dynamics": "node scripts/ensure-dynamics-schema.js",
