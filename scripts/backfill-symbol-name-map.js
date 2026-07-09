@@ -88,6 +88,9 @@ function needsBackfill(sym, existing) {
   if (!tag || tag === "ot") {
     return true;
   }
+  if (sym.startsWith("sh") || sym.startsWith("sz")) {
+    return tag !== "cn";
+  }
   return false;
 }
 
@@ -98,6 +101,13 @@ async function main() {
   }
   await initPool();
   await getSymbolMetaMap([]);
+  const fixed = await dbQuery(
+    `UPDATE symbol_name_map
+     SET market_tag = 'cn', updated_at = $1
+     WHERE lower(symbol) ~ '^(sh|sz)' AND lower(coalesce(market_tag, '')) = 'ot'`,
+    [Date.now()]
+  );
+  console.log(`[backfill] fixed sh/sz ot→cn rows: ${fixed.rowCount ?? 0}`);
   const all = await collectSymbolsFromDb();
   console.log(`[backfill] collected ${all.length} unique symbols`);
   const existing = await loadExistingMap(all);

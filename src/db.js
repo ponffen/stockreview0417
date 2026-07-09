@@ -20,6 +20,8 @@ const {
   validNumber,
   normalizeAccountRecords,
   normalizeSymbol,
+  inferMarketTagFromSymbol,
+  resolveMarketTagForSymbol,
   isUsTickerSymbol,
   getLegacyUsAlias,
   formatSymbolForDisplay,
@@ -2482,7 +2484,10 @@ function normalizeSymbolMetaEntry(entry = {}) {
   }
   let nameCn = String(entry.nameCn ?? entry.name ?? "").trim();
   const source = String(entry.source || "unknown").trim().slice(0, 32) || "unknown";
-  const marketTag = normalizeMarketTagStored(entry.marketTag ?? entry.market_tag ?? "");
+  const marketTag = resolveMarketTagForSymbol(
+    symbol,
+    normalizeMarketTagStored(entry.marketTag ?? entry.market_tag ?? "")
+  );
   if (nameCn.length > 64) {
     nameCn = nameCn.slice(0, 64);
   }
@@ -2597,7 +2602,7 @@ async function getSymbolMetaMap(symbols = []) {
     }
     out[symbol] = {
       nameCn: String(row.name_cn || "").trim() || "-",
-      marketTag: normalizeMarketTagStored(row.market_tag) || "ot",
+      marketTag: resolveMarketTagForSymbol(symbol, normalizeMarketTagStored(row.market_tag) || "ot"),
     };
   }
   return out;
@@ -3345,6 +3350,8 @@ module.exports = {
   schemaDdl: DDL,
   SEED_USER_PHONE,
   normalizeSymbol,
+  inferMarketTagFromSymbol,
+  resolveMarketTagForSymbol,
   isUsTickerSymbol,
   formatSymbolForDisplay,
   normalizeTrade,

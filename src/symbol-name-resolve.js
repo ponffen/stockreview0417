@@ -4,6 +4,7 @@ const {
   upsertSymbolNameMapBatch,
   normalizeSymbol,
   formatSymbolForDisplay,
+  resolveMarketTagForSymbol,
 } = require("./db");
 const { fetchTencentQuoteMetaForSymbols, marketTagForApi } = require("./tencent-quote-meta");
 
@@ -28,7 +29,7 @@ function resolveMetaFromMap(symbol, metaMap) {
   const sym = normalizeSymbol(symbol);
   const meta = metaMap?.[sym] || {};
   const nameCn = String(meta.nameCn || meta.name || "").trim() || SYMBOL_NAME_MAP_MISSING;
-  const marketTag = marketTagForApi(meta.marketTag || "ot");
+  const marketTag = marketTagForApi(resolveMarketTagForSymbol(sym, meta.marketTag || "ot"));
   const stockCode = stockCodeForDisplay(sym);
   return { nameCn, marketTag, stockCode };
 }

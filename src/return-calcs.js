@@ -9,7 +9,10 @@ const validNumber = (v, fb = 0) => {
 };
 
 function inferMarket(symbol) {
-  const s = String(symbol || "");
+  const s = String(symbol || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toLowerCase();
   if (s.startsWith("sh") || s.startsWith("sz")) return "A股";
   if (s.startsWith("hk") || s.startsWith("rt_hk")) return "港股";
   if (s.startsWith("gb_") || /^[a-z]/i.test(s)) return "美股";

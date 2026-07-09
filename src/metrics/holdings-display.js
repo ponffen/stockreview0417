@@ -59,7 +59,10 @@ function marketFromMetaTag(marketTag) {
 }
 
 function inferMarket(symbol) {
-  const s = String(symbol || "");
+  const s = String(symbol || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toLowerCase();
   if (s.startsWith("sh") || s.startsWith("sz")) {
     return "A股";
   }

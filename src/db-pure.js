@@ -172,6 +172,38 @@ function normalizeSymbol(rawSymbol) {
   return value;
 }
 
+/** 库内 symbol → 小写 market_tag（cn/hk/us）；sh/sz 前缀一律 cn */
+function inferMarketTagFromSymbol(rawSymbol) {
+  const s = normalizeSymbol(rawSymbol);
+  if (!s) {
+    return "";
+  }
+  if (s.startsWith("sh") || s.startsWith("sz")) {
+    return "cn";
+  }
+  if (s.startsWith("hk") || s.startsWith("rt_hk")) {
+    return "hk";
+  }
+  if (isUsTickerSymbol(s)) {
+    return "us";
+  }
+  return "";
+}
+
+function resolveMarketTagForSymbol(rawSymbol, storedTag) {
+  const prefixTag = inferMarketTagFromSymbol(rawSymbol);
+  if (prefixTag === "cn" || prefixTag === "hk") {
+    return prefixTag;
+  }
+  const v = String(storedTag || "")
+    .trim()
+    .toLowerCase();
+  if (v === "cn" || v === "hk" || v === "us" || v === "ot") {
+    return v || prefixTag || "ot";
+  }
+  return prefixTag || v || "ot";
+}
+
 function isUsTickerSymbol(symbol) {
   const s = String(symbol || "").trim().toLowerCase();
   if (!s) {
@@ -518,6 +550,8 @@ module.exports = {
   validNumber,
   normalizeAccountRecords,
   normalizeSymbol,
+  inferMarketTagFromSymbol,
+  resolveMarketTagForSymbol,
   isUsTickerSymbol,
   getLegacyUsAlias,
   formatSymbolForDisplay,

@@ -3,7 +3,7 @@
  * 规则与浏览器端 toTencentQuoteSymbol 一致：sh/sz/hk、美股 usTICKER、gb_ → us。
  */
 
-const { normalizeSymbol } = require("./db");
+const { normalizeSymbol, resolveMarketTagForSymbol } = require("./db");
 
 function toTencentQuoteKey(rawSymbol) {
   const normalized =
@@ -138,7 +138,7 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
       for (const orig of originals) {
         out.set(orig, {
           name: parsed.name,
-          marketTag: parsed.marketTag,
+          marketTag: resolveMarketTagForSymbol(orig, parsed.marketTag),
         });
       }
     }
