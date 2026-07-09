@@ -7,6 +7,7 @@ require("dotenv").config();
 
 const { initPool, dbQuery, upsertSymbolNameMapBatch, normalizeSymbol, getSymbolMetaMap } = require("../src/db");
 const { fetchTencentQuoteMetaForSymbols } = require("../src/tencent-quote-meta");
+const { isUsTickerSymbol } = require("../src/db-pure");
 
 const CHUNK = 50;
 const forceAll = process.argv.includes("--force-all");
@@ -91,6 +92,9 @@ function needsBackfill(sym, existing) {
   if (sym.startsWith("sh") || sym.startsWith("sz")) {
     return tag !== "cn";
   }
+  if (isUsTickerSymbol(sym)) {
+    return tag !== "us";
+  }
   return false;
 }
 
@@ -108,6 +112,26 @@ async function main() {
     [Date.now()]
   );
   console.log(`[backfill] fixed sh/sz ot→cn rows: ${fixed.rowCount ?? 0}`);
+  const { rows: otRows } = await dbQuery(
+    `SELECT symbol FROM symbol_name_map WHERE lower(coalesce(market_tag, '')) = 'ot'`
+  );
+  const usFix = (otRows || [])
+    .map((r) => normalizeSymbol(r.symbol))
+    .filter((sym) => sym && isUsTickerSymbol(sym));
+  if (usFix.length) {
+    const usFixed = await dbQuery(
+      `UPDATE symbol_name_map
+       SET market_tag = 'us', updated_at = $2
+       WHERE symbol = ANY($1::text[])`,
+      [usFix, Date.now()]
+    );
+    console.log(`[backfill] fixed us-ticker ot→us rows: ${usFixed.rowCount ?? 0}`, usFix);
+  }
+  const pltrFixed = await dbQuery(
+    `UPDATE symbol_name_map SET market_tag = 'us', updated_at = $1 WHERE symbol = 'pltr'`,
+    [Date.now()]
+  );
+  console.log(`[backfill] pltr→us rows: ${pltrFixed.rowCount ?? 0}`);
   const all = await collectSymbolsFromDb();
   console.log(`[backfill] collected ${all.length} unique symbols`);
   const existing = await loadExistingMap(all);

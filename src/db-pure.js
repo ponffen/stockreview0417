@@ -192,7 +192,7 @@ function inferMarketTagFromSymbol(rawSymbol) {
 
 function resolveMarketTagForSymbol(rawSymbol, storedTag) {
   const prefixTag = inferMarketTagFromSymbol(rawSymbol);
-  if (prefixTag === "cn" || prefixTag === "hk") {
+  if (prefixTag === "cn" || prefixTag === "hk" || prefixTag === "us") {
     return prefixTag;
   }
   const v = String(storedTag || "")
