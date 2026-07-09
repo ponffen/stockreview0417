@@ -264,9 +264,14 @@ async function buildHoldingsPayload({
   }
 
   const accountIdForPnl = scopeId === "all" ? "all" : scopeId;
-  const activeSyms = [...keys].filter((sym) =>
-    hasOpenPositionQuantity(Number(liveBySym.get(sym)?.quantity) || 0),
-  );
+  const activeSyms = [...keys].filter((sym) => {
+    const qty = Number(liveBySym.get(sym)?.quantity) || 0;
+    if (hasOpenPositionQuantity(qty)) {
+      return true;
+    }
+    const todayP = live.tradingDay ? Number(liveBySym.get(sym)?.todayProfitCny) || 0 : 0;
+    return Math.abs(todayP) > 1e-6;
+  });
   const frozenRowBySym = new Map();
   if (userId && frozenThrough && activeSyms.length) {
     const frozenRows = await Promise.all(
@@ -290,7 +295,8 @@ async function buildHoldingsPayload({
     const snap = snapBySym.get(sym);
     const frozenRow = frozenRowBySym.get(sym) || null;
     const qty = Number(liveP?.quantity) || 0;
-    if (!hasOpenPositionQuantity(qty)) {
+    const todayProfitBookRow = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    if (!hasOpenPositionQuantity(qty) && Math.abs(todayProfitBookRow) <= 1e-6) {
       continue;
     }
     const ccy = String(frozenRow?.currency || snap?.currency || liveP?.currency || "CNY").toUpperCase();

@@ -4,6 +4,12 @@
  */
 const { normalizeSymbol, addCalendarDays } = require("./db");
 
+const POSITION_EPS = 1e-6;
+
+function hasPositionQuantity(qty) {
+  return Math.abs(Number(qty) || 0) > POSITION_EPS;
+}
+
 function parseQuoteTimeToDateKey(timeStr) {
   if (!timeStr || typeof timeStr !== "string") {
     return null;
@@ -106,18 +112,27 @@ function computeTodayProfitNative({
   now,
   frozenMvNat,
   endQuantity,
+  clearedToday = false,
 }) {
-  if (!shouldCountTodayPositionPnlFromQuote(quote, now)) {
-    return 0;
-  }
   const dayCtx = getPositionDayTradeContext(symbol, todayKey, trades);
   const frozenStart = Number(frozenMvNat);
-  const todayStartMvNat =
-    Number.isFinite(frozenStart) && frozenStart > 0 ? frozenStart : dayCtx.startQuantity * prevClose;
   const endQty =
     endQuantity != null && Number.isFinite(Number(endQuantity))
       ? Number(endQuantity)
       : dayCtx.endQuantity;
+  const todayStartMvNat =
+    Number.isFinite(frozenStart) && frozenStart > 0 ? frozenStart : dayCtx.startQuantity * prevClose;
+
+  const isClearedToday =
+    clearedToday ||
+    (hasPositionQuantity(dayCtx.startQuantity) && !hasPositionQuantity(endQty));
+  if (isClearedToday && !hasPositionQuantity(endQty)) {
+    return 0 - todayStartMvNat - dayCtx.dayFlowNative;
+  }
+
+  if (!shouldCountTodayPositionPnlFromQuote(quote, now)) {
+    return 0;
+  }
   return endQty * current - todayStartMvNat - dayCtx.dayFlowNative;
 }
 

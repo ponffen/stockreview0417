@@ -16,11 +16,12 @@ const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metr
 const { toTencentQuoteKey } = require("./tencent-quote-meta");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const {
-  holdingsSymbolsFromTrades,
+  holdingsSymbolsForLiveMetrics,
   aggregateFrozenEodBySymbol,
   currentQuantityFromFrozenEod,
   frozenMvNatForSymbol,
   hasOpenPositionQuantity,
+  wasClearedOnTradingDay,
 } = require("./metrics/holdings-active-symbols");
 const {
   parseQuoteTimeToDateKey,
@@ -428,8 +429,18 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   ]);
 
   const priceAsOf = tradingDay ? liveDate : frozenThrough || liveDate;
-
-  const symbols = holdingsSymbolsFromTrades(trades, scope, pre.lastEodRows);
+  const frozenDate = String(frozenThrough || "").slice(0, 10);
+  const frozenEodRows = Array.isArray(pre.frozenSymbolEodRows) ? pre.frozenSymbolEodRows : [];
+  const frozenBySym = aggregateFrozenEodBySymbol(frozenEodRows, scope, frozenDate);
+  const todayKey = tradingDay ? liveDate : frozenDate;
+  const symbols = holdingsSymbolsForLiveMetrics(
+    trades,
+    scope,
+    pre.lastEodRows,
+    frozenBySym,
+    todayKey,
+    tradingDay,
+  );
   if (pre.scopeCleared || symbols.length === 0) {
     return buildLiveFromHomeFrozen({
       tradingDay: true,
@@ -497,9 +508,6 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
 
   const scoped =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
-  const frozenDate = String(frozenThrough || "").slice(0, 10);
-  const frozenEodRows = Array.isArray(pre.frozenSymbolEodRows) ? pre.frozenSymbolEodRows : [];
-  const frozenBySym = aggregateFrozenEodBySymbol(frozenEodRows, scope, frozenDate);
 
   let liveMarketValue = 0;
   const positions = [];
@@ -508,11 +516,14 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       frozenBySym,
       trades,
       symbol,
-      tradingDay ? liveDate : frozenDate,
+      todayKey,
       scope,
       tradingDay,
     );
-    if (!hasOpenPositionQuantity(qty)) {
+    const clearedToday =
+      tradingDay &&
+      wasClearedOnTradingDay(frozenBySym, trades, symbol, todayKey, scope, tradingDay);
+    if (!hasOpenPositionQuantity(qty) && !clearedToday) {
       continue;
     }
     let quote = quoteMap[symbol];
@@ -532,16 +543,18 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       }
     }
     if (!quote) {
-      continue;
+      if (!clearedToday) {
+        continue;
+      }
+      quote = { current: 0, prevClose: 0, marketDate: todayKey, quoteDate: todayKey };
     }
     const current = Number(quote.current) || 0;
     const prevClose = Number(quote.prevClose) || current;
     const symCcy = getSymbolCurrency(symbol);
     const rateToBook = rateSymbolToBook(symCcy, bookCcy, fxSpot);
-    const mvNat = qty * current;
+    const mvNat = hasOpenPositionQuantity(qty) ? qty * current : 0;
     const mv = mvNat * rateToBook;
     liveMarketValue += mv;
-    const todayKey = tradingDay ? liveDate : priceAsOf;
     const todayNat = tradingDay
       ? computeTodayProfitNative({
           quote,
@@ -552,6 +565,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
           todayKey,
           frozenMvNat: frozenMvNatForSymbol(frozenBySym, symbol),
           endQuantity: qty,
+          clearedToday,
         })
       : 0;
     const todayP = todayNat * rateToBook;

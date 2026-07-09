@@ -3,6 +3,7 @@
  * 股数 = 冻结日 eod_shares + 仅当日成交净变动。
  */
 const { normalizeSymbol } = require("../db");
+const { getPositionDayTradeContext } = require("../position-today-pnl");
 
 const POSITION_EPS = 1e-6;
 
@@ -144,6 +145,59 @@ function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
   );
 }
 
+/** 交易日：仍持仓 + 当日清仓（冻结日有仓、今日卖光） */
+function wasClearedOnTradingDay(frozenBySym, trades, symbol, todayKey, accountScope, tradingDay) {
+  if (!tradingDay || !todayKey) {
+    return false;
+  }
+  const sym = normalizeSymbol(symbol);
+  if (!sym) {
+    return false;
+  }
+  const qty = currentQuantityFromFrozenEod(frozenBySym, trades, sym, todayKey, accountScope, tradingDay);
+  if (hasOpenPositionQuantity(qty)) {
+    return false;
+  }
+  const frozen = frozenBySym?.get(sym);
+  const eodSh = frozen ? Number(frozen.eodShares) || 0 : 0;
+  if (hasOpenPositionQuantity(eodSh)) {
+    return true;
+  }
+  const wanted = String(accountScope || "all").trim() || "all";
+  const list =
+    wanted === "all" ? trades || [] : (trades || []).filter((t) => String(t.accountId || "default") === wanted);
+  const ctx = getPositionDayTradeContext(sym, todayKey, list);
+  return hasOpenPositionQuantity(ctx.startQuantity);
+}
+
+function holdingsSymbolsForLiveMetrics(trades, accountScope, lastEodRows, frozenBySym, todayKey, tradingDay) {
+  const set = new Set(holdingsSymbolsFromTrades(trades, accountScope, lastEodRows));
+  if (!tradingDay || !todayKey) {
+    return [...set];
+  }
+  const wanted = String(accountScope || "all").trim() || "all";
+  const list =
+    wanted === "all" ? trades || [] : (trades || []).filter((t) => String(t.accountId || "default") === wanted);
+  const candidates = new Set(set);
+  for (const sym of (frozenBySym || new Map()).keys()) {
+    candidates.add(sym);
+  }
+  for (const trade of list) {
+    if (String(trade.date || "").slice(0, 10) === todayKey) {
+      const sym = normalizeSymbol(trade.symbol);
+      if (sym) {
+        candidates.add(sym);
+      }
+    }
+  }
+  for (const sym of candidates) {
+    if (wasClearedOnTradingDay(frozenBySym, trades, sym, todayKey, accountScope, tradingDay)) {
+      set.add(sym);
+    }
+  }
+  return [...set];
+}
+
 module.exports = {
   POSITION_EPS,
   hasOpenPositionQuantity,
@@ -155,4 +209,6 @@ module.exports = {
   frozenMvNatForSymbol,
   applyEodFilterToHoldingsSymbols,
   holdingsSymbolsFromTrades,
+  wasClearedOnTradingDay,
+  holdingsSymbolsForLiveMetrics,
 };

@@ -44,6 +44,9 @@ function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date()
   for (const p of positions || []) {
     const qty = Number(p.quantity) || 0;
     if (!hasOpenPositionQuantity(qty)) {
+      if (Math.abs(Number(p.todayProfitCny) || 0) > 1e-6) {
+        return true;
+      }
       continue;
     }
     const sym = normalizeSymbol(p.symbol);
