@@ -18,6 +18,11 @@ const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp, MCP_MAX_TOTAL_ITEMS }
 const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
 const { assertMcpScope, WRITE_LEDGER_SCOPE } = require("./scope");
 const { upsertTradesViaMcp, upsertCashTransfersViaMcp } = require("./ledger-write");
+const {
+  MCP_UPSERT_TRADES_INPUT_SCHEMA,
+  MCP_UPSERT_CASH_TRANSFERS_INPUT_SCHEMA,
+  MCP_LEDGER_WRITE_BATCH_MAX,
+} = require("./ledger-schema");
 
 const OTHER_USER_TARGET_RULE =
   "查他人时：若用户只给昵称/称呼，必须先调用 search_community_users，展示候选人并请用户确认后，再将确认的 user_id 作为 target_user_id；禁止把昵称当作 target_user_id。";
@@ -157,36 +162,17 @@ const TOOL_DEFS = [
   {
     name: "upsert_trades",
     description:
-      "新增或更新本人交易记录（单笔 trade 或批量 trades，最多 50 条）。需要 scope write:ledger。symbol 可多种写法，服务端 normalize 后存库。校验失败返回 errors 与 format_spec。date=YYYY-MM-DD；price 最多3位小数；quantity 最多4位；amount 最多2位。",
-    inputSchema: {
-      type: "object",
-      properties: {
-        trade: { type: "object", description: "单笔交易" },
-        trades: {
-          type: "array",
-          items: { type: "object" },
-          description: "批量交易，最多 50 条",
-        },
-        strict: { type: "boolean", description: "默认 true：任一校验失败则整批不写入" },
-      },
-    },
+      `新增或更新本人交易记录（单笔 trade 或批量 trades，最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条）。需要 scope write:ledger。` +
+      "普通买卖(type=trade 或省略)必填：date、symbol、side、price、quantity、amount，以及 account_id 或 account_name 二选一（无默认账户）。" +
+      "分红/送股/拆股/并股字段要求见 inputSchema。校验失败返回 errors、format_spec 与 available_accounts。",
+    inputSchema: MCP_UPSERT_TRADES_INPUT_SCHEMA,
   },
   {
     name: "upsert_cash_transfers",
     description:
-      "新增或更新本人银证转账/资金记录（单笔 cash_transfer 或批量 cash_transfers，最多 50 条）。需要 scope write:ledger。date=YYYY-MM-DD；direction=in|out；amount>0 最多2位小数。",
-    inputSchema: {
-      type: "object",
-      properties: {
-        cash_transfer: { type: "object", description: "单笔资金记录" },
-        cash_transfers: {
-          type: "array",
-          items: { type: "object" },
-          description: "批量资金记录，最多 50 条",
-        },
-        strict: { type: "boolean", description: "默认 true：任一校验失败则整批不写入" },
-      },
-    },
+      `新增或更新本人银证转账/资金记录（单笔 cash_transfer 或批量 cash_transfers，最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条）。需要 scope write:ledger。` +
+      "必填：date、direction、amount，以及 account_id 或 account_name 二选一（无默认账户）。校验失败返回 available_accounts。",
+    inputSchema: MCP_UPSERT_CASH_TRANSFERS_INPUT_SCHEMA,
   },
 ];
 

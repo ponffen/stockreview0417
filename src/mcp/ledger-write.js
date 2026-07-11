@@ -15,45 +15,107 @@ const {
   hintDatesFromImportRows,
   notifyLedgerMutation,
 } = require("../metrics-invalidate");
+const {
+  MCP_LEDGER_WRITE_BATCH_MAX,
+  MCP_LEDGER_FORMAT_SPEC,
+} = require("./ledger-schema");
 
-const MCP_LEDGER_WRITE_BATCH_MAX = Math.min(
-  200,
-  Math.max(1, Number(process.env.MCP_LEDGER_WRITE_BATCH_MAX) || 50),
-);
+function formatAvailableAccounts(accounts) {
+  return (accounts || []).map((account) => ({
+    id: String(account.id || ""),
+    name: String(account.name || ""),
+    currency: String(account.currency || ""),
+  }));
+}
+
+function validationPayload(extra = {}, availableAccounts = null) {
+  const payload = { format_spec: MCP_LEDGER_FORMAT_SPEC, ...extra };
+  if (Array.isArray(availableAccounts) && availableAccounts.length) {
+    payload.available_accounts = formatAvailableAccounts(availableAccounts);
+  }
+  return payload;
+}
+
+function resolveAccountByName(nameRaw, accounts, index, errors) {
+  const name = String(nameRaw || "").trim();
+  const matches = (accounts || []).filter((account) => String(account.name || "").trim() === name);
+  if (!matches.length) {
+    pushError(
+      errors,
+      index,
+      "account_name",
+      "unknown_account",
+      "account_name 不存在",
+      name,
+      "本人已有账户名称",
+    );
+    return null;
+  }
+  if (matches.length > 1) {
+    pushError(
+      errors,
+      index,
+      "account_name",
+      "ambiguous_account",
+      "account_name 匹配到多个账户，请改用 account_id",
+      name,
+      matches.map((account) => account.id).join(", "),
+    );
+    return null;
+  }
+  return String(matches[0].id);
+}
+
+function resolveAccountInput(raw, accounts, index, errors) {
+  const idRaw = raw.account_id ?? raw.accountId;
+  const nameRaw = raw.account_name ?? raw.accountName;
+  const legacyRaw = raw.account;
+  const hasId = isPresent(idRaw);
+  const hasName = isPresent(nameRaw);
+  const hasLegacy = isPresent(legacyRaw);
+
+  if (!hasId && !hasName && !hasLegacy) {
+    pushError(
+      errors,
+      index,
+      "account_id",
+      "required",
+      "account_id 或 account_name 为必填",
+      null,
+      "account_id 或 account_name 二选一",
+    );
+    return null;
+  }
+
+  if (hasId) {
+    const accountId = String(idRaw).trim();
+    if ((accounts || []).some((account) => String(account.id) === accountId)) {
+      return accountId;
+    }
+    pushError(
+      errors,
+      index,
+      "account_id",
+      "unknown_account",
+      "account_id 不存在",
+      accountId,
+      "本人已有账户 id",
+    );
+    return null;
+  }
+
+  if (hasName) {
+    return resolveAccountByName(nameRaw, accounts, index, errors);
+  }
+
+  const legacy = String(legacyRaw).trim();
+  if ((accounts || []).some((account) => String(account.id) === legacy)) {
+    return legacy;
+  }
+  return resolveAccountByName(legacy, accounts, index, errors);
+}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-const MCP_LEDGER_FORMAT_SPEC = {
-  trade: {
-    date: "YYYY-MM-DD，例如 2026-06-24",
-    symbol: {
-      input:
-        "可传 A 股 6 位(600519)、带前缀(sh600519)、港股(00700/hk00700)、美股(tsm/us_tsm)、内置中文别名(台积电→tsm)",
-      stored: "normalize 后的 canonical 形式，如 sh600519、hk00700、tsm",
-    },
-    type: "trade | dividend | bonus | split | merge，默认 trade",
-    side: "type=trade 时必填：buy | sell（可接受 买入/卖出）",
-    price: "number，≥0，最多 3 位小数",
-    quantity: "number，≥0，最多 4 位小数",
-    amount: "number，>0 时最多 2 位小数；type=trade 可省略(默认 price×quantity)；type=dividend 必填",
-    account_id: "可选，默认 default，须为本人已有账户",
-    note: "可选，最长 500 字符",
-    id: "可选 UUID，有则更新",
-    forbidden: ["amount_share_ratio", "image_urls"],
-  },
-  cash_transfer: {
-    date: "YYYY-MM-DD，例如 2026-06-24",
-    direction: "必填：in | out（可接受 转入/转出）",
-    amount: "number，>0，最多 2 位小数",
-    account_id: "可选，默认 default",
-    note: "可选，最长 500 字符",
-    id: "可选 UUID，有则更新",
-  },
-  batch: {
-    max_items: MCP_LEDGER_WRITE_BATCH_MAX,
-    strict: "默认 true：任一校验失败则整批不写入",
-  },
-};
 
 class McpValidationError extends Error {
   constructor(payload) {
@@ -186,26 +248,30 @@ function checkForbiddenFields(raw, forbiddenKeys, index, errors) {
   }
 }
 
-function resolveBatchRows(input, singleKey, pluralKey) {
+function resolveBatchRows(input, singleKey, pluralKey, availableAccounts = null) {
   const hasSingle = input[singleKey] != null && typeof input[singleKey] === "object";
   const hasPlural = Array.isArray(input[pluralKey]);
   if (hasSingle && hasPlural) {
-    throw new McpValidationError({
-      ok: false,
-      code: "validation_error",
-      error: `请只传 ${singleKey} 或 ${pluralKey} 之一`,
-      errors: [
+    throw new McpValidationError(
+      validationPayload(
         {
-          index: -1,
-          field: singleKey,
-          code: "invalid_format",
-          message: `请只传 ${singleKey} 或 ${pluralKey} 之一`,
-          received: { [singleKey]: true, [pluralKey]: true },
-          expected: `二选一：${singleKey} 或 ${pluralKey}[]`,
+          ok: false,
+          code: "validation_error",
+          error: `请只传 ${singleKey} 或 ${pluralKey} 之一`,
+          errors: [
+            {
+              index: -1,
+              field: singleKey,
+              code: "invalid_format",
+              message: `请只传 ${singleKey} 或 ${pluralKey} 之一`,
+              received: { [singleKey]: true, [pluralKey]: true },
+              expected: `二选一：${singleKey} 或 ${pluralKey}[]`,
+            },
+          ],
         },
-      ],
-      format_spec: MCP_LEDGER_FORMAT_SPEC,
-    });
+        availableAccounts,
+      ),
+    );
   }
   if (hasSingle) {
     return [input[singleKey]];
@@ -213,28 +279,32 @@ function resolveBatchRows(input, singleKey, pluralKey) {
   if (hasPlural) {
     return input[pluralKey];
   }
-  throw new McpValidationError({
-    ok: false,
-    code: "validation_error",
-    error: `缺少 ${singleKey} 或 ${pluralKey}`,
-    errors: [
+  throw new McpValidationError(
+    validationPayload(
       {
-        index: -1,
-        field: pluralKey,
-        code: "required",
-        message: `请提供 ${singleKey} 或 ${pluralKey} 数组`,
-        received: null,
-        expected: `${singleKey} 对象或 ${pluralKey}[]`,
+        ok: false,
+        code: "validation_error",
+        error: `缺少 ${singleKey} 或 ${pluralKey}`,
+        errors: [
+          {
+            index: -1,
+            field: pluralKey,
+            code: "required",
+            message: `请提供 ${singleKey} 或 ${pluralKey} 数组`,
+            received: null,
+            expected: `${singleKey} 对象或 ${pluralKey}[]`,
+          },
+        ],
       },
-    ],
-    format_spec: MCP_LEDGER_FORMAT_SPEC,
-  });
+      availableAccounts,
+    ),
+  );
 }
 
 function validateNumberField(errors, index, field, raw, { min = null, maxDecimals, required, positive }) {
   if (!isPresent(raw)) {
     if (required) {
-      pushError(errors, index, field, "required", `${field} 为必填`, raw ?? null, MCP_LEDGER_FORMAT_SPEC.trade[field] || "number");
+      pushError(errors, index, field, "required", `${field} 为必填`, raw ?? null, "number");
     }
     return null;
   }
@@ -267,7 +337,7 @@ function validateNumberField(errors, index, field, raw, { min = null, maxDecimal
   return num;
 }
 
-async function validateTradeRow(raw, index, accountIds, userId, errors) {
+async function validateTradeRow(raw, index, accounts, userId, errors) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     pushError(errors, index, "trade", "invalid_format", "每条记录必须是对象", raw, "object");
     return null;
@@ -279,7 +349,15 @@ async function validateTradeRow(raw, index, accountIds, userId, errors) {
   const symbolInput = raw.symbol ?? raw.code ?? raw.stockCode ?? raw["证券代码"] ?? raw["代码"];
   const normalizedSymbol = normalizeSymbol(symbolInput);
   if (!isPresent(symbolInput)) {
-    pushError(errors, index, "symbol", "required", "symbol 为必填", symbolInput ?? null, MCP_LEDGER_FORMAT_SPEC.trade.symbol.input);
+    pushError(
+      errors,
+      index,
+      "symbol",
+      "required",
+      "symbol 为必填",
+      symbolInput ?? null,
+      MCP_LEDGER_FORMAT_SPEC.trade.symbol.input,
+    );
   } else if (!isValidStockSymbol(normalizedSymbol)) {
     pushError(
       errors,
@@ -299,10 +377,7 @@ async function validateTradeRow(raw, index, accountIds, userId, errors) {
     pushError(errors, index, "date", "invalid_format", "date 必须是 YYYY-MM-DD", dateRaw, MCP_LEDGER_FORMAT_SPEC.trade.date);
   }
 
-  const accountId = String(raw.account_id ?? raw.accountId ?? raw.account ?? "default").trim() || "default";
-  if (!accountIds.has(accountId)) {
-    pushError(errors, index, "account_id", "unknown_account", "account_id 不存在", accountId, "本人已有账户 id");
-  }
+  const accountId = resolveAccountInput(raw, accounts, index, errors);
 
   let side = parseSideInput(raw.side ?? raw.direction ?? raw["方向"] ?? raw["买卖"]);
   let price = null;
@@ -323,16 +398,12 @@ async function validateTradeRow(raw, index, accountIds, userId, errors) {
       maxDecimals: 4,
       required: true,
     });
-    const amountRaw = raw.amount ?? raw["发生金额"] ?? raw["成交金额"];
-    if (isPresent(amountRaw)) {
-      amount = validateNumberField(errors, index, "amount", amountRaw, {
-        min: 0,
-        maxDecimals: 2,
-        positive: true,
-      });
-    } else if (price != null && quantity != null) {
-      amount = Math.abs(price * quantity);
-    }
+    amount = validateNumberField(errors, index, "amount", raw.amount ?? raw["发生金额"] ?? raw["成交金额"], {
+      min: 0,
+      maxDecimals: 2,
+      required: true,
+      positive: true,
+    });
   } else if (type === "dividend") {
     side = "sell";
     price = 0;
@@ -396,6 +467,9 @@ async function validateTradeRow(raw, index, accountIds, userId, errors) {
   if (errors.some((e) => e.index === index)) {
     return null;
   }
+  if (!accountId) {
+    return null;
+  }
 
   const trade = normalizeTrade({
     ...raw,
@@ -415,7 +489,7 @@ async function validateTradeRow(raw, index, accountIds, userId, errors) {
   return { trade, prior, symbolInput: isPresent(symbolInput) ? String(symbolInput).trim() : "" };
 }
 
-async function validateCashTransferRow(raw, index, accountIds, userId, errors) {
+async function validateCashTransferRow(raw, index, accounts, userId, errors) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     pushError(errors, index, "cash_transfer", "invalid_format", "每条记录必须是对象", raw, "object");
     return null;
@@ -448,10 +522,7 @@ async function validateCashTransferRow(raw, index, accountIds, userId, errors) {
     positive: true,
   });
 
-  const accountId = String(raw.account_id ?? raw.accountId ?? raw.account ?? "default").trim() || "default";
-  if (!accountIds.has(accountId)) {
-    pushError(errors, index, "account_id", "unknown_account", "account_id 不存在", accountId, "本人已有账户 id");
-  }
+  const accountId = resolveAccountInput(raw, accounts, index, errors);
 
   const note = raw.note ?? raw.remark ?? raw["备注"];
   if (note != null && String(note).length > 500) {
@@ -470,6 +541,9 @@ async function validateCashTransferRow(raw, index, accountIds, userId, errors) {
   if (errors.some((e) => e.index === index)) {
     return null;
   }
+  if (!accountId) {
+    return null;
+  }
 
   const row = normalizeCashTransfer({
     ...raw,
@@ -485,80 +559,90 @@ async function validateCashTransferRow(raw, index, accountIds, userId, errors) {
   return { row, prior };
 }
 
-function buildValidationFailure(errors, total) {
+function buildValidationFailure(errors, total, availableAccounts) {
   const invalidIndexes = new Set(errors.map((e) => e.index));
-  return {
-    ok: false,
-    code: "validation_error",
-    error: `批量校验失败：${total} 条记录中有 ${invalidIndexes.size} 条不符合格式`,
-    summary: {
-      total,
-      invalid: invalidIndexes.size,
-      valid: Math.max(0, total - invalidIndexes.size),
+  return validationPayload(
+    {
+      ok: false,
+      code: "validation_error",
+      error: `批量校验失败：${total} 条记录中有 ${invalidIndexes.size} 条不符合格式`,
+      summary: {
+        total,
+        invalid: invalidIndexes.size,
+        valid: Math.max(0, total - invalidIndexes.size),
+      },
+      errors,
     },
-    errors,
-    format_spec: MCP_LEDGER_FORMAT_SPEC,
-  };
+    availableAccounts,
+  );
 }
 
-async function loadAccountIdSet(userId) {
-  const accounts = await getAccounts(userId);
-  return new Set(accounts.map((a) => String(a.id)));
+async function loadAccountsForUser(userId) {
+  return getAccounts(userId);
 }
 
 async function upsertTradesViaMcp(userId, input) {
+  const accounts = await loadAccountsForUser(userId);
+
   if (input.strict === false) {
-    throw new McpValidationError({
-      ok: false,
-      code: "validation_error",
-      error: "暂不支持 strict=false 部分成功模式",
-      errors: [
+    throw new McpValidationError(
+      validationPayload(
         {
-          index: -1,
-          field: "strict",
-          code: "invalid_format",
-          message: "仅支持 strict=true（默认）",
-          received: false,
-          expected: "true 或省略",
+          ok: false,
+          code: "validation_error",
+          error: "暂不支持 strict=false 部分成功模式",
+          errors: [
+            {
+              index: -1,
+              field: "strict",
+              code: "invalid_format",
+              message: "仅支持 strict=true（默认）",
+              received: false,
+              expected: "true 或省略",
+            },
+          ],
         },
-      ],
-      format_spec: MCP_LEDGER_FORMAT_SPEC,
-    });
+        accounts,
+      ),
+    );
   }
 
-  const rows = resolveBatchRows(input, "trade", "trades");
+  const rows = resolveBatchRows(input, "trade", "trades", accounts);
   if (rows.length > MCP_LEDGER_WRITE_BATCH_MAX) {
-    throw new McpValidationError({
-      ok: false,
-      code: "validation_error",
-      error: `批量条数超过上限 ${MCP_LEDGER_WRITE_BATCH_MAX}`,
-      errors: [
+    throw new McpValidationError(
+      validationPayload(
         {
-          index: -1,
-          field: "trades",
-          code: "batch_too_large",
-          message: `单次最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条`,
-          received: rows.length,
-          expected: `≤ ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+          ok: false,
+          code: "validation_error",
+          error: `批量条数超过上限 ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+          errors: [
+            {
+              index: -1,
+              field: "trades",
+              code: "batch_too_large",
+              message: `单次最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条`,
+              received: rows.length,
+              expected: `≤ ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+            },
+          ],
         },
-      ],
-      format_spec: MCP_LEDGER_FORMAT_SPEC,
-    });
+        accounts,
+      ),
+    );
   }
 
-  const accountIds = await loadAccountIdSet(userId);
   const errors = [];
   const normalized = [];
 
   for (let index = 0; index < rows.length; index += 1) {
-    const item = await validateTradeRow(rows[index], index, accountIds, userId, errors);
+    const item = await validateTradeRow(rows[index], index, accounts, userId, errors);
     if (item) {
       normalized.push(item);
     }
   }
 
   if (errors.length) {
-    throw new McpValidationError(buildValidationFailure(errors, rows.length));
+    throw new McpValidationError(buildValidationFailure(errors, rows.length, accounts));
   }
 
   const saved = [];
@@ -596,58 +680,67 @@ async function upsertTradesViaMcp(userId, input) {
 }
 
 async function upsertCashTransfersViaMcp(userId, input) {
+  const accounts = await loadAccountsForUser(userId);
+
   if (input.strict === false) {
-    throw new McpValidationError({
-      ok: false,
-      code: "validation_error",
-      error: "暂不支持 strict=false 部分成功模式",
-      errors: [
+    throw new McpValidationError(
+      validationPayload(
         {
-          index: -1,
-          field: "strict",
-          code: "invalid_format",
-          message: "仅支持 strict=true（默认）",
-          received: false,
-          expected: "true 或省略",
+          ok: false,
+          code: "validation_error",
+          error: "暂不支持 strict=false 部分成功模式",
+          errors: [
+            {
+              index: -1,
+              field: "strict",
+              code: "invalid_format",
+              message: "仅支持 strict=true（默认）",
+              received: false,
+              expected: "true 或省略",
+            },
+          ],
         },
-      ],
-      format_spec: MCP_LEDGER_FORMAT_SPEC,
-    });
+        accounts,
+      ),
+    );
   }
 
-  const rows = resolveBatchRows(input, "cash_transfer", "cash_transfers");
+  const rows = resolveBatchRows(input, "cash_transfer", "cash_transfers", accounts);
   if (rows.length > MCP_LEDGER_WRITE_BATCH_MAX) {
-    throw new McpValidationError({
-      ok: false,
-      code: "validation_error",
-      error: `批量条数超过上限 ${MCP_LEDGER_WRITE_BATCH_MAX}`,
-      errors: [
+    throw new McpValidationError(
+      validationPayload(
         {
-          index: -1,
-          field: "cash_transfers",
-          code: "batch_too_large",
-          message: `单次最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条`,
-          received: rows.length,
-          expected: `≤ ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+          ok: false,
+          code: "validation_error",
+          error: `批量条数超过上限 ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+          errors: [
+            {
+              index: -1,
+              field: "cash_transfers",
+              code: "batch_too_large",
+              message: `单次最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条`,
+              received: rows.length,
+              expected: `≤ ${MCP_LEDGER_WRITE_BATCH_MAX}`,
+            },
+          ],
         },
-      ],
-      format_spec: MCP_LEDGER_FORMAT_SPEC,
-    });
+        accounts,
+      ),
+    );
   }
 
-  const accountIds = await loadAccountIdSet(userId);
   const errors = [];
   const normalized = [];
 
   for (let index = 0; index < rows.length; index += 1) {
-    const item = await validateCashTransferRow(rows[index], index, accountIds, userId, errors);
+    const item = await validateCashTransferRow(rows[index], index, accounts, userId, errors);
     if (item) {
       normalized.push(item);
     }
   }
 
   if (errors.length) {
-    throw new McpValidationError(buildValidationFailure(errors, rows.length));
+    throw new McpValidationError(buildValidationFailure(errors, rows.length, accounts));
   }
 
   const saved = [];
@@ -683,4 +776,6 @@ module.exports = {
   McpValidationError,
   upsertTradesViaMcp,
   upsertCashTransfersViaMcp,
+  formatAvailableAccounts,
+  resolveAccountInput,
 };
