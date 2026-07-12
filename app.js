@@ -5639,8 +5639,7 @@ function dynamicsCardBodyHtml(card, view) {
   }
   return `<div class="dyn-card__slot dyn-card__slot--body">
     <div class="dyn-card__body-wrap" data-dynamics-body-wrap>
-      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}</div>
-      <button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button>
+      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}<button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button></div>
     </div>
   </div>`;
 }
@@ -5997,6 +5996,9 @@ async function toggleFollowCommunity(userId, btnEl) {
 }
 
 function handleDynamicsListClick(event, { editable = false } = {}) {
+  if (event.target.closest("[data-dynamics-body-toggle]")) {
+    return;
+  }
   if (
     event.target.closest("[data-community-feed-stock-analysis]") ||
     event.target.closest("[data-community-feed-portfolio-analysis]")

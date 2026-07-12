@@ -4323,7 +4323,6 @@ body.subscription-expired-mode {
 }
 
 .dyn-card__body-wrap {
-  position: relative;
   display: block;
 }
 
@@ -4339,34 +4338,39 @@ body.subscription-expired-mode {
   word-break: break-word;
 }
 
-.dyn-card__body-wrap:has([data-dynamics-body-toggle]:not(.hidden)) [data-dynamics-body] {
-  padding-right: 2.75em;
-}
-
 .dyn-card__body.is-collapsed {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  max-height: calc(18px * 1.5 * 4);
   overflow: hidden;
 }
 
+.dyn-card__body.is-collapsed::before {
+  content: "";
+  float: right;
+  width: 0;
+  height: calc(18px * 1.5 * 3);
+}
+
 .dyn-card__body-toggle {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  margin: 0;
-  padding: 0 0 0 18px;
+  margin: 0 0 0 4px;
+  padding: 0;
   border: none;
-  background: linear-gradient(90deg, rgb(255 255 255 / 0), var(--surface-content) 16px);
+  background: none;
   color: var(--blue);
   font-size: 14px;
-  line-height: calc(18px * 1.5);
+  line-height: inherit;
+  vertical-align: baseline;
   cursor: pointer;
 }
 
-.dyn-card__body-wrap:not(:has(.is-collapsed)) .dyn-card__body-toggle {
-  padding-left: 6px;
-  background: var(--surface-content);
+.dyn-card__body.is-collapsed .dyn-card__body-toggle:not(.hidden) {
+  float: right;
+  clear: both;
+  margin: 0 0 0 8px;
+  line-height: calc(18px * 1.5);
+}
+
+.dyn-card__body:not(.is-collapsed) .dyn-card__body-toggle:not(.hidden) {
+  display: inline;
 }
 
 .dyn-card__body-toggle.hidden {
