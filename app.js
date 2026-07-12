@@ -5852,7 +5852,7 @@ function bindDynamicsBodyToggleOnce() {
     const willCollapse = btn.getAttribute("aria-expanded") === "true";
     const applyToggle = () => {
       if (willCollapse) {
-        if (btn.parentElement === body) {
+        if (btn.parentElement !== wrap) {
           wrap.appendChild(btn);
         }
         wrap.classList.add("is-collapsed");
@@ -5860,11 +5860,11 @@ function bindDynamicsBodyToggleOnce() {
         btn.textContent = "展开";
         btn.setAttribute("aria-expanded", "false");
       } else {
+        if (btn.parentElement !== wrap) {
+          wrap.appendChild(btn);
+        }
         wrap.classList.remove("is-collapsed");
         body.classList.remove("is-collapsed");
-        if (btn.parentElement !== body) {
-          body.appendChild(btn);
-        }
         btn.textContent = "折叠";
         btn.setAttribute("aria-expanded", "true");
       }

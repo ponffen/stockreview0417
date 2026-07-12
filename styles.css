@@ -4358,19 +4358,22 @@ body.subscription-expired-mode {
   cursor: pointer;
 }
 
-.dyn-card__body-wrap.is-collapsed > .dyn-card__body-toggle:not(.hidden) {
+.dyn-card__body-wrap > .dyn-card__body-toggle:not(.hidden) {
   position: absolute;
   right: 0;
   bottom: 0;
   margin: 0;
   padding: 0 0 0 12px;
   line-height: calc(18px * 1.5);
+}
+
+.dyn-card__body-wrap.is-collapsed > .dyn-card__body-toggle:not(.hidden) {
   background: linear-gradient(90deg, transparent, var(--surface-content) 10px);
 }
 
-.dyn-card__body:not(.is-collapsed) > .dyn-card__body-toggle:not(.hidden) {
-  display: inline;
-  margin-left: 4px;
+.dyn-card__body-wrap:not(.is-collapsed) > .dyn-card__body-toggle:not(.hidden) {
+  padding-left: 6px;
+  background: var(--surface-content);
 }
 
 .dyn-card__body-toggle.hidden {
