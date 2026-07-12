@@ -5874,22 +5874,23 @@ function syncDynamicsCardBodyCollapse(root) {
   if (!root) {
     return;
   }
+  const collapsedMaxHeightPx = 18 * 1.5 * 4;
   root.querySelectorAll("[data-dynamics-body-wrap]").forEach((wrap) => {
     const body = wrap.querySelector("[data-dynamics-body]");
     const toggle = wrap.querySelector("[data-dynamics-body-toggle]");
     if (!body || !toggle) {
       return;
     }
-    body.classList.add("is-collapsed");
     toggle.classList.add("hidden");
     toggle.setAttribute("aria-expanded", "false");
     toggle.textContent = "展开";
-    const needsToggle = body.scrollHeight > body.clientHeight + 1;
+    body.classList.remove("is-collapsed");
+    const needsToggle = body.scrollHeight > collapsedMaxHeightPx + 1;
     if (needsToggle) {
+      body.classList.add("is-collapsed");
       toggle.classList.remove("hidden");
       return;
     }
-    body.classList.remove("is-collapsed");
   });
 }
 
