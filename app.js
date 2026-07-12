@@ -5639,7 +5639,8 @@ function dynamicsCardBodyHtml(card, view) {
   }
   return `<div class="dyn-card__slot dyn-card__slot--body">
     <div class="dyn-card__body-wrap" data-dynamics-body-wrap>
-      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}<button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button></div>
+      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}</div>
+      <button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button>
     </div>
   </div>`;
 }
@@ -5851,11 +5852,19 @@ function bindDynamicsBodyToggleOnce() {
     const willCollapse = btn.getAttribute("aria-expanded") === "true";
     const applyToggle = () => {
       if (willCollapse) {
+        if (btn.parentElement === body) {
+          wrap.appendChild(btn);
+        }
+        wrap.classList.add("is-collapsed");
         body.classList.add("is-collapsed");
         btn.textContent = "展开";
         btn.setAttribute("aria-expanded", "false");
       } else {
+        wrap.classList.remove("is-collapsed");
         body.classList.remove("is-collapsed");
+        if (btn.parentElement !== body) {
+          body.appendChild(btn);
+        }
         btn.textContent = "折叠";
         btn.setAttribute("aria-expanded", "true");
       }
@@ -5870,28 +5879,76 @@ function bindDynamicsBodyToggleOnce() {
   });
 }
 
+function measureDynamicsBodyNeedsToggle(body) {
+  const lineClamp = 4;
+  const width = body.clientWidth || body.parentElement?.clientWidth || 0;
+  if (width <= 0) {
+    return null;
+  }
+  const style = getComputedStyle(body);
+  const fontSize = parseFloat(style.fontSize) || 18;
+  const lineHeightRaw = style.lineHeight;
+  const lineHeight =
+    lineHeightRaw === "normal" ? fontSize * 1.5 : parseFloat(lineHeightRaw) || fontSize * 1.5;
+  const maxHeight = lineHeight * lineClamp;
+  const hadCollapsed = body.classList.contains("is-collapsed");
+  body.classList.remove("is-collapsed");
+  void body.offsetHeight;
+  const fullHeight = body.scrollHeight;
+  if (hadCollapsed) {
+    body.classList.add("is-collapsed");
+  }
+  return fullHeight > maxHeight + 1;
+}
+
+function applyDynamicsBodyCollapseState(wrap) {
+  const body = wrap.querySelector("[data-dynamics-body]");
+  const toggle = wrap.querySelector("[data-dynamics-body-toggle]");
+  if (!body || !toggle) {
+    return;
+  }
+  toggle.classList.add("hidden");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "展开";
+  wrap.classList.remove("is-collapsed");
+  body.classList.remove("is-collapsed");
+  if (toggle.parentElement === body) {
+    wrap.appendChild(toggle);
+  }
+  const needsToggle = measureDynamicsBodyNeedsToggle(body);
+  if (needsToggle) {
+    wrap.classList.add("is-collapsed");
+    body.classList.add("is-collapsed");
+    toggle.classList.remove("hidden");
+  }
+}
+
 function syncDynamicsCardBodyCollapse(root) {
   if (!root) {
     return;
   }
-  const collapsedMaxHeightPx = 18 * 1.5 * 4;
-  root.querySelectorAll("[data-dynamics-body-wrap]").forEach((wrap) => {
-    const body = wrap.querySelector("[data-dynamics-body]");
-    const toggle = wrap.querySelector("[data-dynamics-body-toggle]");
-    if (!body || !toggle) {
+  const run = () => {
+    const wraps = [...root.querySelectorAll("[data-dynamics-body-wrap]")];
+    if (!wraps.length) {
       return;
     }
-    toggle.classList.add("hidden");
-    toggle.setAttribute("aria-expanded", "false");
-    toggle.textContent = "展开";
-    body.classList.remove("is-collapsed");
-    const needsToggle = body.scrollHeight > collapsedMaxHeightPx + 1;
-    if (needsToggle) {
-      body.classList.add("is-collapsed");
-      toggle.classList.remove("hidden");
-      return;
+    let retry = false;
+    wraps.forEach((wrap) => {
+      const body = wrap.querySelector("[data-dynamics-body]");
+      if (!body) {
+        return;
+      }
+      if ((body.clientWidth || body.parentElement?.clientWidth || 0) <= 0) {
+        retry = true;
+        return;
+      }
+      applyDynamicsBodyCollapseState(wrap);
+    });
+    if (retry) {
+      requestAnimationFrame(run);
     }
-  });
+  };
+  requestAnimationFrame(run);
 }
 
 async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText }) {
