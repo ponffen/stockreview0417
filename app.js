@@ -5795,6 +5795,43 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
   syncDynamicsCardBodyCollapse(container);
 }
 
+function preserveViewportAroundDynamicsToggle(btn, mutate) {
+  const scroller = findScrollableAncestor(btn);
+  const useWindow =
+    scroller === document.documentElement ||
+    scroller === document.body ||
+    scroller === document.scrollingElement;
+  const anchorTop = btn.getBoundingClientRect().top;
+  mutate();
+  requestAnimationFrame(() => {
+    const delta = btn.getBoundingClientRect().top - anchorTop;
+    if (Math.abs(delta) <= 0.5) {
+      return;
+    }
+    if (useWindow) {
+      window.scrollBy({ top: delta, left: 0, behavior: "auto" });
+      return;
+    }
+    scroller.scrollTop += delta;
+  });
+}
+
+function findScrollableAncestor(el) {
+  let node = el?.parentElement;
+  while (node && node !== document.documentElement) {
+    const style = getComputedStyle(node);
+    const oy = style.overflowY;
+    if (
+      (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+      node.scrollHeight > node.clientHeight + 1
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
 function bindDynamicsBodyToggleOnce() {
   if (dynamicsBodyToggleBound) {
     return;
@@ -5813,15 +5850,17 @@ function bindDynamicsBodyToggleOnce() {
       return;
     }
     const expanded = btn.getAttribute("aria-expanded") === "true";
-    if (expanded) {
-      body.classList.add("is-collapsed");
-      btn.textContent = "展开";
-      btn.setAttribute("aria-expanded", "false");
-    } else {
-      body.classList.remove("is-collapsed");
-      btn.textContent = "折叠";
-      btn.setAttribute("aria-expanded", "true");
-    }
+    preserveViewportAroundDynamicsToggle(btn, () => {
+      if (expanded) {
+        body.classList.add("is-collapsed");
+        btn.textContent = "展开";
+        btn.setAttribute("aria-expanded", "false");
+      } else {
+        body.classList.remove("is-collapsed");
+        btn.textContent = "折叠";
+        btn.setAttribute("aria-expanded", "true");
+      }
+    });
   });
 }
 
