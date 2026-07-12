@@ -171,6 +171,7 @@ function closeLoginPageReturnBrowse() {
   showAppShell();
 }
 let analysisStockRankHelpListenersBound = false;
+let dynamicsBodyToggleBound = false;
 let holdingsAiConnectionLoading = false;
 const holdingsAiProvidersState = {
   mcpUrl: "https://www.higcc.com/mcp",
@@ -5793,8 +5794,6 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
     (state.loading ? `<p class="empty">加载中…</p>` : "");
   syncDynamicsCardBodyCollapse(container);
 }
-
-let dynamicsBodyToggleBound = false;
 
 function bindDynamicsBodyToggleOnce() {
   if (dynamicsBodyToggleBound) {
