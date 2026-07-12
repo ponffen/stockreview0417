@@ -4321,6 +4321,10 @@ body.subscription-expired-mode {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.dyn-card__body-wrap {
+  display: block;
+}
+
 .dyn-card__body,
 .dynamics-list .dyn-card .community-feed-card__content {
   margin: 0;
@@ -4329,6 +4333,30 @@ body.subscription-expired-mode {
   font-size: 18px;
   line-height: 1.5;
   color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dyn-card__body.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.dyn-card__body-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.dyn-card__body-toggle.hidden {
+  display: none;
 }
 
 .dyn-card__slot--footer,

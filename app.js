@@ -3362,6 +3362,7 @@ async function deleteTradeFromApi(tradeId) {
 }
 
 function bindEvents() {
+  bindDynamicsBodyToggleOnce();
   stockCurrencyToggle?.addEventListener("click", () => {
     state.stockAmountDisplay = state.stockAmountDisplay === "cny" ? "native" : "cny";
     persistState();
@@ -5635,7 +5636,12 @@ function dynamicsCardBodyHtml(card, view) {
   if (!text) {
     return "";
   }
-  return `<div class="dyn-card__slot dyn-card__slot--body"><p class="dyn-card__body community-feed-note community-feed-card__content">${linkifyDynamicsText(text)}</p></div>`;
+  return `<div class="dyn-card__slot dyn-card__slot--body">
+    <div class="dyn-card__body-wrap" data-dynamics-body-wrap>
+      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}</div>
+      <button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button>
+    </div>
+  </div>`;
 }
 
 function dynamicsCardImagesHtml(card, view) {
@@ -5785,6 +5791,62 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
   container.innerHTML =
     state.items.map((card) => dynamicsCardHtml(card, { editable })).join(gap) +
     (state.loading ? `<p class="empty">加载中…</p>` : "");
+  syncDynamicsCardBodyCollapse(container);
+}
+
+let dynamicsBodyToggleBound = false;
+
+function bindDynamicsBodyToggleOnce() {
+  if (dynamicsBodyToggleBound) {
+    return;
+  }
+  dynamicsBodyToggleBound = true;
+  document.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-dynamics-body-toggle]");
+    if (!btn) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const wrap = btn.closest("[data-dynamics-body-wrap]");
+    const body = wrap?.querySelector("[data-dynamics-body]");
+    if (!body) {
+      return;
+    }
+    const expanded = btn.getAttribute("aria-expanded") === "true";
+    if (expanded) {
+      body.classList.add("is-collapsed");
+      btn.textContent = "展开";
+      btn.setAttribute("aria-expanded", "false");
+    } else {
+      body.classList.remove("is-collapsed");
+      btn.textContent = "折叠";
+      btn.setAttribute("aria-expanded", "true");
+    }
+  });
+}
+
+function syncDynamicsCardBodyCollapse(root) {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll("[data-dynamics-body-wrap]").forEach((wrap) => {
+    const body = wrap.querySelector("[data-dynamics-body]");
+    const toggle = wrap.querySelector("[data-dynamics-body-toggle]");
+    if (!body || !toggle) {
+      return;
+    }
+    body.classList.add("is-collapsed");
+    toggle.classList.add("hidden");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "展开";
+    const needsToggle = body.scrollHeight > body.clientHeight + 1;
+    if (needsToggle) {
+      toggle.classList.remove("hidden");
+      return;
+    }
+    body.classList.remove("is-collapsed");
+  });
 }
 
 async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText }) {
@@ -5990,6 +6052,7 @@ async function loadGuestCommunityFeed() {
       cardsHtml +
       guestFeedLoginSeparatorHtml() +
       guestFeedLoginBannerHtml("bottom");
+    syncDynamicsCardBodyCollapse(communityFeedList);
   } catch {
     communityFeedList.innerHTML = `<p class="empty">网络错误</p>`;
   } finally {
