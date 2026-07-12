@@ -4323,6 +4323,7 @@ body.subscription-expired-mode {
 }
 
 .dyn-card__body-wrap {
+  position: relative;
   display: block;
 }
 
@@ -4338,6 +4339,10 @@ body.subscription-expired-mode {
   word-break: break-word;
 }
 
+.dyn-card__body-wrap:has([data-dynamics-body-toggle]:not(.hidden)) [data-dynamics-body] {
+  padding-right: 2.75em;
+}
+
 .dyn-card__body.is-collapsed {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -4346,14 +4351,22 @@ body.subscription-expired-mode {
 }
 
 .dyn-card__body-toggle {
-  margin-top: 8px;
-  padding: 0;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0 0 0 18px;
   border: none;
-  background: none;
+  background: linear-gradient(90deg, rgb(255 255 255 / 0), var(--surface-content) 16px);
   color: var(--blue);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: calc(18px * 1.5);
   cursor: pointer;
+}
+
+.dyn-card__body-wrap:not(:has(.is-collapsed)) .dyn-card__body-toggle {
+  padding-left: 6px;
+  background: var(--surface-content);
 }
 
 .dyn-card__body-toggle.hidden {
