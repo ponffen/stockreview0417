@@ -5795,16 +5795,16 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
   syncDynamicsCardBodyCollapse(container);
 }
 
-function preserveViewportAroundDynamicsToggle(btn, mutate) {
-  const scroller = findScrollableAncestor(btn);
+function preserveViewportAroundAnchor(anchorEl, mutate) {
+  const scroller = findScrollableAncestor(anchorEl);
   const useWindow =
     scroller === document.documentElement ||
     scroller === document.body ||
     scroller === document.scrollingElement;
-  const anchorTop = btn.getBoundingClientRect().top;
+  const anchorTop = anchorEl.getBoundingClientRect().top;
   mutate();
   requestAnimationFrame(() => {
-    const delta = btn.getBoundingClientRect().top - anchorTop;
+    const delta = anchorEl.getBoundingClientRect().top - anchorTop;
     if (Math.abs(delta) <= 0.5) {
       return;
     }
@@ -5849,9 +5849,9 @@ function bindDynamicsBodyToggleOnce() {
     if (!body) {
       return;
     }
-    const expanded = btn.getAttribute("aria-expanded") === "true";
-    preserveViewportAroundDynamicsToggle(btn, () => {
-      if (expanded) {
+    const willCollapse = btn.getAttribute("aria-expanded") === "true";
+    const applyToggle = () => {
+      if (willCollapse) {
         body.classList.add("is-collapsed");
         btn.textContent = "展开";
         btn.setAttribute("aria-expanded", "false");
@@ -5860,7 +5860,14 @@ function bindDynamicsBodyToggleOnce() {
         btn.textContent = "折叠";
         btn.setAttribute("aria-expanded", "true");
       }
-    });
+    };
+    if (willCollapse) {
+      // 折叠：上方内容收起，以按钮为锚点保持当前浏览位置
+      preserveViewportAroundAnchor(btn, applyToggle);
+    } else {
+      // 展开：内容向下展开，正文顶部不动，视口不滚动
+      preserveViewportAroundAnchor(body, applyToggle);
+    }
   });
 }
 
