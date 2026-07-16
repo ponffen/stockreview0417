@@ -4126,6 +4126,11 @@ function bindEvents() {
     hideLedgerNoteSuggest(tradeNoteSuggest);
     tradeDialog.close();
   });
+  tradeDialog?.addEventListener("close", () => {
+    requestAnimationFrame(() => {
+      clearLedgerMutationContext();
+    });
+  });
   setupLedgerNoteField(tradeNoteInput, tradeNoteSuggest);
   setupLedgerNoteField(cashTransferNote, cashTransferNoteSuggest);
   tradeTypeInput.addEventListener("change", applyTradeTypePreset);
@@ -4181,8 +4186,10 @@ function bindEvents() {
       return;
     }
 
+    const editingTradeId = state.editingTradeId;
+    const prevTrade = editingTradeId ? findTradeById(editingTradeId) : null;
     const trade = normalizeTrade({
-      id: state.editingTradeId || crypto.randomUUID(),
+      id: editingTradeId || crypto.randomUUID(),
       accountId: String(formData.get("accountId") || DEFAULT_ACCOUNT.id),
       type,
       symbol,
@@ -4198,7 +4205,7 @@ function bindEvents() {
     });
 
     state.useDemoData = false;
-    const isNewTrade = !state.editingTradeId;
+    const isNewTrade = !editingTradeId;
     let savedTrade = trade;
     try {
       savedTrade = await saveTradeToApi(trade);
@@ -4208,9 +4215,9 @@ function bindEvents() {
     if (isNewTrade) {
       bumpLedgerCount("trades", 1);
     }
-    if (state.editingTradeId) {
-      state.trades = state.trades.filter((item) => item.id !== state.editingTradeId);
-      state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== state.editingTradeId);
+    if (editingTradeId) {
+      state.trades = state.trades.filter((item) => item.id !== editingTradeId);
+      state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== editingTradeId);
     }
     state.trades.push(savedTrade);
     state.trades.sort(sortTradeAsc);
@@ -4227,18 +4234,11 @@ function bindEvents() {
     clearEditState();
     tradeDialog.close();
     renderAll();
-    invalidateTradeListAfterMutation();
-    invalidateStockRecordTradesAfterMutation();
     const tradeSymbols = [savedTrade.symbol];
-    if (state.editingTradeId) {
-      const prevTrade = findTradeById(state.editingTradeId);
-      if (prevTrade?.symbol) {
-        tradeSymbols.push(prevTrade.symbol);
-      }
+    if (prevTrade?.symbol) {
+      tradeSymbols.push(prevTrade.symbol);
     }
-    invalidateStockDynamicsListForSymbols(tradeSymbols);
-    scheduleMetricsRebuildUiRefresh();
-    void refreshMarketData();
+    void refreshAfterLedgerMutation({ kind: "trade", symbol: savedTrade.symbol, symbols: tradeSymbols });
   });
 
   if (setCapitalBtn) {
@@ -4285,6 +4285,11 @@ function bindEvents() {
   closePublishDynamicsBtn?.addEventListener("click", () => publishDynamicsDialog?.close());
   publishDynamicsDialog?.addEventListener("close", () => {
     document.documentElement.classList.remove("dynamics-compose-open");
+    requestAnimationFrame(() => {
+      if (!state.tradeSearchPickForDynamics) {
+        clearLedgerMutationContext();
+      }
+    });
   });
   publishDynamicsContent?.addEventListener("input", () => {
     syncPublishDynamicsTextareaHeight();
@@ -4360,15 +4365,12 @@ function bindEvents() {
     }
     try {
       await deleteDynamicsPostById(postId);
-      publishDynamicsDialog?.close();
-      invalidateStockDynamicsListForSymbols([
+      const postSymbolsToInvalidate = [
         ...publishDynamicsState.symbols.map((s) => s.symbol),
         ...(publishDynamicsState.originalSymbols || []),
-      ]);
-      resetDynamicsListState("portfolio-dynamics");
-      if (state.route === "dynamics") {
-        void loadPortfolioDynamics();
-      }
+      ];
+      publishDynamicsDialog?.close();
+      void refreshAfterLedgerMutation({ kind: "post", symbols: postSymbolsToInvalidate });
     } catch (error) {
       if (publishDynamicsError) {
         publishDynamicsError.textContent = error?.message || "删除失败";
@@ -4406,11 +4408,7 @@ function bindEvents() {
         throw new Error(j?.error || "保存失败");
       }
       publishDynamicsDialog?.close();
-      invalidateStockDynamicsListForSymbols(postSymbolsToInvalidate);
-      resetDynamicsListState("portfolio-dynamics");
-      if (state.route === "dynamics") {
-        void loadPortfolioDynamics();
-      }
+      void refreshAfterLedgerMutation({ kind: "post", symbols: postSymbolsToInvalidate });
     } catch (error) {
       if (publishDynamicsError) {
         publishDynamicsError.textContent = error?.message || "保存失败";
@@ -4432,13 +4430,10 @@ function bindEvents() {
       const affectedSymbols = collectDynamicsCardSymbols(target);
       if (target.cardKind === "post") {
         await deleteDynamicsPostById(target.id);
-        invalidateStockDynamicsListForSymbols(affectedSymbols);
+        void refreshAfterLedgerMutation({ kind: "post", symbols: affectedSymbols });
       } else if (target.cardKind === "trade") {
-        await removeTradeById(target.id);
-      }
-      resetDynamicsListState("portfolio-dynamics");
-      if (state.route === "dynamics") {
-        void loadPortfolioDynamics();
+        await removeTradeById(target.id, { skipRefresh: true });
+        void refreshAfterLedgerMutation({ kind: "trade", symbol: target.symbol, symbols: affectedSymbols });
       }
     } catch (error) {
       console.error(error);
@@ -4779,7 +4774,7 @@ function syncTradeAmountFromPriceQuantity() {
   tradeAmountInput.value = formatPlainMoney(amt);
 }
 
-function openNewTradeDialog(prefill) {
+function openNewTradeDialog(prefill, contextOverrides = {}) {
   clearEditState();
   tradeForm.reset();
   tradeTypeInput.value = "trade";
@@ -4804,6 +4799,7 @@ function openNewTradeDialog(prefill) {
   }
   hideLedgerNoteSuggest(tradeNoteSuggest);
   resetTradeFormImages();
+  setLedgerMutationContext("trade", contextOverrides);
   tradeDialog.showModal();
   resetLedgerNoteTextarea(tradeNoteInput);
   syncTradeAmountFromPriceQuantity();
@@ -4938,6 +4934,7 @@ function applyStockSearchPick(symbol, name) {
     reopenPublishDynamicsDialog();
     return;
   }
+  const returnSurface = ledgerSurfaceFromRoute(state.tradeSearchReturnRoute || "trade");
   state.appModule = "holdings";
   state.route = "trade";
   state.tradeSearchReturnRoute = "trade";
@@ -4947,7 +4944,7 @@ function applyStockSearchPick(symbol, name) {
   clearTradeSearchResults();
   persistState();
   renderRoute();
-  openNewTradeDialog({ symbol: sym, name: n });
+  openNewTradeDialog({ symbol: sym, name: n }, returnSurface);
 }
 
 
@@ -5788,6 +5785,225 @@ function getDynamicsListState(key) {
   return dynamicsListStore.get(key);
 }
 
+let ledgerMutationContext = null;
+
+function detectLedgerMutationSurface() {
+  const route = String(state.route || "");
+  if (route === "stock-record" && state.activeRecordSymbol) {
+    return {
+      surface: "stock-record",
+      symbol: normalizeSymbol(state.activeRecordSymbol),
+      stockRecordPublic: Boolean(state.stockRecordFromPublicProfile),
+      profileUserId: state.stockRecordFromPublicProfile
+        ? String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim()
+        : "",
+    };
+  }
+  if (route === "dynamics") {
+    return { surface: "portfolio-dynamics" };
+  }
+  if (route === "trade-records") {
+    return { surface: "trade-records" };
+  }
+  if (route === "trade-cash") {
+    return { surface: "trade-cash" };
+  }
+  if (route === "earning") {
+    return { surface: "earning" };
+  }
+  if (route === "analysis") {
+    return { surface: "analysis" };
+  }
+  if (route === "community-feed") {
+    return { surface: "community-feed" };
+  }
+  if (route === "community-profile") {
+    const tab = state.communityProfileTab || "earning";
+    const profileUserId = String(state.communityProfileUserId || "").trim();
+    if (tab === "dynamics") {
+      return { surface: "profile-dynamics", profileUserId };
+    }
+    if (tab === "trade") {
+      return { surface: "profile-trades", profileUserId };
+    }
+    if (tab === "earning") {
+      return { surface: "profile-earning", profileUserId };
+    }
+    if (tab === "analysis") {
+      return { surface: "profile-analysis", profileUserId };
+    }
+  }
+  if (route === "trade" || route === "trade-search") {
+    return { surface: "trade-hub" };
+  }
+  return { surface: route || "unknown" };
+}
+
+function ledgerSurfaceFromRoute(route) {
+  const r = String(route || "").trim();
+  if (r === "stock-record" && state.activeRecordSymbol) {
+    return {
+      surface: "stock-record",
+      symbol: normalizeSymbol(state.activeRecordSymbol),
+      stockRecordPublic: Boolean(state.stockRecordFromPublicProfile),
+    };
+  }
+  if (r === "dynamics") {
+    return { surface: "portfolio-dynamics" };
+  }
+  if (r === "trade-records") {
+    return { surface: "trade-records" };
+  }
+  if (r === "trade-cash") {
+    return { surface: "trade-cash" };
+  }
+  if (r === "earning") {
+    return { surface: "earning" };
+  }
+  if (r === "analysis") {
+    return { surface: "analysis" };
+  }
+  if (r === "community-feed") {
+    return { surface: "community-feed" };
+  }
+  if (r === "trade") {
+    return { surface: "trade-hub" };
+  }
+  return detectLedgerMutationSurface();
+}
+
+function setLedgerMutationContext(kind, overrides = {}) {
+  ledgerMutationContext = {
+    kind: kind === "post" ? "post" : "trade",
+    ...detectLedgerMutationSurface(),
+    ...overrides,
+  };
+}
+
+function clearLedgerMutationContext() {
+  ledgerMutationContext = null;
+}
+
+function resetStockDynamicsCachesForSymbols(symbols) {
+  const syms = [...new Set(collectDynamicsCardSymbols(symbols).map((s) => normalizeSymbol(s)).filter(Boolean))];
+  for (const sym of syms) {
+    const key = stockDynamicsListKey(sym);
+    if (key) {
+      resetDynamicsListState(key);
+    }
+  }
+}
+
+function applyLedgerMutationCrossInvalidation(ctx, payload = {}) {
+  const symbols = [
+    ...new Set(collectDynamicsCardSymbols(payload.symbols || payload.symbol).map((s) => normalizeSymbol(s)).filter(Boolean)),
+  ];
+  if (ctx.surface !== "portfolio-dynamics") {
+    resetDynamicsListState("portfolio-dynamics");
+  }
+  if (ctx.surface !== "community-feed") {
+    resetDynamicsListState("community-feed");
+  }
+  for (const sym of symbols) {
+    if (ctx.surface === "stock-record" && normalizeSymbol(ctx.symbol) === sym) {
+      continue;
+    }
+    const key = stockDynamicsListKey(sym);
+    if (!key) {
+      continue;
+    }
+    resetDynamicsListState(key);
+    if (
+      state.route === "stock-record" &&
+      !state.stockRecordFromPublicProfile &&
+      normalizeSymbol(state.activeRecordSymbol) === sym
+    ) {
+      void loadStockRecordDynamics(state.activeRecordSymbol, false, state.lastPublicProfileDetail, { reset: true });
+    }
+  }
+  if (ctx.surface !== "earning") {
+    scheduleMetricsRebuildUiRefresh();
+  }
+  void refreshMarketData();
+}
+
+async function refreshAfterLedgerMutation(payload = {}) {
+  const ctx = ledgerMutationContext ? { ...ledgerMutationContext } : detectLedgerMutationSurface();
+  ctx.kind = payload.kind || ctx.kind || "trade";
+  clearLedgerMutationContext();
+
+  switch (ctx.surface) {
+    case "stock-record": {
+      const sym = normalizeSymbol(ctx.symbol || payload.symbol || state.activeRecordSymbol);
+      if (sym && !ctx.stockRecordPublic) {
+        resetDynamicsListState(stockDynamicsListKey(sym));
+        void refreshStockRecordPageData(sym, state.stockRecordAccountId);
+      } else if (sym) {
+        resetStockDynamicsCachesForSymbols([sym, ...(payload.symbols || [])]);
+      }
+      break;
+    }
+    case "portfolio-dynamics":
+      resetDynamicsListState("portfolio-dynamics");
+      void loadPortfolioDynamics({ reset: true });
+      break;
+    case "trade-records":
+      resetTradeListPager();
+      void loadTradeListPage({ reset: true });
+      break;
+    case "trade-cash":
+      resetCashListPager();
+      void loadCashListPage({ reset: true });
+      break;
+    case "earning":
+      invalidateOverviewMetricsUi();
+      void refreshOverviewProfitRowFromSnapshots();
+      break;
+    case "analysis":
+      void renderAnalysis({ blockLoading: false });
+      break;
+    case "community-feed":
+      resetDynamicsListState("community-feed");
+      void loadCommunityFeed();
+      break;
+    case "profile-dynamics": {
+      const uid = String(ctx.profileUserId || state.communityProfileUserId || "").trim();
+      if (uid) {
+        resetDynamicsListState(`profile-dynamics:${uid}`);
+        void loadProfileDynamics(uid, { reset: true });
+      }
+      break;
+    }
+    case "profile-trades": {
+      const uid = String(ctx.profileUserId || state.communityProfileUserId || "").trim();
+      if (uid) {
+        void loadCommunityPublicTrades(uid);
+      }
+      break;
+    }
+    case "profile-earning": {
+      const uid = String(ctx.profileUserId || state.communityProfileUserId || "").trim();
+      if (uid) {
+        void loadPublicEarningTabData(uid);
+      }
+      break;
+    }
+    case "profile-analysis":
+      void openCommunityProfileAnalysisTab();
+      break;
+    case "trade-hub":
+      invalidateOverviewMetricsUi();
+      if (state.route === "earning") {
+        void refreshOverviewProfitRowFromSnapshots();
+      }
+      break;
+    default:
+      break;
+  }
+
+  applyLedgerMutationCrossInvalidation(ctx, payload);
+}
+
 function resetDynamicsListState(key) {
   const st = getDynamicsListState(key);
   st.items = [];
@@ -6319,6 +6535,9 @@ function reopenPublishDynamicsDialog() {
   if (!publishDynamicsDialog) {
     return;
   }
+  if (!ledgerMutationContext || ledgerMutationContext.kind !== "post") {
+    setLedgerMutationContext("post");
+  }
   publishDynamicsDialog.showModal();
   document.documentElement.classList.add("dynamics-compose-open");
   requestAnimationFrame(() => {
@@ -6403,7 +6622,8 @@ function resetPublishDynamicsForm() {
   syncPublishDynamicsUi();
 }
 
-function openPublishDynamicsDialog(postCard) {
+function openPublishDynamicsDialog(postCard, contextOverrides = {}) {
+  setLedgerMutationContext("post", contextOverrides);
   resetPublishDynamicsForm();
   if (postCard) {
     publishDynamicsState.editingPostId = postCard.id;
@@ -6440,6 +6660,11 @@ let dynamicsActionsTarget = null;
 
 function openDynamicsPostActionsDialog(card) {
   dynamicsActionsTarget = card;
+  const overrides = {};
+  if (card?.cardKind === "trade" && card.symbol) {
+    overrides.symbol = normalizeSymbol(card.symbol);
+  }
+  setLedgerMutationContext(card?.cardKind === "post" ? "post" : "trade", overrides);
   dynamicsPostActionsDialog?.showModal();
 }
 
@@ -9329,6 +9554,8 @@ function openTradeRecordActionsSheet(tradeId) {
   if (!recordTradeActionsDialog || !tradeId) {
     return;
   }
+  const trade = findTradeById(tradeId);
+  setLedgerMutationContext("trade", trade?.symbol ? { symbol: normalizeSymbol(trade.symbol) } : {});
   recordTradeActionsDialog.dataset.tradeId = String(tradeId);
   recordTradeActionsDialog.showModal();
 }
@@ -9488,6 +9715,7 @@ function openEditTradeDialog(tradeId, tradeOverride) {
   if (!trade) {
     return;
   }
+  setLedgerMutationContext("trade", { symbol: normalizeSymbol(trade.symbol) });
   state.editingTradeId = tradeId;
   if (tradeDialogTitle) {
     tradeDialogTitle.textContent = "修改交易";
@@ -9524,7 +9752,7 @@ function clearEditState() {
   }
 }
 
-async function removeTradeById(tradeId) {
+async function removeTradeById(tradeId, opts = {}) {
   closeTradeRecordActionsSheet();
   const trade = findTradeById(tradeId);
   try {
@@ -9552,10 +9780,9 @@ async function removeTradeById(tradeId) {
   }
   persistState();
   renderAll();
-  invalidateTradeListAfterMutation();
-  invalidateStockRecordTradesAfterMutation();
-  invalidateStockDynamicsListForSymbols(trade?.symbol);
-  void refreshMarketData();
+  if (!opts.skipRefresh) {
+    void refreshAfterLedgerMutation({ kind: "trade", symbol: trade?.symbol, symbols: trade?.symbol });
+  }
 }
 
 let tradeFormImageUrls = [];
@@ -10637,7 +10864,10 @@ async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
   } else if (state.selectedAccountId && state.selectedAccountId !== "all") {
     prefill.accountId = resolveValidAccountFilter(state.selectedAccountId);
   }
-  openNewTradeDialog(prefill);
+  openNewTradeDialog(prefill, {
+    ...detectLedgerMutationSurface(),
+    symbol: symKey,
+  });
 }
 
 async function openAddTradePrefilledForActiveRecordSymbol() {
