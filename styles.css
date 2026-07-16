@@ -187,11 +187,14 @@ body {
 }
 
 .app-shell {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
-  padding-bottom: 74px;
+  padding-bottom: 0;
   background: var(--bg);
 }
 
@@ -250,7 +253,10 @@ body {
 }
 
 .app-shell-inner {
-  min-height: calc(100vh - 120px);
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px) + 8px);
 }
 
 .app-drawer-backdrop {
@@ -2493,7 +2499,9 @@ h2 {
   transform: none;
   width: 100%;
   max-width: 100%;
-  height: 62px;
+  height: calc(62px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
   border-top: 1px solid var(--line);
   background: var(--panel);
   display: grid;
