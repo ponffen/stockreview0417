@@ -4229,6 +4229,14 @@ function bindEvents() {
     renderAll();
     invalidateTradeListAfterMutation();
     invalidateStockRecordTradesAfterMutation();
+    const tradeSymbols = [savedTrade.symbol];
+    if (state.editingTradeId) {
+      const prevTrade = findTradeById(state.editingTradeId);
+      if (prevTrade?.symbol) {
+        tradeSymbols.push(prevTrade.symbol);
+      }
+    }
+    invalidateStockDynamicsListForSymbols(tradeSymbols);
     scheduleMetricsRebuildUiRefresh();
     void refreshMarketData();
   });
@@ -4353,6 +4361,10 @@ function bindEvents() {
     try {
       await deleteDynamicsPostById(postId);
       publishDynamicsDialog?.close();
+      invalidateStockDynamicsListForSymbols([
+        ...publishDynamicsState.symbols.map((s) => s.symbol),
+        ...(publishDynamicsState.originalSymbols || []),
+      ]);
       resetDynamicsListState("portfolio-dynamics");
       if (state.route === "dynamics") {
         void loadPortfolioDynamics();
@@ -4375,6 +4387,7 @@ function bindEvents() {
       imageUrls: publishDynamicsState.imageUrls,
       symbols: publishDynamicsState.symbols.map((s) => s.symbol),
     };
+    const postSymbolsToInvalidate = [...body.symbols, ...(publishDynamicsState.originalSymbols || [])];
     try {
       const base = getApiBaseForFetch();
       const editingId = publishDynamicsState.editingPostId;
@@ -4393,6 +4406,7 @@ function bindEvents() {
         throw new Error(j?.error || "保存失败");
       }
       publishDynamicsDialog?.close();
+      invalidateStockDynamicsListForSymbols(postSymbolsToInvalidate);
       resetDynamicsListState("portfolio-dynamics");
       if (state.route === "dynamics") {
         void loadPortfolioDynamics();
@@ -4415,8 +4429,10 @@ function bindEvents() {
       return;
     }
     try {
+      const affectedSymbols = collectDynamicsCardSymbols(target);
       if (target.cardKind === "post") {
         await deleteDynamicsPostById(target.id);
+        invalidateStockDynamicsListForSymbols(affectedSymbols);
       } else if (target.cardKind === "trade") {
         await removeTradeById(target.id);
       }
@@ -5780,6 +5796,51 @@ function resetDynamicsListState(key) {
   st.loading = false;
 }
 
+function stockDynamicsListKey(symbol) {
+  const sym = normalizeSymbol(symbol);
+  return sym ? `stock-dynamics:self:${sym}` : "";
+}
+
+function collectDynamicsCardSymbols(cardOrSymbols) {
+  if (Array.isArray(cardOrSymbols)) {
+    return cardOrSymbols
+      .map((item) => (typeof item === "string" ? item : item?.symbol))
+      .filter(Boolean);
+  }
+  const card = cardOrSymbols;
+  if (!card) {
+    return [];
+  }
+  if (card.cardKind === "trade") {
+    return card.symbol ? [card.symbol] : [];
+  }
+  if (Array.isArray(card.symbols)) {
+    return card.symbols.map((item) => item?.symbol).filter(Boolean);
+  }
+  return [];
+}
+
+function invalidateStockDynamicsListForSymbols(symbols) {
+  const syms = [...new Set(collectDynamicsCardSymbols(symbols).map((s) => normalizeSymbol(s)).filter(Boolean))];
+  if (!syms.length) {
+    return;
+  }
+  for (const sym of syms) {
+    const key = stockDynamicsListKey(sym);
+    if (key) {
+      resetDynamicsListState(key);
+    }
+  }
+  if (state.route !== "stock-record" || state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
+    return;
+  }
+  const active = normalizeSymbol(state.activeRecordSymbol);
+  if (!syms.includes(active)) {
+    return;
+  }
+  void loadStockRecordDynamics(state.activeRecordSymbol, false, state.lastPublicProfileDetail, { reset: true });
+}
+
 function renderDynamicsListContainer(container, state, { editable = false } = {}) {
   if (!container) {
     return;
@@ -6243,6 +6304,7 @@ let publishDynamicsState = {
   editingPostId: null,
   imageUrls: [],
   symbols: [],
+  originalSymbols: [],
 };
 
 function syncPublishDynamicsTextareaHeight() {
@@ -6317,7 +6379,7 @@ function renderPublishDynamicsImages() {
 }
 
 function resetPublishDynamicsForm() {
-  publishDynamicsState = { editingPostId: null, imageUrls: [], symbols: [] };
+  publishDynamicsState = { editingPostId: null, imageUrls: [], symbols: [], originalSymbols: [] };
   if (publishDynamicsContent) {
     publishDynamicsContent.value = "";
   }
@@ -6352,6 +6414,7 @@ function openPublishDynamicsDialog(postCard) {
     publishDynamicsState.symbols = Array.isArray(postCard.symbols)
       ? postCard.symbols.map((s) => ({ symbol: s.symbol, name: s.name }))
       : [];
+    publishDynamicsState.originalSymbols = collectDynamicsCardSymbols(postCard);
     if (publishDynamicsSubmitBtn) {
       publishDynamicsSubmitBtn.textContent = "保存";
     }
@@ -9463,6 +9526,7 @@ function clearEditState() {
 
 async function removeTradeById(tradeId) {
   closeTradeRecordActionsSheet();
+  const trade = findTradeById(tradeId);
   try {
     await deleteTradeFromApi(tradeId);
   } catch (error) {
@@ -9490,6 +9554,7 @@ async function removeTradeById(tradeId) {
   renderAll();
   invalidateTradeListAfterMutation();
   invalidateStockRecordTradesAfterMutation();
+  invalidateStockDynamicsListForSymbols(trade?.symbol);
   void refreshMarketData();
 }
 
