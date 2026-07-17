@@ -189,9 +189,14 @@ function symbolTotalRates({
   const flowNat = Number(dayCtx.dayFlowNative) || 0;
   const frozenTotalRateTwr = Number(snap?.total_rate_twr);
   let rateTwr = Number.isFinite(frozenTotalRateTwr) ? frozenTotalRateTwr : 0;
-  if (live.tradingDay && Number.isFinite(frozenTotalRateTwr)) {
+  if (live.tradingDay) {
     const rToday = positionDailyTwrReturn(startMv, mvNat, todayProfitNative, flowNat);
-    rateTwr = chainTwrRate(frozenTotalRateTwr, rToday);
+    if (Number.isFinite(frozenTotalRateTwr)) {
+      rateTwr = chainTwrRate(frozenTotalRateTwr, rToday);
+    } else if (qty > 0 && (Math.abs(flowNat) > 0 || Math.abs(todayProfitNative) > 0)) {
+      // 无冻结历史（如今日新开仓）：总收益率 = 当日 TWR，勿默认 0%
+      rateTwr = rToday;
+    }
   }
   const pts = symbolPnlToValueFlowPoints(pnlRows);
   const frozenThrough = String(snap?.frozen_through || live.frozenThrough || "").slice(0, 10);
@@ -337,9 +342,11 @@ async function buildHoldingsPayload({
     const mvNat = qty * current;
     const mvCny = Number(liveP?.marketValueCny) || mvNat * (isCnyStock ? 1 : fx);
     const costNat =
-      Math.abs(totalFrozenNative) > 0 && Number(rateSnap?.total_rate_twr)
+      qty > 0 && Math.abs(totalNative) > 1e-9
         ? mvNat - totalNative
-        : mvNat;
+        : Math.abs(totalFrozenNative) > 0 && Number(rateSnap?.total_rate_twr)
+          ? mvNat - totalNative
+          : mvNat;
     const sigma = qty > 0 ? costNat / qty : 0;
     const { totalRate, rateTwr, rateMwr } = symbolTotalRates({
       snap: rateSnap,
