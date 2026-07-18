@@ -1078,6 +1078,26 @@ h2 {
   display: block;
 }
 
+.chart-tooltip--with-trades {
+  max-width: 220px;
+}
+
+.chart-tooltip-gap {
+  height: 6px;
+}
+
+.chart-tooltip-trades {
+  margin-top: 2px;
+  border-top: 1px solid rgb(255 255 255 / 20%);
+  padding-top: 6px;
+}
+
+.chart-tooltip-trade + .chart-tooltip-trade {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgb(255 255 255 / 12%);
+}
+
 .chart-wrap canvas {
   display: block;
   width: 100%;
