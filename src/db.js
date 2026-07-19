@@ -3027,6 +3027,8 @@ async function updateUserCommunityProfile(userId, { nickname, communityPublic })
     uid,
   ]);
   await q("DELETE FROM community_leaderboard_cache");
+  const { bumpFollowEpoch } = require("./cache-epoch");
+  await bumpFollowEpoch(uid);
   return getUserCommunityRow(uid);
 }
 

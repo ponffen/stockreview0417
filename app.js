@@ -6746,6 +6746,16 @@ async function toggleFollowCommunity(userId, btnEl) {
     const nowOn = isOn ? false : j.following !== false;
     btnEl.classList.toggle("is-on", nowOn);
     btnEl.textContent = nowOn ? "已关注" : "关注";
+    bumpPageCacheLocalEpochs(["follow"]);
+    if (state.lastPublicProfileDetail && state.communityProfileUserId === uid) {
+      state.lastPublicProfileDetail = {
+        ...state.lastPublicProfileDetail,
+        following: nowOn,
+      };
+    }
+    if (typeof PageCache !== "undefined" && sessionUserId) {
+      void PageCache.deleteEntry(PageCache.communityProfileCacheKey(sessionUserId, uid));
+    }
     if (state.route === "community-profile" && state.communityProfileUserId === uid) {
       lastCommunityDataKey = "";
       void loadCommunityProfileDetail();
@@ -7865,6 +7875,74 @@ async function loadCommunityPublicTrades(targetId) {
   await loadCommunityPublicTradesPage({ targetId, reset: true });
 }
 
+async function fetchCommunityUserProfileFromNetwork(targetId) {
+  const tid = String(targetId || "").trim();
+  if (!tid || !apiReady) {
+    return { data: null, status: 0, error: "" };
+  }
+  try {
+    const base = getApiBaseForFetch();
+    const enc = encodeURIComponent(tid);
+    const profileRes = await apiFetch(`${base}/community/users/${enc}/profile`, { cache: "no-store" });
+    const profileJson = await profileRes.json().catch(() => ({}));
+    if (profileRes.status === 404) {
+      return { data: null, status: 404, error: profileJson?.error || "用户未公开或不可见" };
+    }
+    if (!profileRes.ok || !profileJson?.ok) {
+      return { data: null, status: profileRes.status, error: profileJson?.error || "加载失败" };
+    }
+    return { data: profileJson.data, status: 200, error: "" };
+  } catch {
+    return { data: null, status: 0, error: "网络错误" };
+  }
+}
+
+async function fetchCommunityUserProfile(targetId) {
+  const tid = String(targetId || "").trim();
+  if (!tid || !apiReady) {
+    return { data: null, status: 0, error: "" };
+  }
+  const viewerKey = sessionUserId || "guest";
+  const cacheKey = PageCache.communityProfileCacheKey(viewerKey, tid);
+  const cacheOn = pageCacheEnabled(tid);
+  const viewerMeta = sessionUserId ? await ensurePageCacheMeta() : null;
+  const targetMeta = await ensurePageCacheMetaForScope(tid);
+
+  if (cacheOn) {
+    const entry = await PageCache.readEntry(cacheKey);
+    if (entry?.fullPayload && !PageCache.isCommunityProfileStale(entry, viewerMeta, targetMeta)) {
+      return { data: entry.fullPayload, status: 200, error: "", fromCache: true };
+    }
+    if (entry?.fullPayload && PageCache.isCommunityProfileStale(entry, viewerMeta, targetMeta)) {
+      void (async () => {
+        const fresh = await fetchCommunityUserProfileFromNetwork(tid);
+        if (fresh.data) {
+          const vm = sessionUserId ? await ensurePageCacheMeta(true) : null;
+          const tm = await ensurePageCacheMetaForScope(tid, true);
+          await PageCache.writeEntry({
+            cacheKey,
+            fullPayload: { ...fresh.data },
+            epochs: PageCache.profileEpochsForSave(vm, tm),
+            savedAt: Date.now(),
+          });
+        }
+      })();
+      return { data: entry.fullPayload, status: 200, error: "", fromCache: true, stale: true };
+    }
+  }
+
+  const fresh = await fetchCommunityUserProfileFromNetwork(tid);
+  if (fresh.data && cacheOn) {
+    await PageCache.writeEntry({
+      cacheKey,
+      fullPayload: { ...fresh.data },
+      epochs: PageCache.profileEpochsForSave(viewerMeta, targetMeta),
+      savedAt: Date.now(),
+    });
+  }
+  return fresh;
+}
+
 async function loadCommunityProfileDetail() {
   if (!communityProfileBody || !state.communityProfileUserId) {
     return;
@@ -7894,19 +7972,16 @@ async function loadCommunityProfileDetail() {
     meta: null,
   };
   try {
-    const base = getApiBaseForFetch();
-    const enc = encodeURIComponent(uid);
-    const profileRes = await apiFetch(`${base}/community/users/${enc}/profile`, { cache: "no-store" });
-    const profileJson = await profileRes.json().catch(() => ({}));
-    if (profileRes.status === 404) {
+    const profileResult = await fetchCommunityUserProfile(uid);
+    if (profileResult.status === 404) {
       communityProfileBody.innerHTML = `<p class="empty">用户未公开或不可见</p>`;
       return;
     }
-    if (!profileRes.ok || !profileJson?.ok) {
-      communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(profileJson?.error || "加载失败")}</p>`;
+    if (!profileResult.data) {
+      communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(profileResult.error || "加载失败")}</p>`;
       return;
     }
-    const d = profileJson.data;
+    const d = profileResult.data;
     state.lastPublicProfileDetail = d;
 
     if (communityProfileTitle) {

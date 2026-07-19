@@ -16,6 +16,7 @@
     dynamicsPortfolio: ["dynamics", "ledger"],
     communityFeed: ["dynamics", "ledger", "quote", "follow"],
     communityLeaderboard: ["follow", "metrics", "ledger", "quote"],
+    communityProfile: ["follow"],
   };
 
   let dbPromise = null;
@@ -586,6 +587,40 @@
     };
   }
 
+  function profileEpochsForSave(viewerMeta, targetMeta) {
+    return {
+      followEpoch: Number(viewerMeta?.followEpoch) || 0,
+      targetFollowEpoch: Number(targetMeta?.followEpoch) || 0,
+    };
+  }
+
+  function isCommunityProfileStale(entry, viewerMeta, targetMeta) {
+    if (!entry?.epochs) {
+      return true;
+    }
+    const saved = entry.epochs;
+    if (Number(saved.followEpoch) !== (Number(viewerMeta?.followEpoch) || 0)) {
+      return true;
+    }
+    if (Number(saved.targetFollowEpoch) !== (Number(targetMeta?.followEpoch) || 0)) {
+      return true;
+    }
+    return false;
+  }
+
+  async function deleteEntry(cacheKey) {
+    const db = await openDb();
+    if (!db || !cacheKey) {
+      return;
+    }
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).delete(String(cacheKey));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  }
+
   global.PageCache = {
     PAGE_DOMAIN_DEPS,
     LIVE_HEAD_TTL_MS,
@@ -613,6 +648,9 @@
     loadMergedBundle,
     isPartStale,
     isPageStale,
+    isCommunityProfileStale,
+    profileEpochsForSave,
+    deleteEntry,
     homeBundleCacheKey: (userId, accountId, stages) =>
       `home:${String(userId || "")}:${String(accountId || "all")}:${String(stages || "")}`,
     analysisBundleCacheKey: (userId, accountId, querySig) =>
@@ -621,6 +659,8 @@
       `stock:${String(userId || "")}:${normalizeSymbolKey(symbol)}:${String(accountId || "all")}:${String(range || "30")}`,
     dynamicsListCacheKey: (userId, listKey) =>
       `dyn:${String(userId || "")}:${String(listKey || "")}`,
+    communityProfileCacheKey: (viewerKey, targetId) =>
+      `profile:${String(viewerKey || "guest")}:${String(targetId || "")}`,
   };
 
   function normalizeSymbolKey(sym) {
