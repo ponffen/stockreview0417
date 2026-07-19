@@ -1380,6 +1380,12 @@ async function ensureMetricsOpsTables() {
         id BIGSERIAL PRIMARY KEY, job_name TEXT NOT NULL, started_at BIGINT NOT NULL,
         finished_at BIGINT, ok BOOLEAN NOT NULL DEFAULT FALSE, error_message TEXT,
         meta_json TEXT, created_at BIGINT NOT NULL)`).catch(() => {});
+    await q(`CREATE TABLE IF NOT EXISTS user_cache_epoch (
+        user_id TEXT PRIMARY KEY,
+        ledger_epoch INTEGER NOT NULL DEFAULT 0,
+        dynamics_epoch INTEGER NOT NULL DEFAULT 0,
+        follow_epoch INTEGER NOT NULL DEFAULT 0,
+        updated_at BIGINT NOT NULL DEFAULT 0)`).catch(() => {});
   })();
   return metricsOpsSchemaPromise;
 }

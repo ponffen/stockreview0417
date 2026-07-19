@@ -1,7 +1,8 @@
 /**
  * Per-user cache epoch domains + global quote epoch for client-side page cache invalidation.
  */
-const { q, nowMs, getUserMetricsMeta } = require("./db");
+const { nowMs } = require("./db-pure");
+const { dbQuery: q, getUserMetricsMeta, ensureMetricsOpsTables } = require("./db");
 
 let cacheEpochSchemaPromise = null;
 
@@ -52,19 +53,23 @@ async function getUserCacheEpochRow(userId) {
     return { ledgerEpoch: 0, dynamicsEpoch: 0, followEpoch: 0 };
   }
   await ensureCacheEpochTables();
-  const { rows } = await q(
-    `SELECT ledger_epoch, dynamics_epoch, follow_epoch FROM user_cache_epoch WHERE user_id = $1`,
-    [uid],
-  );
-  const row = rows[0];
-  if (!row) {
+  try {
+    const { rows } = await q(
+      `SELECT ledger_epoch, dynamics_epoch, follow_epoch FROM user_cache_epoch WHERE user_id = $1`,
+      [uid],
+    );
+    const row = rows[0];
+    if (!row) {
+      return { ledgerEpoch: 0, dynamicsEpoch: 0, followEpoch: 0 };
+    }
+    return {
+      ledgerEpoch: Number(row.ledger_epoch) || 0,
+      dynamicsEpoch: Number(row.dynamics_epoch) || 0,
+      followEpoch: Number(row.follow_epoch) || 0,
+    };
+  } catch {
     return { ledgerEpoch: 0, dynamicsEpoch: 0, followEpoch: 0 };
   }
-  return {
-    ledgerEpoch: Number(row.ledger_epoch) || 0,
-    dynamicsEpoch: Number(row.dynamics_epoch) || 0,
-    followEpoch: Number(row.follow_epoch) || 0,
-  };
 }
 
 async function bumpUserCacheEpoch(userId, field) {
@@ -109,21 +114,38 @@ async function bumpFollowEpoch(userId) {
 
 async function getCacheMeta(userId) {
   const uid = String(userId || "").trim();
-  const [epochs, um] = await Promise.all([
-    getUserCacheEpochRow(uid),
-    getUserMetricsMeta(uid, { light: true }),
-  ]);
-  const quote = getGlobalQuoteEpoch();
-  return {
-    ledgerEpoch: epochs.ledgerEpoch,
-    metricsEpoch: Number(um?.dataVersion) || 0,
-    dynamicsEpoch: epochs.dynamicsEpoch,
-    followEpoch: epochs.followEpoch,
-    quoteEpoch: quote.epoch,
-    quoteTime: quote.quoteTime,
-    rebuilding: !!um?.rebuilding,
-    frozenThrough: um?.frozenThrough || null,
-  };
+  try {
+    await ensureMetricsOpsTables();
+    const [epochs, um] = await Promise.all([
+      getUserCacheEpochRow(uid),
+      getUserMetricsMeta(uid, { light: true }),
+    ]);
+    const quote = getGlobalQuoteEpoch();
+    return {
+      ledgerEpoch: epochs.ledgerEpoch,
+      metricsEpoch: Number(um?.dataVersion) || 0,
+      dynamicsEpoch: epochs.dynamicsEpoch,
+      followEpoch: epochs.followEpoch,
+      quoteEpoch: quote.epoch,
+      quoteTime: quote.quoteTime,
+      rebuilding: !!um?.rebuilding,
+      frozenThrough: um?.frozenThrough || null,
+    };
+  } catch (error) {
+    const quote = getGlobalQuoteEpoch();
+    return {
+      ledgerEpoch: 0,
+      metricsEpoch: 0,
+      dynamicsEpoch: 0,
+      followEpoch: 0,
+      quoteEpoch: quote.epoch,
+      quoteTime: quote.quoteTime,
+      rebuilding: false,
+      frozenThrough: null,
+      degraded: true,
+      error: String(error?.message || error || "cache-meta degraded"),
+    };
+  }
 }
 
 module.exports = {
