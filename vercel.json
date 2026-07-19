@@ -51,6 +51,7 @@
     { "source": "/icon.png", "destination": "/api/assets?file=icon.png" },
     { "source": "/styles.css", "destination": "/api/assets?file=styles.css" },
     { "source": "/app.js", "destination": "/api/assets?file=app.js" },
+    { "source": "/page-cache.js", "destination": "/api/assets?file=page-cache.js" },
     { "source": "/quote-smoke-test.html", "destination": "/api/assets?file=quote-smoke-test.html" },
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/api/index" }

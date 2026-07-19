@@ -2552,7 +2552,7 @@ app.use(
   express.static(WEB_ROOT, {
     setHeaders(res, filePath) {
       const base = path.basename(String(filePath || ""));
-      if (STATIC_ASSET_LONG_CACHE && /^(app\.js|styles\.css)$/i.test(base)) {
+      if (STATIC_ASSET_LONG_CACHE && /^(app\.js|page-cache\.js|styles\.css)$/i.test(base)) {
         res.setHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
         return;
       }
