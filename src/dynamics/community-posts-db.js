@@ -100,6 +100,8 @@ async function createCommunityPost(userId, body) {
     ],
   );
   await ensureSymbolNameMapForSymbols(input.symbols, { source: "tencent" });
+  const { bumpDynamicsEpoch } = require("../cache-epoch");
+  await bumpDynamicsEpoch(uid);
   return getCommunityPostByIdForUser(id, uid);
 }
 
@@ -130,6 +132,8 @@ async function updateCommunityPost(userId, postId, body) {
     await deleteBlobUrls(removed);
   }
   await ensureSymbolNameMapForSymbols(input.symbols, { source: "tencent" });
+  const { bumpDynamicsEpoch } = require("../cache-epoch");
+  await bumpDynamicsEpoch(uid);
   return getCommunityPostByIdForUser(pid, uid);
 }
 
@@ -143,6 +147,8 @@ async function deleteCommunityPost(userId, postId) {
   const { rowCount } = await dbQuery(`DELETE FROM community_posts WHERE user_id = $1 AND id = $2`, [uid, pid]);
   if (rowCount > 0) {
     await deleteBlobUrls(prior.imageUrls);
+    const { bumpDynamicsEpoch } = require("../cache-epoch");
+    await bumpDynamicsEpoch(uid);
   }
   return { deleted: rowCount > 0 };
 }

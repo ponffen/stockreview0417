@@ -30,6 +30,9 @@ async function notifyLedgerMutation(userId, opts = {}) {
   if (!uid) {
     return;
   }
+  const { bumpLedgerEpoch, bumpDynamicsEpoch } = require("./cache-epoch");
+  await bumpLedgerEpoch(uid);
+  await bumpDynamicsEpoch(uid);
   const { prepareLedgerMetricsFreeze, dispatchFreezeEodJobAsync } = require("./metrics-rebuild-trigger");
   const { runInBackground } = require("./background-task");
 

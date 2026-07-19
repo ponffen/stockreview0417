@@ -3033,6 +3033,8 @@ async function setCommunityFollow(followerId, followeeId) {
   const now = nowMs();
   try {
     await q("INSERT INTO community_follows (follower_id, followee_id, created_at) VALUES ($1,$2,$3)", [a, b, now]);
+    const { bumpFollowEpoch } = require("./cache-epoch");
+    await bumpFollowEpoch(a);
     return true;
   } catch (e) {
     if (e && e.code === "23505") {
@@ -3046,6 +3048,10 @@ async function removeCommunityFollow(followerId, followeeId) {
   const a = String(followerId || "").trim();
   const b = String(followeeId || "").trim();
   const { rowCount } = await q("DELETE FROM community_follows WHERE follower_id = $1 AND followee_id = $2", [a, b]);
+  if (rowCount > 0) {
+    const { bumpFollowEpoch } = require("./cache-epoch");
+    await bumpFollowEpoch(a);
+  }
   return rowCount > 0;
 }
 

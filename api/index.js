@@ -937,6 +937,7 @@ module.exports = async function handler(req, res, context) {
   const isCronDailyCloseDirect =
     (req.method === "POST" || req.method === "GET") && pathOnly === "/api/cron/sync-daily-close";
   const isSettingsGetDirect = req.method === "GET" && pathOnly === "/api/settings";
+  const isCacheMetaDirect = req.method === "GET" && pathOnly === "/api/cache-meta";
   const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
   const tradesDeleteMatch = pathOnly.match(/^\/api\/trades\/([^/]+)$/) || null;
   const isTradesGetDirect = req.method === "GET" && pathOnly === "/api/trades";
@@ -1212,6 +1213,7 @@ module.exports = async function handler(req, res, context) {
 
   if (
     isSettingsGetDirect ||
+    isCacheMetaDirect ||
     isSettingsPatchDirect ||
     isTradesImportDirect ||
     isCashTransfersImportDirect
@@ -1246,6 +1248,14 @@ module.exports = async function handler(req, res, context) {
 
       if (isSettingsGetDirect) {
         const data = await getSettings(userId);
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data }));
+        return;
+      }
+
+      if (isCacheMetaDirect) {
+        const { getCacheMeta } = require("../src/cache-epoch");
+        const data = await getCacheMeta(userId);
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));
         return;

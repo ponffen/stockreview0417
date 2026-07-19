@@ -506,6 +506,7 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
     };
   }
   const missingKeys = keys.filter((key) => !payloadMap.has(String(key).toLowerCase()));
+  touchQuoteEpochFromPayloadMap(payloadMap);
   return {
     ok: true,
     payloadMap,
@@ -514,6 +515,23 @@ async function fetchTencentQuotePayloadMap(reqKeys) {
     error: "",
     missingKeys,
   };
+}
+
+function touchQuoteEpochFromPayloadMap(payloadMap) {
+  try {
+    const { touchGlobalQuoteEpoch } = require("./src/cache-epoch");
+    let quoteTime = null;
+    for (const payload of payloadMap.values()) {
+      const t = payload?.time || payload?.quoteTime;
+      if (t) {
+        quoteTime = String(t);
+        break;
+      }
+    }
+    touchGlobalQuoteEpoch(quoteTime);
+  } catch {
+    // ignore
+  }
 }
 
 const PROBE_DEFAULT_TIMEOUT_MS = 12_000;
@@ -1831,6 +1849,16 @@ app.post("/api/trades/import", requireAuth, async (req, res) => {
 
 app.get("/api/settings", requireAuth, async (req, res) => {
   res.json({ ok: true, data: await getSettings(req.userId) });
+});
+
+app.get("/api/cache-meta", requireAuth, async (req, res) => {
+  try {
+    const { getCacheMeta } = require("./src/cache-epoch");
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, data: await getCacheMeta(req.userId) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "cache-meta failed" });
+  }
 });
 
 app.patch("/api/settings", requireAuth, async (req, res) => {

@@ -11,6 +11,7 @@ const destDir = path.join(root, "api", "public");
 const copies = [
   ["index.html", "index.html"],
   ["app.js", "app.js"],
+  ["page-cache.js", "page-cache.js"],
   ["styles.css", "styles.css"],
   ["quote-smoke-test.html", "quote-smoke-test.html"],
   ["public/favicon.ico", "favicon.ico"],

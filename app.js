@@ -1046,6 +1046,9 @@ function bindAuthUi() {
     } catch {
       // ignore
     }
+    if (typeof PageCache !== "undefined") {
+      void PageCache.clearAll();
+    }
     window.location.reload();
   });
 
@@ -1059,6 +1062,9 @@ function bindAuthUi() {
       window.sessionStorage.removeItem(SESSION_TAB_KEY);
     } catch {
       // ignore
+    }
+    if (typeof PageCache !== "undefined") {
+      void PageCache.clearAll();
     }
     window.location.reload();
   });
@@ -1118,6 +1124,7 @@ async function startAppAfterAuth(options = {}) {
     await refreshSessionFromServer();
   }
   await hydrateState();
+  void ensurePageCacheMeta();
   normalizeModuleHomeOnColdLoad();
   applyEmptyLedgerCommunityDefault();
   persistState({ skipSettingsSync: true });
@@ -2552,6 +2559,163 @@ function invalidateHomeBundleInflight(accountId) {
   }
 }
 
+function pageCacheUserId(publicTargetId = "") {
+  const tid = String(publicTargetId || "").trim();
+  if (tid) {
+    return `public:${tid}`;
+  }
+  return String(sessionUserId || "").trim();
+}
+
+function pageCacheEnabled() {
+  return typeof PageCache !== "undefined" && !!sessionUserId && apiReady;
+}
+
+async function ensurePageCacheMeta(force = false) {
+  if (!pageCacheEnabled()) {
+    return PageCache?.readLocalMeta?.() || null;
+  }
+  return PageCache.ensureCacheMeta(apiFetch, getApiBaseForFetch(), { force });
+}
+
+function bumpPageCacheLocalEpochs(domains = []) {
+  if (!pageCacheEnabled()) {
+    return;
+  }
+  for (const d of domains) {
+    PageCache.bumpLocalEpoch(d, 1);
+  }
+}
+
+function invalidatePageCacheServerMeta() {
+  if (typeof PageCache !== "undefined") {
+    PageCache.invalidateServerMeta();
+  }
+}
+
+function analysisBundleQuerySig(params = {}) {
+  const parts = [];
+  for (const k of Object.keys(params).sort()) {
+    parts.push(`${k}=${String(params[k] ?? "")}`);
+  }
+  return parts.join("&");
+}
+
+async function fetchMetricsBundleFromNetwork(path, params = {}, publicTargetId = "") {
+  if (!apiReady) {
+    return null;
+  }
+  const qs = new URLSearchParams();
+  const p = { ...params };
+  if (p.account_id == null && p.accountScope != null) {
+    p.account_id = p.accountScope;
+  }
+  delete p.accountScope;
+  for (const [k, v] of Object.entries(p)) {
+    if (v != null && String(v) !== "") {
+      qs.set(k, String(v));
+    }
+  }
+  const q = qs.toString();
+  const prefix = publicTargetId
+    ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}`
+    : getApiBaseForFetch();
+  const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
+  const pathNorm = String(path || "");
+  const timeoutMs =
+    pathNorm.includes("home-bundle") ||
+    pathNorm.includes("analysis-bundle") ||
+    pathNorm.includes("stock-record-bundle")
+      ? 55_000
+      : 28_000;
+  try {
+    const res = await apiFetch(url, { cache: "no-store", timeoutMs });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j?.ok || !j.data) {
+      return null;
+    }
+    return j.data;
+  } catch {
+    return null;
+  }
+}
+
+async function persistMetricsBundlePageCache(kind, cacheKey, bundle, meta) {
+  if (!pageCacheEnabled() || !bundle || !cacheKey) {
+    return;
+  }
+  const m = meta || (await ensurePageCacheMeta());
+  if (kind === "home") {
+    await PageCache.saveBundleParts(
+      cacheKey,
+      PageCache.splitHomeBundle,
+      PageCache.mergeHomeBundle,
+      bundle,
+      m,
+    );
+    return;
+  }
+  if (kind === "analysis") {
+    await PageCache.saveBundleParts(
+      cacheKey,
+      PageCache.splitAnalysisBundle,
+      PageCache.mergeAnalysisBundle,
+      bundle,
+      m,
+    );
+    return;
+  }
+  if (kind === "stock") {
+    await PageCache.saveBundleParts(
+      cacheKey,
+      PageCache.splitStockRecordBundle,
+      PageCache.mergeStockRecordBundle,
+      bundle,
+      m,
+    );
+  }
+}
+
+async function loadMetricsBundleWithPageCache({
+  kind,
+  pageKind,
+  cacheKey,
+  path,
+  params,
+  publicTargetId = "",
+  mergeFn,
+  skipCache = false,
+  onStaleHit = null,
+}) {
+  const meta = await ensurePageCacheMeta();
+  if (pageCacheEnabled() && !skipCache && cacheKey && mergeFn) {
+    const hit = await PageCache.loadMergedBundle(cacheKey, mergeFn, pageKind, meta);
+    if (hit.bundle && !hit.needFetch) {
+      return hit.bundle;
+    }
+    if (hit.bundle && hit.needFetch) {
+      if (typeof onStaleHit === "function") {
+        onStaleHit(hit.bundle, hit.needLiveOnly);
+      }
+      void (async () => {
+        const fresh = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
+        if (fresh) {
+          await persistMetricsBundlePageCache(kind, cacheKey, fresh, await ensurePageCacheMeta(true));
+          if (typeof onStaleHit === "function") {
+            onStaleHit(fresh, false, true);
+          }
+        }
+      })();
+      return hit.bundle;
+    }
+  }
+  const data = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
+  if (data && pageCacheEnabled() && cacheKey) {
+    await persistMetricsBundlePageCache(kind, cacheKey, data, meta);
+  }
+  return data;
+}
+
 /** home-bundle 单飞 + 短时结果复用；URL 仅 account_id + stages（仅组合分析-持仓 Tab 拉取） */
 async function fetchHomeBundleMetrics(aid, opts = {}) {
   if (!opts.allowOffEarning && !isEarningHomeRoute()) {
@@ -2571,14 +2735,23 @@ async function fetchHomeBundleMetrics(aid, opts = {}) {
     return null;
   }
   const promise = (async () => {
-    const qs = new URLSearchParams({ account_id: id, stages });
-    const url = `${getApiBaseForFetch()}/metrics/home-bundle?${qs.toString()}`;
-    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 55_000 });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok || !j?.ok || !j.data) {
-      return null;
-    }
-    return j.data;
+    const cacheKey = pageCacheEnabled()
+      ? PageCache.homeBundleCacheKey(pageCacheUserId(), id, stages)
+      : "";
+    return loadMetricsBundleWithPageCache({
+      kind: "home",
+      pageKind: "home",
+      cacheKey,
+      path: "/metrics/home-bundle",
+      params: { account_id: id, stages },
+      mergeFn: PageCache.mergeHomeBundle,
+      skipCache: opts.skipPageCache === true,
+      onStaleHit: (bundle, _needLiveOnly, isFresh) => {
+        if (isFresh && isEarningHomeRoute()) {
+          void applyHomeBundleToOverviewUi(bundle, id, overviewProfitRefreshSeq);
+        }
+      },
+    });
   })();
   homeBundleInflightByKey.set(key, { promise });
   try {
@@ -2946,7 +3119,25 @@ async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTa
     account_id: resolveValidAccountFilter(accountId),
     range: String(chartOpts.range ?? state.stockRecordChartRange ?? "30").trim(),
   };
-  return fetchMetricsApi("/metrics/stock-record-bundle", params, publicTargetId);
+  const cacheKey = pageCacheEnabled()
+    ? PageCache.stockRecordBundleCacheKey(
+        pageCacheUserId(publicTargetId),
+        params.symbol,
+        params.account_id,
+        params.range,
+      )
+    : "";
+  const path = publicTargetId ? "/metrics/stock-record-bundle" : "/metrics/stock-record-bundle";
+  return loadMetricsBundleWithPageCache({
+    kind: "stock",
+    pageKind: "stockRecord",
+    cacheKey,
+    path,
+    params,
+    publicTargetId,
+    mergeFn: PageCache.mergeStockRecordBundle,
+    skipCache: chartOpts.skipPageCache === true,
+  });
 }
 
 function stockRecordPublicTargetId() {
@@ -3524,6 +3715,11 @@ async function deleteTradeFromApi(tradeId) {
 }
 
 function bindEvents() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && pageCacheEnabled()) {
+      void ensurePageCacheMeta(true);
+    }
+  });
   bindDynamicsBodyToggleOnce();
   stockCurrencyToggle?.addEventListener("click", () => {
     state.stockAmountDisplay = state.stockAmountDisplay === "cny" ? "native" : "cny";
@@ -6089,6 +6285,8 @@ function applyLedgerMutationCrossInvalidation(ctx, payload = {}) {
 }
 
 async function refreshAfterLedgerMutation(payload = {}) {
+  invalidatePageCacheServerMeta();
+  bumpPageCacheLocalEpochs(["ledger", "dynamics"]);
   const ctx = ledgerMutationContext ? { ...ledgerMutationContext } : detectLedgerMutationSurface();
   ctx.kind = payload.kind || ctx.kind || "trade";
   clearLedgerMutationContext();
@@ -6407,6 +6605,21 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
     return;
   }
   const st = getDynamicsListState(key);
+  if (reset && pageCacheEnabled()) {
+    const meta = await ensurePageCacheMeta();
+    const cacheKey = PageCache.dynamicsListCacheKey(sessionUserId, key);
+    const entry = await PageCache.readEntry(cacheKey);
+    const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
+    if (entry?.fullPayload && !PageCache.isPageStale(entry, pageKind, meta)) {
+      const payload = entry.fullPayload;
+      st.items = Array.isArray(payload.items) ? [...payload.items] : [];
+      st.cursor = payload.cursor ?? null;
+      st.hasMore = payload.hasMore === true;
+      st.loading = false;
+      renderDynamicsListContainer(container, st, { editable });
+      return;
+    }
+  }
   if (st.loading || (!st.hasMore && !reset && st.items.length)) {
     renderDynamicsListContainer(container, st, { editable });
     return;
@@ -6439,6 +6652,20 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
     const pagination = j.pagination || {};
     st.cursor = pagination.cursor || null;
     st.hasMore = pagination.hasMore === true;
+    if (reset && pageCacheEnabled() && !qs.get("cursor")) {
+      const meta = await ensurePageCacheMeta();
+      const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
+      await PageCache.writeEntry({
+        cacheKey: PageCache.dynamicsListCacheKey(sessionUserId, key),
+        fullPayload: {
+          items: st.items.map((item) => ({ ...item })),
+          cursor: st.cursor,
+          hasMore: st.hasMore,
+        },
+        epochs: { ...meta },
+        savedAt: Date.now(),
+      });
+    }
   } catch {
     if (!st.items.length) {
       container.innerHTML = `<p class="empty">网络错误</p>`;
@@ -10129,35 +10356,33 @@ function analysisChartNavTotalFromCache() {
   ].filter((n) => Number(n) > 0);
   return lens.length ? Math.max(...lens) : 0;
 }
-async function fetchMetricsApi(path, params = {}, publicTargetId = "") {
-  if (!apiReady) return null;
-  const qs = new URLSearchParams();
-  const p = { ...params };
-  if (p.account_id == null && p.accountScope != null) {
-    p.account_id = p.accountScope;
+async function fetchMetricsApi(path, params = {}, publicTargetId = "", opts = {}) {
+  if (!apiReady) {
+    return null;
   }
-  delete p.accountScope;
-  for (const [k, v] of Object.entries(p)) {
-    if (v != null && String(v) !== "") {
-      qs.set(k, String(v));
-    }
-  }
-  const q = qs.toString();
-  const prefix = publicTargetId ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}` : getApiBaseForFetch();
-  const url = `${prefix}${path.startsWith("/") ? path : `/${path}`}${q ? `?${q}` : ""}`;
   const pathNorm = String(path || "");
-  const timeoutMs =
-    pathNorm.includes("home-bundle") ||
-    pathNorm.includes("analysis-bundle") ||
-    pathNorm.includes("stock-record-bundle")
-      ? 55_000
-      : 28_000;
-  try {
-    const res = await apiFetch(url, { cache: "no-store", timeoutMs });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok || !j?.ok || !j.data) return null;
-    return j.data;
-  } catch { return null; }
+  if (
+    !opts.skipPageCache &&
+    pageCacheEnabled() &&
+    (pathNorm.includes("analysis-bundle") || pathNorm.endsWith("/analysis-bundle"))
+  ) {
+    const bundleParams = { ...params };
+    const cacheKey = PageCache.analysisBundleCacheKey(
+      pageCacheUserId(publicTargetId),
+      bundleParams.account_id || bundleParams.accountId || "all",
+      analysisBundleQuerySig(bundleParams),
+    );
+    return loadMetricsBundleWithPageCache({
+      kind: "analysis",
+      pageKind: "analysis",
+      cacheKey,
+      path: pathNorm.startsWith("/") ? pathNorm : `/${pathNorm}`,
+      params: bundleParams,
+      publicTargetId,
+      mergeFn: PageCache.mergeAnalysisBundle,
+    });
+  }
+  return fetchMetricsBundleFromNetwork(path, params, publicTargetId);
 }
 function metricHeadlineHtml(profitStr, rateStr) {
   const amtCls = bundleSignedClass(profitStr);
