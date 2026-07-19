@@ -1684,6 +1684,23 @@ async function handlePublicHomeBundle(req, res) {
   }
 }
 
+async function handlePublicCacheMeta(req, res) {
+  try {
+    const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ ok: false, error: gate.error });
+      return;
+    }
+    const { getCacheMeta } = require("./src/cache-epoch");
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, data: await getCacheMeta(gate.userId) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "public cache-meta failed" });
+  }
+}
+
+app.get("/api/public/:targetId/cache-meta", optionalAuth, handlePublicCacheMeta);
+
 app.get("/api/public/:targetId/home-bundle", optionalAuth, handlePublicHomeBundle);
 app.get("/api/public/:targetId/metrics/home-bundle", optionalAuth, handlePublicHomeBundle);
 

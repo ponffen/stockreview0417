@@ -21,6 +21,9 @@
   let dbPromise = null;
   let serverMetaPromise = null;
   let serverMetaCache = null;
+  const publicMetaByTarget = new Map();
+  const publicMetaPromises = new Map();
+  const LS_PUBLIC_META_PREFIX = "stockreview_cache_meta_public:";
 
   function domainsForPart(part) {
     if (part === "seriesFrozen") {
@@ -138,10 +141,112 @@
     });
   }
 
+  function readLocalPublicMeta(targetId) {
+    const tid = String(targetId || "").trim();
+    if (!tid) {
+      return null;
+    }
+    try {
+      const raw = global.localStorage.getItem(`${LS_PUBLIC_META_PREFIX}${tid}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLocalPublicMeta(targetId, meta) {
+    const tid = String(targetId || "").trim();
+    if (!tid) {
+      return;
+    }
+    try {
+      if (!meta) {
+        global.localStorage.removeItem(`${LS_PUBLIC_META_PREFIX}${tid}`);
+        return;
+      }
+      global.localStorage.setItem(`${LS_PUBLIC_META_PREFIX}${tid}`, JSON.stringify(meta));
+    } catch {
+      // quota or private mode
+    }
+  }
+
+  async function fetchPublicCacheMeta(apiFetch, baseUrl, targetId) {
+    const tid = String(targetId || "").trim();
+    if (!apiFetch || !baseUrl || !tid) {
+      return readLocalPublicMeta(tid);
+    }
+    try {
+      const res = await apiFetch(`${baseUrl}/public/${encodeURIComponent(tid)}/cache-meta`, {
+        cache: "no-store",
+        timeoutMs: 8000,
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok || !j.data) {
+        return readLocalPublicMeta(tid);
+      }
+      publicMetaByTarget.set(tid, j.data);
+      writeLocalPublicMeta(tid, j.data);
+      return j.data;
+    } catch {
+      return readLocalPublicMeta(tid);
+    }
+  }
+
+  async function ensurePublicCacheMeta(apiFetch, baseUrl, targetId, opts = {}) {
+    const tid = String(targetId || "").trim();
+    if (!tid) {
+      return null;
+    }
+    if (opts.force) {
+      publicMetaPromises.delete(tid);
+    }
+    if (publicMetaByTarget.has(tid) && !opts.force) {
+      return publicMetaByTarget.get(tid);
+    }
+    const pending = publicMetaPromises.get(tid);
+    if (pending && !opts.force) {
+      return pending;
+    }
+    const promise = fetchPublicCacheMeta(apiFetch, baseUrl, tid).then((meta) => {
+      const resolved = meta || readLocalPublicMeta(tid);
+      publicMetaByTarget.set(tid, resolved);
+      return resolved;
+    });
+    publicMetaPromises.set(tid, promise);
+    return promise;
+  }
+
+  function invalidatePublicCacheMeta(targetId) {
+    const tid = String(targetId || "").trim();
+    if (!tid) {
+      publicMetaByTarget.clear();
+      publicMetaPromises.clear();
+      return;
+    }
+    publicMetaByTarget.delete(tid);
+    publicMetaPromises.delete(tid);
+  }
+
   async function clearAll() {
     writeLocalMeta(null);
     serverMetaCache = null;
     serverMetaPromise = null;
+    publicMetaByTarget.clear();
+    publicMetaPromises.clear();
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < global.localStorage.length; i += 1) {
+        const k = global.localStorage.key(i);
+        if (k && k.startsWith(LS_PUBLIC_META_PREFIX)) {
+          keysToRemove.push(k);
+        }
+      }
+      for (const k of keysToRemove) {
+        global.localStorage.removeItem(k);
+      }
+    } catch {
+      // ignore
+    }
     const db = await openDb();
     if (!db) {
       return;
@@ -487,6 +592,9 @@
     readLocalMeta,
     writeLocalMeta,
     ensureCacheMeta,
+    ensurePublicCacheMeta,
+    readLocalPublicMeta,
+    invalidatePublicCacheMeta,
     invalidateServerMeta: () => {
       serverMetaCache = null;
       serverMetaPromise = null;

@@ -463,6 +463,35 @@ module.exports = async function handler(req, res, context) {
     }
   }
 
+  const isPublicCacheMeta = /^\/api\/public\/[^/]+\/cache-meta$/.test(pathKey);
+  if (req.method === "GET" && isPublicCacheMeta) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const gate = await resolveMetricsBundleUserId(true);
+      if (!gate.ok) {
+        res.statusCode = gate.status;
+        res.end(JSON.stringify({ ok: false, error: gate.error, code: gate.code || null }));
+        return;
+      }
+      const { getCacheMeta } = require("../src/cache-epoch");
+      const data = await getCacheMeta(gate.userId);
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data }));
+      return;
+    } catch (error) {
+      console.error("[api/index.js] direct public cache-meta error:", error);
+      res.statusCode = 500;
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: error?.message || "public cache-meta direct failed",
+        }),
+      );
+      return;
+    }
+  }
+
   const isPublicHomeBundle = /^\/api\/public\/[^/]+(?:\/home-bundle|\/metrics\/home-bundle)$/.test(pathKey);
   if (req.method === "GET" && isPublicHomeBundle) {
     res.setHeader("Content-Type", "application/json; charset=utf-8");

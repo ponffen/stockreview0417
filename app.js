@@ -2567,8 +2567,15 @@ function pageCacheUserId(publicTargetId = "") {
   return String(sessionUserId || "").trim();
 }
 
-function pageCacheEnabled() {
-  return typeof PageCache !== "undefined" && !!sessionUserId && apiReady;
+function pageCacheEnabled(publicTargetId = "") {
+  if (typeof PageCache === "undefined" || !apiReady) {
+    return false;
+  }
+  const tid = String(publicTargetId || "").trim();
+  if (tid) {
+    return true;
+  }
+  return !!sessionUserId;
 }
 
 async function ensurePageCacheMeta(force = false) {
@@ -2576,6 +2583,17 @@ async function ensurePageCacheMeta(force = false) {
     return PageCache?.readLocalMeta?.() || null;
   }
   return PageCache.ensureCacheMeta(apiFetch, getApiBaseForFetch(), { force });
+}
+
+async function ensurePageCacheMetaForScope(publicTargetId = "", force = false) {
+  const tid = String(publicTargetId || "").trim();
+  if (tid) {
+    if (!apiReady) {
+      return PageCache?.readLocalPublicMeta?.(tid) || null;
+    }
+    return PageCache.ensurePublicCacheMeta(apiFetch, getApiBaseForFetch(), tid, { force });
+  }
+  return ensurePageCacheMeta(force);
 }
 
 function bumpPageCacheLocalEpochs(domains = []) {
@@ -2640,11 +2658,12 @@ async function fetchMetricsBundleFromNetwork(path, params = {}, publicTargetId =
   }
 }
 
-async function persistMetricsBundlePageCache(kind, cacheKey, bundle, meta) {
-  if (!pageCacheEnabled() || !bundle || !cacheKey) {
+async function persistMetricsBundlePageCache(kind, cacheKey, bundle, meta, publicTargetId = "") {
+  const tid = String(publicTargetId || "").trim();
+  if (!pageCacheEnabled(tid) || !bundle || !cacheKey) {
     return;
   }
-  const m = meta || (await ensurePageCacheMeta());
+  const m = meta || (await ensurePageCacheMetaForScope(tid));
   if (kind === "home") {
     await PageCache.saveBundleParts(
       cacheKey,
@@ -2687,8 +2706,10 @@ async function loadMetricsBundleWithPageCache({
   skipCache = false,
   onStaleHit = null,
 }) {
-  const meta = await ensurePageCacheMeta();
-  if (pageCacheEnabled() && !skipCache && cacheKey && mergeFn) {
+  const tid = String(publicTargetId || "").trim();
+  const cacheOn = pageCacheEnabled(tid);
+  const meta = await ensurePageCacheMetaForScope(tid);
+  if (cacheOn && !skipCache && cacheKey && mergeFn) {
     const hit = await PageCache.loadMergedBundle(cacheKey, mergeFn, pageKind, meta);
     if (hit.bundle && !hit.needFetch) {
       return hit.bundle;
@@ -2700,7 +2721,13 @@ async function loadMetricsBundleWithPageCache({
       void (async () => {
         const fresh = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
         if (fresh) {
-          await persistMetricsBundlePageCache(kind, cacheKey, fresh, await ensurePageCacheMeta(true));
+          await persistMetricsBundlePageCache(
+            kind,
+            cacheKey,
+            fresh,
+            await ensurePageCacheMetaForScope(tid, true),
+            tid,
+          );
           if (typeof onStaleHit === "function") {
             onStaleHit(fresh, false, true);
           }
@@ -2710,8 +2737,8 @@ async function loadMetricsBundleWithPageCache({
     }
   }
   const data = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
-  if (data && pageCacheEnabled() && cacheKey) {
-    await persistMetricsBundlePageCache(kind, cacheKey, data, meta);
+  if (data && cacheOn && cacheKey) {
+    await persistMetricsBundlePageCache(kind, cacheKey, data, meta, tid);
   }
   return data;
 }
@@ -3119,7 +3146,7 @@ async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTa
     account_id: resolveValidAccountFilter(accountId),
     range: String(chartOpts.range ?? state.stockRecordChartRange ?? "30").trim(),
   };
-  const cacheKey = pageCacheEnabled()
+  const cacheKey = pageCacheEnabled(publicTargetId)
     ? PageCache.stockRecordBundleCacheKey(
         pageCacheUserId(publicTargetId),
         params.symbol,
@@ -6587,8 +6614,18 @@ function syncDynamicsCardBodyCollapse(root) {
   requestAnimationFrame(run);
 }
 
-async function loadDynamicsListPage({ key, container, apiPath, reset = false, editable = false, emptyText }) {
+async function loadDynamicsListPage({
+  key,
+  container,
+  apiPath,
+  reset = false,
+  editable = false,
+  emptyText,
+  publicTargetId = "",
+}) {
   ensureTradeListScrollListener();
+  const pubTid = String(publicTargetId || "").trim();
+  const cacheOwner = pageCacheUserId(pubTid);
   const listState = getDynamicsListState(key);
   listState.apiPath = apiPath;
   listState.editable = editable;
@@ -6605,9 +6642,9 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
     return;
   }
   const st = getDynamicsListState(key);
-  if (reset && pageCacheEnabled()) {
-    const meta = await ensurePageCacheMeta();
-    const cacheKey = PageCache.dynamicsListCacheKey(sessionUserId, key);
+  if (reset && pageCacheEnabled(pubTid)) {
+    const meta = await ensurePageCacheMetaForScope(pubTid);
+    const cacheKey = PageCache.dynamicsListCacheKey(cacheOwner, key);
     const entry = await PageCache.readEntry(cacheKey);
     const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
     if (entry?.fullPayload && !PageCache.isPageStale(entry, pageKind, meta)) {
@@ -6652,11 +6689,11 @@ async function loadDynamicsListPage({ key, container, apiPath, reset = false, ed
     const pagination = j.pagination || {};
     st.cursor = pagination.cursor || null;
     st.hasMore = pagination.hasMore === true;
-    if (reset && pageCacheEnabled() && !qs.get("cursor")) {
-      const meta = await ensurePageCacheMeta();
+    if (reset && pageCacheEnabled(pubTid) && !qs.get("cursor")) {
+      const meta = await ensurePageCacheMetaForScope(pubTid);
       const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
       await PageCache.writeEntry({
-        cacheKey: PageCache.dynamicsListCacheKey(sessionUserId, key),
+        cacheKey: PageCache.dynamicsListCacheKey(cacheOwner, key),
         fullPayload: {
           items: st.items.map((item) => ({ ...item })),
           cursor: st.cursor,
@@ -6875,6 +6912,7 @@ async function loadProfileDynamics(targetId, { reset = false } = {}) {
     reset: true,
     editable: false,
     emptyText: "暂无动态",
+    publicTargetId: uid,
   });
 }
 
@@ -6901,6 +6939,7 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
     reset: shouldReset,
     editable: !usePub,
     emptyText: "暂无个股动态",
+    publicTargetId: usePub && detail?.userId ? String(detail.userId).trim() : "",
   });
 }
 
@@ -7421,11 +7460,18 @@ async function fetchPublicHomeBundleMetrics(targetId) {
   }
   state.publicEarningBundleUi.loading = true;
   try {
-    const data = await fetchMetricsApi(
-      "/home-bundle",
-      { account_id: "all", stages: METRICS_HOME_BUNDLE_STAGES },
-      tid,
-    );
+    const cacheKey = pageCacheEnabled(tid)
+      ? PageCache.homeBundleCacheKey(pageCacheUserId(tid), "all", METRICS_HOME_BUNDLE_STAGES)
+      : "";
+    const data = await loadMetricsBundleWithPageCache({
+      kind: "home",
+      pageKind: "home",
+      cacheKey,
+      path: "/home-bundle",
+      params: { account_id: "all", stages: METRICS_HOME_BUNDLE_STAGES },
+      publicTargetId: tid,
+      mergeFn: PageCache.mergeHomeBundle,
+    });
     if (!data) {
       return null;
     }
@@ -10361,9 +10407,10 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "", opts = {}
     return null;
   }
   const pathNorm = String(path || "");
+  const pubTid = String(publicTargetId || "").trim();
   if (
     !opts.skipPageCache &&
-    pageCacheEnabled() &&
+    pageCacheEnabled(pubTid) &&
     (pathNorm.includes("analysis-bundle") || pathNorm.endsWith("/analysis-bundle"))
   ) {
     const bundleParams = { ...params };
