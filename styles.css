@@ -824,12 +824,18 @@ body {
   white-space: nowrap;
 }
 
+.stock-col-price .cell-main {
+  text-align: right;
+}
+
 .stock-col-price .cell-sub {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: nowrap;
   gap: 0;
   min-width: 0;
+  text-align: right;
 }
 
 .stock-col-price .cell-sub-pct {
