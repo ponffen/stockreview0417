@@ -299,6 +299,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const bookCcy = bookCurrencyForScope(accounts, scope);
   let quoteDelayed = !!quoteReq.delayed || !!fxReq.delayed;
   const quoteSource = quoteReq.quoteSource || "";
+  const quoteError = String(quoteReq.quoteError || quoteReq.error || "").trim() || null;
 
   const quoteMap = {};
   for (const sym of symbols) {
@@ -469,6 +470,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       bookCurrency: bookCcy,
       delayed: quoteDelayed,
       quoteSource,
+      quoteError,
       quoteTime: pickLatestQuoteTime([
         fxReq?.quoteTime,
         ...Object.values(quoteMap).map((q) => q?.time),
@@ -506,6 +508,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     bookCurrency: bookCcy,
     delayed: quoteDelayed,
     quoteSource,
+    quoteError,
     quoteTime: pickLatestQuoteTime([
       fxReq?.quoteTime,
       ...Object.values(quoteMap).map((q) => q?.time),

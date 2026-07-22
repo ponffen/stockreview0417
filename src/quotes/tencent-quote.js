@@ -25,6 +25,29 @@ const QUOTE_PROXY_BASE =
 const quoteMem = new Map();
 const FOREX_KEYS = ["whUSDCNY", "whHKDCNY"];
 
+/** 腾讯 qt 对美股代码大小写敏感（须 usGOOG，不能 usgoog）；A/HK 用小写。 */
+function canonicalTencentRequestKey(key) {
+  const s = String(key || "").trim();
+  if (!s) {
+    return "";
+  }
+  const lower = s.toLowerCase();
+  if (/^(sh|sz)\d{6}$/.test(lower) || /^hk\d{5}$/.test(lower)) {
+    return lower;
+  }
+  if (/^wh[a-z0-9]+$/.test(lower)) {
+    return `wh${lower.slice(2).toUpperCase()}`;
+  }
+  if (/^us[a-z0-9._-]+$/.test(lower)) {
+    return `us${lower.slice(2).toUpperCase()}`;
+  }
+  return lower;
+}
+
+function tencentKeyLookup(key) {
+  return String(key || "").trim().toLowerCase();
+}
+
 function parseTencentQuoteRecord(symbol, rawText) {
   if (!rawText || typeof rawText !== "string") {
     return null;
@@ -104,7 +127,13 @@ async function fetchTencentQuoteChunk(keys) {
 }
 
 async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
-  const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
+  const keys = [
+    ...new Set(
+      (reqKeys || [])
+        .map((s) => canonicalTencentRequestKey(String(s || "").trim()))
+        .filter(Boolean),
+    ),
+  ];
   if (!keys.length) {
     return { ok: false, payloadMap: new Map(), delayed: true, source: "", error: "empty keys" };
   }
@@ -146,7 +175,7 @@ async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGE
     delayed = true;
   }
   for (const key of keys) {
-    const k = String(key).toLowerCase();
+    const k = tencentKeyLookup(key);
     if (!payloadMap.has(k) && quoteMem.has(k)) {
       payloadMap.set(k, quoteMem.get(k));
       delayed = true;
@@ -162,13 +191,19 @@ async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGE
 async function fetchTencentQuoteMap(symbols, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
   const symList = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
   const keyToSym = new Map();
+  const requestKeys = [];
   for (const sym of symList) {
     const key = toTencentQuoteKey(sym);
-    if (key) {
-      keyToSym.set(String(key).toLowerCase(), sym);
+    if (!key) {
+      continue;
+    }
+    const lk = tencentKeyLookup(key);
+    if (!keyToSym.has(lk)) {
+      keyToSym.set(lk, sym);
+      requestKeys.push(canonicalTencentRequestKey(key));
     }
   }
-  const keys = [...keyToSym.keys()];
+  const keys = requestKeys;
   if (!keys.length) {
     return { ok: false, map: new Map(), delayed: false, source: "" };
   }
@@ -272,6 +307,8 @@ async function fetchTencentForexMap(budgetMs = QUOTE_TOTAL_BUDGET_MS) {
 
 module.exports = {
   toTencentQuoteKey,
+  canonicalTencentRequestKey,
+  tencentKeyLookup,
   parseTencentQuoteRecord,
   parseTencentQuoteTextToMap,
   parseTencentQuoteTextToRawMap,

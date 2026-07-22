@@ -56,6 +56,7 @@ async function fetchQuoteMap(symbols, opts = {}) {
     map: out,
     delayed,
     quoteSource: resolveQuoteSource(sources),
+    quoteError: lp.error || "",
     missing: stillMissing,
     error: lp.error || "",
   };
