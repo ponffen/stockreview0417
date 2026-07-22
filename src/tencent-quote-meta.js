@@ -113,7 +113,7 @@ async function fetchTencentQuoteMetaForSymbols(symbols) {
   for (let i = 0; i < keys.length; i += CHUNK) {
     const chunk = keys.slice(i, i + CHUNK);
     const q = chunk.join(",");
-    const url = `https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent?q=${encodeURIComponent(q)}`;
+    const url = `https://market-et-proxy-chbtzurmsn.cn-hangzhou.fcapp.run/api/quote/tencent?q=${encodeURIComponent(q)}`;
     let text = "";
     try {
       const r = await fetch(url, {

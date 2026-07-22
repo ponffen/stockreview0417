@@ -1,5 +1,5 @@
 const { parseHttpEvent, jsonResponse, textResponse } = require("./lib/http");
-const { fetchLongportQuotes } = require("./lib/longport");
+const { fetchLongportQuotes, longportCredsFromHeaders } = require("./lib/longport");
 const { fetchTencentQuoteText } = require("./lib/tencent");
 
 function parseSymbolList(raw) {
@@ -19,17 +19,10 @@ exports.handler = async (event) => {
   }
 
   if (path === "/api/health" || path === "/health") {
-    const hasCreds = !!(
-      process.env.LONGPORT_APP_KEY ||
-      process.env.LONGBRIDGE_APP_KEY ||
-      process.env.LONGPORT_ACCESS_TOKEN ||
-      process.env.LONGBRIDGE_ACCESS_TOKEN
-    );
     return jsonResponse(200, {
       ok: true,
       service: "market-proxy",
-      longportConfigured: hasCreds,
-      overnight: String(process.env.LONGPORT_ENABLE_OVERNIGHT || process.env.LONGBRIDGE_ENABLE_OVERNIGHT || ""),
+      credentialMode: "forwarded-from-vercel",
     });
   }
 
@@ -38,7 +31,11 @@ exports.handler = async (event) => {
     if (!symbols.length || symbols.length > 500) {
       return jsonResponse(400, { ok: false, error: "invalid symbols" });
     }
-    const result = await fetchLongportQuotes(symbols);
+    const creds = longportCredsFromHeaders(req.headers);
+    if (!creds?.appKey || !creds?.appSecret || !creds?.accessToken) {
+      return jsonResponse(401, { ok: false, error: "longport credentials missing in request headers" });
+    }
+    const result = await fetchLongportQuotes(symbols, creds);
     const status = result.ok ? 200 : 502;
     return jsonResponse(status, result);
   }

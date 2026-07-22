@@ -544,7 +544,7 @@ const PROBE_MAX_TIMEOUT_MS = 30_000;
 const PROBE_DEFAULT_ROUNDS = 1;
 const PROBE_MAX_ROUNDS = 5;
 const DEFAULT_ALIYUN_PROBE_URL =
-  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/probe/upstream";
+  "https://market-et-proxy-chbtzurmsn.cn-hangzhou.fcapp.run/api/probe/upstream";
 
 function parsePositiveInt(input, fallback, min, max) {
   const n = Number(input);

@@ -20,7 +20,7 @@ const QUOTE_TOTAL_BUDGET_MS = Math.max(
 const QUOTE_CHUNK_CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.QUOTE_CHUNK_CONCURRENCY || 2)));
 const QUOTE_PROXY_BASE =
   String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
-  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
+  "https://market-et-proxy-chbtzurmsn.cn-hangzhou.fcapp.run";
 
 const quoteMem = new Map();
 const FOREX_KEYS = ["whUSDCNY", "whHKDCNY"];

@@ -4,6 +4,7 @@ const {
   buildQuoteRecord,
   isUsTickerSymbol,
 } = require("./quote-common");
+const { headerValue } = require("./http");
 
 const LONGPORT_CHUNK_SIZE = 450;
 const LONGPORT_FETCH_TIMEOUT_MS = Math.max(
@@ -17,11 +18,11 @@ const SESSION_LABELS = {
   overnight: "夜盘",
 };
 
-let quoteContextPromise = null;
+const quoteContextCache = new Map();
 
-function envValue(...names) {
-  for (const name of names) {
-    const v = String(process.env[name] || "").trim();
+function pickCredsValue(creds, ...keys) {
+  for (const key of keys) {
+    const v = String(creds?.[key] || "").trim();
     if (v) {
       return v;
     }
@@ -29,9 +30,60 @@ function envValue(...names) {
   return "";
 }
 
-function isOvernightEnabled() {
-  const raw = envValue("LONGPORT_ENABLE_OVERNIGHT", "LONGBRIDGE_ENABLE_OVERNIGHT");
+function isOvernightEnabled(creds) {
+  const raw = pickCredsValue(creds, "enableOvernight");
   return raw === "1" || /^true$/i.test(raw);
+}
+
+function credsCacheKey(creds) {
+  const appKey = pickCredsValue(creds, "appKey");
+  const accessToken = pickCredsValue(creds, "accessToken");
+  return `${appKey}::${accessToken}`;
+}
+
+async function getQuoteContext(creds) {
+  const appKey = pickCredsValue(creds, "appKey");
+  const appSecret = pickCredsValue(creds, "appSecret");
+  const accessToken = pickCredsValue(creds, "accessToken");
+  if (!appKey || !appSecret || !accessToken) {
+    throw new Error("longport credentials missing");
+  }
+  const cacheKey = credsCacheKey(creds);
+  if (quoteContextCache.has(cacheKey)) {
+    return quoteContextCache.get(cacheKey);
+  }
+  const promise = (async () => {
+    const { Config, QuoteContext } = require("longbridge");
+    const httpUrl = pickCredsValue(creds, "httpUrl");
+    const extra = { enableOvernight: isOvernightEnabled(creds) };
+    if (httpUrl) {
+      extra.httpUrl = httpUrl;
+    }
+    const config = Config.fromApikey(appKey, appSecret, accessToken, extra);
+    return QuoteContext.new(config);
+  })();
+  quoteContextCache.set(cacheKey, promise);
+  return promise;
+}
+
+function longportCredsFromHeaders(headers) {
+  const appKey = headerValue(headers, "x-longport-app-key") || headerValue(headers, "x-longbridge-app-key");
+  const appSecret =
+    headerValue(headers, "x-longport-app-secret") || headerValue(headers, "x-longbridge-app-secret");
+  const accessToken =
+    headerValue(headers, "x-longport-access-token") || headerValue(headers, "x-longbridge-access-token");
+  if (!appKey && !appSecret && !accessToken) {
+    return null;
+  }
+  return {
+    appKey,
+    appSecret,
+    accessToken,
+    httpUrl: headerValue(headers, "x-longport-http-url") || headerValue(headers, "x-longbridge-http-url"),
+    enableOvernight:
+      headerValue(headers, "x-longport-enable-overnight") ||
+      headerValue(headers, "x-longbridge-enable-overnight"),
+  };
 }
 
 function normalizeSymbol(rawSymbol) {
@@ -55,29 +107,6 @@ function normalizeSymbol(rawSymbol) {
     return value.toLowerCase();
   }
   return value;
-}
-
-async function getQuoteContext() {
-  if (quoteContextPromise) {
-    return quoteContextPromise;
-  }
-  quoteContextPromise = (async () => {
-    const appKey = envValue("LONGPORT_APP_KEY", "LONGBRIDGE_APP_KEY");
-    const appSecret = envValue("LONGPORT_APP_SECRET", "LONGBRIDGE_APP_SECRET");
-    const accessToken = envValue("LONGPORT_ACCESS_TOKEN", "LONGBRIDGE_ACCESS_TOKEN");
-    if (!appKey || !appSecret || !accessToken) {
-      throw new Error("longport credentials missing");
-    }
-    const { Config, QuoteContext } = require("longbridge");
-    const httpUrl = envValue("LONGPORT_HTTP_URL", "LONGBRIDGE_HTTP_URL");
-    const extra = { enableOvernight: isOvernightEnabled() };
-    if (httpUrl) {
-      extra.httpUrl = httpUrl;
-    }
-    const config = Config.fromApikey(appKey, appSecret, accessToken, extra);
-    return QuoteContext.new(config);
-  })();
-  return quoteContextPromise;
 }
 
 function toLongportSymbol(rawSymbol) {
@@ -199,7 +228,7 @@ function parseLongportQuote(lpSymbol, quote, internalSym) {
   });
 }
 
-async function fetchLongportQuotes(symbols) {
+async function fetchLongportQuotes(symbols, creds) {
   const symList = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
   const lpToInternal = new Map();
   for (const sym of symList) {
@@ -218,7 +247,7 @@ async function fetchLongportQuotes(symbols) {
   let lastError = "";
 
   try {
-    const ctx = await getQuoteContext();
+    const ctx = await getQuoteContext(creds);
     for (let i = 0; i < lpSymbols.length; i += LONGPORT_CHUNK_SIZE) {
       const chunk = lpSymbols.slice(i, i + LONGPORT_CHUNK_SIZE);
       const rows = await Promise.race([
@@ -257,5 +286,6 @@ async function fetchLongportQuotes(symbols) {
 
 module.exports = {
   fetchLongportQuotes,
+  longportCredsFromHeaders,
   normalizeSymbol,
 };

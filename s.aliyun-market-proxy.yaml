@@ -20,12 +20,6 @@ resources:
       cpu: 1
       diskSize: 512
       internetAccess: true
-      environmentVariables:
-        LONGPORT_HTTP_URL: ${env(LONGPORT_HTTP_URL)}
-        LONGPORT_ENABLE_OVERNIGHT: ${env(LONGPORT_ENABLE_OVERNIGHT)}
-        LONGPORT_APP_KEY: ${env(LONGPORT_APP_KEY)}
-        LONGPORT_APP_SECRET: ${env(LONGPORT_APP_SECRET)}
-        LONGPORT_ACCESS_TOKEN: ${env(LONGPORT_ACCESS_TOKEN)}
       triggers:
         - triggerName: httpTrigger
           triggerType: http

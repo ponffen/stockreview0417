@@ -1,17 +1,51 @@
 /**
  * 长桥实时行情：经阿里云 FC 代理拉取（Vercel 不打包 longbridge SDK）。
+ * 长桥密钥仅配置在 Vercel 环境变量，由服务端随请求转发给 FC。
  */
 const { normalizeSymbol } = require("../db");
 const { buildQuoteRecord } = require("./quote-common");
 
 const LONGPORT_FETCH_TIMEOUT_MS = Math.max(
   3000,
-  Math.min(20_000, Number(process.env.LONGPORT_QUOTE_TIMEOUT_MS || 12_000)),
+  Math.min(25_000, Number(process.env.LONGPORT_QUOTE_TIMEOUT_MS || 18_000)),
 );
 
 const LONGPORT_PROXY_BASE =
   String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
-  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
+  "https://market-et-proxy-chbtzurmsn.cn-hangzhou.fcapp.run";
+
+function envValue(...names) {
+  for (const name of names) {
+    const v = String(process.env[name] || "").trim();
+    if (v) {
+      return v;
+    }
+  }
+  return "";
+}
+
+function buildLongportProxyHeaders() {
+  const appKey = envValue("LONGPORT_APP_KEY", "LONGBRIDGE_APP_KEY");
+  const appSecret = envValue("LONGPORT_APP_SECRET", "LONGBRIDGE_APP_SECRET");
+  const accessToken = envValue("LONGPORT_ACCESS_TOKEN", "LONGBRIDGE_ACCESS_TOKEN");
+  if (!appKey || !appSecret || !accessToken) {
+    return null;
+  }
+  const headers = {
+    "X-Longport-App-Key": appKey,
+    "X-Longport-App-Secret": appSecret,
+    "X-Longport-Access-Token": accessToken,
+  };
+  const httpUrl = envValue("LONGPORT_HTTP_URL", "LONGBRIDGE_HTTP_URL");
+  if (httpUrl) {
+    headers["X-Longport-Http-Url"] = httpUrl;
+  }
+  const overnight = envValue("LONGPORT_ENABLE_OVERNIGHT", "LONGBRIDGE_ENABLE_OVERNIGHT");
+  if (overnight) {
+    headers["X-Longport-Enable-Overnight"] = overnight;
+  }
+  return headers;
+}
 
 function toLongportSymbol(rawSymbol) {
   const sym = normalizeSymbol(rawSymbol);
@@ -70,6 +104,11 @@ async function fetchLongportQuoteMap(symbols) {
     return { ok: false, map: new Map(), delayed: false, error: "empty symbols" };
   }
 
+  const proxyHeaders = buildLongportProxyHeaders();
+  if (!proxyHeaders) {
+    return { ok: false, map: new Map(), delayed: true, error: "longport credentials missing on server" };
+  }
+
   const url = `${LONGPORT_PROXY_BASE}/api/quote/longport?symbols=${encodeURIComponent(symList.join(","))}`;
   const out = new Map();
   let delayed = false;
@@ -77,6 +116,7 @@ async function fetchLongportQuoteMap(symbols) {
 
   try {
     const response = await fetch(url, {
+      headers: proxyHeaders,
       signal: AbortSignal.timeout(LONGPORT_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {

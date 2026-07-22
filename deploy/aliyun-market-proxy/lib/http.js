@@ -56,8 +56,19 @@ function textResponse(statusCode, text, contentType = "text/plain; charset=utf-8
   };
 }
 
+function headerValue(headers, name) {
+  const want = String(name || "").toLowerCase();
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (String(k).toLowerCase() === want) {
+      return String(v || "").trim();
+    }
+  }
+  return "";
+}
+
 module.exports = {
   parseHttpEvent,
   jsonResponse,
   textResponse,
+  headerValue,
 };
