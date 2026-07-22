@@ -240,9 +240,25 @@ function isSymbolClearedStable({
   return !hasOpenPositionQuantity(eodShares);
 }
 
+function closeForChartDay(pnl, closeLookup, dk) {
+  const fromLookup = closeLookup.closeOn(dk);
+  const pnlDay = String(pnl?.date || pnl?.dk || "").slice(0, 10);
+  const fromPnl =
+    Number(pnl?.eodPrice ?? pnl?.eod_price) ||
+    Number(pnl?.dayClosePrice ?? pnl?.day_close_price) ||
+    0;
+  if (fromLookup > 0 && pnlDay === dk) {
+    return fromLookup;
+  }
+  if (fromPnl > 0) {
+    return fromPnl;
+  }
+  return fromLookup;
+}
+
 function chartPointFromPnlRow(pnl, closeLookup, profitOf) {
   const dk = String(pnl.date || pnl.dk || "").slice(0, 10);
-  const close = closeLookup.closeOn(dk);
+  const close = closeForChartDay(pnl, closeLookup, dk);
   if (!(close > 0)) {
     return null;
   }
@@ -799,10 +815,42 @@ async function buildStockRecordBundlePayload({
     }
   }
   const pageCloseTo = endDate || frozenThrough || chartFrom;
-  const pageCloseRows =
+  let pageCloseRows =
     pageCloseFrom && pageCloseTo
       ? await getSymbolDailyCloseRange(sym, pageCloseFrom, pageCloseTo)
       : [];
+
+  if (pageCloseFrom && pageCloseTo) {
+    try {
+      const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, pageCloseFrom, pageCloseTo);
+      if (remoteRows.length) {
+        const merged = new Map(
+          pageCloseRows.map((r) => [String(r.date || "").slice(0, 10), r]),
+        );
+        const toPersist = [];
+        for (const row of remoteRows) {
+          const d = String(row.date || "").slice(0, 10);
+          const c = Number(row.close);
+          if (!d || !(c > 0)) {
+            continue;
+          }
+          const prev = merged.get(d);
+          if (!prev || Math.abs(Number(prev.close) - c) > 0.005) {
+            merged.set(d, { symbol: sym, date: d, close: c, source: row.source || "sina" });
+            toPersist.push({ symbol: sym, date: d, close: c, source: row.source || "sina" });
+          }
+        }
+        pageCloseRows = [...merged.values()].sort((a, b) =>
+          String(a.date || "").localeCompare(String(b.date || "")),
+        );
+        if (toPersist.length) {
+          void upsertSymbolDailyCloseBatch(toPersist).catch(() => {});
+        }
+      }
+    } catch {
+      /* keep local closes */
+    }
+  }
 
   const pageCloseLookup = closeLookupFromRows(pageCloseRows);
   const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);

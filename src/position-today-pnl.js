@@ -102,6 +102,22 @@ function getPositionDayTradeContext(symbol, dateKey, trades) {
   return { startQuantity, endQuantity, dayFlowNative };
 }
 
+function resolveTodayStartMvNat({ frozenMvNat, startQuantity, prevClose, quote }) {
+  const startQty = Number(startQuantity) || 0;
+  const prev = Number(prevClose) || 0;
+  const fromQuote = startQty > 0 && prev > 0 ? startQty * prev : 0;
+  const frozen = Number(frozenMvNat) || 0;
+  const liveCurrent = Number(quote?.current) || 0;
+  // 盘前/盘后/夜盘：今日收益基准 = 昨持仓 × 昨日盘中收盘价（与涨跌幅昨收口径一致）
+  if (fromQuote > 0 && liveCurrent > 0) {
+    return fromQuote;
+  }
+  if (frozen > 0) {
+    return frozen;
+  }
+  return fromQuote;
+}
+
 function computeTodayProfitNative({
   quote,
   symbol,
@@ -115,13 +131,16 @@ function computeTodayProfitNative({
   clearedToday = false,
 }) {
   const dayCtx = getPositionDayTradeContext(symbol, todayKey, trades);
-  const frozenStart = Number(frozenMvNat);
   const endQty =
     endQuantity != null && Number.isFinite(Number(endQuantity))
       ? Number(endQuantity)
       : dayCtx.endQuantity;
-  const todayStartMvNat =
-    Number.isFinite(frozenStart) && frozenStart > 0 ? frozenStart : dayCtx.startQuantity * prevClose;
+  const todayStartMvNat = resolveTodayStartMvNat({
+    frozenMvNat,
+    startQuantity: dayCtx.startQuantity,
+    prevClose,
+    quote,
+  });
 
   const isClearedToday =
     clearedToday ||
@@ -168,6 +187,7 @@ module.exports = {
   shouldCountTodayPositionPnlFromQuote,
   tradeSignedAmount,
   getPositionDayTradeContext,
+  resolveTodayStartMvNat,
   computeTodayProfitNative,
   todayProfitCnyForHolding,
 };

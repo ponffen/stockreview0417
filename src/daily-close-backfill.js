@@ -62,11 +62,18 @@ function inferCloseMarket(symbol) {
 
 function usTickerFromSymbol(symbol) {
   const s = String(symbol || "").trim();
-  if (/^gb_/i.test(s)) {
-    return s.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase();
+  const n = s.toLowerCase();
+  if (!n) {
+    return "";
   }
-  if (/^us_/i.test(s)) {
-    return s.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase();
+  if (/^gb_/i.test(n)) {
+    return n.slice(3).replace(/\.(oq|n)$/i, "").toUpperCase();
+  }
+  if (/^us_/i.test(n)) {
+    return s.replace(/^us_/i, "").replace(/\.(OQ|N)$/i, "").toUpperCase();
+  }
+  if (/^us[a-z0-9._-]+$/i.test(s)) {
+    return s.replace(/^us/i, "").replace(/\.(OQ|N)$/i, "").toUpperCase();
   }
   return s.replace(/\.(oq|n)$/i, "").toUpperCase();
 }
@@ -242,7 +249,11 @@ async function fetchRemoteDailyClosesForSymbol(normalized, fromDate, toDate) {
   if (market === "cn") {
     rows = await fetchSinaCnDailyCloses(symbol);
   } else if (market === "us") {
-    rows = await fetchSinaUsDailyCloses(symbol);
+    const [batchRows, dailyRows] = await Promise.all([
+      fetchSinaDailyKBatchCloses(symbol, from, to),
+      fetchSinaUsDailyCloses(symbol),
+    ]);
+    rows = mergeDailyRows(batchRows, filterRowsToRange(dailyRows, from, to));
   } else if (market === "hk") {
     const [gtimgRows, batchRows] = await Promise.all([
       fetchGtimgHkDailyCloses(symbol, from, to),

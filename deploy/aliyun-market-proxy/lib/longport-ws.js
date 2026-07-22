@@ -100,8 +100,9 @@ function parseQuoteRow(lpSymbol, row, internalSym) {
   const sym = internalSym || lpSymbol;
   let session = "regular";
   let sessionLabel = null;
+  const regularPrevClose = decimalToNum(row.prev_close);
   let current = decimalToNum(row.last_done);
-  let prevClose = decimalToNum(row.prev_close);
+  let prevClose = regularPrevClose;
   let time = formatTimestampBeijing((Number(row.timestamp) || 0) * 1000);
 
   if (isUsTickerSymbol(sym)) {
@@ -110,7 +111,7 @@ function parseQuoteRow(lpSymbol, row, internalSym) {
       session = active.session;
       sessionLabel = active.sessionLabel;
       current = active.current;
-      prevClose = active.prevClose;
+      prevClose = regularPrevClose > 0 ? regularPrevClose : active.prevClose;
       time = active.time;
     }
   }

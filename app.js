@@ -10704,6 +10704,7 @@ function overviewStockTableLayoutCacheKey(rows) {
         r.totalProfitCny,
         r.price,
         r.dayChange,
+        r.sessionLabel,
         r.quantity,
         r.weight,
         r.cost,
@@ -10868,8 +10869,10 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
       ];
     case 1:
       return metricsHoldingsMoneyCell(row, "todayProfit", displayMode);
-    case 2:
-      return [bundleFmtText(row.price), bundleFmtText(row.dayChange)];
+    case 2: {
+      const sessionPrefix = row.sessionLabel ? `${bundleFmtText(row.sessionLabel)} ` : "";
+      return [bundleFmtText(row.price), `${sessionPrefix}${bundleFmtText(row.dayChange)}`];
+    }
     case 3:
       return [metricsHoldingsMoneyCell(row, "marketValue", displayMode), bundleFmtText(row.quantity)];
     case 4:
@@ -10947,7 +10950,7 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
       const sessionTag = row.sessionLabel
         ? `<span class="quote-session-tag">${escapeHtml(bundleFmtText(row.sessionLabel))}</span>`
         : "";
-      return `<td${attr}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}${sessionTag}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>`;
+      return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${sessionTag}<span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.dayChange))}</span></div></td>`;
     }
     case 3:
       return `<td${attr}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>`;
@@ -11537,12 +11540,16 @@ async function renderStockRecordPage(symbol) {
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${headline?.code || formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = headline?.quoteTime ?? "—";
   const sessionTag = headline?.sessionLabel
-    ? ` <span class="quote-session-tag">${escapeHtml(bundleFmtText(headline.sessionLabel))}</span>`
+    ? `<span class="quote-session-tag">${escapeHtml(bundleFmtText(headline.sessionLabel))}</span>`
     : "";
-  stockRecordPrice.innerHTML = `${escapeHtml(headline?.price ?? "—")}${sessionTag}`;
+  stockRecordPrice.textContent = headline?.price ?? "—";
   const priceUp = headline?.changePct ? !String(headline.changePct).startsWith("-") : false;
   stockRecordPrice.className = `stock-record-price ${headline ? (priceUp ? "up" : "down") : ""}`;
-  stockRecordChange.textContent = headline ? `${headline.change} ${headline.changePct}` : "—";
+  if (headline) {
+    stockRecordChange.innerHTML = `${escapeHtml(headline.change)} ${sessionTag}<span class="cell-sub-pct">${escapeHtml(headline.changePct)}</span>`;
+  } else {
+    stockRecordChange.textContent = "—";
+  }
   stockRecordChange.className = `stock-record-change ${headline ? (priceUp ? "up" : "down") : ""}`;
   const intervalText = headline?.tradingInterval ?? "—";
   if (stockRecordInterval) {

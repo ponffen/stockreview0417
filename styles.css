@@ -811,15 +811,29 @@ body {
 
 .quote-session-tag {
   display: inline-block;
-  margin-left: 4px;
+  margin-right: 4px;
   padding: 0 4px;
   border-radius: 3px;
-  background: #eef2ff;
-  color: #4f6ef7;
+  background: #f0f1f3;
+  color: #8b93a1;
+  border: 1px solid #e2e5ea;
   font-size: 10px;
   font-weight: 500;
   line-height: 1.4;
   vertical-align: middle;
+  white-space: nowrap;
+}
+
+.stock-col-price .cell-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+}
+
+.stock-col-price .cell-sub-pct {
+  white-space: nowrap;
 }
 
 .stock-record-price .quote-session-tag {
