@@ -54,29 +54,17 @@ const bench = padBenchmarkLead(
 assert(bench.points[0].date === "2026-01-01", "bench lead");
 
 // Stock: close uses lookup, others zero
-const closeRows = [
-  { date: "2026-01-02", close: 10.5 },
-  { date: "2026-03-03", close: 12.0 },
-];
-const sorted = closeRows.map((r) => ({ day: r.date, close: r.close }));
-const closeLookup = {
-  closeOn(day) {
-    let last = 0;
-    for (const r of sorted) {
-      if (r.day <= day) {
-        last = r.close;
-      }
-    }
-    return last;
-  },
-};
 const stockPts = padStockRecordChartPointsLead(
   [{ date: "2026-03-03", close: "12.000", shares: "100", marketValueNative: "1,200.00", weight: "10.00%", profit: "+50.00" }],
   "2026-01-01",
-  closeLookup,
+  new Map([
+    ["2026-01-02", 10.5],
+    ["2026-03-02", 11.2],
+  ]),
 );
 assert(stockPts[0].date === "2026-01-02", `stock first lead ${stockPts[0].date}`);
 assert(stockPts[0].close === "10.500", `stock close ${stockPts[0].close}`);
 assert(stockPts[0].shares === "0", "stock shares zero");
+assert(stockPts.some((p) => p.date === "2026-03-02"), "stock includes day before first data");
 
 console.log("verify-chart-stage-lead-padding: ok");

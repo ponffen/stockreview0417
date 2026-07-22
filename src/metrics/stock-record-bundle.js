@@ -36,8 +36,11 @@ const { isLastNdStage, lastNdProfit } = require("./last-nd");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
+const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
 const {
   resolveChartLeadStart,
+  leadSessionDates,
+  firstSeriesDate,
   padStockRecordChartPointsLead,
 } = require("./chart-stage-lead-padding");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
@@ -863,7 +866,36 @@ async function buildStockRecordBundlePayload({
   }
 
   if (chartLeadStart && stageKey !== "today") {
-    points = padStockRecordChartPointsLead(points, chartLeadStart, pageCloseLookup);
+    const firstDataDate = firstSeriesDate(points);
+    const leadTo = firstDataDate ? addCalendarDays(firstDataDate, -1) : chartLeadStart;
+    const closeMap = new Map();
+    if (leadTo && chartLeadStart <= leadTo) {
+      const localRows = await getSymbolDailyCloseRange(sym, chartLeadStart, leadTo);
+      for (const row of localRows) {
+        const d = String(row.date || "").slice(0, 10);
+        const c = Number(row.close);
+        if (d && c > 0) {
+          closeMap.set(d, c);
+        }
+      }
+      const leadDates = leadSessionDates(chartLeadStart, firstDataDate);
+      const needsRemote = leadDates.some((d) => !closeMap.has(d));
+      if (needsRemote) {
+        try {
+          const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, chartLeadStart, leadTo);
+          for (const row of remoteRows) {
+            const d = String(row.date || "").slice(0, 10);
+            const c = Number(row.close);
+            if (d && c > 0 && !closeMap.has(d)) {
+              closeMap.set(d, c);
+            }
+          }
+        } catch {
+          // chart padding may proceed with partial closes
+        }
+      }
+    }
+    points = padStockRecordChartPointsLead(points, chartLeadStart, closeMap);
   }
 
   const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);

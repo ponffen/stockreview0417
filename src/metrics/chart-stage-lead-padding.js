@@ -162,7 +162,17 @@ function padBenchmarkLead(benchmark, chartStart) {
   return { ...benchmark, points };
 }
 
-function padStockRecordChartPointsLead(points, chartStart, closeLookup) {
+function closeOnExactDay(closeSource, dk) {
+  if (closeSource instanceof Map) {
+    return Number(closeSource.get(dk)) || 0;
+  }
+  if (typeof closeSource?.closeExactOn === "function") {
+    return Number(closeSource.closeExactOn(dk)) || 0;
+  }
+  return Number(closeSource?.closeOn?.(dk)) || 0;
+}
+
+function padStockRecordChartPointsLead(points, chartStart, closeSource) {
   if (!chartStart) {
     return sortedByDate(points);
   }
@@ -173,7 +183,7 @@ function padStockRecordChartPointsLead(points, chartStart, closeLookup) {
   const leadDates = leadSessionDates(chartStart, firstSeriesDate(sorted));
   const lead = [];
   for (const dk of leadDates) {
-    const close = closeLookup?.closeOn?.(dk);
+    const close = closeOnExactDay(closeSource, dk);
     if (!(close > 0)) {
       continue;
     }
@@ -195,6 +205,7 @@ function padStockRecordChartPointsLead(points, chartStart, closeLookup) {
 module.exports = {
   resolveChartLeadStart,
   leadSessionDates,
+  firstSeriesDate,
   padAnalysisSeriesBundle,
   padBenchmarkLead,
   padStockRecordChartPointsLead,

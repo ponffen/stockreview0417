@@ -652,11 +652,11 @@
     profileEpochsForSave,
     deleteEntry,
     homeBundleCacheKey: (userId, accountId, stages) =>
-      `home:${String(userId || "")}:${String(accountId || "all")}:${String(stages || "")}`,
+      `home:v2:${String(userId || "")}:${String(accountId || "all")}:${String(stages || "")}`,
     analysisBundleCacheKey: (userId, accountId, querySig) =>
-      `analysis:${String(userId || "")}:${String(accountId || "all")}:${String(querySig || "")}`,
+      `analysis:v2:${String(userId || "")}:${String(accountId || "all")}:${String(querySig || "")}`,
     stockRecordBundleCacheKey: (userId, symbol, accountId, range) =>
-      `stock:${String(userId || "")}:${normalizeSymbolKey(symbol)}:${String(accountId || "all")}:${String(range || "30")}`,
+      `stock:v2:${String(userId || "")}:${normalizeSymbolKey(symbol)}:${String(accountId || "all")}:${String(range || "30")}`,
     dynamicsListCacheKey: (userId, listKey) =>
       `dyn:${String(userId || "")}:${String(listKey || "")}`,
     communityProfileCacheKey: (viewerKey, targetId) =>
