@@ -363,7 +363,7 @@ const state = {
   tradePanelTab: "trades",
   editingCashTransferId: null,
   quoteMap: {},
-  /** 进入页面后固化的 Bundle 行情快照（F5 前不更新现价） */
+  /** 最近一次 Bundle 行情快照（用于 quoteMap / 个股页兜底） */
   quoteSnapshotLocked: false,
   quoteSnapshot: { meta: {}, bySymbol: {}, headline: null },
   klineMap: {},
@@ -3139,11 +3139,6 @@ function captureQuoteSnapshotFromBundle(bundle) {
   if (!bundle) {
     return;
   }
-  if (state.quoteSnapshotLocked) {
-    refreshQuoteFeedStatusFromBundle(bundle);
-    return;
-  }
-  state.quoteSnapshotLocked = true;
   const bySymbol = {};
   for (const row of bundle?.holdings?.rows || []) {
     const sym = normalizeSymbol(row.symbol);
@@ -3173,11 +3168,13 @@ function captureQuoteSnapshotFromBundle(bundle) {
         quoteTime: bundle.headline.quoteTime || null,
       }
     : state.quoteSnapshot?.headline || null;
+  state.quoteSnapshotLocked = true;
   state.quoteSnapshot = {
     meta: {
       quoteTime: bundle?.meta?.quoteTime ?? null,
       delayed: !!bundle?.meta?.delayed,
       quoteSource: bundle?.meta?.quoteSource ?? null,
+      quoteError: bundle?.meta?.quoteError ?? null,
     },
     bySymbol,
     headline,
@@ -3187,28 +3184,13 @@ function captureQuoteSnapshotFromBundle(bundle) {
     state.quoteTime = String(state.quoteSnapshot.meta.quoteTime);
   }
   state.marketDataDelayed = !!state.quoteSnapshot.meta.delayed;
-}
-
-function refreshQuoteFeedStatusFromBundle(bundle) {
-  const meta = bundle?.meta;
-  if (!meta || !state.quoteSnapshot?.meta) {
-    return;
-  }
-  state.quoteSnapshot.meta.delayed = !!meta.delayed;
-  state.quoteSnapshot.meta.quoteSource = meta.quoteSource ?? null;
-  state.quoteSnapshot.meta.quoteError = meta.quoteError ?? null;
-  if (meta.quoteTime) {
-    state.quoteSnapshot.meta.quoteTime = String(meta.quoteTime);
-    state.quoteTime = String(meta.quoteTime);
-  }
-  state.marketDataDelayed = !!meta.delayed;
-  state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
-  const quoteTime = document.getElementById("quoteTime");
-  if (quoteTime) {
-    quoteTime.classList.toggle("is-delayed", !!meta.delayed);
-    quoteTime.setAttribute(
+  state.marketDataDelaySource = state.marketDataDelayed ? "metrics-delayed" : "";
+  const quoteTimeEl = document.getElementById("quoteTime");
+  if (quoteTimeEl) {
+    quoteTimeEl.classList.toggle("is-delayed", !!state.marketDataDelayed);
+    quoteTimeEl.setAttribute(
       "title",
-      meta.delayed
+      state.marketDataDelayed
         ? "行情或指标延迟，数字为最近一次成功计算结果"
         : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
     );
@@ -3228,54 +3210,6 @@ function rebuildQuoteMapFromSnapshot() {
       sessionLabel: row.sessionLabel || null,
     };
   }
-}
-
-function mergeHoldingsRowsWithQuoteSnapshot(rows) {
-  if (!state.quoteSnapshotLocked || !Array.isArray(rows)) {
-    return rows;
-  }
-  const snap = state.quoteSnapshot?.bySymbol || {};
-  return rows.map((row) => {
-    const sym = normalizeSymbol(row.symbol);
-    const s = snap[sym];
-    if (!s) {
-      return row;
-    }
-    return {
-      ...row,
-      price: s.price,
-      dayChange: s.dayChange,
-      sessionLabel: s.sessionLabel,
-    };
-  });
-}
-
-function mergeBundleMetaWithQuoteSnapshot(meta) {
-  if (!state.quoteSnapshotLocked || !meta) {
-    return meta;
-  }
-  return {
-    ...meta,
-    quoteTime: meta.quoteTime ?? state.quoteSnapshot.meta.quoteTime,
-  };
-}
-
-function mergeStockRecordHeadlineWithQuoteSnapshot(headline) {
-  if (!state.quoteSnapshotLocked || !headline) {
-    return headline;
-  }
-  const snap = state.quoteSnapshot?.headline;
-  if (!snap) {
-    return headline;
-  }
-  return {
-    ...headline,
-    price: snap.price ?? headline.price,
-    change: snap.change ?? headline.change,
-    changePct: snap.changePct ?? headline.changePct,
-    sessionLabel: snap.sessionLabel ?? headline.sessionLabel,
-    quoteTime: snap.quoteTime ?? headline.quoteTime,
-  };
 }
 
 async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTargetId = "", chartOpts = {}) {
@@ -11369,8 +11303,8 @@ function applyHomeBundleToOverviewUi(bundle, aid, seq) {
   const ret = bundle?.returns;
   const assets = bundle?.assets;
   const hold = bundle?.holdings;
-  const meta = mergeBundleMetaWithQuoteSnapshot(bundle?.meta);
-  const holdRows = mergeHoldingsRowsWithQuoteSnapshot(hold?.rows || []);
+  const meta = bundle?.meta;
+  const holdRows = hold?.rows || [];
   if (seq !== overviewProfitRefreshSeq) {
     return false;
   }
@@ -11597,9 +11531,7 @@ async function renderStockRecordPage(symbol) {
   );
   const symbolTrades = [...scopeTrades].sort(sortTradeDesc);
   const bundle = state.stockRecordBundle;
-  const headline = mergeStockRecordHeadlineWithQuoteSnapshot(
-    bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol),
-  );
+  const headline = bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol);
   const positionName = headline?.name || "-";
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${headline?.code || formatSymbolForDisplay(symbol)})`;
