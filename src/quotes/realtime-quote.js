@@ -29,9 +29,9 @@ async function fetchQuoteMap(symbols, opts = {}) {
     for (const [sym, rec] of lp.map.entries()) {
       out.set(sym, rec);
     }
-  }
-  if (lp.delayed) {
-    delayed = true;
+    if (lp.delayed) {
+      delayed = true;
+    }
   }
 
   const missing = symList.filter((sym) => !out.has(sym));

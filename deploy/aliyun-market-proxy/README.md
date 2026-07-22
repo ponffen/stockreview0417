@@ -39,6 +39,11 @@ npm run deploy:aliyun-market-proxy
 
 当前生产 URL：`https://market-et-proxy-chbtzurmsn.cn-hangzhou.fcapp.run`
 
+## 实现说明
+
+- 长桥行情走 **WebSocket + legacy HTTP 签名**（`/v1/socket/token` → `wss://openapi-quote.longbridge.cn`），**不依赖** `longbridge` 原生 `.node` 绑定，避免 FC `nodejs20` 运行时 glibc 版本不兼容（`GLIBC_2.29`）。
+- 健康检查 `GET /api/health` 返回 `longportTransport: "websocket"`。
+
 ## 资源
 
 - 内存 1536 MB / 超时 30s / nodejs20

@@ -5,20 +5,13 @@ const {
   isUsTickerSymbol,
 } = require("./quote-common");
 const { headerValue } = require("./http");
+const { fetchQuotesOverWs } = require("./longport-ws");
 
 const LONGPORT_CHUNK_SIZE = 450;
 const LONGPORT_FETCH_TIMEOUT_MS = Math.max(
   3000,
   Math.min(30_000, Number(process.env.LONGPORT_QUOTE_TIMEOUT_MS || 15_000)),
 );
-
-const SESSION_LABELS = {
-  pre: "盘前",
-  post: "盘后",
-  overnight: "夜盘",
-};
-
-const quoteContextCache = new Map();
 
 function pickCredsValue(creds, ...keys) {
   for (const key of keys) {
@@ -28,42 +21,6 @@ function pickCredsValue(creds, ...keys) {
     }
   }
   return "";
-}
-
-function isOvernightEnabled(creds) {
-  const raw = pickCredsValue(creds, "enableOvernight");
-  return raw === "1" || /^true$/i.test(raw);
-}
-
-function credsCacheKey(creds) {
-  const appKey = pickCredsValue(creds, "appKey");
-  const accessToken = pickCredsValue(creds, "accessToken");
-  return `${appKey}::${accessToken}`;
-}
-
-async function getQuoteContext(creds) {
-  const appKey = pickCredsValue(creds, "appKey");
-  const appSecret = pickCredsValue(creds, "appSecret");
-  const accessToken = pickCredsValue(creds, "accessToken");
-  if (!appKey || !appSecret || !accessToken) {
-    throw new Error("longport credentials missing");
-  }
-  const cacheKey = credsCacheKey(creds);
-  if (quoteContextCache.has(cacheKey)) {
-    return quoteContextCache.get(cacheKey);
-  }
-  const promise = (async () => {
-    const { Config, QuoteContext } = require("longbridge");
-    const httpUrl = pickCredsValue(creds, "httpUrl");
-    const extra = { enableOvernight: isOvernightEnabled(creds) };
-    if (httpUrl) {
-      extra.httpUrl = httpUrl;
-    }
-    const config = Config.fromApikey(appKey, appSecret, accessToken, extra);
-    return QuoteContext.new(config);
-  })();
-  quoteContextCache.set(cacheKey, promise);
-  return promise;
 }
 
 function longportCredsFromHeaders(headers) {
@@ -162,72 +119,6 @@ function longportSymbolToInternal(lpSymbol, fallbackSym) {
   return fb || raw.toLowerCase();
 }
 
-function sessionCandidate(session, sessionLabel, block) {
-  if (!block) {
-    return null;
-  }
-  const current = decimalToNum(block.lastDone);
-  const prevClose = decimalToNum(block.prevClose);
-  const ts = block.timestamp instanceof Date ? block.timestamp.getTime() : 0;
-  if (!Number.isFinite(current) || current <= 0 || !ts) {
-    return null;
-  }
-  return { session, sessionLabel, current, prevClose, ts, time: formatTimestampBeijing(block.timestamp) };
-}
-
-function resolveUsActiveSession(quote) {
-  const regular = sessionCandidate("regular", null, {
-    lastDone: quote.lastDone,
-    prevClose: quote.prevClose,
-    timestamp: quote.timestamp,
-  });
-  const candidates = [
-    sessionCandidate("overnight", SESSION_LABELS.overnight, quote.overnightQuote),
-    sessionCandidate("post", SESSION_LABELS.post, quote.postMarketQuote),
-    sessionCandidate("pre", SESSION_LABELS.pre, quote.preMarketQuote),
-    regular,
-  ].filter(Boolean);
-  if (!candidates.length) {
-    return null;
-  }
-  candidates.sort((a, b) => b.ts - a.ts);
-  return candidates[0];
-}
-
-function parseLongportQuote(lpSymbol, quote, internalSym) {
-  const sym = longportSymbolToInternal(lpSymbol, internalSym);
-  if (!quote) {
-    return null;
-  }
-  let session = "regular";
-  let sessionLabel = null;
-  let current = decimalToNum(quote.lastDone);
-  let prevClose = decimalToNum(quote.prevClose);
-  let time = formatTimestampBeijing(quote.timestamp);
-
-  if (isUsTickerSymbol(sym)) {
-    const active = resolveUsActiveSession(quote);
-    if (active) {
-      session = active.session;
-      sessionLabel = active.sessionLabel;
-      current = active.current;
-      prevClose = active.prevClose;
-      time = active.time;
-    }
-  }
-
-  return buildQuoteRecord({
-    symbol: sym,
-    current,
-    prevClose,
-    time,
-    rawTime: time,
-    session,
-    sessionLabel,
-    source: "longport",
-  });
-}
-
 async function fetchLongportQuotes(symbols, creds) {
   const symList = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
   const lpToInternal = new Map();
@@ -247,22 +138,11 @@ async function fetchLongportQuotes(symbols, creds) {
   let lastError = "";
 
   try {
-    const ctx = await getQuoteContext(creds);
     for (let i = 0; i < lpSymbols.length; i += LONGPORT_CHUNK_SIZE) {
       const chunk = lpSymbols.slice(i, i + LONGPORT_CHUNK_SIZE);
-      const rows = await Promise.race([
-        ctx.quote(chunk),
-        new Promise((_, reject) => {
-          setTimeout(() => reject(new Error("longport quote timeout")), LONGPORT_FETCH_TIMEOUT_MS);
-        }),
-      ]);
-      for (const q of rows || []) {
-        const lpSym = String(q?.symbol || "");
-        const internal = lpToInternal.get(lpSym);
-        const rec = parseLongportQuote(lpSym, q, internal);
-        if (rec) {
-          quotes[normalizeSymbol(rec.symbol)] = rec;
-        }
+      const chunkQuotes = await fetchQuotesOverWs(chunk, lpToInternal, creds, LONGPORT_FETCH_TIMEOUT_MS);
+      for (const [sym, rec] of Object.entries(chunkQuotes)) {
+        quotes[normalizeSymbol(sym)] = rec;
       }
     }
   } catch (error) {

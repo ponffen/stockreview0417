@@ -121,8 +121,15 @@ async function fetchLongportQuoteMap(symbols) {
     });
     if (!response.ok) {
       lastError = `longport proxy http ${response.status}`;
-      delayed = true;
-      return { ok: false, map: out, delayed, error: lastError };
+      try {
+        const errBody = await response.json();
+        if (errBody?.error) {
+          lastError = String(errBody.error);
+        }
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, map: out, delayed: false, error: lastError };
     }
     const payload = await response.json();
     delayed = !!payload?.delayed;

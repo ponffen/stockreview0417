@@ -1,13 +1,13 @@
 {
   "name": "aliyun-market-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Aliyun FC market proxy: LongPort quotes + Tencent qt fallback",
+  "description": "Aliyun FC market proxy: LongPort quotes (WebSocket) + Tencent qt fallback",
   "main": "index.js",
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "longbridge": "^4.3.3"
+    "ws": "^8.18.3"
   }
 }

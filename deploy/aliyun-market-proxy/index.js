@@ -23,6 +23,10 @@ exports.handler = async (event) => {
       ok: true,
       service: "market-proxy",
       credentialMode: "forwarded-from-vercel",
+      longportTransport: "websocket",
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
     });
   }
 
