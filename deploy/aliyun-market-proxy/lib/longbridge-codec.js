@@ -2,9 +2,22 @@
  * LongPort WebSocket binary codec (v1 wire format on /v2 endpoint).
  * Reference: BrownSweet/longbridge-php LongbridgeCodec.php
  */
+const zlib = require("zlib");
+
 const PACKET_REQUEST = 1;
 const PACKET_RESPONSE = 2;
 const PACKET_PUSH = 3;
+
+function decompressBody(body, gzip) {
+  if (!gzip || !body?.length) {
+    return body;
+  }
+  try {
+    return zlib.gunzipSync(body);
+  } catch (err) {
+    throw new Error(`longport gzip decompress failed: ${err?.message || err}`);
+  }
+}
 
 function packHeader(type, verify = false, gzip = false, reserve = 0) {
   const byte = (type & 0x0f) | ((verify ? 1 : 0) << 4) | ((gzip ? 1 : 0) << 5) | ((reserve & 0x03) << 6);
@@ -62,6 +75,7 @@ function decodePacket(buf) {
   }
   const header = data[0];
   const type = header & 0x0f;
+  const gzip = !!(header & 0x20);
   const cmdCode = data[1];
 
   if (type === PACKET_RESPONSE) {
@@ -71,8 +85,9 @@ function decodePacket(buf) {
     const requestId = data.readUInt32BE(2);
     const status = data[6];
     const bodyLen = unpackUint24(data, 7);
-    const body = data.subarray(10, 10 + bodyLen);
-    return { type, cmdCode, requestId, status, body };
+    const rawBody = data.subarray(10, 10 + bodyLen);
+    const body = decompressBody(rawBody, gzip);
+    return { type, cmdCode, requestId, status, body, gzip };
   }
   if (type === PACKET_REQUEST) {
     if (data.length < 11) {
@@ -80,16 +95,18 @@ function decodePacket(buf) {
     }
     const requestId = data.readUInt32BE(2);
     const bodyLen = unpackUint24(data, 8);
-    const body = data.subarray(11, 11 + bodyLen);
-    return { type, cmdCode, requestId, status: 0, body, isRequest: true };
+    const rawBody = data.subarray(11, 11 + bodyLen);
+    const body = decompressBody(rawBody, gzip);
+    return { type, cmdCode, requestId, status: 0, body, gzip, isRequest: true };
   }
   if (type === PACKET_PUSH) {
     if (data.length < 5) {
       throw new Error("invalid push packet");
     }
     const bodyLen = unpackUint24(data, 2);
-    const body = data.subarray(5, 5 + bodyLen);
-    return { type, cmdCode, requestId: 0, status: 0, body, isPush: true };
+    const rawBody = data.subarray(5, 5 + bodyLen);
+    const body = decompressBody(rawBody, gzip);
+    return { type, cmdCode, requestId: 0, status: 0, body, gzip, isPush: true };
   }
   throw new Error(`unsupported packet type ${type}`);
 }
@@ -101,4 +118,5 @@ module.exports = {
   encodeRequest,
   encodeResponse,
   decodePacket,
+  decompressBody,
 };

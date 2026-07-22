@@ -74,6 +74,28 @@ function resolveUsActiveSession(quote) {
   return candidates[0];
 }
 
+function longportSymbolToInternal(lpSymbol) {
+  const raw = String(lpSymbol || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const [ticker, region] = raw.split(".");
+  const reg = String(region || "").toUpperCase();
+  if (reg === "HK") {
+    return `hk${String(ticker || "").replace(/\D/g, "").padStart(5, "0")}`;
+  }
+  if (reg === "SH") {
+    return `sh${String(ticker || "").padStart(6, "0")}`;
+  }
+  if (reg === "SZ") {
+    return `sz${String(ticker || "").padStart(6, "0")}`;
+  }
+  if (reg === "US") {
+    return `us${String(ticker || "").toUpperCase()}`;
+  }
+  return raw.toLowerCase();
+}
+
 function parseQuoteRow(lpSymbol, row, internalSym) {
   const sym = internalSym || lpSymbol;
   let session = "regular";
@@ -235,14 +257,25 @@ async function fetchQuotesOverWs(lpSymbols, lpToInternal, creds, timeoutMs) {
       throw new Error(detail ? `longport quote failed: ${detail}` : `longport quote failed status ${resp.status}`);
     }
     const rows = parseSecurityQuoteResponse(resp.body);
+    if (!rows.length) {
+      throw new Error(
+        `longport quote empty protobuf (body ${resp.body?.length || 0} bytes${resp.gzip ? ", gzip" : ""})`,
+      );
+    }
     const quotes = {};
+    let dropped = 0;
     for (const row of rows) {
-      const lpSym = String(row.symbol || "");
-      const internal = lpToInternal.get(lpSym);
+      const lpSym = String(row.symbol || "").trim();
+      const internal = lpToInternal.get(lpSym) || longportSymbolToInternal(lpSym);
       const rec = parseQuoteRow(lpSym, row, internal);
       if (rec) {
         quotes[rec.symbol] = rec;
+      } else {
+        dropped += 1;
       }
+    }
+    if (!Object.keys(quotes).length) {
+      throw new Error(`longport quote dropped all ${rows.length} rows (${dropped} invalid prices)`);
     }
     return quotes;
   } finally {

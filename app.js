@@ -3203,6 +3203,16 @@ function refreshQuoteFeedStatusFromBundle(bundle) {
   }
   state.marketDataDelayed = !!meta.delayed;
   state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
+  const quoteTime = document.getElementById("quoteTime");
+  if (quoteTime) {
+    quoteTime.classList.toggle("is-delayed", !!meta.delayed);
+    quoteTime.setAttribute(
+      "title",
+      meta.delayed
+        ? "行情或指标延迟，数字为最近一次成功计算结果"
+        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
+    );
+  }
 }
 
 function rebuildQuoteMapFromSnapshot() {
