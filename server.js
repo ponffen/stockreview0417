@@ -11,6 +11,11 @@ const {
   toSinaDailyKBatchSymbol,
 } = require("./src/sina-kline-upstream");
 const { fetchRemoteDailyClosesForSymbol } = require("./src/daily-close-backfill");
+const {
+  fetchQuoteMap,
+  fetchTencentForexMap,
+  fetchTencentQuotePayloadMap: fetchTencentQuotePayloadMapUpstream,
+} = require("./src/quotes/realtime-quote");
 
 const MARKET_KLINE_DEFAULT_LEN = 120;
 const MARKET_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -2156,31 +2161,28 @@ app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
 
 app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
   try {
-    const tRes = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
-    if (!tRes.ok) {
-      res.status(502).json({ ok: false, error: tRes.error || "realtime fx failed" });
+    const fxReq = await fetchTencentForexMap();
+    if (!fxReq.ok) {
+      res.status(502).json({ ok: false, error: "realtime fx failed" });
       return;
     }
-    if (tRes.delayed) {
-      setDelayedHeaders(res, tRes.source || "cache");
+    if (fxReq.delayed) {
+      setDelayedHeaders(res, fxReq.source || "cache");
     }
-    const usd = parseTencentForexQuotePayload(tRes.payloadMap.get("whusdcny"));
-    const hkd = parseTencentForexQuotePayload(tRes.payloadMap.get("whhkdcny"));
     const fxSpot = {};
-    if (usd && Number.isFinite(usd.current) && usd.current > 0) {
-      fxSpot.USD = usd.current;
+    if (fxReq.rates?.USD > 0) {
+      fxSpot.USD = fxReq.rates.USD;
     }
-    if (hkd && Number.isFinite(hkd.current) && hkd.current > 0) {
-      fxSpot.HKD = hkd.current;
+    if (fxReq.rates?.HKD > 0) {
+      fxSpot.HKD = fxReq.rates.HKD;
     }
-    const quoteTime = pickLatestQuoteTime([usd?.time, hkd?.time]);
     res.setHeader("Cache-Control", "no-store");
     res.json({
       ok: true,
       fxSpot,
-      quoteTime,
-      delayed: !!tRes.delayed,
-      delaySource: tRes.source || "",
+      quoteTime: fxReq.quoteTime,
+      delayed: !!fxReq.delayed,
+      delaySource: fxReq.source || "",
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "realtime fx failed" });
@@ -2205,33 +2207,24 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
     const baseSnapshot = baseRows[baseRows.length - 1] || null;
 
     const symbols = await collectLiveSymbolsForUser(req.userId, accountId || "all");
-    const quoteReq = await fetchTencentQuotePayloadMap(symbols.map((s) => toTencentQuoteSymbol(s)).filter(Boolean));
-    const fxReq = await fetchTencentQuotePayloadMap(["whUSDCNY", "whHKDCNY"]);
+    const quoteReq = await fetchQuoteMap(symbols);
+    const fxReq = await fetchTencentForexMap();
 
     const quoteMap = {};
-    if (quoteReq.ok) {
-      const keyToSymbol = new Map();
-      symbols.forEach((sym) => {
-        const key = toTencentQuoteSymbol(sym);
-        if (key) {
-          keyToSymbol.set(String(key).toLowerCase(), sym);
-        }
-      });
-      for (const [k, payload] of quoteReq.payloadMap.entries()) {
-        const sym = keyToSymbol.get(String(k).toLowerCase());
-        if (!sym) continue;
-        const parsed = parseTencentQuoteRecord(sym, payload);
-        if (parsed) {
-          quoteMap[sym] = parsed;
-        }
+    for (const sym of symbols) {
+      const q = quoteReq.map?.get(sym);
+      if (q) {
+        quoteMap[sym] = q;
       }
     }
 
     const fxSpot = {};
-    const usd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whusdcny")) : null;
-    const hkd = fxReq.ok ? parseTencentForexQuotePayload(fxReq.payloadMap.get("whhkdcny")) : null;
-    if (usd?.current > 0) fxSpot.USD = usd.current;
-    if (hkd?.current > 0) fxSpot.HKD = hkd.current;
+    if (fxReq?.rates?.USD > 0) {
+      fxSpot.USD = fxReq.rates.USD;
+    }
+    if (fxReq?.rates?.HKD > 0) {
+      fxSpot.HKD = fxReq.rates.HKD;
+    }
     const fxRate = (currency) => {
       if (currency === "CNY") return 1;
       if (currency === "USD") return Number(fxSpot.USD) > 0 ? Number(fxSpot.USD) : 7.2;
@@ -2350,7 +2343,7 @@ app.get("/api/quote/tencent", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid q keys" });
     return;
   }
-  const result = await fetchTencentQuotePayloadMap(reqKeys);
+  const result = await fetchTencentQuotePayloadMapUpstream(reqKeys);
   if (!result.ok) {
     res.status(502).json({ ok: false, error: result.error || "tencent quote failed" });
     return;

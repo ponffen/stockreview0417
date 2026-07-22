@@ -13,7 +13,13 @@ const {
 } = require("./db");
 const { computeLedgerCashBookUpToDate, principalBookUpToDate, bookCurrencyForScope } = require("./ledger-metrics");
 const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metrics/snapshot-plus-live");
-const { toTencentQuoteKey } = require("./tencent-quote-meta");
+const { pickLatestQuoteTime } = require("./quotes/quote-common");
+const {
+  fetchQuoteMap,
+  fetchTencentForexMap,
+  fetchTencentQuotePayloadMap,
+  toTencentQuoteKey,
+} = require("./quotes/realtime-quote");
 const { shouldEmitTodayLivePoint, liveDateKeyShanghai } = require("./metrics/trading-calendar");
 const {
   holdingsSymbolsForLiveMetrics,
@@ -23,15 +29,9 @@ const {
   hasOpenPositionQuantity,
   wasClearedOnTradingDay,
 } = require("./metrics/holdings-active-symbols");
-const {
-  parseQuoteTimeToDateKey,
-  computeTodayProfitNative,
-} = require("./position-today-pnl");
-const { normalizeQuoteTimeToBeijingBySymbol } = require("./tencent-quote-time");
-
+const { computeTodayProfitNative } = require("./position-today-pnl");
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
-const quoteMem = new Map();
 
 function resolvePreloadedAccounts(pre) {
   if (Array.isArray(pre?.accounts) && pre.accounts.length > 0) {
@@ -39,190 +39,16 @@ function resolvePreloadedAccounts(pre) {
   }
   return null;
 }
-const QUOTE_CHUNK_SIZE = 55;
-const QUOTE_FETCH_TIMEOUT_MS = 5_000;
 const QUOTE_TOTAL_BUDGET_MS = Math.max(
   2000,
   Math.min(12_000, Number(process.env.QUOTE_TOTAL_BUDGET_MS || 7000)),
 );
-const QUOTE_CHUNK_CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.QUOTE_CHUNK_CONCURRENCY || 2)));
-const QUOTE_PROXY_BASE =
-  String(process.env.ALIYUN_QUOTE_PROXY_BASE_URL || "").trim().replace(/\/+$/, "") ||
-  "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run";
 const LIVE_METRICS_DEDUP_MS = Math.max(
   1000,
   Math.min(8000, Number(process.env.LIVE_METRICS_DEDUP_MS || 4000)),
 );
 const liveMetricsInflight = new Map();
 const liveMetricsRecent = new Map();
-
-function pickLatestQuoteTime(times) {
-  let best = "";
-  let bestKey = 0;
-  for (const item of Array.isArray(times) ? times : []) {
-    const t = String(item || "").trim();
-    const digits = t.replace(/\D/g, "");
-    const key =
-      digits.length >= 14
-        ? Number(digits.slice(0, 14)) || 0
-        : digits.length >= 8
-          ? Number(`${digits.slice(0, 8)}000000`) || 0
-          : 0;
-    if (key > bestKey) {
-      best = t;
-      bestKey = key;
-    }
-  }
-  return best || null;
-}
-
-function parseTencentPriceField(v) {
-  const n = Number(String(v || "").replace(/,/g, ""));
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function parseTencentQuoteRecord(symbol, rawText) {
-  if (!rawText || typeof rawText !== "string") {
-    return null;
-  }
-  const parts = rawText.split("~");
-  if (parts.length < 6) {
-    return null;
-  }
-  const current = parseTencentPriceField(parts[3]);
-  const prevClose = parseTencentPriceField(parts[4]);
-  const rawTime = String(parts[30] || parts[31] || "--").trim();
-  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, symbol);
-  const marketDate = parseQuoteTimeToDateKey(rawTime) || parseQuoteTimeToDateKey(time);
-  if (!Number.isFinite(current) || current <= 0) {
-    return null;
-  }
-  return {
-    name: String(parts[1] || "").trim() || symbol,
-    current,
-    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
-    time: time || "--",
-    rawTime: rawTime || "--",
-    marketDate,
-    quoteDate: marketDate,
-  };
-}
-
-function parseTencentQuoteTextToMap(text) {
-  const map = new Map();
-  for (const chunk of String(text || "").split(";")) {
-    const m = /v_(\w+)="([^"]*)"/.exec(chunk);
-    if (!m) {
-      continue;
-    }
-    const key = String(m[1]).toLowerCase();
-    const rec = parseTencentQuoteRecord(key, m[2]);
-    if (rec) {
-      map.set(key, rec);
-    }
-  }
-  return map;
-}
-
-async function mapPool(items, limit, fn) {
-  const n = items.length;
-  if (!n) {
-    return [];
-  }
-  const out = new Array(n);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, n) }, async () => {
-    while (next < n) {
-      const i = next++;
-      out[i] = await fn(items[i], i);
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
-
-async function fetchTencentQuoteChunk(keys) {
-  const url = `${QUOTE_PROXY_BASE}/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
-  const r = await fetch(url, {
-    signal: AbortSignal.timeout(QUOTE_FETCH_TIMEOUT_MS),
-  });
-  if (!r.ok) {
-    return { ok: false, map: new Map() };
-  }
-  const text = await r.text();
-  return { ok: true, map: parseTencentQuoteTextToMap(text) };
-}
-
-async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
-  const keys = [...new Set((reqKeys || []).map((s) => String(s || "").trim()).filter(Boolean))];
-  if (!keys.length) {
-    return { ok: false, payloadMap: new Map(), delayed: true };
-  }
-  const budget = Math.max(1000, Number(budgetMs) || QUOTE_TOTAL_BUDGET_MS);
-  const payloadMap = new Map();
-  let delayed = false;
-  const chunks = [];
-  for (let i = 0; i < keys.length; i += QUOTE_CHUNK_SIZE) {
-    chunks.push(keys.slice(i, i + QUOTE_CHUNK_SIZE));
-  }
-  const work = (async () => {
-    const parts = await mapPool(chunks, QUOTE_CHUNK_CONCURRENCY, (c) => fetchTencentQuoteChunk(c));
-    for (const part of parts) {
-      if (!part?.ok) {
-        delayed = true;
-        continue;
-      }
-      for (const [k, payload] of part.map.entries()) {
-        quoteMem.set(k, payload);
-        payloadMap.set(k, payload);
-      }
-    }
-  })();
-  let timedOut = false;
-  try {
-    await Promise.race([
-      work,
-      new Promise((resolve) => {
-        setTimeout(() => {
-          timedOut = true;
-          resolve();
-        }, budget);
-      }),
-    ]);
-  } catch {
-    delayed = true;
-  }
-  if (timedOut) {
-    delayed = true;
-  }
-  for (const key of keys) {
-    const k = String(key).toLowerCase();
-    if (!payloadMap.has(k) && quoteMem.has(k)) {
-      payloadMap.set(k, quoteMem.get(k));
-      delayed = true;
-    }
-  }
-  return { ok: payloadMap.size > 0, payloadMap, delayed };
-}
-
-function parseTencentForexFromPayload(raw) {
-  if (!raw) {
-    return null;
-  }
-  if (typeof raw === "object" && Number(raw.current) > 0) {
-    return raw;
-  }
-  if (typeof raw !== "string") {
-    return null;
-  }
-  const parts = raw.split("~");
-  const current = parseTencentPriceField(parts[3]);
-  if (!Number.isFinite(current) || current <= 0) {
-    return null;
-  }
-  const prevClose = parseTencentPriceField(parts[4]);
-  return { current, prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current };
-}
 
 async function lastCloseForSymbol(sym, asOf) {
   const rows = await getSymbolDailyCloseRange(sym, addCalendarDays(asOf, -10), asOf);
@@ -458,36 +284,28 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       lastMarketValueCny,
     });
   }
-  const quoteKeys = [
-    ...symbols.map((s) => toTencentQuoteKey(s)).filter(Boolean),
-    "whUSDCNY",
-    "whHKDCNY",
-  ];
-  const [closeFallback, quoteReq] = await Promise.all([
+  const [closeFallback, quoteReq, fxReq] = await Promise.all([
     batchLastCloseForSymbols(symbols, priceAsOf),
-    fetchTencentQuotePayloadMap(quoteKeys, QUOTE_TOTAL_BUDGET_MS),
+    fetchQuoteMap(symbols, { budgetMs: QUOTE_TOTAL_BUDGET_MS }),
+    fetchTencentForexMap(QUOTE_TOTAL_BUDGET_MS),
   ]);
   const fxSpot = { CNY: 1, USD: FX_FALLBACK.USD, HKD: FX_FALLBACK.HKD };
-  const payloadMap = quoteReq.payloadMap || new Map();
-  const usdP = parseTencentForexFromPayload(payloadMap.get("whusdcny"));
-  const hkdP = parseTencentForexFromPayload(payloadMap.get("whhkdcny"));
-  if (usdP?.current > 0) {
-    fxSpot.USD = usdP.current;
+  if (fxReq?.rates?.USD > 0) {
+    fxSpot.USD = fxReq.rates.USD;
   }
-  if (hkdP?.current > 0) {
-    fxSpot.HKD = hkdP.current;
+  if (fxReq?.rates?.HKD > 0) {
+    fxSpot.HKD = fxReq.rates.HKD;
   }
   const bookCcy = bookCurrencyForScope(accounts, scope);
+  let quoteDelayed = !!quoteReq.delayed || !!fxReq.delayed;
+  const quoteSource = quoteReq.quoteSource || "";
 
   const quoteMap = {};
   for (const sym of symbols) {
-    const key = toTencentQuoteKey(sym);
-    let q = payloadMap.get(String(key).toLowerCase());
-    if (typeof q === "string") {
-      q = parseTencentQuoteRecord(sym, q);
-    }
+    const norm = normalizeSymbol(sym);
+    let q = quoteReq.map?.get(norm) || quoteReq.map?.get(sym);
     if (!q) {
-      const fb = closeFallback.get(normalizeSymbol(sym)) || closeFallback.get(sym);
+      const fb = closeFallback.get(norm) || closeFallback.get(sym);
       if (fb && Number(fb.close) > 0) {
         const md = String(fb.date || "").slice(0, 10);
         q = {
@@ -495,9 +313,10 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
           prevClose: Number(fb.close),
           marketDate: md || undefined,
           quoteDate: md || undefined,
+          source: "close-fallback",
         };
         if (!quoteReq.ok) {
-          quoteReq.delayed = true;
+          quoteDelayed = true;
         }
       }
     }
@@ -538,7 +357,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
           quoteDate: md || undefined,
         };
         if (!quoteReq.ok) {
-          quoteReq.delayed = true;
+          quoteDelayed = true;
         }
       }
     }
@@ -575,6 +394,8 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       current,
       prevClose,
       currency: symCcy,
+      session: quote.session || null,
+      sessionLabel: quote.sessionLabel || null,
       todayProfitNative: todayNat,
       todayProfitCny: todayP,
       marketValueCny: mv,
@@ -646,8 +467,12 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       liveDate,
       frozenThrough: frozenThrough || null,
       bookCurrency: bookCcy,
-      delayed: !!quoteReq.delayed,
-      quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
+      delayed: quoteDelayed,
+      quoteSource,
+      quoteTime: pickLatestQuoteTime([
+        fxReq?.quoteTime,
+        ...Object.values(quoteMap).map((q) => q?.time),
+      ]),
       todayProfitCny,
       liveMarketValueCny,
       lastMarketValueCny,
@@ -679,8 +504,12 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     liveDate: null,
     frozenThrough: frozenThrough || null,
     bookCurrency: bookCcy,
-    delayed: !!quoteReq.delayed,
-    quoteTime: pickLatestQuoteTime(Object.values(quoteMap).map((q) => q?.time)),
+    delayed: quoteDelayed,
+    quoteSource,
+    quoteTime: pickLatestQuoteTime([
+      fxReq?.quoteTime,
+      ...Object.values(quoteMap).map((q) => q?.time),
+    ]),
     todayProfitCny: 0,
     liveMarketValueCny,
     lastMarketValueCny: mvFrozen,

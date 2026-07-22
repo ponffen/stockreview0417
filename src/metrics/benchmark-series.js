@@ -4,7 +4,7 @@
 const { getSymbolDailyCloseRange, normalizeSymbol } = require("../db");
 const { fmtPercentRatio } = require("../account-kpi-surface");
 const { resolveStageRange } = require("./stages");
-const { fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
+const { fetchQuoteMap } = require("../quotes/realtime-quote");
 const { liveDateKeyShanghai, shouldEmitTodayLivePoint } = require("./trading-calendar");
 
 function parseTencentPriceField(v) {
@@ -48,10 +48,8 @@ async function buildBenchmarkSeriesPayload({ symbol, stage, live }) {
   });
   let today = null;
   if (shouldEmitTodayLivePoint() && live.tradingDay) {
-    const key = toTencentQuoteKey(sym);
-    const req = await fetchTencentQuotePayloadMap([key]);
-    const raw = req.payloadMap?.get(String(key).toLowerCase());
-    const q = parseQuoteFromRaw(sym, raw);
+    const req = await fetchQuoteMap([sym]);
+    const q = req.map?.get(sym);
     const lastClose = byDate.get(dates[dates.length - 1]) || base;
     const px = q?.current > 0 ? q.current : lastClose;
     const rate = base > 0 ? (px - base) / base : 0;

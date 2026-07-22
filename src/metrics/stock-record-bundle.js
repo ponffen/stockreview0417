@@ -22,9 +22,7 @@ const {
   fmtPercentRatio,
   fmtSignedPercentRatio,
 } = require("../account-kpi-surface");
-const { fetchTencentQuotePayloadMap, toTencentQuoteKey } = require("../market-realtime-pnl");
 const { getLiveMetricsWithFrozenPack } = require("./live-metrics-context");
-const { normalizeQuoteTimeToBeijingBySymbol } = require("../tencent-quote-time");
 const { getSymbolCurrency, lastPositiveCloseOnOrBefore } = require("../return-calcs");
 const { liveDateKeyShanghai } = require("./trading-calendar");
 const { resolveStageRange } = require("./stages");
@@ -174,42 +172,26 @@ function parseSymbolLiveQuote(sym, raw) {
       current: Number(raw.current),
       prevClose: Number(raw.prevClose) > 0 ? raw.prevClose : raw.current,
       time: raw.time || null,
+      sessionLabel: raw.sessionLabel || null,
     };
   }
-  if (typeof raw !== "string") {
-    return null;
-  }
-  const parts = raw.split("~");
-  const current = Number(String(parts[3] || "").replace(/,/g, ""));
-  const prevClose = Number(String(parts[4] || "").replace(/,/g, ""));
-  const rawTime = String(parts[30] || parts[31] || "").trim();
-  const time = normalizeQuoteTimeToBeijingBySymbol(rawTime, sym);
-  if (!Number.isFinite(current) || current <= 0) {
-    return null;
-  }
-  return {
-    current,
-    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : current,
-    time: time || rawTime || null,
-  };
+  return null;
 }
 
-async function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
-  let directQuote = null;
-  const quoteKey = toTencentQuoteKey(sym);
-  if (live.tradingDay && quoteKey) {
-    const req = await fetchTencentQuotePayloadMap([quoteKey]);
-    directQuote = parseSymbolLiveQuote(sym, req.payloadMap?.get(String(quoteKey).toLowerCase()));
-  }
+function resolveHeadlineQuote(sym, livePos, live, closeLookup, endDate) {
   const frozenClose = closeLookup.closeOn(endDate) || 0;
   const current =
-    Number(directQuote?.current) || Number(livePos?.current) || Number(frozenClose) || 0;
+    Number(livePos?.current) || Number(frozenClose) || 0;
   const prev =
-    Number(directQuote?.prevClose) ||
     Number(livePos?.prevClose) ||
     (Number(frozenClose) > 0 ? Number(frozenClose) : current);
-  const quoteTime = directQuote?.time || live.quoteTime || null;
-  return { current, prevClose: prev, quoteTime };
+  const quoteTime = livePos ? live.quoteTime || null : live.quoteTime || null;
+  return {
+    current,
+    prevClose: prev,
+    quoteTime,
+    sessionLabel: livePos?.sessionLabel || null,
+  };
 }
 
 function netQtyFromTrades(symbolTrades) {
@@ -468,17 +450,23 @@ async function applyLiveChartPoint(raw, {
   let current = Number(livePosition?.current) || 0;
   let prevClose = Number(livePosition?.prevClose) || 0;
   let quote = null;
-  if (!(current > 0)) {
-    const quoteKey = toTencentQuoteKey(sym);
-    if (quoteKey) {
-      const req = await fetchTencentQuotePayloadMap([quoteKey]);
-      quote = parseSymbolLiveQuote(sym, req.payloadMap?.get(String(quoteKey).toLowerCase()));
-      if (quote?.current > 0) {
-        current = quote.current;
-        prevClose = quote.prevClose || current;
-        quote = { ...quote, marketDate: liveDate, quoteDate: liveDate };
-      }
+  if (!(current > 0) && closeLookup) {
+    const fallbackClose = closeLookup.closeOn(liveDate);
+    if (fallbackClose > 0) {
+      current = fallbackClose;
+      prevClose = fallbackClose;
     }
+  }
+  if (current > 0 && livePosition) {
+    quote = {
+      current,
+      prevClose,
+      marketDate: liveDate,
+      quoteDate: liveDate,
+      sessionLabel: livePosition.sessionLabel || null,
+    };
+  } else if (current > 0) {
+    quote = { marketDate: liveDate, quoteDate: liveDate };
   }
   if (!(current > 0) && closeLookup) {
     const fallbackClose = closeLookup.closeOn(liveDate);
@@ -696,7 +684,7 @@ async function buildStockRecordBundlePayload({
     ]);
     const headlineCloseLookup = closeLookupFromRows(headlineCloseRows);
     const livePos = (live.positions || []).find((p) => normalizeSymbol(p.symbol) === sym) || null;
-    const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
+    const headlineQuote = resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
     const current = headlineQuote.current;
     const prev = headlineQuote.prevClose;
     const changeAbs = current - prev;
@@ -727,6 +715,7 @@ async function buildStockRecordBundlePayload({
         change: fmtPlainSignedAmount(changeAbs),
         changePct: fmtSignedPercentRatio(changePct),
         quoteTime: formatQuoteTimeDisplay(headlineQuote.quoteTime),
+        sessionLabel: headlineQuote.sessionLabel || null,
         tradingInterval,
       },
       charts: {
@@ -914,7 +903,7 @@ async function buildStockRecordBundlePayload({
     points = padStockRecordChartPointsLead(points, chartLeadStart, closeMap);
   }
 
-  const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
+  const headlineQuote = resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);
   const current = headlineQuote.current;
   const prev = headlineQuote.prevClose;
   const changeAbs = current - prev;

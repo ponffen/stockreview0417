@@ -300,6 +300,7 @@ async function buildHoldingsPayload({
     const snap = snapBySym.get(sym);
     const frozenRow = frozenRowBySym.get(sym) || null;
     const qty = Number(liveP?.quantity) || 0;
+    const sessionLabel = liveP?.sessionLabel ? String(liveP.sessionLabel) : null;
     const todayProfitBookRow = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
     if (!hasOpenPositionQuantity(qty) && Math.abs(todayProfitBookRow) <= 1e-6) {
       continue;
@@ -374,6 +375,7 @@ async function buildHoldingsPayload({
       marketTag: meta.marketTag,
       stockCode: meta.stockCode,
       price: Number.isFinite(current) ? current.toFixed(3) : "—",
+      sessionLabel,
       dayChange: fmtSignedPercentRatio(dayChg),
       marketValue: fmtPlainAmount(mvNat),
       marketValueCny: fmtPlainAmount(mvCny),

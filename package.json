@@ -50,6 +50,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "iconv-lite": "^0.7.0",
+    "longbridge": "^4.3.3",
     "pg": "^8.16.0",
     "serverless-http": "^3.2.0",
     "ws": "^8.20.0",

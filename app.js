@@ -363,6 +363,9 @@ const state = {
   tradePanelTab: "trades",
   editingCashTransferId: null,
   quoteMap: {},
+  /** 进入页面后固化的 Bundle 行情快照（F5 前不更新现价） */
+  quoteSnapshotLocked: false,
+  quoteSnapshot: { meta: {}, bySymbol: {}, headline: null },
   klineMap: {},
   quoteTime: "--",
   marketDataDelayed: false,
@@ -1134,12 +1137,7 @@ async function startAppAfterAuth(options = {}) {
   }
   renderAll();
   if (state.route !== "earning") {
-    void refreshMarketData({ skipFinalRender: true }).finally(() => {
-      renderAll();
-      if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-        void openCommunityProfileAnalysisTab();
-      }
-    });
+    renderAll();
   }
   window.dumpMonthlyReturnAudit = dumpMonthlyReturnAudit;
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
@@ -3137,6 +3135,121 @@ function parseBundlePercent(value) {
   return m ? Number(m[1]) / 100 : 0;
 }
 
+function captureQuoteSnapshotFromBundle(bundle) {
+  if (!bundle || state.quoteSnapshotLocked) {
+    return;
+  }
+  state.quoteSnapshotLocked = true;
+  const bySymbol = {};
+  for (const row of bundle?.holdings?.rows || []) {
+    const sym = normalizeSymbol(row.symbol);
+    if (!sym) {
+      continue;
+    }
+    bySymbol[sym] = {
+      price: bundleFmtText(row.price),
+      dayChange: bundleFmtText(row.dayChange),
+      sessionLabel: row.sessionLabel || null,
+    };
+  }
+  const headlineSym = normalizeSymbol(bundle?.meta?.symbol);
+  if (headlineSym && bundle?.headline && !bySymbol[headlineSym]) {
+    bySymbol[headlineSym] = {
+      price: bundleFmtText(bundle.headline.price),
+      dayChange: bundleFmtText(bundle.headline.changePct),
+      sessionLabel: bundle.headline.sessionLabel || null,
+    };
+  }
+  const headline = bundle?.headline
+    ? {
+        price: bundleFmtText(bundle.headline.price),
+        change: bundleFmtText(bundle.headline.change),
+        changePct: bundleFmtText(bundle.headline.changePct),
+        sessionLabel: bundle.headline.sessionLabel || null,
+        quoteTime: bundle.headline.quoteTime || null,
+      }
+    : state.quoteSnapshot?.headline || null;
+  state.quoteSnapshot = {
+    meta: {
+      quoteTime: bundle?.meta?.quoteTime ?? null,
+      delayed: !!bundle?.meta?.delayed,
+      quoteSource: bundle?.meta?.quoteSource ?? null,
+    },
+    bySymbol,
+    headline,
+  };
+  rebuildQuoteMapFromSnapshot();
+  if (state.quoteSnapshot.meta.quoteTime) {
+    state.quoteTime = String(state.quoteSnapshot.meta.quoteTime);
+  }
+  state.marketDataDelayed = !!state.quoteSnapshot.meta.delayed;
+}
+
+function rebuildQuoteMapFromSnapshot() {
+  const snap = state.quoteSnapshot?.bySymbol || {};
+  for (const [sym, row] of Object.entries(snap)) {
+    const current = parseBundlePlainNumber(row.price);
+    const chg = parseBundlePercent(row.dayChange);
+    const prevClose = current > 0 ? current / (1 + chg) : current;
+    state.quoteMap[sym] = {
+      current,
+      prevClose,
+      time: state.quoteSnapshot?.meta?.quoteTime || state.quoteTime,
+      sessionLabel: row.sessionLabel || null,
+    };
+  }
+}
+
+function mergeHoldingsRowsWithQuoteSnapshot(rows) {
+  if (!state.quoteSnapshotLocked || !Array.isArray(rows)) {
+    return rows;
+  }
+  const snap = state.quoteSnapshot?.bySymbol || {};
+  return rows.map((row) => {
+    const sym = normalizeSymbol(row.symbol);
+    const s = snap[sym];
+    if (!s) {
+      return row;
+    }
+    return {
+      ...row,
+      price: s.price,
+      dayChange: s.dayChange,
+      sessionLabel: s.sessionLabel,
+    };
+  });
+}
+
+function mergeBundleMetaWithQuoteSnapshot(meta) {
+  if (!state.quoteSnapshotLocked || !meta) {
+    return meta;
+  }
+  return {
+    ...meta,
+    quoteTime: state.quoteSnapshot.meta.quoteTime ?? meta.quoteTime,
+    delayed: state.quoteSnapshot.meta.delayed,
+    quoteSource: state.quoteSnapshot.meta.quoteSource ?? meta.quoteSource,
+  };
+}
+
+function mergeStockRecordHeadlineWithQuoteSnapshot(headline) {
+  if (!state.quoteSnapshotLocked || !headline) {
+    return headline;
+  }
+  const snap = state.quoteSnapshot?.headline;
+  if (!snap) {
+    return headline;
+  }
+  return {
+    ...headline,
+    price: snap.price ?? headline.price,
+    change: snap.change ?? headline.change,
+    changePct: snap.changePct ?? headline.changePct,
+    sessionLabel: snap.sessionLabel ?? headline.sessionLabel,
+    quoteTime: snap.quoteTime ?? headline.quoteTime,
+  };
+}
+
 async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTargetId = "", chartOpts = {}) {
   if (!apiReady) {
     return null;
@@ -3294,6 +3407,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     }
     state.stockRecordBundle = bundle;
     if (bundle) {
+      captureQuoteSnapshotFromBundle(bundle);
       applyStockRecordBundleDefaults(bundle);
       fitStockRecordChartViewportFromBundle(bundle);
     }
@@ -4118,7 +4232,6 @@ function bindEvents() {
       }
       persistState();
       renderAll();
-      void refreshMarketData();
     });
   }
 
@@ -4166,7 +4279,6 @@ function bindEvents() {
     } else {
       void renderAnalysis({ blockLoading: state.route === "analysis" });
     }
-    void refreshMarketData();
   });
 
   stageRangeSelect?.addEventListener("change", () => {
@@ -4181,14 +4293,12 @@ function bindEvents() {
     invalidateOverviewMetricsUi();
     renderAll();
     if (state.route !== "earning") {
-      void refreshMarketData();
     }
   });
   analysisAccountSelect?.addEventListener("change", () => {
     state.selectedAccountId = resolveValidAccountFilter(analysisAccountSelect.value);
     persistState();
     renderAll();
-    void refreshMarketData();
   });
   const onTradeFilterAccountChange = (value) => {
     state.tradeFilterAccountId = resolveValidAccountFilter(value);
@@ -6308,7 +6418,6 @@ function applyLedgerMutationCrossInvalidation(ctx, payload = {}) {
   if (ctx.surface !== "earning") {
     scheduleMetricsRebuildUiRefresh();
   }
-  void refreshMarketData();
 }
 
 async function refreshAfterLedgerMutation(payload = {}) {
@@ -10872,8 +10981,12 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
       return `<td${attr} class="stock-name"><strong>${escapeHtml(getDisplayName(sym, row.name))}</strong><span><i class="market-tag market-tag--${tag}">${escapeHtml(row.marketTag || "OT")}</i> ${escapeHtml(row.stockCode || "")}</span></td>`;
     case 1:
       return `<td${attr} class="${todayClass}">${escapeHtml(metricsHoldingsMoneyCell(row, "todayProfit"))}</td>`;
-    case 2:
-      return `<td${attr}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>`;
+    case 2: {
+      const sessionTag = row.sessionLabel
+        ? `<span class="quote-session-tag">${escapeHtml(bundleFmtText(row.sessionLabel))}</span>`
+        : "";
+      return `<td${attr}><div class="cell-main">${escapeHtml(bundleFmtText(row.price))}${sessionTag}</div><div class="cell-sub ${dayClass}">${escapeHtml(bundleFmtText(row.dayChange))}</div></td>`;
+    }
     case 3:
       return `<td${attr}><div class="cell-main">${escapeHtml(metricsHoldingsMoneyCell(row, "marketValue"))}</div><div class="cell-sub">${escapeHtml(qty)}</div></td>`;
     case 4:
@@ -11076,6 +11189,7 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
     const bundlePath = isPublicView ? "/analysis-bundle" : "/metrics/analysis-bundle";
     bundle = await fetchMetricsApi(bundlePath, bundleParams, publicTargetId);
   }
+  captureQuoteSnapshotFromBundle(bundle);
   const series = bundle?.series || {};
   const fullTwrPts = series.stageRate || series.dailyTwr || [];
   const fullProfitPts = series.stageProfit || series.dailyProfit || [];
@@ -11223,9 +11337,12 @@ async function refreshOverviewProfitRowFromSnapshots() {
 
 function applyHomeBundleToOverviewUi(bundle, aid, seq) {
   const metricsKey = overviewMetricsBundleCacheKey(aid);
+  captureQuoteSnapshotFromBundle(bundle);
   const ret = bundle?.returns;
   const assets = bundle?.assets;
   const hold = bundle?.holdings;
+  const meta = mergeBundleMetaWithQuoteSnapshot(bundle?.meta);
+  const holdRows = mergeHoldingsRowsWithQuoteSnapshot(hold?.rows || []);
   if (seq !== overviewProfitRefreshSeq) {
     return false;
   }
@@ -11244,13 +11361,13 @@ function applyHomeBundleToOverviewUi(bundle, aid, seq) {
     ready: true,
     loading: false,
     key: metricsKey,
-    meta: bundle.meta,
+    meta,
     returns: ret,
     assets,
-    holdings: hold,
+    holdings: { ...hold, rows: holdRows },
   };
   if (state.route === "earning") {
-    paintOverviewFromMetricsBundle(ret, assets, hold, metricsStageFromHome());
+    paintOverviewFromMetricsBundle(ret, assets, { ...hold, rows: holdRows }, metricsStageFromHome());
   }
   return true;
 }
@@ -11452,12 +11569,17 @@ async function renderStockRecordPage(symbol) {
   );
   const symbolTrades = [...scopeTrades].sort(sortTradeDesc);
   const bundle = state.stockRecordBundle;
-  const headline = bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol);
+  const headline = mergeStockRecordHeadlineWithQuoteSnapshot(
+    bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol),
+  );
   const positionName = headline?.name || "-";
 
   stockRecordTitle.textContent = `${getDisplayName(symbol, positionName)}(${headline?.code || formatSymbolForDisplay(symbol)})`;
   stockRecordTime.textContent = headline?.quoteTime ?? "—";
-  stockRecordPrice.textContent = headline?.price ?? "—";
+  const sessionTag = headline?.sessionLabel
+    ? ` <span class="quote-session-tag">${escapeHtml(bundleFmtText(headline.sessionLabel))}</span>`
+    : "";
+  stockRecordPrice.innerHTML = `${escapeHtml(headline?.price ?? "—")}${sessionTag}`;
   const priceUp = headline?.changePct ? !String(headline.changePct).startsWith("-") : false;
   stockRecordPrice.className = `stock-record-price ${headline ? (priceUp ? "up" : "down") : ""}`;
   stockRecordChange.textContent = headline ? `${headline.change} ${headline.changePct}` : "—";
@@ -11490,19 +11612,11 @@ async function renderStockRecordPage(symbol) {
 }
 
 async function ensureSymbolData(symbol) {
-  try {
-    const quoteMap = await fetchRealtimeQuotes([symbol]);
-    const normalizedSymbol = normalizeSymbol(symbol);
-    const legacyAlias = getLegacyUsAlias(normalizedSymbol);
-    if (quoteMap[symbol]) {
-      state.quoteMap[normalizedSymbol] = quoteMap[symbol];
-      if (legacyAlias) {
-        state.quoteMap[legacyAlias] = quoteMap[symbol];
-      }
-      state.quoteTime = pickLatestQuoteTime([state.quoteTime, quoteMap[symbol].time]);
-    }
-  } catch (error) {
-    console.error("加载个股实时行情失败", error);
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const legacyAlias = getLegacyUsAlias(normalizedSymbol);
+  const snapRow = state.quoteSnapshot?.bySymbol?.[normalizedSymbol];
+  if (snapRow && !getQuoteBySymbol(symbol)?.current) {
+    rebuildQuoteMapFromSnapshot();
   }
   if (!getQuoteBySymbol(symbol)?.current || !Number.isFinite(getQuoteBySymbol(symbol)?.current)) {
     const nSym = normalizeSymbol(symbol);
@@ -11511,8 +11625,6 @@ async function ensureSymbolData(symbol) {
     }
     const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol);
     if (latest) {
-      const normalizedSymbol = normalizeSymbol(symbol);
-      const legacyAlias = getLegacyUsAlias(normalizedSymbol);
       state.quoteMap[normalizedSymbol] = latest;
       if (legacyAlias) {
         state.quoteMap[legacyAlias] = latest;
@@ -11524,8 +11636,6 @@ async function ensureSymbolData(symbol) {
   if (!supportsKline(symbol)) {
     return;
   }
-  const normalizedSymbol = normalizeSymbol(symbol);
-  const legacyAlias = getLegacyUsAlias(normalizedSymbol);
   const sourceTrades = state.stockRecordTrades;
   const latestTradeDate = sourceTrades
     .filter((trade) => normalizeSymbol(trade?.symbol) === normalizedSymbol)
@@ -13329,97 +13439,16 @@ function updateStockRecordWindowByScale(scale, totalPoints) {
   state.stockRecordOffset = Math.max(0, Math.min(maxOffset, Number(state.stockRecordOffset) || 0));
 }
 
-async function refreshMarketData(opts = {}) {
-  const skipFinalRender = opts.skipFinalRender === true;
-  if (state.marketLoading) {
-    return;
-  }
-  state.marketLoading = true;
-  state.marketDataDelayed = false;
-  state.marketDataDelaySource = "";
+async function refreshMarketData(_opts = {}) {
+  // 行情由 Bundle 在页面加载时一次性拉取；此处不再单独请求。
+}
 
-  try {
-    const symbols = collectSymbolsForMarket();
-    if (!symbols.length) {
-      state.marketLoading = false;
-      if (!skipFinalRender && state.route !== "analysis") {
-        renderAll();
-      }
-      return;
-    }
+async function fetchRealtimeQuotes(_symbols) {
+  return {};
+}
 
-    // 仅拉实时：腾讯 quote + 腾讯外汇；历史日K由离线快照落库后读取 snapshot/symbol-close。
-    try {
-      const [quoteMap, fxRes] = await Promise.all([fetchRealtimeQuotes(symbols), fetchRealtimeForexSpot()]);
-      if (fxRes?.delayed) {
-        markMarketDataDelayed("fx-cache");
-      }
-      if (fxRes?.rates && typeof fxRes.rates === "object") {
-        Object.assign(state.fxSpot, fxRes.rates);
-      }
-      if (Object.keys(quoteMap).length) {
-        Object.entries(quoteMap).forEach(([symbol, quote]) => {
-          const normalized = normalizeSymbol(symbol);
-          const legacyAlias = getLegacyUsAlias(normalized);
-          state.quoteMap[normalized] = quote;
-          if (legacyAlias) {
-            state.quoteMap[legacyAlias] = quote;
-          }
-        });
-      }
-      const latestSnapshotQuoteTime = pickLatestQuoteTime([
-        state.quoteTime,
-        ...Object.values(quoteMap).map((item) => item?.time),
-      ]);
-      if (latestSnapshotQuoteTime !== "--") {
-        state.quoteTime = latestSnapshotQuoteTime;
-      }
-      if (!skipFinalRender && state.route !== "analysis") {
-        renderAll();
-      }
-    } catch (error) {
-      console.warn("首屏实时行情拉取失败，保留本地数据展示", error);
-    }
-
-    const missClose = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
-    if (missClose.length) {
-      await fetchSymbolCloseIntoKlineMap(missClose, 60, { parallelChunks: 6 });
-    }
-    let stillNoRealtime = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
-    if (stillNoRealtime.length) {
-      await fetchSymbolCloseIntoKlineMap(stillNoRealtime, 90, { parallelChunks: 6 });
-    }
-    stillNoRealtime = klineSymbols.filter((s) => !Number.isFinite(getQuoteBySymbol(s)?.current));
-    const fbConc = 6;
-    for (let i = 0; i < stillNoRealtime.length; i += fbConc) {
-      const slice = stillNoRealtime.slice(i, i + fbConc);
-      await Promise.all(
-        slice.map(async (symbol) => {
-          const latest = await fetchLatestQuoteFromDailyKlineFallback(symbol, { skipExtraKlineFetch: true });
-          if (latest) {
-            const normalized = normalizeSymbol(symbol);
-            const legacyAlias = getLegacyUsAlias(normalized);
-            state.quoteMap[normalized] = latest;
-            if (legacyAlias) {
-              state.quoteMap[legacyAlias] = latest;
-            }
-          }
-        }),
-      );
-    }
-
-    // 名称由腾讯实时批量结果填充；停用东财兜底，避免产生与行情无关的超时红项。
-  } catch (error) {
-    console.error("行情拉取失败，保留本地数据展示", error);
-  } finally {
-    state.marketLoading = false;
-    if (!skipFinalRender && state.route !== "analysis") {
-      renderAll();
-      if (state.route === "community-profile" && state.communityProfileTab === "analysis" && state.lastPublicProfileDetail) {
-        void openCommunityProfileAnalysisTab();
-      }
-    }
-  }
+async function fetchRealtimeForexSpot() {
+  return { rates: {}, delayed: false };
 }
 
 /**
@@ -13461,146 +13490,6 @@ async function fetchLatestQuoteFromDailyKlineFallback(symbol, options = {}) {
   }
 }
 
-
-async function fetchRealtimeQuotes(symbols) {
-  const uniqSymbols = [...new Set(symbols.filter(Boolean))];
-  const tRes = await fetchRealtimeQuotesTencent(uniqSymbols).catch(() => null);
-  const fromTencent = tRes?.parsed ?? {};
-  if (tRes?.delayed) {
-    markMarketDataDelayed("quote-cache");
-  }
-  const merged = {};
-
-  uniqSymbols.forEach((sym) => {
-    const q = fromTencent[sym];
-    if (!q) {
-      return;
-    }
-    merged[sym] = { ...q };
-  });
-  return merged;
-}
-
-async function fetchRealtimeQuotesTencent(symbols) {
-  const uniqSymbols = [...new Set(symbols)];
-  if (!uniqSymbols.length) {
-    return {
-      parsed: {},
-      delayed: false,
-    };
-  }
-  if (!apiReady) {
-    return {
-      parsed: {},
-      delayed: true,
-    };
-  }
-  const sourceToTarget = new Map();
-  uniqSymbols.forEach((symbol) => {
-    const key = toTencentQuoteSymbol(symbol);
-    if (key) {
-      sourceToTarget.set(key, symbol);
-    }
-  });
-  if (!sourceToTarget.size) {
-    return {
-      parsed: {},
-      delayed: false,
-    };
-  }
-  const keysJoined = [...sourceToTarget.keys()].join(",");
-  const parsed = {};
-  let delayed = false;
-
-  const fillFromQuoteText = (text) => {
-    if (!text || typeof text !== "string") {
-      return;
-    }
-    const re = /v_([A-Za-z0-9._]+)="([^"]*)"/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const sourceKey = m[1];
-      const payload = m[2];
-      const target = sourceToTarget.get(sourceKey);
-      if (!target) {
-        continue;
-      }
-      const record = parseTencentQuoteRecord(target, payload);
-      if (record) {
-        parsed[target] = record;
-      }
-    }
-  };
-
-  try {
-    const r = await apiFetch(`${getApiBaseForFetch()}/quote/tencent?q=${encodeURIComponent(keysJoined)}`, {
-      cache: "no-store",
-      timeoutMs: 20_000,
-    });
-    readMarketDelayFromResponse(r);
-    delayed = String(r.headers.get("x-market-data-delayed") || "") === "1";
-    if (r.ok) {
-      fillFromQuoteText(await r.text());
-    }
-  } catch {
-    delayed = true;
-  }
-  return {
-    parsed,
-    delayed,
-  };
-}
-
-/** 实时外汇：统一使用腾讯 qt（whUSDCNY / whHKDCNY）。 */
-async function fetchRealtimeForexSpot() {
-  return fetchRealtimeForexTencent().catch(() => ({ rates: {}, delayed: true }));
-}
-
-/** 腾讯 qt 外汇实时：USDCNY / HKDCNY 当前价。 */
-async function fetchRealtimeForexTencent() {
-  const out = {};
-  const q = TENCENT_FOREX_SPOT_CODES.join(",");
-  if (!apiReady) {
-    return { rates: out, delayed: true };
-  }
-  let delayed = false;
-
-  const fillFromText = (text) => {
-    if (!text || typeof text !== "string") {
-      return;
-    }
-    const re = /v_([A-Za-z0-9._]+)="([^"]*)"/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const sourceKey = m[1];
-      const payload = m[2];
-      const ccy = TENCENT_FOREX_CODE_TO_CCY[sourceKey];
-      if (!ccy) {
-        continue;
-      }
-      const rec = parseTencentForexQuotePayload(payload);
-      if (rec && Number.isFinite(rec.current) && rec.current > 0) {
-        out[ccy] = rec.current;
-      }
-    }
-  };
-
-  try {
-    const r = await apiFetch(`${getApiBaseForFetch()}/quote/tencent?q=${encodeURIComponent(q)}`, {
-      cache: "no-store",
-      timeoutMs: 20_000,
-    });
-    readMarketDelayFromResponse(r);
-    delayed = String(r.headers.get("x-market-data-delayed") || "") === "1";
-    if (r.ok) {
-      fillFromText(await r.text());
-    }
-  } catch {
-    delayed = true;
-  }
-
-  return { rates: out, delayed };
-}
 
 function collectSymbolsForMarket() {
   const out = [];
