@@ -2761,12 +2761,14 @@ async function backfillTradeAmountShareRatiosForUser(userId, options = {}) {
     return { trades: 0, updated: 0, nullCount: 0 };
   }
   const logger = options.logger || null;
+  const fromDate = String(options.fromDate || "").slice(0, 10);
   const { rows } = await q(
     `SELECT id, symbol, amount, trade_date
      FROM trades
      WHERE user_id = $1 AND type = 'trade'
+       ${fromDate ? "AND trade_date >= $2" : ""}
      ORDER BY trade_date ASC, created_at ASC`,
-    [uid],
+    fromDate ? [uid, fromDate] : [uid],
   );
   const snapCache = new Map();
   let updated = 0;
