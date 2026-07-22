@@ -41,6 +41,10 @@
       "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/tencent"
     },
     {
+      "source": "/api/quote/longport",
+      "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/quote/longport"
+    },
+    {
       "source": "/api/market/snapshot",
       "destination": "https://market-oxy-http-market-proxy-pbftovdfne.cn-hangzhou.fcapp.run/api/market/snapshot"
     },

@@ -1,0 +1,38 @@
+edition: 3.0.0
+name: stockreview-aliyun-market-proxy
+access: aliyun-fc
+
+vars:
+  region: cn-hangzhou
+
+resources:
+  marketProxy:
+    component: fc3
+    props:
+      region: ${vars.region}
+      functionName: market-oxy-http-market-proxy
+      description: "Market proxy: LongPort quotes + Tencent qt (stockreview)"
+      runtime: nodejs20
+      handler: index.handler
+      code: ./deploy/aliyun-market-proxy
+      timeout: 30
+      memorySize: 1536
+      cpu: 1
+      diskSize: 512
+      internetAccess: true
+      environmentVariables:
+        LONGPORT_HTTP_URL: ${env(LONGPORT_HTTP_URL)}
+        LONGPORT_ENABLE_OVERNIGHT: ${env(LONGPORT_ENABLE_OVERNIGHT)}
+        LONGPORT_APP_KEY: ${env(LONGPORT_APP_KEY)}
+        LONGPORT_APP_SECRET: ${env(LONGPORT_APP_SECRET)}
+        LONGPORT_ACCESS_TOKEN: ${env(LONGPORT_ACCESS_TOKEN)}
+      triggers:
+        - triggerName: httpTrigger
+          triggerType: http
+          qualifier: LATEST
+          triggerConfig:
+            authType: anonymous
+            disableURLInternet: false
+            methods:
+              - GET
+              - OPTIONS
