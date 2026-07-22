@@ -36,6 +36,10 @@ const { isLastNdStage, lastNdProfit } = require("./last-nd");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
+const {
+  resolveChartLeadStart,
+  padStockRecordChartPointsLead,
+} = require("./chart-stage-lead-padding");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
 const {
   getPositionDayTradeContext,
@@ -747,6 +751,7 @@ async function buildStockRecordBundlePayload({
   const sessionAsOf = endDate || liveDateKeyShanghai();
   const { start: from } = resolveStageRange(stageKey, sessionAsOf, firstTrade);
   const chartFrom = String(from || firstTrade || endDate || "").slice(0, 10);
+  const chartLeadStart = resolveChartLeadStart(stageKey, sessionAsOf, firstTrade, null);
 
   const pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
     { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
@@ -786,6 +791,12 @@ async function buildStockRecordBundlePayload({
   let pageCloseFrom = clearedStable
     ? addCalendarDays(chartFrom, -7)
     : pageCloseDateRange(pnlRows, endDate)?.from;
+  if (chartLeadStart) {
+    const leadCandidate = addCalendarDays(chartLeadStart, -7);
+    if (!pageCloseFrom || leadCandidate < pageCloseFrom) {
+      pageCloseFrom = leadCandidate;
+    }
+  }
   if (clearedSegments.length) {
     const segMin = clearedSegments.reduce((min, seg) => (seg.from < min ? seg.from : min), clearedSegments[0].from);
     const segCandidate = addCalendarDays(segMin, -7);
@@ -821,8 +832,10 @@ async function buildStockRecordBundlePayload({
   const frozenStageProfit = frozenProfitRow ? profitOf(frozenProfitRow) : 0;
 
   let points;
+  const visualChartFrom =
+    chartLeadStart && chartLeadStart < chartFrom ? chartLeadStart : chartFrom;
   if (clearedStable) {
-    const sessionDates = enumerateFreezeSessionDates(chartFrom, endDate);
+    const sessionDates = enumerateFreezeSessionDates(visualChartFrom, endDate);
     points = buildClearedStableChartPoints({
       sessionDates,
       pnlRows,
@@ -847,6 +860,10 @@ async function buildStockRecordBundlePayload({
       clearedSegments,
       chartFrom,
     });
+  }
+
+  if (chartLeadStart && stageKey !== "today") {
+    points = padStockRecordChartPointsLead(points, chartLeadStart, pageCloseLookup);
   }
 
   const headlineQuote = await resolveHeadlineQuote(sym, livePos, live, headlineCloseLookup, endDate);

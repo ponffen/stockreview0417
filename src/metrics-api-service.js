@@ -1353,9 +1353,17 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
     buildStockRankFromContext(ctx, st, rankOpts),
   ]);
 
+  const sessionAsOf = liveDateKeyShanghai();
+  const chartLeadStart = resolveChartLeadStart(st, sessionAsOf, firstTrade, customRange);
+  const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
+  const paddedSeries = chartLeadStart ? padAnalysisSeriesBundle(series, chartLeadStart, scopeCtx) : series;
+
   let benchmark = null;
   if (sym && BENCHMARK_SYMBOLS.has(sym)) {
     benchmark = await getBenchmarkSeries(userId, sym, st);
+    if (chartLeadStart && benchmark) {
+      benchmark = padBenchmarkLead(benchmark, chartLeadStart);
+    }
   }
 
   const value = {
@@ -1365,7 +1373,7 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
       rate: fmtSignedPercentRatio(rateVal),
     },
     assets: buildAssetsApi(ctx),
-    series,
+    series: paddedSeries,
     stockRank,
     benchmark,
   };
@@ -1509,6 +1517,11 @@ function todayPointForAssets(live, scope, book, fxU, fxH) {
 const { redactPublicHomeBundle } = require("./metrics/public-home-bundle-redact");
 const { redactPublicAnalysisBundle } = require("./metrics/public-analysis-bundle-redact");
 const { redactPublicStockRecordBundle } = require("./metrics/public-stock-record-bundle-redact");
+const {
+  resolveChartLeadStart,
+  padAnalysisSeriesBundle,
+  padBenchmarkLead,
+} = require("./metrics/chart-stage-lead-padding");
 
 async function getMetricsPublicHomeBundle(userId, accountScope, stagesRaw, opts = {}) {
   const full = await getMetricsHomeBundle(userId, accountScope, stagesRaw, opts);
