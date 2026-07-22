@@ -14,6 +14,7 @@ const {
   normalizeSymbol,
   resolveBookCurrencyForAccountScope,
   addCalendarDays,
+  upsertSymbolDailyCloseBatch,
 } = require("../db");
 const {
   fmtPlainAmount,
@@ -37,6 +38,7 @@ const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
+const CHART_LEAD_PADDING_CLOSE_SOURCE = "chart-lead-padding";
 const {
   resolveChartLeadStart,
   leadSessionDates,
@@ -883,11 +885,25 @@ async function buildStockRecordBundlePayload({
       if (needsRemote) {
         try {
           const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, chartLeadStart, leadTo);
+          const toPersist = [];
           for (const row of remoteRows) {
             const d = String(row.date || "").slice(0, 10);
             const c = Number(row.close);
             if (d && c > 0 && !closeMap.has(d)) {
               closeMap.set(d, c);
+              toPersist.push({
+                symbol: sym,
+                date: d,
+                close: c,
+                source: CHART_LEAD_PADDING_CLOSE_SOURCE,
+              });
+            }
+          }
+          if (toPersist.length) {
+            try {
+              await upsertSymbolDailyCloseBatch(toPersist);
+            } catch {
+              // chart still works with in-memory closeMap
             }
           }
         } catch {
