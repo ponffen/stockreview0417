@@ -1,33 +1,28 @@
 const PACKET_REQUEST = 1;
 const PACKET_RESPONSE = 2;
 
-function packHeader(type) {
-  return Buffer.from([type & 0x0f]);
-}
-
-function packUint24(value) {
-  const v = Number(value) || 0;
-  return Buffer.from([(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff]);
-}
-
 function unpackUint24(buf, offset = 0) {
   return ((buf[offset] & 0xff) << 16) | ((buf[offset + 1] & 0xff) << 8) | (buf[offset + 2] & 0xff);
 }
 
-function encodeRequest(cmdCode, requestId, body, timeoutMs = 10000) {
+function encodeRequest(cmdCode, requestId, body, timeoutMs = 10000, metadata = Buffer.alloc(0)) {
   const payload = Buffer.isBuffer(body) ? body : Buffer.from(body || "");
-  const header = packHeader(PACKET_REQUEST);
-  const out = Buffer.alloc(header.length + 1 + 4 + 2 + 3 + payload.length);
+  const meta = Buffer.isBuffer(metadata) ? metadata : Buffer.from(metadata || "");
+  const out = Buffer.alloc(13 + meta.length + payload.length);
   let o = 0;
-  header.copy(out, o);
-  o += header.length;
+  out[o++] = PACKET_REQUEST & 0x0f;
   out[o++] = cmdCode & 0xff;
   out.writeUInt32BE(requestId >>> 0, o);
   o += 4;
   out.writeUInt16BE(timeoutMs & 0xffff, o);
   o += 2;
-  packUint24(payload.length).copy(out, o);
-  o += 3;
+  out.writeUInt16BE(meta.length & 0xffff, o);
+  o += 2;
+  out[o++] = (payload.length >> 16) & 0xff;
+  out[o++] = (payload.length >> 8) & 0xff;
+  out[o++] = payload.length & 0xff;
+  meta.copy(out, o);
+  o += meta.length;
   payload.copy(out, o);
   return out;
 }
@@ -38,43 +33,50 @@ function decodePacket(buf) {
     throw new Error("invalid packet");
   }
   const type = data[0] & 0x0f;
+  const cmdCode = data[1];
   if (type === PACKET_RESPONSE) {
-    if (data.length < 10) {
+    if (data.length < 12) {
       throw new Error("invalid response packet");
     }
-    const cmdCode = data[1];
     const requestId = data.readUInt32BE(2);
     const status = data[6];
-    const bodyLen = unpackUint24(data, 7);
-    const body = data.subarray(10, 10 + bodyLen);
-    return { type, cmdCode, requestId, status, body };
+    const metadataLen = data.readUInt16BE(7);
+    const bodyLen = unpackUint24(data, 9);
+    const bodyStart = 12 + metadataLen;
+    const body = data.subarray(bodyStart, bodyStart + bodyLen);
+    return { type, cmdCode, requestId, status, body, metadataLen };
   }
   if (type === PACKET_REQUEST) {
-    if (data.length < 11) {
+    if (data.length < 13) {
       throw new Error("invalid request packet");
     }
-    const cmdCode = data[1];
     const requestId = data.readUInt32BE(2);
-    const bodyLen = unpackUint24(data, 8);
-    const body = data.subarray(11, 11 + bodyLen);
-    return { type, cmdCode, requestId, status: 0, body, isRequest: true };
+    const metadataLen = data.readUInt16BE(8);
+    const bodyLen = unpackUint24(data, 10);
+    const bodyStart = 13 + metadataLen;
+    const body = data.subarray(bodyStart, bodyStart + bodyLen);
+    return { type, cmdCode, requestId, status: 0, body, isRequest: true, metadataLen };
   }
   throw new Error(`unsupported packet type ${type}`);
 }
 
-function encodeResponse(cmdCode, requestId, body = Buffer.alloc(0), status = 0) {
+function encodeResponse(cmdCode, requestId, body = Buffer.alloc(0), status = 0, metadata = Buffer.alloc(0)) {
   const payload = Buffer.isBuffer(body) ? body : Buffer.from(body || "");
-  const header = packHeader(PACKET_RESPONSE);
-  const out = Buffer.alloc(header.length + 1 + 4 + 1 + 3 + payload.length);
+  const meta = Buffer.isBuffer(metadata) ? metadata : Buffer.from(metadata || "");
+  const out = Buffer.alloc(12 + meta.length + payload.length);
   let o = 0;
-  header.copy(out, o);
-  o += header.length;
+  out[o++] = PACKET_RESPONSE & 0x0f;
   out[o++] = cmdCode & 0xff;
   out.writeUInt32BE(requestId >>> 0, o);
   o += 4;
   out[o++] = status & 0xff;
-  packUint24(payload.length).copy(out, o);
-  o += 3;
+  out.writeUInt16BE(meta.length & 0xffff, o);
+  o += 2;
+  out[o++] = (payload.length >> 16) & 0xff;
+  out[o++] = (payload.length >> 8) & 0xff;
+  out[o++] = payload.length & 0xff;
+  meta.copy(out, o);
+  o += meta.length;
   payload.copy(out, o);
   return out;
 }

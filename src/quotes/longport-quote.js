@@ -119,19 +119,24 @@ async function fetchLongportQuoteMap(symbols) {
       headers: proxyHeaders,
       signal: AbortSignal.timeout(LONGPORT_FETCH_TIMEOUT_MS),
     });
+    const rawText = await response.text();
     if (!response.ok) {
       lastError = `longport proxy http ${response.status}`;
       try {
-        const errBody = await response.json();
+        const errBody = rawText ? JSON.parse(rawText) : {};
         if (errBody?.error) {
           lastError = String(errBody.error);
+        } else if (rawText && rawText.length < 500) {
+          lastError = `${lastError}: ${rawText}`;
         }
       } catch {
-        /* ignore */
+        if (rawText && rawText.length < 500) {
+          lastError = `${lastError}: ${rawText}`;
+        }
       }
       return { ok: false, map: out, delayed: false, error: lastError };
     }
-    const payload = await response.json();
+    const payload = rawText ? JSON.parse(rawText) : {};
     delayed = !!payload?.delayed;
     lastError = String(payload?.error || "");
     const quotes = payload?.quotes && typeof payload.quotes === "object" ? payload.quotes : {};

@@ -21,8 +21,21 @@ function writeVarintField(fieldNo, value) {
   return Buffer.concat([tag, Buffer.from(chunks)]);
 }
 
-function encodeAuthRequest(token) {
-  return writeStringField(1, token);
+function writeMapEntry(key, value) {
+  const entry = Buffer.concat([writeStringField(1, key), writeStringField(2, value)]);
+  const tag = Buffer.from([0x12]);
+  const len = Buffer.from([entry.length]);
+  return Buffer.concat([tag, len, entry]);
+}
+
+function encodeAuthRequest(token, metadata = {}) {
+  const parts = [writeStringField(1, token)];
+  for (const [key, value] of Object.entries(metadata || {})) {
+    if (key && value != null && String(value) !== "") {
+      parts.push(writeMapEntry(key, String(value)));
+    }
+  }
+  return Buffer.concat(parts);
 }
 
 function encodeMultiSecurityRequest(symbols) {

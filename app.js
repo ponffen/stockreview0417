@@ -3136,7 +3136,11 @@ function parseBundlePercent(value) {
 }
 
 function captureQuoteSnapshotFromBundle(bundle) {
-  if (!bundle || state.quoteSnapshotLocked) {
+  if (!bundle) {
+    return;
+  }
+  if (state.quoteSnapshotLocked) {
+    refreshQuoteFeedStatusFromBundle(bundle);
     return;
   }
   state.quoteSnapshotLocked = true;
@@ -3185,6 +3189,22 @@ function captureQuoteSnapshotFromBundle(bundle) {
   state.marketDataDelayed = !!state.quoteSnapshot.meta.delayed;
 }
 
+function refreshQuoteFeedStatusFromBundle(bundle) {
+  const meta = bundle?.meta;
+  if (!meta || !state.quoteSnapshot?.meta) {
+    return;
+  }
+  state.quoteSnapshot.meta.delayed = !!meta.delayed;
+  state.quoteSnapshot.meta.quoteSource = meta.quoteSource ?? null;
+  state.quoteSnapshot.meta.quoteError = meta.quoteError ?? null;
+  if (meta.quoteTime) {
+    state.quoteSnapshot.meta.quoteTime = String(meta.quoteTime);
+    state.quoteTime = String(meta.quoteTime);
+  }
+  state.marketDataDelayed = !!meta.delayed;
+  state.marketDataDelaySource = meta.delayed ? "metrics-delayed" : "";
+}
+
 function rebuildQuoteMapFromSnapshot() {
   const snap = state.quoteSnapshot?.bySymbol || {};
   for (const [sym, row] of Object.entries(snap)) {
@@ -3226,9 +3246,7 @@ function mergeBundleMetaWithQuoteSnapshot(meta) {
   }
   return {
     ...meta,
-    quoteTime: state.quoteSnapshot.meta.quoteTime ?? meta.quoteTime,
-    delayed: state.quoteSnapshot.meta.delayed,
-    quoteSource: state.quoteSnapshot.meta.quoteSource ?? meta.quoteSource,
+    quoteTime: meta.quoteTime ?? state.quoteSnapshot.meta.quoteTime,
   };
 }
 

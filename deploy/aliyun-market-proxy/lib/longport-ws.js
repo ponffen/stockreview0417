@@ -27,7 +27,12 @@ function quoteWsUrl(httpUrl) {
   const host = u.hostname.includes("longbridge.cn")
     ? "openapi-quote.longbridge.cn"
     : "openapi-quote.longbridge.com";
-  return `wss://${host}/v2/?version=1&codec=1&platform=9`;
+  return `wss://${host}/v2?version=1&codec=1&platform=9`;
+}
+
+function overnightEnabled(creds) {
+  const raw = String(creds?.enableOvernight || process.env.LONGPORT_ENABLE_OVERNIGHT || "").trim();
+  return raw === "1" || /^true$/i.test(raw);
 }
 
 function sessionCandidate(session, sessionLabel, block) {
@@ -163,12 +168,13 @@ async function connectAndAuth(creds, timeoutMs) {
     });
   });
 
+  const authMetadata = overnightEnabled(creds) ? { need_over_night_quote: "true" } : {};
   const authReqId = nextRequestId++;
   ws.send(
     encodeRequest(
       CONTROL_AUTH,
       authReqId,
-      encodeAuthRequest(otp),
+      encodeAuthRequest(otp, authMetadata),
       Math.min(timeoutMs, 15000),
     ),
   );
@@ -180,7 +186,7 @@ async function connectAndAuth(creds, timeoutMs) {
   );
   if (authResp.status !== 0) {
     ws.close();
-    throw new Error(`longport auth failed status ${authResp.status}`);
+    throw new Error(`longport auth failed status ${authResp.status} bodyLen=${authResp.body?.length || 0}`);
   }
   return ws;
 }

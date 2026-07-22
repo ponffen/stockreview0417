@@ -159,7 +159,7 @@ async function fetchLongportQuotes(symbols, creds) {
     ok: got > 0,
     quotes,
     delayed,
-    error: got ? "" : lastError,
+    error: got ? "" : lastError || "longport quote returned no data",
     source: "longport",
   };
 }
