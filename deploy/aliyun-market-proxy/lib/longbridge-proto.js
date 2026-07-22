@@ -1,8 +1,26 @@
-function writeStringField(fieldNo, value) {
-  const text = Buffer.from(String(value || ""), "utf8");
+function writeBytesField(fieldNo, value) {
+  const text = Buffer.isBuffer(value) ? value : Buffer.from(String(value || ""), "utf8");
   const tag = Buffer.from([(fieldNo << 3) | 2]);
-  const len = Buffer.from([text.length]);
+  const len = encodeVarint(text.length);
   return Buffer.concat([tag, len, text]);
+}
+
+function writeStringField(fieldNo, value) {
+  return writeBytesField(fieldNo, value);
+}
+
+function encodeVarint(num) {
+  let n = BigInt(num || 0);
+  const chunks = [];
+  do {
+    let b = Number(n & 0x7fn);
+    n >>= 7n;
+    if (n > 0n) {
+      b |= 0x80;
+    }
+    chunks.push(b);
+  } while (n > 0n);
+  return Buffer.from(chunks);
 }
 
 function writeVarintField(fieldNo, value) {
@@ -24,8 +42,7 @@ function writeVarintField(fieldNo, value) {
 function writeMapEntry(key, value) {
   const entry = Buffer.concat([writeStringField(1, key), writeStringField(2, value)]);
   const tag = Buffer.from([0x12]);
-  const len = Buffer.from([entry.length]);
-  return Buffer.concat([tag, len, entry]);
+  return Buffer.concat([tag, encodeVarint(entry.length), entry]);
 }
 
 function encodeAuthRequest(token, metadata = {}) {
@@ -36,6 +53,16 @@ function encodeAuthRequest(token, metadata = {}) {
     }
   }
   return Buffer.concat(parts);
+}
+
+function parseControlError(buf) {
+  const fields = parseMessage(buf);
+  const code = fieldVarint(fields, 1);
+  const msg = fieldString(fields, 2);
+  if (!code && !msg) {
+    return "";
+  }
+  return msg || `error code ${code}`;
 }
 
 function encodeMultiSecurityRequest(symbols) {
@@ -173,4 +200,5 @@ module.exports = {
   encodeAuthRequest,
   encodeMultiSecurityRequest,
   parseSecurityQuoteResponse,
+  parseControlError,
 };

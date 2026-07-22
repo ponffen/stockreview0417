@@ -1,7 +1,7 @@
 const WebSocket = require("ws");
 const { legacyGet } = require("./legacy-http");
-const { encodeRequest, encodeResponse, decodePacket } = require("./longbridge-codec");
-const { encodeAuthRequest, encodeMultiSecurityRequest, parseSecurityQuoteResponse } = require("./longbridge-proto");
+const { encodeRequest, encodeResponse, decodePacket, PACKET_RESPONSE } = require("./longbridge-codec");
+const { encodeAuthRequest, encodeMultiSecurityRequest, parseSecurityQuoteResponse, parseControlError } = require("./longbridge-proto");
 const {
   decimalToNum,
   formatTimestampBeijing,
@@ -27,7 +27,7 @@ function quoteWsUrl(httpUrl) {
   const host = u.hostname.includes("longbridge.cn")
     ? "openapi-quote.longbridge.cn"
     : "openapi-quote.longbridge.com";
-  return `wss://${host}/v2?version=1&codec=1&platform=9`;
+  return `wss://${host}/v2/?version=1&codec=1&platform=9`;
 }
 
 function overnightEnabled(creds) {
@@ -168,25 +168,44 @@ async function connectAndAuth(creds, timeoutMs) {
     });
   });
 
-  const authMetadata = overnightEnabled(creds) ? { need_over_night_quote: "true" } : {};
   const authReqId = nextRequestId++;
+  const authBody = overnightEnabled(creds)
+    ? encodeAuthRequest(otp, { need_over_night_quote: "true" })
+    : encodeAuthRequest(otp);
   ws.send(
     encodeRequest(
       CONTROL_AUTH,
       authReqId,
-      encodeAuthRequest(otp, authMetadata),
+      authBody,
       Math.min(timeoutMs, 15000),
     ),
   );
   const authResp = await waitForPacket(
     ws,
     (packet) =>
-      packet.type === 2 && packet.cmdCode === CONTROL_AUTH && packet.requestId === authReqId,
+      packet.type === PACKET_RESPONSE && packet.cmdCode === CONTROL_AUTH && packet.requestId === authReqId,
     timeoutMs,
   );
   if (authResp.status !== 0) {
     ws.close();
-    throw new Error(`longport auth failed status ${authResp.status} bodyLen=${authResp.body?.length || 0}`);
+    const detail = parseControlError(authResp.body);
+    const statusNames = [
+      "ok",
+      "server_timeout",
+      "client_timeout",
+      "bad_request",
+      "bad_response",
+      "unauthenticated",
+      "permission_denied",
+      "server_internal",
+      "client_internal",
+    ];
+    const statusLabel = statusNames[authResp.status] || `status_${authResp.status}`;
+    throw new Error(
+      detail
+        ? `longport auth failed (${statusLabel}): ${detail}`
+        : `longport auth failed (${statusLabel})`,
+    );
   }
   return ws;
 }
@@ -206,13 +225,14 @@ async function fetchQuotesOverWs(lpSymbols, lpToInternal, creds, timeoutMs) {
     const resp = await waitForPacket(
       ws,
       (packet) =>
-        packet.type === 2 &&
+        packet.type === PACKET_RESPONSE &&
         packet.cmdCode === CMD_QUERY_SECURITY_QUOTE &&
         packet.requestId === reqId,
       timeoutMs,
     );
     if (resp.status !== 0) {
-      throw new Error(`longport quote failed status ${resp.status}`);
+      const detail = parseControlError(resp.body);
+      throw new Error(detail ? `longport quote failed: ${detail}` : `longport quote failed status ${resp.status}`);
     }
     const rows = parseSecurityQuoteResponse(resp.body);
     const quotes = {};
