@@ -195,6 +195,56 @@ function todayProfitCnyForHolding({
   return nat * (Number(rate) || 1);
 }
 
+function computeTodayProfitTracksForHolding({
+  quote,
+  symbol,
+  prevClose,
+  current,
+  trades,
+  todayKey,
+  frozenDate,
+  now,
+  frozenMvNat,
+  endQuantity,
+  ccy,
+  book,
+  fxLive,
+  fxFrozen,
+  clearedToday = false,
+}) {
+  const { computeTodayProfitTracks } = require("./metrics/profit-tracks");
+  const dayCtx = getPositionDayTradeContext(symbol, todayKey, trades);
+  const endQty =
+    endQuantity != null && Number.isFinite(Number(endQuantity))
+      ? Number(endQuantity)
+      : dayCtx.endQuantity;
+  const isClearedToday =
+    clearedToday ||
+    (Math.abs(dayCtx.startQuantity) > 1e-6 && Math.abs(endQty) <= 1e-6);
+  if (!shouldCountTodayPositionPnlFromQuote(quote, now) && !isClearedToday) {
+    return {
+      native: { profit: 0, rateTwr: 0 },
+      book: { profit: 0, rateTwr: 0 },
+      cny: { profit: 0, rateTwr: 0 },
+    };
+  }
+  const pxEnd = isClearedToday && Math.abs(endQty) <= 1e-6 ? 0 : Number(current) || 0;
+  const pxStart = Number(prevClose) || 0;
+  return computeTodayProfitTracks({
+    endQty,
+    startQty: dayCtx.startQuantity,
+    current: pxEnd,
+    prevClose: pxStart,
+    dayFlowNative: dayCtx.dayFlowNative,
+    ccy,
+    book,
+    liveDate: todayKey,
+    frozenDate,
+    fxLive,
+    fxFrozen,
+  });
+}
+
 module.exports = {
   parseQuoteTimeToDateKey,
   getTradingDateKeyBy0830,
@@ -205,4 +255,5 @@ module.exports = {
   resolveTodayStartMvNat,
   computeTodayProfitNative,
   todayProfitCnyForHolding,
+  computeTodayProfitTracksForHolding,
 };

@@ -1659,6 +1659,34 @@ function mapSymbolDailyPnlChartRow(row) {
     stageLast7dProfit: row.stage_last_7d_profit == null ? null : Number(row.stage_last_7d_profit),
     stageLast30dProfit: row.stage_last_30d_profit == null ? null : Number(row.stage_last_30d_profit),
     stageLast90dProfit: row.stage_last_90d_profit == null ? null : Number(row.stage_last_90d_profit),
+    stageMtdProfitBook:
+      row.stage_mtd_profit_book == null ? null : Number(row.stage_mtd_profit_book ?? row.stage_mtd_profit),
+    stageYtdProfitBook:
+      row.stage_ytd_profit_book == null ? null : Number(row.stage_ytd_profit_book ?? row.stage_ytd_profit),
+    stageInceptionProfitBook:
+      row.stage_inception_profit_book == null
+        ? null
+        : Number(row.stage_inception_profit_book ?? row.stage_inception_profit),
+    stageLast7dProfitBook:
+      row.stage_last_7d_profit_book == null ? null : Number(row.stage_last_7d_profit_book ?? row.stage_last_7d_profit),
+    stageLast30dProfitBook:
+      row.stage_last_30d_profit_book == null ? null : Number(row.stage_last_30d_profit_book ?? row.stage_last_30d_profit),
+    stageLast90dProfitBook:
+      row.stage_last_90d_profit_book == null ? null : Number(row.stage_last_90d_profit_book ?? row.stage_last_90d_profit),
+    stageMtdProfitCny:
+      row.stage_mtd_profit_cny == null ? null : Number(row.stage_mtd_profit_cny ?? row.stage_mtd_profit),
+    stageYtdProfitCny:
+      row.stage_ytd_profit_cny == null ? null : Number(row.stage_ytd_profit_cny ?? row.stage_ytd_profit),
+    stageInceptionProfitCny:
+      row.stage_inception_profit_cny == null
+        ? null
+        : Number(row.stage_inception_profit_cny ?? row.stage_inception_profit),
+    stageLast7dProfitCny:
+      row.stage_last_7d_profit_cny == null ? null : Number(row.stage_last_7d_profit_cny ?? row.stage_last_7d_profit),
+    stageLast30dProfitCny:
+      row.stage_last_30d_profit_cny == null ? null : Number(row.stage_last_30d_profit_cny ?? row.stage_last_30d_profit),
+    stageLast90dProfitCny:
+      row.stage_last_90d_profit_cny == null ? null : Number(row.stage_last_90d_profit_cny ?? row.stage_last_90d_profit),
     dailyTradeCount: row.daily_trade_count == null ? null : Number(row.daily_trade_count),
     stageMtdTradeCount: row.stage_mtd_trade_count == null ? null : Number(row.stage_mtd_trade_count),
     stageYtdTradeCount: row.stage_ytd_trade_count == null ? null : Number(row.stage_ytd_trade_count),
@@ -1839,6 +1867,10 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
     `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
             stage_mtd_profit, stage_ytd_profit, stage_inception_profit, stage_inception_rate_twr,
             stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            stage_mtd_profit_book, stage_ytd_profit_book, stage_inception_profit_book,
+            stage_last_7d_profit_book, stage_last_30d_profit_book, stage_last_90d_profit_book,
+            stage_mtd_profit_cny, stage_ytd_profit_cny, stage_inception_profit_cny,
+            stage_last_7d_profit_cny, stage_last_30d_profit_cny, stage_last_90d_profit_cny,
             daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
             stage_inception_trade_count, stage_last_7d_trade_count,
             stage_last_30d_trade_count, stage_last_90d_trade_count,

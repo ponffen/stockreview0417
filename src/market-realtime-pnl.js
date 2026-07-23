@@ -30,7 +30,7 @@ const {
   hasOpenPositionQuantity,
   wasClearedOnTradingDay,
 } = require("./metrics/holdings-active-symbols");
-const { computeTodayProfitNative } = require("./position-today-pnl");
+const { computeTodayProfitTracksForHolding } = require("./position-today-pnl");
 
 const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 
@@ -385,20 +385,32 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     const mvNat = hasOpenPositionQuantity(qty) ? qty * current : 0;
     const mv = mvNat * rateToBook;
     liveMarketValue += mv;
-    const todayNat = tradingDay
-      ? computeTodayProfitNative({
+    const frozenDateKey = String(frozenThrough || prevSessionKey || todayKey).slice(0, 10);
+    const tracks = tradingDay
+      ? computeTodayProfitTracksForHolding({
           quote,
           symbol,
           prevClose,
           current,
           trades: scoped,
           todayKey,
+          frozenDate: prevSessionKey || frozenDateKey,
+          now: new Date(),
           frozenMvNat: frozenMvNatForSymbol(frozenBySym, symbol),
           endQuantity: qty,
+          ccy: symCcy,
+          book: bookCcy,
+          fxLive: { USD: fxSpot.USD, HKD: fxSpot.HKD },
+          fxFrozen: {
+            USD: Number(fxUsdMap[frozenDateKey]) || FX_FALLBACK.USD,
+            HKD: Number(fxHkdMap[frozenDateKey]) || FX_FALLBACK.HKD,
+          },
           clearedToday,
         })
-      : 0;
-    const todayP = todayNat * rateToBook;
+      : { native: { profit: 0 }, book: { profit: 0 }, cny: { profit: 0 } };
+    const todayNat = Number(tracks.native?.profit) || 0;
+    const todayBook = Number(tracks.book?.profit) || 0;
+    const todayP = Number(tracks.cny?.profit) || 0;
     positions.push({
       symbol,
       quantity: qty,
@@ -408,6 +420,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       session: quote.session || null,
       sessionLabel: quote.sessionLabel || null,
       todayProfitNative: todayNat,
+      todayProfitBook: todayBook,
       todayProfitCny: todayP,
       marketValueCny: mv,
     });

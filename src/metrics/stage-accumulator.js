@@ -2,6 +2,7 @@
  * stage_* 递推：mtd/ytd/inception 累加；last_7d/30d/90d 滑窗减项 + TWR 连乘。
  */
 const { addCalendarDays, monthStartKeyShanghai, yearStartKeyShanghai } = require("./stages");
+const { rowStageValue } = require("./profit-tracks");
 
 function chainTwrRate(prevRate, dailyRate) {
   const p = Number(prevRate) || 0;
@@ -175,10 +176,79 @@ function windowStartForStage(stageKey, asOf, firstTrade) {
   return R;
 }
 
+/** 从昨日快照行恢复 stage 状态（指定轨：native / book / cny）。 */
+function hydrateStageAccFromRowTrack(stageAcc, row, targetDateKey, track) {
+  if (!row || !stageAcc) {
+    return;
+  }
+  const dk = String(targetDateKey || "").slice(0, 10);
+  const rowDate = String(row.date || dk).slice(0, 10);
+  if (!rowDate) {
+    return;
+  }
+  stageAcc.curMonth = monthStartKeyShanghai(rowDate);
+  stageAcc.curYear = yearStartKeyShanghai(rowDate);
+  stageAcc.inception.profit = rowStageValue(row, "inception", "Profit", track);
+  stageAcc.inception.rate = rowStageValue(row, "inception", "RateTwr", track);
+  stageAcc.last7.profit = rowStageValue(row, "last_7d", "Profit", track);
+  stageAcc.last7.rate = rowStageValue(row, "last_7d", "RateTwr", track);
+  stageAcc.last30.profit = rowStageValue(row, "last_30d", "Profit", track);
+  stageAcc.last30.rate = rowStageValue(row, "last_30d", "RateTwr", track);
+  stageAcc.last90.profit = rowStageValue(row, "last_90d", "Profit", track);
+  stageAcc.last90.rate = rowStageValue(row, "last_90d", "RateTwr", track);
+  const rowMonth = monthStartKeyShanghai(rowDate);
+  const rowYear = yearStartKeyShanghai(rowDate);
+  if (rowMonth === monthStartKeyShanghai(dk)) {
+    stageAcc.mtd.profit = rowStageValue(row, "mtd", "Profit", track);
+    stageAcc.mtd.rate = rowStageValue(row, "mtd", "RateTwr", track);
+  }
+  if (rowYear === yearStartKeyShanghai(dk)) {
+    stageAcc.ytd.profit = rowStageValue(row, "ytd", "Profit", track);
+    stageAcc.ytd.rate = rowStageValue(row, "ytd", "RateTwr", track);
+  }
+}
+
+class TrackStageGroup {
+  constructor() {
+    this.native = new StageAccumulator();
+    this.book = new StageAccumulator();
+    this.cny = new StageAccumulator();
+  }
+
+  onDay(dateKey, tracks) {
+    const dk = String(dateKey || "").slice(0, 10);
+    this.native.onDay(dk, tracks?.native?.profit, tracks?.native?.rateTwr);
+    this.book.onDay(dk, tracks?.book?.profit, tracks?.book?.rateTwr);
+    this.cny.onDay(dk, tracks?.cny?.profit, tracks?.cny?.rateTwr);
+  }
+
+  hydrateFromRow(row, targetDateKey) {
+    hydrateStageAccFromRowTrack(this.native, row, targetDateKey, "native");
+    hydrateStageAccFromRowTrack(this.book, row, targetDateKey, "book");
+    hydrateStageAccFromRowTrack(this.cny, row, targetDateKey, "cny");
+  }
+
+  advanceGap(lastRowDate, targetDateKey) {
+    advanceStageAccSessionGap(this.native, lastRowDate, targetDateKey);
+    advanceStageAccSessionGap(this.book, lastRowDate, targetDateKey);
+    advanceStageAccSessionGap(this.cny, lastRowDate, targetDateKey);
+  }
+
+  snapshotTwr() {
+    return {
+      native: this.native.snapshotTwr(),
+      book: this.book.snapshotTwr(),
+      cny: this.cny.snapshotTwr(),
+    };
+  }
+}
+
 module.exports = {
   StageAccumulator,
+  TrackStageGroup,
   chainTwrRate,
   windowStartForStage,
   hydrateStageAccFromRow,
+  hydrateStageAccFromRowTrack,
   advanceStageAccSessionGap,
 };

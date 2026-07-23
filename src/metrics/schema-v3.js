@@ -35,6 +35,51 @@ const ANALYSIS_STAGE_COLS = [
   "stage_last_90d_rate_mwr",
 ];
 
+const ANALYSIS_STAGE_CNY_COLS = [
+  "stage_mtd_profit_cny",
+  "stage_mtd_rate_twr_cny",
+  "stage_ytd_profit_cny",
+  "stage_ytd_rate_twr_cny",
+  "stage_inception_profit_cny",
+  "stage_inception_rate_twr_cny",
+  "stage_last_7d_profit_cny",
+  "stage_last_7d_rate_twr_cny",
+  "stage_last_30d_profit_cny",
+  "stage_last_30d_rate_twr_cny",
+  "stage_last_90d_profit_cny",
+  "stage_last_90d_rate_twr_cny",
+];
+
+const SYMBOL_STAGE_BOOK_COLS = [
+  "stage_mtd_profit_book",
+  "stage_mtd_rate_twr_book",
+  "stage_ytd_profit_book",
+  "stage_ytd_rate_twr_book",
+  "stage_inception_profit_book",
+  "stage_inception_rate_twr_book",
+  "stage_last_7d_profit_book",
+  "stage_last_7d_rate_twr_book",
+  "stage_last_30d_profit_book",
+  "stage_last_30d_rate_twr_book",
+  "stage_last_90d_profit_book",
+  "stage_last_90d_rate_twr_book",
+];
+
+const SYMBOL_STAGE_CNY_COLS = [
+  "stage_mtd_profit_cny",
+  "stage_mtd_rate_twr_cny",
+  "stage_ytd_profit_cny",
+  "stage_ytd_rate_twr_cny",
+  "stage_inception_profit_cny",
+  "stage_inception_rate_twr_cny",
+  "stage_last_7d_profit_cny",
+  "stage_last_7d_rate_twr_cny",
+  "stage_last_30d_profit_cny",
+  "stage_last_30d_rate_twr_cny",
+  "stage_last_90d_profit_cny",
+  "stage_last_90d_rate_twr_cny",
+];
+
 let schemaV3Promise = null;
 
 async function ensureMetricsSchemaV3() {
@@ -50,11 +95,15 @@ async function ensureMetricsSchemaV3() {
       `source_version TEXT NOT NULL DEFAULT '3'`,
       `daily_profit DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_rate_twr_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `total_assets_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_external_flow DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_cash_delta DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `cash DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_trade_count INTEGER NOT NULL DEFAULT 0`,
       ...ANALYSIS_STAGE_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
+      ...ANALYSIS_STAGE_CNY_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
       ...TRADE_COUNT_STAGE_COLS.map((c) => `${c} INTEGER NOT NULL DEFAULT 0`),
     ];
     for (const def of analysisAdds) {
@@ -66,15 +115,21 @@ async function ensureMetricsSchemaV3() {
       `book_currency TEXT NOT NULL DEFAULT 'CNY'`,
       `source_version TEXT NOT NULL DEFAULT '3'`,
       `daily_profit DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_profit_book DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_profit_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_trade_qty DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_trade_amount DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_trade_flow DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_rate_twr DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_rate_twr_book DOUBLE PRECISION NOT NULL DEFAULT 0`,
+      `daily_rate_twr_cny DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `eod_price DOUBLE PRECISION`,
       `eod_market_value_native DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `position_weight DOUBLE PRECISION NOT NULL DEFAULT 0`,
       `daily_trade_count INTEGER NOT NULL DEFAULT 0`,
       ...ANALYSIS_STAGE_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
+      ...SYMBOL_STAGE_BOOK_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
+      ...SYMBOL_STAGE_CNY_COLS.map((c) => `${c} DOUBLE PRECISION NOT NULL DEFAULT 0`),
       ...TRADE_COUNT_STAGE_COLS.map((c) => `${c} INTEGER NOT NULL DEFAULT 0`),
     ];
     for (const def of symbolAdds) {
@@ -107,5 +162,8 @@ module.exports = {
   ensureMetricsSchemaV3,
   METRICS_SOURCE_VERSION,
   ANALYSIS_STAGE_COLS,
+  ANALYSIS_STAGE_CNY_COLS,
+  SYMBOL_STAGE_BOOK_COLS,
+  SYMBOL_STAGE_CNY_COLS,
   TRADE_COUNT_STAGE_COLS,
 };
