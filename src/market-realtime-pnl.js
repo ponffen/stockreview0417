@@ -13,7 +13,8 @@ const {
 } = require("./db");
 const { computeLedgerCashBookUpToDate, principalBookUpToDate, bookCurrencyForScope } = require("./ledger-metrics");
 const { applyEodPlusLiveTotals, resolveAccountTodayProfitCny } = require("./metrics/snapshot-plus-live");
-const { pickLatestQuoteTime } = require("./quotes/quote-common");
+const { pickLatestQuoteTime, isExtendedQuoteSession } = require("./quotes/quote-common");
+const { previousSessionDate } = require("./metrics/freeze-calendar");
 const {
   fetchQuoteMap,
   fetchTencentForexMap,
@@ -284,8 +285,10 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       lastMarketValueCny,
     });
   }
-  const [closeFallback, quoteReq, fxReq] = await Promise.all([
+  const prevSessionKey = tradingDay ? previousSessionDate(todayKey) : null;
+  const [closeFallback, prevSessionClose, quoteReq, fxReq] = await Promise.all([
     batchLastCloseForSymbols(symbols, priceAsOf),
+    prevSessionKey ? batchLastCloseForSymbols(symbols, prevSessionKey) : Promise.resolve(new Map()),
     fetchQuoteMap(symbols, { budgetMs: QUOTE_TOTAL_BUDGET_MS }),
     fetchTencentForexMap(QUOTE_TOTAL_BUDGET_MS),
   ]);
@@ -369,7 +372,14 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       quote = { current: 0, prevClose: 0, marketDate: todayKey, quoteDate: todayKey };
     }
     const current = Number(quote.current) || 0;
-    const prevClose = Number(quote.prevClose) || current;
+    let prevClose = Number(quote.prevClose) || current;
+    if (isExtendedQuoteSession(quote)) {
+      const psc =
+        prevSessionClose.get(normalizeSymbol(symbol)) || prevSessionClose.get(symbol);
+      if (psc && Number(psc.close) > 0) {
+        prevClose = Number(psc.close);
+      }
+    }
     const symCcy = getSymbolCurrency(symbol);
     const rateToBook = rateSymbolToBook(symCcy, bookCcy, fxSpot);
     const mvNat = hasOpenPositionQuantity(qty) ? qty * current : 0;

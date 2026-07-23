@@ -1,7 +1,7 @@
 /**
  * 行情记录与通用工具（长桥 / 腾讯编排层共用）。
  */
-const { parseQuoteTimeToDateKey } = require("../position-today-pnl");
+const { parseQuoteTimeToDateKey, isExtendedQuoteSession } = require("../position-today-pnl");
 
 function parsePriceField(v) {
   const n = Number(String(v ?? "").replace(/,/g, ""));
@@ -151,4 +151,5 @@ module.exports = {
   pickLatestQuoteTime,
   buildQuoteRecord,
   resolveQuoteSource,
+  isExtendedQuoteSession,
 };
