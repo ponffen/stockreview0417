@@ -54,15 +54,25 @@ function getTradingDateKeyBy0830(baseDate = new Date()) {
   return current;
 }
 
-function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
-  const tradingKey = getTradingDateKeyBy0830(now);
+function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
+  const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0830(now)).slice(0, 10);
   const quoteKey =
     (quote && quote.marketDate) ||
     (quote && quote.quoteDate) ||
     (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
     (quote && parseQuoteTimeToDateKey(quote.time)) ||
     null;
-  return !!quoteKey && quoteKey === tradingKey;
+  if (!quoteKey) {
+    return false;
+  }
+  if (quoteKey === tradingKey) {
+    return true;
+  }
+  // 美股夜盘/盘前：行情北京时间可能落在 ledger 日次日 00:00–08:30，仍属同一交易日。
+  if (isExtendedQuoteSession(quote) && quoteKey === addCalendarDays(tradingKey, 1)) {
+    return true;
+  }
+  return false;
 }
 
 function tradeSignedAmount(trade) {
@@ -163,7 +173,7 @@ function computeTodayProfitNative({
     return 0 - todayStartMvNat - dayCtx.dayFlowNative;
   }
 
-  if (!shouldCountTodayPositionPnlFromQuote(quote, now)) {
+  if (!shouldCountTodayPositionPnlFromQuote(quote, now, todayKey)) {
     return 0;
   }
   return endQty * current - todayStartMvNat - dayCtx.dayFlowNative;
@@ -221,7 +231,17 @@ function computeTodayProfitTracksForHolding({
   const isClearedToday =
     clearedToday ||
     (Math.abs(dayCtx.startQuantity) > 1e-6 && Math.abs(endQty) <= 1e-6);
-  if (!shouldCountTodayPositionPnlFromQuote(quote, now) && !isClearedToday) {
+  const todayStartMvNat = resolveTodayStartMvNat({
+    frozenMvNat,
+    startQuantity: dayCtx.startQuantity,
+    prevClose,
+    quote,
+  });
+  const startQty = Number(dayCtx.startQuantity) || 0;
+  const effectivePrev =
+    startQty > 1e-6 ? todayStartMvNat / startQty : Number(prevClose) || 0;
+
+  if (!shouldCountTodayPositionPnlFromQuote(quote, now, todayKey) && !isClearedToday) {
     return {
       native: { profit: 0, rateTwr: 0 },
       book: { profit: 0, rateTwr: 0 },
@@ -229,12 +249,11 @@ function computeTodayProfitTracksForHolding({
     };
   }
   const pxEnd = isClearedToday && Math.abs(endQty) <= 1e-6 ? 0 : Number(current) || 0;
-  const pxStart = Number(prevClose) || 0;
   return computeTodayProfitTracks({
     endQty,
     startQty: dayCtx.startQuantity,
     current: pxEnd,
-    prevClose: pxStart,
+    prevClose: effectivePrev,
     dayFlowNative: dayCtx.dayFlowNative,
     ccy,
     book,

@@ -9389,8 +9389,8 @@ function getBeijingTradingDateKey(now = new Date()) {
  * 今日持仓价差收益：接口行情日期与当前「交易日期」一致时才计算；
  * 接口日期早于交易日期（或未解析到日期）则为 0。
  */
-function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
-  const tradingKey = getBeijingTradingDateKey(now);
+function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
+  const tradingKey = String(ledgerSessionKey || getBeijingTradingDateKey(now)).slice(0, 10);
   const quoteKey =
     (quote && quote.marketDate) ||
     (quote && quote.quoteDate) ||
@@ -9400,7 +9400,17 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
   if (!quoteKey) {
     return false;
   }
-  return quoteKey === tradingKey;
+  if (quoteKey === tradingKey) {
+    return true;
+  }
+  const session = String(quote?.session || "").toLowerCase();
+  if (
+    (session === "pre" || session === "post" || session === "overnight") &&
+    quoteKey === addCalendarDaysToDateKey(tradingKey, 1)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function getPositionDayTradeContext(symbol, dateKey, trades = state.trades) {

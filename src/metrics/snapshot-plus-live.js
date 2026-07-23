@@ -39,7 +39,7 @@ function todayProfitCnyFromTotals(live) {
  * 账户「今日」是否与个股一致：至少一只持仓的行情日 = 当前交易日期（08:30 北京）。
  * 无持仓或行情均未切到今日 → 不计账户今日收益。
  */
-function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date() }) {
+function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date(), ledgerSessionKey = null }) {
   const quotes = quoteBySymbol && typeof quoteBySymbol === "object" ? quoteBySymbol : {};
   for (const p of positions || []) {
     const qty = Number(p.quantity) || 0;
@@ -51,7 +51,7 @@ function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date()
     }
     const sym = normalizeSymbol(p.symbol);
     const quote = quotes[sym] ?? quotes[p.symbol];
-    if (shouldCountTodayPositionPnlFromQuote(quote, now)) {
+    if (shouldCountTodayPositionPnlFromQuote(quote, now, ledgerSessionKey)) {
       return true;
     }
   }
@@ -63,7 +63,8 @@ function resolveAccountTodayProfitCny(live, positions, quoteBySymbol, now = new 
   if (!live?.tradingDay) {
     return 0;
   }
-  if (!shouldCountAccountTodayPnl({ positions, quoteBySymbol, now })) {
+  const ledgerSessionKey = String(live.liveDate || "").slice(0, 10) || null;
+  if (!shouldCountAccountTodayPnl({ positions, quoteBySymbol, now, ledgerSessionKey })) {
     return 0;
   }
   return (positions || []).reduce((s, p) => s + (Number(p.todayProfitCny) || 0), 0);
