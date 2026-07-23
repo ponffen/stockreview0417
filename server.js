@@ -797,6 +797,7 @@ const {
   ensureSymbolNameMapOnNewTrade,
   enrichTradesWithSymbolNames,
 } = require("./src/symbol-name-resolve");
+const { getTradeSearchHistoryForUser } = require("./src/trade-search-history");
 const { readUserIdFromRequest, setSessionCookie, clearSessionCookie } = require("./src/auth-session");
 const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require("./src/sina-suggest");
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
@@ -1768,6 +1769,15 @@ app.get("/api/trades", requireAuth, async (req, res) => {
   const data = await getTrades(req.userId);
   await enrichTradesWithSymbolNames(data);
   res.json({ ok: true, data });
+});
+
+app.get("/api/trades/search-history", requireAuth, async (req, res) => {
+  try {
+    const items = await getTradeSearchHistoryForUser(req.userId);
+    res.json({ ok: true, data: { items } });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "search history failed" });
+  }
 });
 
 app.post("/api/trades", requireAuth, async (req, res) => {

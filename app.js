@@ -720,6 +720,8 @@ const cashTransferDeleteBtn = document.getElementById("cashTransferDeleteBtn");
 const tradeSearchBackBtn = document.getElementById("tradeSearchBackBtn");
 const tradeStockSearchInput = document.getElementById("tradeStockSearchInput");
 const tradeStockSearchResults = document.getElementById("tradeStockSearchResults");
+const tradeSearchHistory = document.getElementById("tradeSearchHistory");
+const tradeSearchHistoryList = document.getElementById("tradeSearchHistoryList");
 const stockRecordTooltip = document.getElementById("stockRecordTooltip");
 const stockRecordWeightTooltip = document.getElementById("stockRecordWeightTooltip");
 const stockRecordProfitTooltip = document.getElementById("stockRecordProfitTooltip");
@@ -1052,6 +1054,7 @@ function bindAuthUi() {
     if (typeof PageCache !== "undefined") {
       void PageCache.clearAll();
     }
+    clearTradeSearchHistoryCache();
     window.location.reload();
   });
 
@@ -1069,6 +1072,7 @@ function bindAuthUi() {
     if (typeof PageCache !== "undefined") {
       void PageCache.clearAll();
     }
+    clearTradeSearchHistoryCache();
     window.location.reload();
   });
 
@@ -4544,6 +4548,18 @@ function bindEvents() {
   tradeStockSearchInput?.addEventListener("input", (e) => {
     void runTradeSearchSuggestQuery(e.target.value);
   });
+  tradeSearchHistoryList?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".trade-search-history__tag[data-symbol]");
+    if (!btn || !tradeSearchHistoryList.contains(btn)) {
+      return;
+    }
+    const symbol = btn.getAttribute("data-symbol");
+    const name = btn.getAttribute("data-name") || "";
+    if (!symbol) {
+      return;
+    }
+    applyStockSearchPick(symbol, name);
+  });
   tradeStockSearchResults?.addEventListener("click", (e) => {
     const li = e.target.closest("li[data-symbol]");
     if (!li || !tradeStockSearchResults?.contains(li)) {
@@ -5272,6 +5288,172 @@ function clearTradeSearchResults() {
   }
 }
 
+const TRADE_SEARCH_HISTORY_LS_PREFIX = "stockreview_trade_search_history:";
+const TRADE_SEARCH_HISTORY_FETCH_MS = 1000;
+let tradeSearchHistoryLoadGen = 0;
+let tradeSearchHistoryInflight = null;
+
+function tradeSearchHistoryCacheKey() {
+  const uid = String(sessionUserId || "").trim();
+  return uid ? `${TRADE_SEARCH_HISTORY_LS_PREFIX}${uid}` : "";
+}
+
+function readTradeSearchHistoryCache() {
+  const key = tradeSearchHistoryCacheKey();
+  if (!key) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    return { items, savedAt: Number(parsed?.savedAt) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function writeTradeSearchHistoryCache(items) {
+  const key = tradeSearchHistoryCacheKey();
+  if (!key) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ items: Array.isArray(items) ? items : [], savedAt: Date.now() }),
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearTradeSearchHistoryCache() {
+  const key = tradeSearchHistoryCacheKey();
+  if (!key) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function tradeSearchHistoryHasQuery() {
+  return !!String(tradeStockSearchInput?.value || "").trim();
+}
+
+function updateTradeSearchHistoryVisibility() {
+  if (!tradeSearchHistory) {
+    return;
+  }
+  const hasItems = !!tradeSearchHistoryList?.querySelector(".trade-search-history__tag");
+  tradeSearchHistory.hidden = tradeSearchHistoryHasQuery() || !hasItems;
+}
+
+function renderTradeSearchHistory(items) {
+  if (!tradeSearchHistoryList) {
+    return;
+  }
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    tradeSearchHistoryList.innerHTML = "";
+    updateTradeSearchHistoryVisibility();
+    return;
+  }
+  tradeSearchHistoryList.innerHTML = `<div class="dyn-card__stock-tags community-feed-card__stock-tags">${list
+    .map((s) => {
+      const sym = String(s.symbol || "").trim();
+      if (!sym) {
+        return "";
+      }
+      const name = String(s.name || "").trim() || sym;
+      const identity = buildCommunityStockIdentityHtml({
+        marketTag: s.marketTag,
+        symbol: sym,
+        name,
+        stockCode: s.stockCode || formatSymbolForDisplay(sym),
+        variant: "feed",
+      });
+      return `<button type="button" class="trade-search-history__tag community-feed-card__stock-tag-item" role="listitem" data-symbol="${escapeHtml(sym)}" data-name="${escapeHtml(name)}">${identity}</button>`;
+    })
+    .join("")}</div>`;
+  updateTradeSearchHistoryVisibility();
+}
+
+async function fetchTradeSearchHistoryFromApi() {
+  const base = getApiBaseForFetch();
+  const res = await apiFetch(`${base}/trades/search-history`, { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data?.error || "search history failed");
+  }
+  return Array.isArray(data?.data?.items) ? data.data.items : [];
+}
+
+async function loadTradeSearchHistory({ force = false } = {}) {
+  if (state.route !== "trade-search" || !apiReady || !sessionUserId) {
+    return;
+  }
+  const gen = ++tradeSearchHistoryLoadGen;
+  const cached = readTradeSearchHistoryCache();
+  if (cached?.items?.length) {
+    renderTradeSearchHistory(cached.items);
+  } else if (!tradeSearchHistoryHasQuery()) {
+    renderTradeSearchHistory([]);
+  }
+
+  if (tradeSearchHistoryInflight && !force) {
+    return tradeSearchHistoryInflight;
+  }
+
+  const run = async () => {
+    const fetchPromise = fetchTradeSearchHistoryFromApi();
+    const raced = await Promise.race([
+      fetchPromise.then((items) => ({ kind: "data", items })),
+      new Promise((resolve) => {
+        window.setTimeout(() => resolve({ kind: "timeout" }), TRADE_SEARCH_HISTORY_FETCH_MS);
+      }),
+    ]);
+    if (gen !== tradeSearchHistoryLoadGen || state.route !== "trade-search") {
+      return;
+    }
+    if (raced.kind === "data") {
+      writeTradeSearchHistoryCache(raced.items);
+      if (!tradeSearchHistoryHasQuery()) {
+        renderTradeSearchHistory(raced.items);
+      }
+      return;
+    }
+    fetchPromise
+      .then((items) => {
+        if (gen !== tradeSearchHistoryLoadGen || state.route !== "trade-search") {
+          return;
+        }
+        writeTradeSearchHistoryCache(items);
+        if (!tradeSearchHistoryHasQuery()) {
+          renderTradeSearchHistory(items);
+        }
+      })
+      .catch(() => {
+        // keep cache on failure
+      });
+  };
+
+  const promise = run();
+  tradeSearchHistoryInflight = promise;
+  promise.finally(() => {
+    if (tradeSearchHistoryInflight === promise) {
+      tradeSearchHistoryInflight = null;
+    }
+  });
+  return promise;
+}
+
 function openTradeStockSearch() {
   if (state.route !== "trade-search") {
     state.tradeSearchReturnRoute = state.route;
@@ -5314,10 +5496,14 @@ async function runTradeSearchSuggestQuery(raw) {
   }
   if (!q) {
     clearTradeSearchResults();
+    updateTradeSearchHistoryVisibility();
     if (tradeStockSearchInput) {
       tradeStockSearchInput.removeAttribute("aria-activedescendant");
     }
     return;
+  }
+  if (tradeSearchHistory) {
+    tradeSearchHistory.hidden = true;
   }
   tradeSearchSuggestController = new AbortController();
   const c = tradeSearchSuggestController;
@@ -6452,6 +6638,9 @@ async function refreshAfterLedgerMutation(payload = {}) {
       invalidateOverviewMetricsUi();
       if (state.route === "earning") {
         void refreshOverviewProfitRowFromSnapshots();
+      }
+      if (state.route === "trade-search") {
+        void loadTradeSearchHistory({ force: true });
       }
       break;
     default:
@@ -8417,6 +8606,9 @@ function renderRoute() {
   }
   notifyNavigationViewChanged();
   lastRenderedRouteForPaneUnmount = state.route;
+  if (state.route === "trade-search" && routeChanged) {
+    void loadTradeSearchHistory();
+  }
 }
 
 function invalidateOverviewMetricsUi() {

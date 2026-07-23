@@ -970,6 +970,7 @@ module.exports = async function handler(req, res, context) {
   const isSettingsPatchDirect = req.method === "PATCH" && pathOnly === "/api/settings";
   const tradesDeleteMatch = pathOnly.match(/^\/api\/trades\/([^/]+)$/) || null;
   const isTradesGetDirect = req.method === "GET" && pathOnly === "/api/trades";
+  const isTradesSearchHistoryDirect = req.method === "GET" && pathOnly === "/api/trades/search-history";
   const isTradesPostDirect = req.method === "POST" && pathOnly === "/api/trades";
   const isTradesDeleteDirect = req.method === "DELETE" && !!tradesDeleteMatch;
   const isTradesImportDirect = req.method === "POST" && pathOnly === "/api/trades/import";
@@ -1042,6 +1043,34 @@ module.exports = async function handler(req, res, context) {
     } catch (error) {
       res.statusCode = 502;
       res.end(JSON.stringify({ ok: false, error: error?.message || "search failed" }));
+      return;
+    }
+  }
+
+  if (isTradesSearchHistoryDirect) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const userId = readUserIdFromRequest(req);
+      if (!userId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "请先登录" }));
+        return;
+      }
+      const subExpired = await getSubscriptionExpiredPayload(userId);
+      if (subExpired) {
+        endJsonPayload(res, subExpired, subExpired.status);
+        return;
+      }
+      const { getTradeSearchHistoryForUser } = require("../src/trade-search-history");
+      const items = await getTradeSearchHistoryForUser(userId);
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: { items } }));
+      return;
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "search history failed" }));
       return;
     }
   }

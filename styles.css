@@ -5021,3 +5021,34 @@ html.dynamics-compose-open body {
   color: var(--muted);
   text-align: center;
 }
+
+.trade-search-history[hidden] {
+  display: none !important;
+}
+
+.trade-search-history__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.trade-search-history__list .community-feed-card__stock-tags {
+  margin-top: 0;
+}
+
+.trade-search-history__tag {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.trade-search-history__tag:active .community-stock-identity {
+  opacity: 0.72;
+}
