@@ -54,6 +54,21 @@ function getTradingDateKeyBy0830(baseDate = new Date()) {
   return current;
 }
 
+function getShanghaiCalendarDate(baseDate = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour12: false,
+  }).formatToParts(baseDate);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const y = Number(get("year"));
+  const m = Number(get("month"));
+  const d = Number(get("day"));
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
   const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0830(now)).slice(0, 10);
   const quoteKey =
@@ -68,8 +83,9 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSes
   if (quoteKey === tradingKey) {
     return true;
   }
-  // 美股夜盘/盘前：行情北京时间可能落在 ledger 日次日 00:00–08:30，仍属同一交易日。
-  if (isExtendedQuoteSession(quote) && quoteKey === addCalendarDays(tradingKey, 1)) {
+  // 08:30 前：行情北京时间戳常落在 ledger 日的次日（美股 regular/夜盘均可能），仍属同一交易日。
+  const calendarToday = getShanghaiCalendarDate(now);
+  if (calendarToday > tradingKey && quoteKey === addCalendarDays(tradingKey, 1)) {
     return true;
   }
   return false;
@@ -267,6 +283,7 @@ function computeTodayProfitTracksForHolding({
 module.exports = {
   parseQuoteTimeToDateKey,
   getTradingDateKeyBy0830,
+  getShanghaiCalendarDate,
   shouldCountTodayPositionPnlFromQuote,
   tradeSignedAmount,
   getPositionDayTradeContext,

@@ -301,16 +301,7 @@ function getTradingDateKeyBy0830(baseDate = new Date()) {
   return current;
 }
 
-function shouldCountTodayPositionPnlFromQuote(quote, now = new Date()) {
-  const tradingKey = getTradingDateKeyBy0830(now);
-  const quoteKey =
-    (quote && quote.marketDate) ||
-    (quote && quote.quoteDate) ||
-    (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
-    (quote && parseQuoteTimeToDateKey(quote.time)) ||
-    null;
-  return !!quoteKey && quoteKey === tradingKey;
-}
+const { shouldCountTodayPositionPnlFromQuote } = require("./src/position-today-pnl");
 
 function quoteTimeSortKey(timeStr) {
   if (!timeStr || typeof timeStr !== "string") {

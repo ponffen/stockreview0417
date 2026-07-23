@@ -9385,6 +9385,22 @@ function getBeijingTradingDateKey(now = new Date()) {
   return `${Number(m2.year)}-${String(Number(m2.month)).padStart(2, "0")}-${String(Number(m2.day)).padStart(2, "0")}`;
 }
 
+function getShanghaiCalendarDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const m = {};
+  for (const p of parts) {
+    if (p.type !== "literal") {
+      m[p.type] = p.value;
+    }
+  }
+  return `${Number(m.year)}-${String(Number(m.month)).padStart(2, "0")}-${String(Number(m.day)).padStart(2, "0")}`;
+}
+
 /**
  * 今日持仓价差收益：接口行情日期与当前「交易日期」一致时才计算；
  * 接口日期早于交易日期（或未解析到日期）则为 0。
@@ -9403,11 +9419,8 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSes
   if (quoteKey === tradingKey) {
     return true;
   }
-  const session = String(quote?.session || "").toLowerCase();
-  if (
-    (session === "pre" || session === "post" || session === "overnight") &&
-    quoteKey === addCalendarDaysToDateKey(tradingKey, 1)
-  ) {
+  const calendarToday = getShanghaiCalendarDate(now);
+  if (calendarToday > tradingKey && quoteKey === addCalendarDaysToDateKey(tradingKey, 1)) {
     return true;
   }
   return false;
