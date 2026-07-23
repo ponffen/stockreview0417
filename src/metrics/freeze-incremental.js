@@ -547,15 +547,18 @@ async function freezeAccountOneDay({
   const cash = cashBook;
   const mv = cnyToBook(mvCny, book, dk, fxUsdMap, fxHkdMap);
   const ta = cash + mv;
-  const cashCny = computeLedgerCashCnyUpToDate(
-    sessionTrades,
-    sessionCash,
-    accounts,
-    accountId,
-    fxUsdMap,
-    fxHkdMap,
-    dk,
-  );
+  const cashCny =
+    book === "CNY"
+      ? cash
+      : computeLedgerCashCnyUpToDate(
+          sessionTrades,
+          sessionCash,
+          accounts,
+          accountId,
+          fxUsdMap,
+          fxHkdMap,
+          dk,
+        );
   const taCny = cashCny + mvCny;
 
   const prevTa = yesterday ? Number(yesterday.totalAssets) : 0;
