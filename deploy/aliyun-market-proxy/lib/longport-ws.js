@@ -107,11 +107,17 @@ function parseQuoteRow(lpSymbol, row, internalSym) {
 
   if (isUsTickerSymbol(sym)) {
     const active = resolveUsActiveSession(row);
+    const regularLastDone = decimalToNum(row.last_done);
     if (active) {
       session = active.session;
       sessionLabel = active.sessionLabel;
       current = active.current;
-      prevClose = regularPrevClose > 0 ? regularPrevClose : active.prevClose;
+      if (active.session !== "regular" && regularLastDone > 0) {
+        // 盘前/盘后/夜盘涨跌幅基准 = 上一常规时段收盘价（非 row.prev_close 的前前日）
+        prevClose = regularLastDone;
+      } else {
+        prevClose = regularPrevClose > 0 ? regularPrevClose : active.prevClose;
+      }
       time = active.time;
     }
   }

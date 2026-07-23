@@ -102,13 +102,27 @@ function getPositionDayTradeContext(symbol, dateKey, trades) {
   return { startQuantity, endQuantity, dayFlowNative };
 }
 
+function isExtendedQuoteSession(quote) {
+  const s = String(quote?.session || "").toLowerCase();
+  return s === "pre" || s === "post" || s === "overnight";
+}
+
 function resolveTodayStartMvNat({ frozenMvNat, startQuantity, prevClose, quote }) {
   const startQty = Number(startQuantity) || 0;
   const prev = Number(prevClose) || 0;
   const fromQuote = startQty > 0 && prev > 0 ? startQty * prev : 0;
   const frozen = Number(frozenMvNat) || 0;
   const liveCurrent = Number(quote?.current) || 0;
-  // 盘前/盘后/夜盘：今日收益基准 = 昨持仓 × 昨日盘中收盘价（与涨跌幅昨收口径一致）
+  // 盘前/盘后/夜盘：今日收益基准优先对齐最近日冻结市值，其次昨收×期初数量
+  if (isExtendedQuoteSession(quote)) {
+    if (frozen > 0) {
+      return frozen;
+    }
+    if (fromQuote > 0) {
+      return fromQuote;
+    }
+    return 0;
+  }
   if (fromQuote > 0 && liveCurrent > 0) {
     return fromQuote;
   }
@@ -187,6 +201,7 @@ module.exports = {
   shouldCountTodayPositionPnlFromQuote,
   tradeSignedAmount,
   getPositionDayTradeContext,
+  isExtendedQuoteSession,
   resolveTodayStartMvNat,
   computeTodayProfitNative,
   todayProfitCnyForHolding,
