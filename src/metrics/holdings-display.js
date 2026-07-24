@@ -7,7 +7,7 @@ const {
   getSymbolMetaMap,
   resolveBookCurrencyForAccountScope,
   getSymbolDailyPnl,
-  getSymbolDailyPnlRowOnOrBefore,
+  getSymbolDailyPnlRowsOnOrBefore,
 } = require("../db");
 const {
   fmtPlainAmount,
@@ -250,20 +250,20 @@ async function buildHoldingsPayload({
   const pnlTo = live.tradingDay
     ? String(live.liveDate || frozenThrough).slice(0, 10)
     : frozenThrough;
-  const allPnl =
-    userId && pnlTo
-      ? await getSymbolDailyPnl(
-          { accountId: scopeId === "all" ? "" : scopeId, from: firstTrade, to: pnlTo },
-          userId,
-        )
-      : [];
   const pnlBySym = new Map();
-  for (const r of allPnl) {
-    const sym = normalizeSymbol(r.symbol);
-    if (!pnlBySym.has(sym)) {
-      pnlBySym.set(sym, []);
+  // MWR 需全历史日序列算个股资金加权收益；TWR 用冻结行 stage_* + 链式 TWR，不拉全表。
+  if (mwrMode && userId && pnlTo) {
+    const allPnl = await getSymbolDailyPnl(
+      { accountId: scopeId === "all" ? "" : scopeId, from: firstTrade, to: pnlTo },
+      userId,
+    );
+    for (const r of allPnl) {
+      const sym = normalizeSymbol(r.symbol);
+      if (!pnlBySym.has(sym)) {
+        pnlBySym.set(sym, []);
+      }
+      pnlBySym.get(sym).push(r);
     }
-    pnlBySym.get(sym).push(r);
   }
 
   const accountIdForPnl = scopeId === "all" ? "all" : scopeId;
@@ -275,22 +275,13 @@ async function buildHoldingsPayload({
     const todayP = live.tradingDay ? Number(liveBySym.get(sym)?.todayProfitCny) || 0 : 0;
     return Math.abs(todayP) > 1e-6;
   });
-  const frozenRowBySym = new Map();
-  if (userId && frozenThrough && activeSyms.length) {
-    const frozenRows = await Promise.all(
-      activeSyms.map((sym) =>
-        getSymbolDailyPnlRowOnOrBefore(
-          { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough },
+  const frozenRowBySym =
+    userId && frozenThrough && activeSyms.length
+      ? await getSymbolDailyPnlRowsOnOrBefore(
+          { accountId: accountIdForPnl, symbols: activeSyms, asOf: frozenThrough },
           userId,
-        ),
-      ),
-    );
-    activeSyms.forEach((sym, i) => {
-      if (frozenRows[i]) {
-        frozenRowBySym.set(sym, frozenRows[i]);
-      }
-    });
-  }
+        )
+      : new Map();
 
   const rowsOut = [];
   for (const sym of keys) {

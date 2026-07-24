@@ -1850,6 +1850,18 @@ async function hasSymbolDailyPnlBeforeDate(query = {}, userId = null) {
   return rows.length > 0;
 }
 
+const SYMBOL_DAILY_PNL_ROW_ON_OR_BEFORE_COLS = `account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
+            stage_mtd_profit, stage_ytd_profit, stage_inception_profit, stage_inception_rate_twr,
+            stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
+            stage_mtd_profit_book, stage_ytd_profit_book, stage_inception_profit_book,
+            stage_last_7d_profit_book, stage_last_30d_profit_book, stage_last_90d_profit_book,
+            stage_mtd_profit_cny, stage_ytd_profit_cny, stage_inception_profit_cny,
+            stage_last_7d_profit_cny, stage_last_30d_profit_cny, stage_last_90d_profit_cny,
+            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
+            stage_inception_trade_count, stage_last_7d_trade_count,
+            stage_last_30d_trade_count, stage_last_90d_trade_count,
+            currency, book_currency, day_close_price`;
+
 /** Live 日 stage profit：取 asOf 及之前最近一行 symbol_daily_pnl（含 stage_*_profit）。 */
 async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
   const uid = String(userId || "").trim();
@@ -1864,17 +1876,7 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
     return null;
   }
   const { rows } = await q(
-    `SELECT account_id, symbol, date, eod_shares, eod_price, eod_market_value_native, position_weight,
-            stage_mtd_profit, stage_ytd_profit, stage_inception_profit, stage_inception_rate_twr,
-            stage_last_7d_profit, stage_last_30d_profit, stage_last_90d_profit,
-            stage_mtd_profit_book, stage_ytd_profit_book, stage_inception_profit_book,
-            stage_last_7d_profit_book, stage_last_30d_profit_book, stage_last_90d_profit_book,
-            stage_mtd_profit_cny, stage_ytd_profit_cny, stage_inception_profit_cny,
-            stage_last_7d_profit_cny, stage_last_30d_profit_cny, stage_last_90d_profit_cny,
-            daily_trade_count, stage_mtd_trade_count, stage_ytd_trade_count,
-            stage_inception_trade_count, stage_last_7d_trade_count,
-            stage_last_30d_trade_count, stage_last_90d_trade_count,
-            currency, book_currency, day_close_price
+    `SELECT ${SYMBOL_DAILY_PNL_ROW_ON_OR_BEFORE_COLS}
      FROM symbol_daily_pnl
      WHERE user_id = $1
        AND ($2 = '' OR account_id = $2)
@@ -1885,6 +1887,40 @@ async function getSymbolDailyPnlRowOnOrBefore(query = {}, userId = null) {
     [uid, accountId, symbol, asOf],
   );
   return rows.length ? mapSymbolDailyPnlChartRow(rows[0]) : null;
+}
+
+/** 批量取多标的 asOf 及之前最近一行 symbol_daily_pnl，单次查询。返回 Map(symbol → row)。 */
+async function getSymbolDailyPnlRowsOnOrBefore(query = {}, userId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return new Map();
+  }
+  const accountId = query.accountId != null ? String(query.accountId).trim() : "";
+  const asOf = query.asOf != null && String(query.asOf).trim() ? String(query.asOf).trim() : "";
+  const symbols = [
+    ...new Set((query.symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean)),
+  ];
+  if (!asOf || !symbols.length) {
+    return new Map();
+  }
+  const { rows } = await q(
+    `SELECT DISTINCT ON (symbol) ${SYMBOL_DAILY_PNL_ROW_ON_OR_BEFORE_COLS}
+     FROM symbol_daily_pnl
+     WHERE user_id = $1
+       AND ($2 = '' OR account_id = $2)
+       AND symbol = ANY($3::text[])
+       AND date <= $4
+     ORDER BY symbol, date DESC`,
+    [uid, accountId, symbols, asOf],
+  );
+  const out = new Map();
+  for (const row of rows) {
+    const sym = normalizeSymbol(row.symbol);
+    if (sym) {
+      out.set(sym, mapSymbolDailyPnlChartRow(row));
+    }
+  }
+  return out;
 }
 
 async function upsertSymbolDailyPnlBatch(rows, userId = null) {
@@ -3441,6 +3477,7 @@ module.exports = {
   getSymbolEodCarryBeforeDate,
   hasSymbolDailyPnlBeforeDate,
   getSymbolDailyPnlRowOnOrBefore,
+  getSymbolDailyPnlRowsOnOrBefore,
   upsertSymbolDailyPnlBatch,
   getAnalysisDailySnapshots,
   deleteAllSymbolDailyPnl,
