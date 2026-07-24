@@ -2,7 +2,7 @@
  * Per-user cache epoch domains + global quote epoch for client-side page cache invalidation.
  */
 const { nowMs } = require("./db-pure");
-const { dbQuery: q, getUserMetricsMeta, ensureMetricsOpsTables } = require("./db");
+const { dbQuery: q, getUserMetricsMeta } = require("./db");
 
 let cacheEpochSchemaPromise = null;
 
@@ -115,7 +115,6 @@ async function bumpFollowEpoch(userId) {
 async function getCacheMeta(userId) {
   const uid = String(userId || "").trim();
   try {
-    await ensureMetricsOpsTables();
     const [epochs, um] = await Promise.all([
       getUserCacheEpochRow(uid),
       getUserMetricsMeta(uid, { light: true }),

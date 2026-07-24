@@ -53,6 +53,56 @@ const POSITION_EPS = 1e-6;
 
 const VALID_CHART_RANGES = new Set(["7", "30", "90", "mtd", "ytd", "all"]);
 
+function pnlRowOnOrBeforeFromSeries(rows, asOf) {
+  const target = String(asOf || "").slice(0, 10);
+  if (!target) {
+    return null;
+  }
+  let best = null;
+  for (const row of rows || []) {
+    const d = String(row.date || "").slice(0, 10);
+    if (d && d <= target && (!best || d > String(best.date || "").slice(0, 10))) {
+      best = row;
+    }
+  }
+  return best;
+}
+
+function earliestDateKey(...dates) {
+  const keys = dates.map((d) => String(d || "").slice(0, 10)).filter(Boolean).sort();
+  return keys[0] || null;
+}
+
+/** 请求外补收盘价：只写库，不阻塞当前 bundle 响应。 */
+function scheduleRemoteDailyCloseBackfill(sym, from, to, source = "sina") {
+  const fromKey = String(from || "").slice(0, 10);
+  const toKey = String(to || "").slice(0, 10);
+  if (!sym || !fromKey || !toKey || fromKey > toKey) {
+    return;
+  }
+  void (async () => {
+    try {
+      const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, fromKey, toKey);
+      if (!remoteRows.length) {
+        return;
+      }
+      const toPersist = [];
+      for (const row of remoteRows) {
+        const d = String(row.date || "").slice(0, 10);
+        const c = Number(row.close);
+        if (d && c > 0) {
+          toPersist.push({ symbol: sym, date: d, close: c, source: row.source || source });
+        }
+      }
+      if (toPersist.length) {
+        await upsertSymbolDailyCloseBatch(toPersist);
+      }
+    } catch {
+      /* background only */
+    }
+  })();
+}
+
 function parseChartRangePreset(opts = {}) {
   const raw = String(opts.chartRange ?? opts.range ?? "").trim().toLowerCase();
   if (VALID_CHART_RANGES.has(raw)) {
@@ -676,7 +726,7 @@ async function buildStockRecordBundlePayload({
     getSettings(uid),
     getTrades(uid),
     getAccounts(uid),
-    getUserMetricsMeta(uid),
+    getUserMetricsMeta(uid, { light: true }),
     liveIn ? Promise.resolve(liveIn) : getLiveMetricsWithFrozenPack(uid, scope),
   ]);
   const book = resolveBookCurrencyForAccountScope({ ...settings, accounts }, scope);
@@ -762,14 +812,19 @@ async function buildStockRecordBundlePayload({
   const { start: from } = resolveStageRange(stageKey, sessionAsOf, firstTrade);
   const chartFrom = String(from || firstTrade || endDate || "").slice(0, 10);
   const chartLeadStart = resolveChartLeadStart(stageKey, sessionAsOf, firstTrade, null);
+  const lastNd = isLastNdStage(stageKey);
+  const pnlSeriesFrom = earliestDateKey(
+    from || endDate,
+    firstTrade,
+    lastNd ? addCalendarDays(chartFrom, -1) : null,
+  );
 
-  const pnlRows = await getSymbolDailyPnlChartSeriesDateRange(
-    { ...pnlQueryBase, from: from || endDate || "1970-01-01", to: endDate || "9999-12-31" },
+  const pnlRowsForSegments = await getSymbolDailyPnlChartSeriesDateRange(
+    { ...pnlQueryBase, from: pnlSeriesFrom || firstTrade || "1970-01-01", to: endDate || "9999-12-31" },
     uid,
   );
-  const pnlRowsForSegments = await getSymbolDailyPnlChartSeriesDateRange(
-    { ...pnlQueryBase, from: firstTrade || "1970-01-01", to: endDate || "9999-12-31" },
-    uid,
+  const pnlRows = pnlRowsForSegments.filter(
+    (r) => String(r.date || "").slice(0, 10) >= chartFrom,
   );
   const clearedSegmentsAll = detectClearedSegments(pnlRowsForSegments, frozenThrough, um);
   const clearedSegments = clearedSegmentsInChartRange(clearedSegmentsAll, chartFrom, endDate);
@@ -778,17 +833,16 @@ async function buildStockRecordBundlePayload({
   const includeLive = true;
   const anchorAsOf = frozenThrough || endDate;
 
-  const [anchorPnlRow, headlineCloseRows, frozenProfitRow, metaMap] = await Promise.all([
-    getSymbolDailyPnlRowOnOrBefore({ accountId: accountIdForPnl, symbol: sym, asOf: anchorAsOf }, uid),
+  const [headlineCloseRows, metaMap] = await Promise.all([
     getSymbolDailyCloseRange(sym, addCalendarDays(endDate || frozenThrough || "1970-01-01", -90), endDate || "9999-12-31"),
-    includeLive && live.tradingDay
-      ? getSymbolDailyPnlRowOnOrBefore(
-          { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough || endDate },
-          uid,
-        )
-      : Promise.resolve(null),
     getSymbolMetaMap([sym]),
   ]);
+
+  const anchorPnlRow = pnlRowOnOrBeforeFromSeries(pnlRowsForSegments, anchorAsOf);
+  const frozenProfitRow =
+    includeLive && live.tradingDay
+      ? pnlRowOnOrBeforeFromSeries(pnlRowsForSegments, frozenThrough || endDate)
+      : null;
 
   const clearedStable = isSymbolClearedStable({
     symbolTrades,
@@ -821,35 +875,7 @@ async function buildStockRecordBundlePayload({
       : [];
 
   if (pageCloseFrom && pageCloseTo) {
-    try {
-      const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, pageCloseFrom, pageCloseTo);
-      if (remoteRows.length) {
-        const merged = new Map(
-          pageCloseRows.map((r) => [String(r.date || "").slice(0, 10), r]),
-        );
-        const toPersist = [];
-        for (const row of remoteRows) {
-          const d = String(row.date || "").slice(0, 10);
-          const c = Number(row.close);
-          if (!d || !(c > 0)) {
-            continue;
-          }
-          const prev = merged.get(d);
-          if (!prev || Math.abs(Number(prev.close) - c) > 0.005) {
-            merged.set(d, { symbol: sym, date: d, close: c, source: row.source || "sina" });
-            toPersist.push({ symbol: sym, date: d, close: c, source: row.source || "sina" });
-          }
-        }
-        pageCloseRows = [...merged.values()].sort((a, b) =>
-          String(a.date || "").localeCompare(String(b.date || "")),
-        );
-        if (toPersist.length) {
-          void upsertSymbolDailyCloseBatch(toPersist).catch(() => {});
-        }
-      }
-    } catch {
-      /* keep local closes */
-    }
+    scheduleRemoteDailyCloseBackfill(sym, pageCloseFrom, pageCloseTo);
   }
 
   const pageCloseLookup = closeLookupFromRows(pageCloseRows);
@@ -857,13 +883,16 @@ async function buildStockRecordBundlePayload({
 
   // 近 N 日（自然日窗口）：持仓收益走势统一由个股「成立以来累计」相对锚点 rebase 得出，
   // 锚点 = 窗口前一交易日（chartFrom−1）的累计收益；不足 N 天 → 0。
-  const lastNd = isLastNdStage(stageKey);
   let symbolAnchorInception = 0;
   if (lastNd) {
-    const anchorRow = await getSymbolDailyPnlRowOnOrBefore(
-      { accountId: accountIdForPnl, symbol: sym, asOf: addCalendarDays(chartFrom, -1) },
-      uid,
-    );
+    const lastNdAsOf = addCalendarDays(chartFrom, -1);
+    let anchorRow = pnlRowOnOrBeforeFromSeries(pnlRowsForSegments, lastNdAsOf);
+    if (!anchorRow) {
+      anchorRow = await getSymbolDailyPnlRowOnOrBefore(
+        { accountId: accountIdForPnl, symbol: sym, asOf: lastNdAsOf },
+        uid,
+      );
+    }
     symbolAnchorInception = Number(anchorRow?.stageInceptionProfit) || 0;
   }
   const profitOf = (row) =>
@@ -919,33 +948,8 @@ async function buildStockRecordBundlePayload({
       }
       const leadDates = leadSessionDates(chartLeadStart, firstDataDate);
       const needsRemote = leadDates.some((d) => !closeMap.has(d));
-      if (needsRemote) {
-        try {
-          const remoteRows = await fetchRemoteDailyClosesForSymbol(sym, chartLeadStart, leadTo);
-          const toPersist = [];
-          for (const row of remoteRows) {
-            const d = String(row.date || "").slice(0, 10);
-            const c = Number(row.close);
-            if (d && c > 0 && !closeMap.has(d)) {
-              closeMap.set(d, c);
-              toPersist.push({
-                symbol: sym,
-                date: d,
-                close: c,
-                source: CHART_LEAD_PADDING_CLOSE_SOURCE,
-              });
-            }
-          }
-          if (toPersist.length) {
-            try {
-              await upsertSymbolDailyCloseBatch(toPersist);
-            } catch {
-              // chart still works with in-memory closeMap
-            }
-          }
-        } catch {
-          // chart padding may proceed with partial closes
-        }
+      if (needsRemote && leadTo) {
+        scheduleRemoteDailyCloseBackfill(sym, chartLeadStart, leadTo, CHART_LEAD_PADDING_CLOSE_SOURCE);
       }
     }
     points = padStockRecordChartPointsLead(points, chartLeadStart, closeMap);

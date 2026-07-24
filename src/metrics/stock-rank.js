@@ -5,7 +5,7 @@ const { resolveDisplayNameFromMap } = require("../symbol-name-resolve");
 const {
   getTrades,
   getSymbolDailyPnl,
-  getSymbolDailyPnlRowOnOrBefore,
+  getSymbolDailyPnlRowsOnOrBefore,
   getMinSymbolDailyPnlDateForAccount,
   getSymbolEodCarryBeforeDate,
   getSymbolNameMap,
@@ -290,20 +290,19 @@ async function buildStockRankPayloadV3({
     candidates.push({ sym, pnlRows: pnlWithLive, segments, livePos });
   }
 
-  const frozenRows = await Promise.all(
-    candidates.map(({ sym }) =>
-      getSymbolDailyPnlRowOnOrBefore(
-        { accountId: accountIdForPnl, symbol: sym, asOf: frozenThrough },
-        userId,
-      ),
-    ),
-  );
+  const candidateSyms = candidates.map(({ sym }) => sym);
+  const frozenRowBySym =
+    candidateSyms.length > 0
+      ? await getSymbolDailyPnlRowsOnOrBefore(
+          { accountId: accountIdForPnl, symbols: candidateSyms, asOf: frozenThrough },
+          userId,
+        )
+      : new Map();
 
   const rows = [];
 
-  for (let i = 0; i < candidates.length; i += 1) {
-    const { sym, pnlRows, segments, livePos } = candidates[i];
-    const frozenRow = frozenRows[i];
+  for (const { sym, pnlRows, segments, livePos } of candidates) {
+    const frozenRow = frozenRowBySym.get(sym) || null;
     const currency = inferSymbolCurrency([], frozenRow ? [{ currency: frozenRow.currency }] : pnlRows);
     const market = inferMarket(sym);
     const closeLookup = buildCloseLookupFromPnl(pnlRows, livePos, live.liveDate, live.tradingDay);

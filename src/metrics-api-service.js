@@ -599,6 +599,7 @@ function frozenMetricsFromHomeAccount(acc) {
 
 const homeBundleCache = new Map();
 const analysisBundleCache = new Map();
+const stockRecordBundleCache = new Map();
 const HOME_BUNDLE_CACHE_MS = Math.max(
   0,
   Math.min(30_000, Number(process.env.HOME_BUNDLE_CACHE_MS || 12_000)),
@@ -606,6 +607,10 @@ const HOME_BUNDLE_CACHE_MS = Math.max(
 const ANALYSIS_BUNDLE_CACHE_MS = Math.max(
   0,
   Math.min(30_000, Number(process.env.ANALYSIS_BUNDLE_CACHE_MS || 12_000)),
+);
+const STOCK_RECORD_BUNDLE_CACHE_MS = Math.max(
+  0,
+  Math.min(30_000, Number(process.env.STOCK_RECORD_BUNDLE_CACHE_MS || 12_000)),
 );
 const ANALYSIS_BUNDLE_DEADLINE_MS = Math.max(
   8_000,
@@ -1456,7 +1461,7 @@ async function getBenchmarkSeries(userId, symbol, stage) {
   const scope = "all";
   const settings = await getSettings(userId);
   const live = await getLiveMetricsWithFrozenPack(userId, scope);
-  const um = await getUserMetricsMeta(userId);
+  const um = await getUserMetricsMeta(userId, { light: true });
   const payload = await buildBenchmarkSeriesPayload({ userId, symbol: sym, stage, live });
   return { meta: metaEnvelope(userId, scope, settings, live, um), ...payload };
 }
@@ -1487,7 +1492,17 @@ async function getMetricsStockRecordBundle(userId, accountScope, symbol, opts = 
   if (!sym) {
     throw new Error("missing symbol");
   }
-  return buildStockRecordBundlePayload({
+  const rangeKey = String(opts.chartRange ?? opts.range ?? "30").trim() || "30";
+  const pubRank = opts.publicLayout === true ? "pub" : "priv";
+  const cacheKey = `${String(userId || "").trim()}|${scope}|${sym}|${rangeKey}|${pubRank}`;
+  const now = Date.now();
+  if (STOCK_RECORD_BUNDLE_CACHE_MS > 0) {
+    const hit = stockRecordBundleCache.get(cacheKey);
+    if (hit && now - hit.at < STOCK_RECORD_BUNDLE_CACHE_MS) {
+      return hit.value;
+    }
+  }
+  const value = await buildStockRecordBundlePayload({
     userId,
     accountScope: scope,
     symbol: sym,
@@ -1497,6 +1512,10 @@ async function getMetricsStockRecordBundle(userId, accountScope, symbol, opts = 
     pointsLimit: opts.pointsLimit,
     pointsOffset: opts.pointsOffset,
   });
+  if (STOCK_RECORD_BUNDLE_CACHE_MS > 0) {
+    stockRecordBundleCache.set(cacheKey, { at: now, value });
+  }
+  return value;
 }
 
 function todayPointForAssets(live, scope, book, fxU, fxH) {
