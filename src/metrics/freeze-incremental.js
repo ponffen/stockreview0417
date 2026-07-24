@@ -851,6 +851,7 @@ async function freezeSymbolOneDay({
     }
   }
   stageGroup.onDay(dk, tracks);
+  stageTradeAcc.onDay(dk, dailyTradeCount);
   const snaps = stageGroup.snapshotTwr();
   const tradeSnap = resolveTradeSnapForFreezeDay(dailyTradeCount, stageTradeAcc.snapshot(), yesterday);
   if (Math.abs(qty) > 1e-6 && closeD > 0) {

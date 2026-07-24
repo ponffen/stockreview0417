@@ -665,6 +665,11 @@ function computeMainRowTradeCount({
 
   const ss = String(stageStart || ps).slice(0, 10);
   let count = stageTradeCountFromRow(frozenRow, st);
+  const frozenEnd = ft || pe;
+  // 冻结库 stage_*_trade_count 历史缺数时，回退按成交记录统计（至 frozenThrough）。
+  if (!count && tradeList.length && frozenEnd) {
+    count = countTradeRecordsInRange(tradeList, ss, frozenEnd);
+  }
 
   if (live?.tradingDay) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
