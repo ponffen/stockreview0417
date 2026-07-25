@@ -6300,7 +6300,11 @@ function dynamicsMetricsBlockHtml(metrics) {
     return "";
   }
   const colClass =
-    cols.length >= 4 ? "dyn-card__metrics dyn-card__metrics--4 community-feed-card__metrics community-feed-card__metrics--4" : "dyn-card__metrics community-feed-card__metrics";
+    cols.length >= 4
+      ? "dyn-card__metrics dyn-card__metrics--4 community-feed-card__metrics community-feed-card__metrics--4"
+      : cols.length === 2
+        ? "dyn-card__metrics dyn-card__metrics--2 community-feed-card__metrics community-feed-card__metrics--2"
+        : "dyn-card__metrics community-feed-card__metrics";
   return `<div class="dyn-card__slot dyn-card__slot--metrics"><div class="${colClass}">${cols
     .map((col) => {
       const help = col.help

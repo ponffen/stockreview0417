@@ -4417,6 +4417,18 @@ body.subscription-expired-mode {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.dyn-card__metrics--2,
+.community-feed-card__metrics--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dyn-card__metrics--2 .community-feed-metric,
+.community-feed-card__metrics--2 .community-feed-metric {
+  align-items: center;
+  text-align: center;
+  padding: 0 10px;
+}
+
 .dyn-card__body-wrap {
   position: relative;
   display: block;

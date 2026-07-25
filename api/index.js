@@ -529,6 +529,7 @@ module.exports = async function handler(req, res, context) {
       query: {
         limit: getSearchParam(req, "limit"),
         cursor: getSearchParam(req, "cursor"),
+        filter: getSearchParam(req, "filter"),
       },
     };
   }
