@@ -4691,6 +4691,12 @@ html.dynamics-compose-open body {
   color: var(--blue);
 }
 
+.dynamics-compose-tool-scale {
+  display: block;
+  width: auto;
+  height: 20px;
+}
+
 .dynamics-compose-avatar {
   flex-shrink: 0;
   width: 40px;
