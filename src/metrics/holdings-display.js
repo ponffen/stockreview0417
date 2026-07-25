@@ -25,6 +25,7 @@ const {
 } = require("../position-today-pnl");
 const { resolveFrozenStageProfits } = require("./profit-tracks");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
+const { getLatestValuationBySymbolForUser } = require("../dynamics/community-posts-db");
 const {
   isFreshStagePeriod,
   monthStartKeyShanghai,

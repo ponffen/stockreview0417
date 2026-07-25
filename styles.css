@@ -4424,9 +4424,7 @@ body.subscription-expired-mode {
 
 .dyn-card__metrics--2 .community-feed-metric,
 .community-feed-card__metrics--2 .community-feed-metric {
-  align-items: center;
-  text-align: center;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .dyn-card__body-wrap {

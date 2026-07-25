@@ -84,19 +84,24 @@ function buildUserScopeSql(scene, params, { viewerId, targetUserId }) {
   };
 }
 
-function buildStockFilterSql(scene, symbol, params) {
+function buildStockFilterSql(scene, symbol, params, { includeTrades = true, includePosts = true } = {}) {
   const sym = normalizeSymbol(symbol);
   if (!sym) {
     return { tradeExtra: "", postExtra: "", excludePureOpinion: false };
   }
-  params.push(sym);
-  const idx = params.length;
-  const symJson = JSON.stringify([sym]);
-  params.push(symJson);
-  const jsonIdx = params.length;
+  let tradeExtra = "";
+  let postExtra = "";
+  if (includeTrades) {
+    params.push(sym);
+    tradeExtra = ` AND t.symbol = $${params.length}`;
+  }
+  if (includePosts) {
+    params.push(JSON.stringify([sym]));
+    postExtra = ` AND p.symbols::jsonb @> $${params.length}::jsonb AND jsonb_array_length(p.symbols::jsonb) > 0`;
+  }
   return {
-    tradeExtra: ` AND t.symbol = $${idx}`,
-    postExtra: ` AND p.symbols::jsonb @> $${jsonIdx}::jsonb AND jsonb_array_length(p.symbols::jsonb) > 0`,
+    tradeExtra,
+    postExtra,
     excludePureOpinion: true,
   };
 }
@@ -153,11 +158,11 @@ async function listDynamicsFeed(options = {}) {
 
   const params = [];
   const scope = buildUserScopeSql(scene, params, { viewerId, targetUserId });
-  const stock = buildStockFilterSql(scene, symbol, params);
 
   const isStockScene = scene === SCENES.STOCK_SELF || scene === SCENES.STOCK_PUBLIC;
   const includePosts = feedKinds.includePosts && (!isStockScene || Boolean(symbol));
   const includeTrades = feedKinds.includeTrades;
+  const stock = buildStockFilterSql(scene, symbol, params, { includeTrades, includePosts });
 
   let cursorClause = "";
   const cursorSortKey =
