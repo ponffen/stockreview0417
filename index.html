@@ -244,6 +244,8 @@
                   <th><button class="th-sort-btn" type="button" data-sort-key="totalWeight">总收益占比<span class="sort-icon"></span></button></th>
                   <th><button class="th-sort-btn" type="button" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
                   <th><button class="th-sort-btn" type="button" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="lowEstimateChangeRate">低估价<span class="sort-icon"></span></button></th>
+                  <th><button class="th-sort-btn" type="button" data-sort-key="highEstimateChangeRate">高估价<span class="sort-icon"></span></button></th>
                   <th class="stock-table-op-head">操作</th>
                 </tr>
               </thead>
@@ -894,28 +896,41 @@
         </header>
         <div class="dynamics-compose-body">
           <div class="dynamics-compose-editor">
-            <div class="dynamics-compose-avatar" aria-hidden="true">
-              <svg class="dynamics-compose-avatar-icon" width="22" height="22" viewBox="0 0 24 24" focusable="false">
-                <circle cx="12" cy="8" r="4" fill="currentColor" />
-                <path fill="currentColor" d="M4 20c0-4 3.6-6 8-6s8 2 8 6v1H4v-1z" />
-              </svg>
-            </div>
-            <div class="dynamics-compose-main">
-              <p id="publishDynamicsUserName" class="dynamics-compose-user-name"></p>
-              <textarea
-                id="publishDynamicsContent"
-                class="dynamics-compose-textarea"
-                rows="1"
-                maxlength="2000"
-                placeholder="分享你的投资观点…"
-                autocomplete="off"
-              ></textarea>
-              <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
-              <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
-            </div>
+            <textarea
+              id="publishDynamicsContent"
+              class="dynamics-compose-textarea dynamics-compose-textarea--solo"
+              rows="1"
+              maxlength="2000"
+              placeholder="分享你的投资观点…"
+              autocomplete="off"
+            ></textarea>
+            <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
+            <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
           </div>
           <p id="publishDynamicsError" class="auth-error dynamics-compose-error hidden" role="alert"></p>
           <button type="button" id="publishDynamicsDeleteBtn" class="dynamics-compose-delete hidden">删除动态</button>
+        </div>
+        <div id="publishDynamicsValuationFields" class="dynamics-compose-valuation hidden" aria-hidden="true">
+          <label class="dynamics-compose-valuation-field">
+            <span class="dynamics-compose-valuation-label">低估价</span>
+            <input
+              id="publishDynamicsLowPrice"
+              type="text"
+              inputmode="decimal"
+              class="dynamics-compose-valuation-input"
+              autocomplete="off"
+            />
+          </label>
+          <label class="dynamics-compose-valuation-field">
+            <span class="dynamics-compose-valuation-label">高估价</span>
+            <input
+              id="publishDynamicsHighPrice"
+              type="text"
+              inputmode="decimal"
+              class="dynamics-compose-valuation-input"
+              autocomplete="off"
+            />
+          </label>
         </div>
         <footer class="dynamics-compose-toolbar">
           <div class="dynamics-compose-tools">
@@ -947,6 +962,24 @@
               title="关联股票"
             >
               <span class="dynamics-compose-tool-dollar" aria-hidden="true">$</span>
+            </button>
+            <button
+              type="button"
+              id="publishDynamicsValuationToggle"
+              class="dynamics-compose-tool dynamics-compose-tool--valuation"
+              aria-label="个股估值"
+              aria-pressed="false"
+              title="个股估值"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M12 3v18M7 7h10a3 3 0 0 1 0 6H7a3 3 0 0 0 0 6h10"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
             </button>
           </div>
           <span id="publishDynamicsCharCount" class="dynamics-compose-char-count">0 / 2000</span>
@@ -1251,6 +1284,14 @@
           <div class="stock-record-trades-section stock-record-dynamics-section">
             <div class="stock-record-dynamics-section__head">
               <h4 class="stock-record-section-title">个股动态</h4>
+              <label class="stock-record-dynamics-filter-wrap">
+                <select id="stockRecordDynamicsFilter" class="stock-record-dynamics-filter" aria-label="动态类型">
+                  <option value="all">全部</option>
+                  <option value="viewpoint">个股观点</option>
+                  <option value="valuation">个股估值</option>
+                  <option value="trade">个股交易</option>
+                </select>
+              </label>
             </div>
             <div id="stockRecordDynamicsList" class="community-list dynamics-list"></div>
           </div>

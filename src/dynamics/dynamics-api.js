@@ -26,6 +26,7 @@ function parseLimit(raw) {
 async function handleListDynamicsFeed(req, userId, scene, options = {}) {
   const limit = parseLimit(req.query?.limit);
   const cursor = req.query?.cursor != null ? String(req.query.cursor) : "";
+  const filter = req.query?.filter != null ? String(req.query.filter) : options.filter || "";
   return listDynamicsFeed({
     viewerId: userId,
     targetUserId: options.targetUserId || userId,
@@ -33,6 +34,7 @@ async function handleListDynamicsFeed(req, userId, scene, options = {}) {
     symbol: options.symbol || "",
     limit,
     cursor,
+    filter,
   });
 }
 

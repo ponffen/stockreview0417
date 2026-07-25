@@ -101,6 +101,32 @@ function buildStockFilterSql(scene, symbol, params) {
   };
 }
 
+function normalizeFeedFilter(raw) {
+  const f = String(raw || "all").trim().toLowerCase();
+  if (f === "trade" || f === "viewpoint" || f === "valuation") {
+    return f;
+  }
+  return "all";
+}
+
+function resolveFeedKinds(filter) {
+  const f = normalizeFeedFilter(filter);
+  if (f === "trade") {
+    return { includeTrades: true, includePosts: false, postTypeExtra: "" };
+  }
+  if (f === "viewpoint") {
+    return {
+      includeTrades: false,
+      includePosts: true,
+      postTypeExtra: ` AND COALESCE(p.post_type, 'viewpoint') = 'viewpoint'`,
+    };
+  }
+  if (f === "valuation") {
+    return { includeTrades: false, includePosts: true, postTypeExtra: ` AND p.post_type = 'valuation'` };
+  }
+  return { includeTrades: true, includePosts: true, postTypeExtra: "" };
+}
+
 async function listDynamicsFeed(options = {}) {
   await initPool();
   const viewerId = String(options.viewerId || "").trim();
@@ -111,6 +137,7 @@ async function listDynamicsFeed(options = {}) {
   const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
   const cursor = decodeCursor(options.cursor);
   const isSelf = viewerId && targetUserId && viewerId === targetUserId;
+  const feedKinds = resolveFeedKinds(options.filter);
 
   if (scene === SCENES.PUBLIC || scene === SCENES.STOCK_PUBLIC) {
     if (!targetUserId) {
@@ -129,7 +156,8 @@ async function listDynamicsFeed(options = {}) {
   const stock = buildStockFilterSql(scene, symbol, params);
 
   const isStockScene = scene === SCENES.STOCK_SELF || scene === SCENES.STOCK_PUBLIC;
-  const includePosts = !isStockScene || Boolean(symbol);
+  const includePosts = feedKinds.includePosts && (!isStockScene || Boolean(symbol));
+  const includeTrades = feedKinds.includeTrades;
 
   let cursorClause = "";
   const cursorSortKey =
@@ -146,7 +174,8 @@ async function listDynamicsFeed(options = {}) {
     cursorClause = `WHERE (sort_key, created_at, id) < ($${a}, $${b}, $${c})`;
   }
 
-  const tradeSelect = `
+  const tradeSelect = includeTrades
+    ? `
     SELECT
       'trade'::text AS card_kind,
       t.id,
@@ -166,11 +195,39 @@ async function listDynamicsFeed(options = {}) {
       t.image_urls,
       NULL::text AS content,
       '[]'::text AS symbols,
+      NULL::text AS post_type,
+      NULL::text AS extra,
       u.nickname,
       u.phone
     FROM trades t
     ${scope.tradeJoin}
     WHERE ${scope.tradeWhere}${stock.tradeExtra}
+  `
+    : `
+    SELECT
+      NULL::text AS card_kind,
+      NULL::text AS id,
+      NULL::text AS user_id,
+      NULL::bigint AS sort_key,
+      NULL::bigint AS created_at,
+      NULL::text AS symbol,
+      NULL::text AS name,
+      NULL::text AS side,
+      NULL::double precision AS price,
+      NULL::double precision AS quantity,
+      NULL::double precision AS amount,
+      NULL::text AS trade_date,
+      NULL::text AS note,
+      NULL::text AS account_id,
+      NULL::double precision AS amount_share_ratio,
+      NULL::text AS image_urls,
+      NULL::text AS content,
+      NULL::text AS symbols,
+      NULL::text AS post_type,
+      NULL::text AS extra,
+      NULL::text AS nickname,
+      NULL::text AS phone
+    WHERE FALSE
   `;
 
   const postSelect = includePosts
@@ -195,11 +252,13 @@ async function listDynamicsFeed(options = {}) {
       p.image_urls,
       p.content,
       p.symbols,
+      p.post_type,
+      p.extra,
       u.nickname,
       u.phone
     FROM community_posts p
     ${scope.postJoin}
-    WHERE ${scope.postWhere}${stock.postExtra}
+    WHERE ${scope.postWhere}${stock.postExtra}${feedKinds.postTypeExtra}
   `
     : "";
 
@@ -272,4 +331,5 @@ module.exports = {
   listDynamicsFeed,
   encodeCursor,
   decodeCursor,
+  normalizeFeedFilter,
 };

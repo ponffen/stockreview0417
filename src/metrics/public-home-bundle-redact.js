@@ -21,6 +21,10 @@ const HOLDING_ROW_PUBLIC_KEYS = new Set([
   "regret",
   "lastTradeDate",
   "lastTradeSide",
+  "lowEstimate",
+  "lowEstimateChange",
+  "highEstimate",
+  "highEstimateChange",
 ]);
 
 const ASSET_PUBLIC_KEYS = new Set(["cashRatio", "stockRatio"]);

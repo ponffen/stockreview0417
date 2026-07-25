@@ -31,6 +31,7 @@ const {
   yearStartKeyShanghai,
 } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
+const { getLatestValuationBySymbolForUser } = require("../dynamics/community-posts-db");
 
 function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
   let stockBook = Number(stockProfitScalar) || 0;
@@ -93,6 +94,24 @@ function formatRegretRateWithSide(rate, side) {
   const num = (safe * 100).toFixed(2);
   const rateText = `${safe > 0 ? "+" : ""}${num}%`;
   return suffix ? `${rateText} ${suffix}` : rateText;
+}
+
+function formatEstimatePrice(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) {
+    return "";
+  }
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+}
+
+function formatEstimateChange(price, current) {
+  const p = Number(price);
+  const c = Number(current);
+  if (!Number.isFinite(p) || p <= 0 || !Number.isFinite(c) || c <= 0) {
+    return { text: "", rate: null };
+  }
+  const rate = p / c - 1;
+  return { text: fmtSignedPercentRatio(rate), rate };
 }
 
 function lastTradeBySymbol(trades, accountScope) {
@@ -236,6 +255,7 @@ async function buildHoldingsPayload({
   }
   const nameMap = await getSymbolMetaMap([...keys]);
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
+  const valuationBySym = userId ? await getLatestValuationBySymbolForUser(userId) : new Map();
   const scopeId = String(accountScope || "all").trim() || "all";
   const frozenThrough = String(
     accountRow?.frozen_through || symbolRows?.[0]?.frozen_through || live.frozenThrough || "",
@@ -353,6 +373,9 @@ async function buildHoldingsPayload({
     const lastTradePrice = Number(lastTr.lastTradePrice) || 0;
     const regretRate =
       lastTradePrice > 0 ? (current - lastTradePrice) / lastTradePrice : 0;
+    const valuationExtra = valuationBySym.get(sym) || {};
+    const lowChg = formatEstimateChange(valuationExtra.lowPrice, current);
+    const highChg = formatEstimateChange(valuationExtra.highPrice, current);
 
     rowsOut.push({
       symbol: sym,
@@ -385,6 +408,12 @@ async function buildHoldingsPayload({
       regret: formatRegretRateWithSide(regretRate, lastTr.lastTradeSide),
       lastTradeSide: lastTr.lastTradeSide || "",
       lastTradeDate: lastTr.lastTradeDate || "",
+      lowEstimate: formatEstimatePrice(valuationExtra.lowPrice),
+      lowEstimateChange: lowChg.text,
+      lowEstimateChangeRate: lowChg.rate,
+      highEstimate: formatEstimatePrice(valuationExtra.highPrice),
+      highEstimateChange: highChg.text,
+      highEstimateChangeRate: highChg.rate,
     });
   }
 

@@ -2401,7 +2401,36 @@ h2 {
 }
 
 .stock-record-dynamics-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 0 14px 10px;
+}
+
+.stock-record-dynamics-filter-wrap {
+  flex-shrink: 0;
+}
+
+.stock-record-dynamics-filter {
+  min-width: 108px;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-content);
+  color: var(--text);
+  font-size: 13px;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #9aa3b2 50%),
+    linear-gradient(135deg, #9aa3b2 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 13px,
+    calc(100% - 9px) 13px;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
 }
 
 .stock-record-dynamics-section .stock-record-section-title {
@@ -4591,9 +4620,57 @@ html.dynamics-compose-open body {
 
 .dynamics-compose-editor {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   background: var(--surface-content);
+}
+
+.dynamics-compose-textarea--solo {
+  min-height: 72px;
+}
+
+.dynamics-compose-valuation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-content);
+}
+
+.dynamics-compose-valuation.hidden {
+  display: none;
+}
+
+.dynamics-compose-valuation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dynamics-compose-valuation-label {
+  font-size: 13px;
+  color: #9aa3b2;
+}
+
+.dynamics-compose-valuation-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--surface-content);
+  box-sizing: border-box;
+}
+
+.dynamics-compose-tool--valuation.is-active {
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .dynamics-compose-avatar {

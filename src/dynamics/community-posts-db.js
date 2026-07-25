@@ -15,6 +15,7 @@ const {
 } = require("./blob-images");
 
 const CONTENT_MAX = 2000;
+const POST_TYPES = new Set(["viewpoint", "valuation"]);
 
 function parseSymbolsField(raw) {
   if (raw == null || raw === "") {
@@ -38,13 +39,43 @@ function serializeSymbols(symbols) {
   return JSON.stringify(parseSymbolsField(symbols));
 }
 
+function parseExtraField(raw) {
+  if (raw == null || raw === "") {
+    return {};
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return { ...raw };
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return { ...parsed };
+  } catch {
+    return {};
+  }
+}
+
+function serializeExtra(extra) {
+  return JSON.stringify(parseExtraField(extra));
+}
+
+function normalizePostType(raw) {
+  const t = String(raw || "viewpoint").trim().toLowerCase();
+  return POST_TYPES.has(t) ? t : "viewpoint";
+}
+
 function rowToPost(row) {
+  const postType = normalizePostType(row.post_type);
   return {
     id: row.id,
     userId: row.user_id,
     content: String(row.content || ""),
     imageUrls: parseImageUrlsField(row.image_urls),
     symbols: parseSymbolsField(row.symbols),
+    postType,
+    extra: postType === "valuation" ? parseExtraField(row.extra) : {},
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -61,7 +92,37 @@ function normalizePostInput(body) {
     throw new Error("最多 9 张图片");
   }
   const symbols = parseSymbolsField(raw.symbols);
-  return { content, imageUrls, symbols };
+  const postType = normalizePostType(raw.postType ?? raw.post_type);
+
+  if (postType === "valuation") {
+    if (symbols.length !== 1) {
+      throw new Error("个股估值必须且只能选择一只股票");
+    }
+    const extraIn = parseExtraField(raw.extra);
+    const lowPrice = Number(extraIn.lowPrice ?? raw.lowPrice);
+    const highPrice = Number(extraIn.highPrice ?? raw.highPrice);
+    if (!Number.isFinite(lowPrice) || lowPrice <= 0) {
+      throw new Error("请输入有效的低估价");
+    }
+    if (!Number.isFinite(highPrice) || highPrice <= 0) {
+      throw new Error("请输入有效的高估价");
+    }
+    if (highPrice < lowPrice) {
+      throw new Error("高估价不能低于低估价");
+    }
+    return {
+      content,
+      imageUrls,
+      symbols,
+      postType,
+      extra: { lowPrice, highPrice },
+    };
+  }
+
+  if (!content && !imageUrls.length && !symbols.length) {
+    throw new Error("请输入内容、图片或关联股票");
+  }
+  return { content, imageUrls, symbols, postType: "viewpoint", extra: {} };
 }
 
 async function getCommunityPostByIdForUser(postId, userId) {
@@ -71,7 +132,7 @@ async function getCommunityPostByIdForUser(postId, userId) {
     return null;
   }
   const { rows } = await dbQuery(
-    `SELECT id, user_id, content, image_urls, symbols, created_at, updated_at
+    `SELECT id, user_id, content, image_urls, symbols, post_type, extra, created_at, updated_at
      FROM community_posts WHERE user_id = $1 AND id = $2 LIMIT 1`,
     [uid, pid],
   );
@@ -87,14 +148,16 @@ async function createCommunityPost(userId, body) {
   const now = nowMs();
   const id = randomUUID();
   await dbQuery(
-    `INSERT INTO community_posts (id, user_id, content, image_urls, symbols, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    `INSERT INTO community_posts (id, user_id, content, image_urls, symbols, post_type, extra, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [
       id,
       uid,
       input.content,
       serializeImageUrls(input.imageUrls),
       serializeSymbols(input.symbols),
+      input.postType,
+      serializeExtra(input.extra),
       now,
       now,
     ],
@@ -117,7 +180,7 @@ async function updateCommunityPost(userId, postId, body) {
   const now = nowMs();
   await dbQuery(
     `UPDATE community_posts
-     SET content = $3, image_urls = $4, symbols = $5, updated_at = $6
+     SET content = $3, image_urls = $4, symbols = $5, post_type = $6, extra = $7, updated_at = $8
      WHERE user_id = $1 AND id = $2`,
     [
       uid,
@@ -125,6 +188,8 @@ async function updateCommunityPost(userId, postId, body) {
       input.content,
       serializeImageUrls(input.imageUrls),
       serializeSymbols(input.symbols),
+      input.postType,
+      serializeExtra(input.extra),
       now,
     ],
   );
@@ -153,12 +218,42 @@ async function deleteCommunityPost(userId, postId) {
   return { deleted: rowCount > 0 };
 }
 
+/** 每标的取最新一条估值帖 extra（user 维度）。 */
+async function getLatestValuationBySymbolForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return new Map();
+  }
+  const { rows } = await dbQuery(
+    `SELECT DISTINCT ON (elem.sym)
+       elem.sym AS symbol,
+       p.extra
+     FROM community_posts p
+     CROSS JOIN LATERAL jsonb_array_elements_text(p.symbols::jsonb) AS elem(sym)
+     WHERE p.user_id = $1 AND p.post_type = 'valuation'
+     ORDER BY elem.sym, p.created_at DESC`,
+    [uid],
+  );
+  const map = new Map();
+  for (const row of rows) {
+    const sym = normalizeSymbol(row.symbol);
+    if (!sym) {
+      continue;
+    }
+    map.set(sym, parseExtraField(row.extra));
+  }
+  return map;
+}
+
 module.exports = {
   CONTENT_MAX,
+  POST_TYPES,
   parseSymbolsField,
+  parseExtraField,
   rowToPost,
   getCommunityPostByIdForUser,
   createCommunityPost,
   updateCommunityPost,
   deleteCommunityPost,
+  getLatestValuationBySymbolForUser,
 };

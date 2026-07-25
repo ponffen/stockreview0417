@@ -12,12 +12,12 @@ const METRIC_DEFS = {
   tradeDate: { label: "交易日期", field: "tradeDate" },
 };
 
-function defaultSlots(cardKind) {
+function defaultSlots(cardKind, postType) {
   if (cardKind === "post") {
     return {
       header: true,
       stock: true,
-      metrics: false,
+      metrics: postType === "valuation",
       body: true,
       images: true,
       footer: true,
@@ -80,14 +80,15 @@ function applyCardView(model, scene, { isSelf = false } = {}) {
   const src = model || {};
   const s = String(scene || "").trim() || SCENES.COMMUNITY;
   const cardKind = src.cardKind === "post" ? "post" : "trade";
-  const slots = defaultSlots(cardKind);
+  const postType = cardKind === "post" ? String(src.postType || "viewpoint").trim() || "viewpoint" : "";
+  const slots = defaultSlots(cardKind, postType);
   const isPrivateTrade = s === SCENES.SELF || s === SCENES.STOCK_SELF;
 
   if (s === SCENES.STOCK_SELF || s === SCENES.STOCK_PUBLIC) {
     slots.header = false;
   }
 
-  const metricKeys = slots.metrics ? metricKeysForScene(s, cardKind) : [];
+  const metricKeys = slots.metrics && cardKind === "trade" ? metricKeysForScene(s, cardKind) : [];
   const metrics = buildMetricsPresentation(src, metricKeys);
 
   const view = {
@@ -101,8 +102,11 @@ function applyCardView(model, scene, { isSelf = false } = {}) {
     ...src,
     cardKind,
     view,
-    metrics,
   };
+
+  if (cardKind === "trade" && metrics.length) {
+    out.metrics = metrics;
+  }
 
   if (!slots.header) {
     delete out.displayName;

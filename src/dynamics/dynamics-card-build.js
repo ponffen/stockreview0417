@@ -4,7 +4,7 @@
 
 const { displayNameForUser } = require("../community-service");
 const { parseImageUrlsField } = require("./blob-images");
-const { parseSymbolsField } = require("./community-posts-db");
+const { parseSymbolsField, parseExtraField } = require("./community-posts-db");
 const { normalizeSymbol } = require("../db");
 
 function tradeSortMs(tradeDate) {
@@ -111,8 +111,11 @@ function buildTradeCard(row, ctx) {
 
 function buildPostCard(row) {
   const symbols = buildSymbolTags(row.symbols);
+  const postType = String(row.post_type || "viewpoint").trim() || "viewpoint";
+  const extra = postType === "valuation" ? parseExtraField(row.extra) : {};
   return {
     cardKind: "post",
+    postType,
     id: row.id,
     userId: row.user_id,
     displayName: displayNameForUser({ nickname: row.nickname, phone: row.phone }),
@@ -120,6 +123,7 @@ function buildPostCard(row) {
     sortMs: Number(row.created_at),
     content: String(row.content || ""),
     symbols,
+    extra,
     imageUrls: parseImageUrlsField(row.image_urls),
     bottomTime: formatDynamicsDateTime(row.created_at),
   };
