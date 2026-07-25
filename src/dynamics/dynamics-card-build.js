@@ -5,6 +5,7 @@
 const { displayNameForUser } = require("../community-service");
 const { parseImageUrlsField } = require("./blob-images");
 const { parseSymbolsField, parseExtraField } = require("./community-posts-db");
+const { formatValuationExtraDisplay } = require("./valuation-format");
 const { normalizeSymbol } = require("../db");
 
 function tradeSortMs(tradeDate) {
@@ -112,7 +113,8 @@ function buildTradeCard(row, ctx) {
 function buildPostCard(row) {
   const symbols = buildSymbolTags(row.symbols);
   const postType = String(row.post_type || "viewpoint").trim() || "viewpoint";
-  const extra = postType === "valuation" ? parseExtraField(row.extra) : {};
+  const extra =
+    postType === "valuation" ? formatValuationExtraDisplay(parseExtraField(row.extra)) : {};
   return {
     cardKind: "post",
     postType,

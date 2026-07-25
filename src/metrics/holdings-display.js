@@ -31,7 +31,7 @@ const {
   yearStartKeyShanghai,
 } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
-const { getLatestValuationBySymbolForUser } = require("../dynamics/community-posts-db");
+const { formatValuationPrice } = require("../dynamics/valuation-format");
 
 function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
   let stockBook = Number(stockProfitScalar) || 0;
@@ -96,22 +96,14 @@ function formatRegretRateWithSide(rate, side) {
   return suffix ? `${rateText} ${suffix}` : rateText;
 }
 
-function formatEstimatePrice(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v) || v <= 0) {
-    return "";
-  }
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-}
-
 function formatEstimateChange(price, current) {
   const p = Number(price);
   const c = Number(current);
   if (!Number.isFinite(p) || p <= 0 || !Number.isFinite(c) || c <= 0) {
-    return { text: "", rate: null };
+    return "";
   }
   const rate = p / c - 1;
-  return { text: fmtSignedPercentRatio(rate), rate };
+  return fmtSignedPercentRatio(rate);
 }
 
 function lastTradeBySymbol(trades, accountScope) {
@@ -408,12 +400,10 @@ async function buildHoldingsPayload({
       regret: formatRegretRateWithSide(regretRate, lastTr.lastTradeSide),
       lastTradeSide: lastTr.lastTradeSide || "",
       lastTradeDate: lastTr.lastTradeDate || "",
-      lowEstimate: formatEstimatePrice(valuationExtra.lowPrice),
-      lowEstimateChange: lowChg.text,
-      lowEstimateChangeRate: lowChg.rate,
-      highEstimate: formatEstimatePrice(valuationExtra.highPrice),
-      highEstimateChange: highChg.text,
-      highEstimateChangeRate: highChg.rate,
+      lowEstimate: formatValuationPrice(valuationExtra.lowPrice),
+      lowEstimateChange: lowChg,
+      highEstimate: formatValuationPrice(valuationExtra.highPrice),
+      highEstimateChange: highChg,
     });
   }
 

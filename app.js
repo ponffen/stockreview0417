@@ -1591,11 +1591,11 @@ function resolvePublicProfileSortKeyValue(row, key, bookCcy, trades, denoms) {
   if (key === "regretRate") {
     return row.regretRate;
   }
-  if (key === "lowEstimateChangeRate") {
-    return Number.isFinite(Number(row.lowEstimateChangeRate)) ? Number(row.lowEstimateChangeRate) : 0;
+  if (key === "lowEstimateChange") {
+    return parseBundlePercent(row.lowEstimateChange);
   }
-  if (key === "highEstimateChangeRate") {
-    return Number.isFinite(Number(row.highEstimateChangeRate)) ? Number(row.highEstimateChangeRate) : 0;
+  if (key === "highEstimateChange") {
+    return parseBundlePercent(row.highEstimateChange);
   }
   if (key === "lastTradeDate") {
     return Date.parse(row.lastTradeDate || 0);
@@ -6221,24 +6221,16 @@ function formatCommunityFeedTradeDate(dateStr) {
 
 const DYN_CARD_USER_ICON_SVG = `<svg class="dyn-card__user-icon community-feed-user-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" fill="currentColor"/><path fill="currentColor" d="M4 20c0-4 3.6-6 8-6s8 2 8 6v1H4v-1z"/></svg>`;
 
-function formatDynamicsEstimatePrice(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v) || v <= 0) {
-    return "—";
-  }
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-}
-
 function dynamicsValuationMetricsFromExtra(extra) {
   const data = extra && typeof extra === "object" ? extra : {};
-  const low = Number(data.lowPrice);
-  const high = Number(data.highPrice);
   const cols = [];
-  if (Number.isFinite(low) && low > 0) {
-    cols.push({ label: "低估价", value: formatDynamicsEstimatePrice(low), help: false });
+  const low = String(data.lowPrice ?? "").trim();
+  const high = String(data.highPrice ?? "").trim();
+  if (low) {
+    cols.push({ label: "低估价", value: low, help: false });
   }
-  if (Number.isFinite(high) && high > 0) {
-    cols.push({ label: "高估价", value: formatDynamicsEstimatePrice(high), help: false });
+  if (high) {
+    cols.push({ label: "高估价", value: high, help: false });
   }
   return cols;
 }
@@ -10959,11 +10951,11 @@ function resolveMetricsStockSortKeyValue(row, key) {
     const raw = String(row.regret || "").replace(/\s+[BS]$/i, "").trim();
     return parseBundlePercent(raw);
   }
-  if (key === "lowEstimateChangeRate") {
-    return Number.isFinite(Number(row.lowEstimateChangeRate)) ? Number(row.lowEstimateChangeRate) : 0;
+  if (key === "lowEstimateChange") {
+    return parseBundlePercent(row.lowEstimateChange);
   }
-  if (key === "highEstimateChangeRate") {
-    return Number.isFinite(Number(row.highEstimateChangeRate)) ? Number(row.highEstimateChangeRate) : 0;
+  if (key === "highEstimateChange") {
+    return parseBundlePercent(row.highEstimateChange);
   }
   if (key === "lastTradeDate") return Date.parse(row.lastTradeDate || 0) || 0;
   return 0;
