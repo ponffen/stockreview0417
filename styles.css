@@ -4678,9 +4678,17 @@ html.dynamics-compose-open body {
   box-sizing: border-box;
 }
 
+.dynamics-compose-tool--valuation {
+  color: var(--muted);
+}
+
 .dynamics-compose-tool--valuation.is-active {
   color: var(--blue);
   background: rgba(37, 99, 235, 0.08);
+}
+
+.dynamics-compose-tool--valuation:hover:not(:disabled) {
+  color: var(--blue);
 }
 
 .dynamics-compose-avatar {
