@@ -25,6 +25,7 @@ const HOLDING_ROW_PUBLIC_KEYS = new Set([
   "lowEstimateChange",
   "highEstimate",
   "highEstimateChange",
+  "valuationPercentile",
 ]);
 
 const ASSET_PUBLIC_KEYS = new Set(["cashRatio", "stockRatio"]);

@@ -639,6 +639,16 @@ body {
   gap: 4px;
 }
 
+.th-sort-btn--right {
+  justify-content: flex-end;
+  width: 100%;
+  text-align: right;
+}
+
+.stock-col-valuation-pct {
+  text-align: right;
+}
+
 .sort-icon {
   width: 9px;
   height: 12px;

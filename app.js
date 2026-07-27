@@ -506,7 +506,7 @@ const tradeCashAccountFilterSelect = document.getElementById("tradeCashAccountFi
 const stockTableBody = document.getElementById("stockTableBody");
 /** 首页持仓表列宽缓存（不含 stockAmountDisplay，切换人民币不重算） */
 let overviewStockColWidthCache = { key: "", widths: null };
-const OVERVIEW_STOCK_TABLE_COL_COUNT = 17;
+const OVERVIEW_STOCK_TABLE_COL_COUNT = 18;
 const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
   "名称",
   "今日收益",
@@ -524,6 +524,7 @@ const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
   "交易间隔",
   "低估价",
   "高估价",
+  "估值分位",
   "操作",
 ];
 const STOCK_TABLE_MEASURE_FONT_TH =
@@ -1596,6 +1597,9 @@ function resolvePublicProfileSortKeyValue(row, key, bookCcy, trades, denoms) {
   }
   if (key === "highEstimateChange") {
     return parseBundlePercent(row.highEstimateChange);
+  }
+  if (key === "valuationPercentile") {
+    return parseBundlePercent(row.valuationPercentile);
   }
   if (key === "lastTradeDate") {
     return Date.parse(row.lastTradeDate || 0);
@@ -7692,7 +7696,7 @@ async function withPublicTradesContextAsync(d, asyncFn) {
 }
 
 /** 他人收益 Tab：物理渲染列（与私人表同列索引的 th/td 规则，不含金额列） */
-const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16];
+const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 17];
 
 function stockTableAllColIndices() {
   return Array.from({ length: OVERVIEW_STOCK_TABLE_COL_COUNT }, (_, i) => i);
@@ -10957,6 +10961,9 @@ function resolveMetricsStockSortKeyValue(row, key) {
   if (key === "highEstimateChange") {
     return parseBundlePercent(row.highEstimateChange);
   }
+  if (key === "valuationPercentile") {
+    return parseBundlePercent(row.valuationPercentile);
+  }
   if (key === "lastTradeDate") return Date.parse(row.lastTradeDate || 0) || 0;
   return 0;
 }
@@ -11255,6 +11262,8 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
     case 15:
       return [bundleFmtText(row.highEstimate), bundleFmtText(row.highEstimateChange)];
     case 16:
+      return bundleFmtText(row.valuationPercentile);
+    case 17:
       return "分析  交易";
     default:
       return "";
@@ -11340,6 +11349,8 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
     case 15:
       return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.highEstimate))}</div><div class="cell-sub ${highEstimateClass}"><span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.highEstimateChange))}</span></div></td>`;
     case 16:
+      return `<td${attr} class="stock-col-valuation-pct">${escapeHtml(bundleFmtText(row.valuationPercentile))}</td>`;
+    case 17:
       return `<td${attr} class="stock-table-op-cell">${recordLink}${tradeLink}</td>`;
     default:
       return `<td${attr}></td>`;

@@ -10,6 +10,21 @@ function formatValuationPrice(n) {
   return v.toLocaleString("zh-CN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
+/** (当前价-低估价)/(高估价-低估价)*100%，取整，API 直出如 "45%"。 */
+function formatValuationPercentile(lowPrice, highPrice, current) {
+  const low = Number(lowPrice);
+  const high = Number(highPrice);
+  const cur = Number(current);
+  if (!Number.isFinite(low) || low <= 0 || !Number.isFinite(high) || high <= low) {
+    return "—";
+  }
+  if (!Number.isFinite(cur) || cur <= 0) {
+    return "—";
+  }
+  const pct = Math.round(((cur - low) / (high - low)) * 100);
+  return `${pct}%`;
+}
+
 /** 将 DB/CRUD 中的数值 extra 格式化为 Feed 展示用字符串。 */
 function formatValuationExtraDisplay(extra) {
   const raw = extra && typeof extra === "object" ? extra : {};
@@ -27,5 +42,6 @@ function formatValuationExtraDisplay(extra) {
 
 module.exports = {
   formatValuationPrice,
+  formatValuationPercentile,
   formatValuationExtraDisplay,
 };

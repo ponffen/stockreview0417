@@ -32,7 +32,7 @@ const {
   yearStartKeyShanghai,
 } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
-const { formatValuationPrice } = require("../dynamics/valuation-format");
+const { formatValuationPrice, formatValuationPercentile } = require("../dynamics/valuation-format");
 
 function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
   let stockBook = Number(stockProfitScalar) || 0;
@@ -369,6 +369,11 @@ async function buildHoldingsPayload({
     const valuationExtra = valuationBySym.get(sym) || {};
     const lowChg = formatEstimateChange(valuationExtra.lowPrice, current);
     const highChg = formatEstimateChange(valuationExtra.highPrice, current);
+    const valuationPercentile = formatValuationPercentile(
+      valuationExtra.lowPrice,
+      valuationExtra.highPrice,
+      current,
+    );
 
     rowsOut.push({
       symbol: sym,
@@ -405,6 +410,7 @@ async function buildHoldingsPayload({
       lowEstimateChange: lowChg,
       highEstimate: formatValuationPrice(valuationExtra.highPrice),
       highEstimateChange: highChg,
+      valuationPercentile,
     });
   }
 
