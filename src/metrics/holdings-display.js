@@ -107,6 +107,16 @@ function formatEstimateChange(price, current) {
   return fmtSignedPercentRatio(rate);
 }
 
+/** 低估价下方百分比：当前价/低估价 - 1 */
+function formatLowEstimateChange(lowPrice, current) {
+  const low = Number(lowPrice);
+  const c = Number(current);
+  if (!Number.isFinite(low) || low <= 0 || !Number.isFinite(c) || c <= 0) {
+    return "";
+  }
+  return fmtSignedPercentRatio(c / low - 1);
+}
+
 function lastTradeBySymbol(trades, accountScope) {
   const scope = String(accountScope || "all").trim() || "all";
   const list =
@@ -367,7 +377,7 @@ async function buildHoldingsPayload({
     const regretRate =
       lastTradePrice > 0 ? (current - lastTradePrice) / lastTradePrice : 0;
     const valuationExtra = valuationBySym.get(sym) || {};
-    const lowChg = formatEstimateChange(valuationExtra.lowPrice, current);
+    const lowChg = formatLowEstimateChange(valuationExtra.lowPrice, current);
     const highChg = formatEstimateChange(valuationExtra.highPrice, current);
     const valuationPercentile = formatValuationPercentile(
       valuationExtra.lowPrice,
