@@ -521,10 +521,10 @@ const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
   "总收益",
   "总收益占比",
   "总收益率",
-  "交易间隔",
   "低估价",
   "高估价",
   "估值分位",
+  "交易间隔",
   "操作",
 ];
 const STOCK_TABLE_MEASURE_FONT_TH =
@@ -11256,13 +11256,13 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
     case 12:
       return bundleFmtText(row.totalRate);
     case 13:
-      return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
-    case 14:
       return [bundleFmtText(row.lowEstimate), bundleFmtText(row.lowEstimateChange)];
-    case 15:
+    case 14:
       return [bundleFmtText(row.highEstimate), bundleFmtText(row.highEstimateChange)];
-    case 16:
+    case 15:
       return bundleFmtText(row.valuationPercentile);
+    case 16:
+      return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
     case 17:
       return "分析  交易";
     default:
@@ -11343,13 +11343,13 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
     case 12:
       return `<td${attr} class="${totalRateClass}">${escapeHtml(bundleFmtText(row.totalRate))}</td>`;
     case 13:
-      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
-    case 14:
       return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.lowEstimate))}</div><div class="cell-sub ${lowEstimateClass}"><span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.lowEstimateChange))}</span></div></td>`;
-    case 15:
+    case 14:
       return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.highEstimate))}</div><div class="cell-sub ${highEstimateClass}"><span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.highEstimateChange))}</span></div></td>`;
-    case 16:
+    case 15:
       return `<td${attr} class="stock-col-valuation-pct">${escapeHtml(bundleFmtText(row.valuationPercentile))}</td>`;
+    case 16:
+      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
     case 17:
       return `<td${attr} class="stock-table-op-cell">${recordLink}${tradeLink}</td>`;
     default:
