@@ -227,8 +227,58 @@ async function runDailyFreeze(options = {}) {
   return payload;
 }
 
+/** Vercel 定时：先全局 sync 日 K，再日终冻结（周二～六 08:35 北京）。 */
+async function runScheduledEodPipeline(options = {}) {
+  const logger = options.logger || console;
+  const pipelineStartedAt = Date.now();
+  const { runDailyCloseSync } = require("./daily-close-sync-service");
+
+  let dailyClose = null;
+  let dailyCloseError = null;
+  try {
+    logger.info?.("[eod-pipeline] daily-close-sync start");
+    dailyClose = await runDailyCloseSync({
+      asOfDate: options.asOfDate,
+      symbols: options.symbols,
+      logger,
+    });
+    logger.info?.(
+      "[eod-pipeline] daily-close-sync done symbolsSynced=%s rowsWritten=%s failed=%s",
+      dailyClose?.symbolsSynced,
+      dailyClose?.rowsWritten,
+      dailyClose?.symbolsFailed,
+    );
+  } catch (error) {
+    dailyCloseError = error;
+    logger.error?.("[eod-pipeline] daily-close-sync failed", error?.message || error);
+  }
+
+  const freeze = await runDailyFreeze({
+    frozenDate: options.frozenDate,
+    force: options.force === true,
+    userIds: options.userIds,
+    fromCron: true,
+    rebuildFromDate: options.rebuildFromDate,
+    fullRebuild: options.fullRebuild === true,
+    syncDailyClose: false,
+    logger,
+  });
+
+  const pipelineElapsedMs = Date.now() - pipelineStartedAt;
+  const dailyCloseFailed = !!dailyCloseError;
+  return {
+    ...freeze,
+    ok: freeze.ok && !dailyCloseFailed,
+    partial: freeze.partial || dailyCloseFailed,
+    pipelineElapsedMs,
+    dailyClose,
+    dailyCloseError: dailyCloseError ? String(dailyCloseError?.message || dailyCloseError) : null,
+  };
+}
+
 module.exports = {
   runDailyFreeze,
+  runScheduledEodPipeline,
   resolveFrozenDate,
   freezeUserToDate,
 };

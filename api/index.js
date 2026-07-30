@@ -1468,16 +1468,28 @@ module.exports = async function handler(req, res, context) {
           force,
           fullRebuild,
         );
-        const data = await runDailyFreeze({
-          frozenDate,
-          force,
-          syncDailyClose,
-          userIds,
-          fromCron,
-          rebuildFromDate,
-          fullRebuild,
-          logger: console,
-        });
+        const data = fromCron
+          ? await (async () => {
+              const { runScheduledEodPipeline } = require("../src/eod-freeze-service");
+              return runScheduledEodPipeline({
+                frozenDate,
+                force,
+                userIds,
+                rebuildFromDate,
+                fullRebuild,
+                logger: console,
+              });
+            })()
+          : await runDailyFreeze({
+              frozenDate,
+              force,
+              syncDailyClose,
+              userIds,
+              fromCron,
+              rebuildFromDate,
+              fullRebuild,
+              logger: console,
+            });
         const { isFreezeUserFailure } = require("../src/metrics-rebuild-trigger");
         const lagRemaining = Array.isArray(data?.lagRemaining) ? data.lagRemaining : [];
         const failedUsers = (data.users || []).filter(isFreezeUserFailure);
@@ -1502,9 +1514,11 @@ module.exports = async function handler(req, res, context) {
           return;
         }
         console.log(
-          "[api/index.js] freeze-eod done elapsedMs=%s userIds=%s",
+          "[api/index.js] freeze-eod done elapsedMs=%s pipelineElapsedMs=%s userIds=%s dailyCloseRows=%s",
           data.elapsedMs,
+          data.pipelineElapsedMs,
           userIds.join(",") || "-",
+          data.dailyClose?.rowsWritten,
         );
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data }));

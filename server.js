@@ -1946,21 +1946,33 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       return;
     }
 
-    const result = await runDailyFreeze({
-      frozenDate: forcedDate,
-      force,
-      syncDailyClose,
-      userIds,
-      fromCron,
-      rebuildFromDate,
-      fullRebuild,
-      logger: console,
-    });
+    const result = fromCron
+      ? await (async () => {
+          const { runScheduledEodPipeline } = require("./src/eod-freeze-service");
+          return runScheduledEodPipeline({
+            frozenDate: forcedDate,
+            force,
+            userIds,
+            rebuildFromDate,
+            fullRebuild,
+            logger: console,
+          });
+        })()
+      : await runDailyFreeze({
+          frozenDate: forcedDate,
+          force,
+          syncDailyClose,
+          userIds,
+          fromCron,
+          rebuildFromDate,
+          fullRebuild,
+          logger: console,
+        });
     const { isFreezeUserFailure } = require("./src/metrics-rebuild-trigger");
     const lagRemaining = Array.isArray(result?.lagRemaining) ? result.lagRemaining : [];
     if (lagRemaining.length) {
       await insertCronJobRun({
-        jobName: "freeze-eod",
+        jobName: fromCron ? "eod-pipeline" : "freeze-eod",
         startedAt,
         finishedAt: Date.now(),
         ok: false,
@@ -1969,6 +1981,14 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
           catchUpRounds: result?.catchUpRounds,
           lagRemaining,
           watermark: result?.watermark?.status,
+          dailyClose: result?.dailyClose
+            ? {
+                rowsWritten: result.dailyClose.rowsWritten,
+                symbolsSynced: result.dailyClose.symbolsSynced,
+                symbolsFailed: result.dailyClose.symbolsFailed,
+              }
+            : null,
+          dailyCloseError: result?.dailyCloseError || null,
         }),
         errorMessage: `lag=${lagRemaining.length}`,
       }).catch(() => {});
@@ -1995,7 +2015,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     dailyCloseForTradesMemoryCache.clear();
     realtimePatchMemoryCache.clear();
     await insertCronJobRun({
-      jobName: "freeze-eod",
+      jobName: fromCron ? "eod-pipeline" : "freeze-eod",
       startedAt,
       finishedAt: Date.now(),
       ok: true,
@@ -2005,6 +2025,15 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
         catchUpRounds: result?.catchUpRounds,
         lagRemaining: result?.lagRemaining,
         watermark: result?.watermark?.status,
+        pipelineElapsedMs: result?.pipelineElapsedMs,
+        dailyClose: result?.dailyClose
+          ? {
+              rowsWritten: result.dailyClose.rowsWritten,
+              symbolsSynced: result.dailyClose.symbolsSynced,
+              symbolsFailed: result.dailyClose.symbolsFailed,
+            }
+          : null,
+        dailyCloseError: result?.dailyCloseError || null,
       }),
     });
     res.setHeader("Cache-Control", "no-store");

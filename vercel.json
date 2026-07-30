@@ -13,8 +13,7 @@
     }
   },
   "crons": [
-    { "path": "/api/cron/sync-daily-close", "schedule": "5 0 * * 2-6" },
-    { "path": "/api/cron/freeze-eod", "schedule": "35 0 * * *" }
+    { "path": "/api/cron/freeze-eod", "schedule": "35 0 * * 2-6" }
   ],
   "rewrites": [
     { "source": "/api/health", "destination": "/api/health" },
