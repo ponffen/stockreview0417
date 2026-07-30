@@ -138,6 +138,98 @@ function apiPathKey(pathOnly) {
   return p;
 }
 
+const SPA_SHELL_RESERVED_EXACT = new Set([
+  "/app.js",
+  "/page-cache.js",
+  "/styles.css",
+  "/favicon.ico",
+  "/icon.png",
+  "/public/icon.png",
+  "/quote-smoke-test.html",
+]);
+
+/** Vercel rewrite 后还原浏览器侧 path（如 /xipo），避免误走 server.js 冷启动挂起 */
+function browserPathFromRequest(req) {
+  try {
+    const forwarded =
+      req.headers["x-forwarded-uri"] ||
+      req.headers["x-original-url"] ||
+      req.headers["x-matched-path"];
+    if (typeof forwarded === "string" && forwarded.startsWith("/")) {
+      return apiPathKey(urlPathOnly(forwarded));
+    }
+  } catch (_) {}
+  const pu = apiPathKey(urlPathOnly(req.url));
+  if (pu === "/api/index" || pu === "/api") {
+    return "/";
+  }
+  return pu;
+}
+
+function shouldServeSpaShell(req) {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    return false;
+  }
+  const browserPath = browserPathFromRequest(req);
+  if (browserPath.startsWith("/api/") || browserPath === "/api") {
+    return false;
+  }
+  if (browserPath.startsWith("/.well-known/")) {
+    return false;
+  }
+  if (browserPath.startsWith("/oauth/")) {
+    return false;
+  }
+  if (browserPath === "/mcp") {
+    return false;
+  }
+  if (SPA_SHELL_RESERVED_EXACT.has(browserPath)) {
+    return false;
+  }
+  return true;
+}
+
+let cachedSpaHtml = null;
+
+function loadSpaShellHtml() {
+  if (cachedSpaHtml) {
+    return cachedSpaHtml;
+  }
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const candidates = [
+    path.join(__dirname, "public", "index.html"),
+    path.join(__dirname, "..", "index.html"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      cachedSpaHtml = fs.readFileSync(p, "utf8");
+      return cachedSpaHtml;
+    }
+  }
+  return "";
+}
+
+function serveSpaShell(req, res) {
+  const html = loadSpaShellHtml();
+  if (!html) {
+    res.statusCode = 404;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Not Found");
+    return;
+  }
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  if (String(req.method || "GET").toUpperCase() === "HEAD") {
+    res.end();
+    return;
+  }
+  res.end(html);
+}
+
 function getSearchParam(req, key) {
   try {
     const u = new URL(String(req.url || "/"), "http://localhost");
@@ -1804,6 +1896,12 @@ module.exports = async function handler(req, res, context) {
       }
       return;
     }
+  }
+
+  // 深链 /xipo、/?u= 等非 /api 路径：直接回 index.html，勿加载 server.js（Vercel 上会挂起）
+  if (shouldServeSpaShell(req)) {
+    serveSpaShell(req, res);
+    return;
   }
 
   // 不依赖 server.js 的诊断端点：证明 /api/(.*) 这条路由至少能到达函数
