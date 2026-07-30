@@ -824,16 +824,13 @@ module.exports = async function handler(req, res, context) {
     try {
       const { readUserIdFromRequest } = require("../src/auth-session");
       const { getPublicTradesPage } = require("../src/community-service");
-      const viewerId = readUserIdFromRequest(req);
-      if (!viewerId) {
-        res.statusCode = 401;
-        res.end(JSON.stringify({ ok: false, error: "未登录" }));
-        return;
-      }
-      const subExpired = await getSubscriptionExpiredPayload(viewerId);
-      if (subExpired) {
-        endJsonPayload(res, subExpired, subExpired.status);
-        return;
+      const viewerId = readUserIdFromRequest(req) || null;
+      if (viewerId) {
+        const subExpired = await getSubscriptionExpiredPayload(viewerId);
+        if (subExpired) {
+          endJsonPayload(res, subExpired, subExpired.status);
+          return;
+        }
       }
       const targetId = String(publicTradesMatch[1] || "").trim();
       const symbol = String(getSearchParam(req, "symbol") || "").trim();

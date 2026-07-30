@@ -130,6 +130,7 @@ function applyPublicProfileDeepLinkFromLocation() {
   state.appModule = "community";
   state.route = "community-profile";
   state.communityProfileUserId = hit.userId;
+  state.publicProfileDeepLinkUserId = hit.userId;
   state.communityProfileTab = hit.tab;
   state.communityProfileReturnRoute = "community-feed";
   state.lastPublicProfileDetail = null;
@@ -153,6 +154,22 @@ function applyPublicProfileDeepLinkFromLocation() {
   return true;
 }
 
+/** 游客通过 ?u= /xipo 深链进入的公开主页用户；仅在该用户页面内免登录浏览 */
+function isGuestPublicProfileDeepLinkContext() {
+  const linkUid = String(state.publicProfileDeepLinkUserId || "").trim();
+  if (!isGuest() || !linkUid) {
+    return false;
+  }
+  const activeUid = String(state.communityProfileUserId || "").trim();
+  if (state.route === "community-profile" && activeUid === linkUid) {
+    return true;
+  }
+  if (state.route === "stock-record" && state.stockRecordFromPublicProfile && activeUid === linkUid) {
+    return true;
+  }
+  return false;
+}
+
 function isGuest() {
   return !sessionPhone;
 }
@@ -166,6 +183,15 @@ const GUEST_ALLOWED_ROUTES = new Set([
 
 function isGuestAllowedRoute(route, options = {}) {
   const r = String(route || "");
+  if (isGuestPublicProfileDeepLinkContext()) {
+    if (r === "community-profile") {
+      const tab = String(options.profileTab || state.communityProfileTab || "earning");
+      return ["earning", "analysis", "dynamics", "trade"].includes(tab);
+    }
+    if (r === "stock-record" && state.stockRecordFromPublicProfile) {
+      return true;
+    }
+  }
   if (options.profileTab && r === "community-profile") {
     return options.profileTab === "earning" || options.profileTab === "dynamics";
   }
@@ -214,7 +240,11 @@ function normalizeGuestRoute() {
   }
   if (state.route === "community-profile") {
     const tab = String(state.communityProfileTab || "earning");
-    if (tab !== "earning" && tab !== "dynamics") {
+    if (isGuestPublicProfileDeepLinkContext()) {
+      if (!["earning", "analysis", "dynamics", "trade"].includes(tab)) {
+        state.communityProfileTab = PUBLIC_PROFILE_DEEP_LINK_DEFAULT_TAB;
+      }
+    } else if (tab !== "earning" && tab !== "dynamics") {
       state.communityProfileTab = PUBLIC_PROFILE_DEEP_LINK_DEFAULT_TAB;
     }
   }
@@ -406,6 +436,7 @@ const state = {
   appModule: "community",
   ledgerCounts: null,
   communityProfileUserId: null,
+  publicProfileDeepLinkUserId: null,
   communityProfileReturnRoute: "community-feed",
   previousRoute: "community-feed",
   useDemoData: true,
@@ -2962,7 +2993,7 @@ function stockRecordChartTradesListQuery(symbol, accountId, offset, isPublic) {
 
 async function loadStockRecordChartTrades(symKey, accountId, isPublic, publicTargetId) {
   const key = normalizeSymbol(symKey);
-  if (!key || !apiReady || !sessionPhone || (isPublic && !publicTargetId)) {
+  if (!key || !apiReady || (!sessionPhone && !(isPublic && publicTargetId)) || (isPublic && !publicTargetId)) {
     resetStockRecordChartTrades();
     return [];
   }
@@ -3109,7 +3140,7 @@ async function loadStockRecordTradesPage({ reset = false } = {}) {
   const symKey = normalizeSymbol(state.activeRecordSymbol);
   const isPublic = state.stockRecordFromPublicProfile;
   const publicTargetId = isPublic ? stockRecordPublicTargetId() : "";
-  if (!symKey || !apiReady || !sessionPhone || (isPublic && !publicTargetId)) {
+  if (!symKey || !apiReady || (!sessionPhone && !(isPublic && publicTargetId)) || (isPublic && !publicTargetId)) {
     state.stockRecordTrades = [];
     state.stockRecordTradesLoading = false;
     return;
@@ -4231,12 +4262,16 @@ function bindEvents() {
     const feedStockAnalysis = e.target.closest("[data-community-feed-stock-analysis]");
     if (feedStockAnalysis && appShell.contains(feedStockAnalysis)) {
       e.preventDefault();
-      if (isGuest()) {
+      const uid = feedStockAnalysis.getAttribute("data-community-user");
+      const sym = feedStockAnalysis.getAttribute("data-community-symbol");
+      const fromDeepLinkPublicProfile =
+        isGuestPublicProfileDeepLinkContext() &&
+        uid &&
+        uid === String(state.publicProfileDeepLinkUserId || "").trim();
+      if (isGuest() && !fromDeepLinkPublicProfile) {
         openLoginPage();
         return;
       }
-      const uid = feedStockAnalysis.getAttribute("data-community-user");
-      const sym = feedStockAnalysis.getAttribute("data-community-symbol");
       if (uid && sym) {
         if (feedStockAnalysis.closest("#portfolioDynamicsList")) {
           void openStockRecordDialog(sym);
@@ -5158,7 +5193,7 @@ function bindEvents() {
     if (state.route !== "community-profile") {
       return;
     }
-    if (isGuest()) {
+    if (isGuest() && !isGuestPublicProfileDeepLinkContext()) {
       openLoginPage();
       return;
     }
@@ -8265,7 +8300,7 @@ function renderCommunityProfilePageHtml(d) {
 
 async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
   const uid = String(targetId || state.communityProfileUserId || "").trim();
-  if (!uid || !apiReady || !sessionPhone) {
+  if (!uid || !apiReady || (!sessionPhone && !isGuestPublicProfileDeepLinkContext())) {
     state.communityPublicTrades = [];
     return;
   }

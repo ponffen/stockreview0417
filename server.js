@@ -1400,12 +1400,12 @@ app.get("/api/community/users/:targetId/profile", optionalAuth, async (req, res)
   }
 });
 
-app.get("/api/public/:targetId/trades", requireAuth, async (req, res) => {
+app.get("/api/public/:targetId/trades", optionalAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
     const symbol = req.query.symbol != null ? String(req.query.symbol).trim() : "";
     const accountId = req.query.account_id != null ? String(req.query.account_id).trim() : "";
-    const data = await getPublicTradesPage(req.userId, targetId, {
+    const data = await getPublicTradesPage(req.userId || null, targetId, {
       symbol: symbol || undefined,
       accountId: accountId || undefined,
       limit: req.query.limit,
@@ -1640,10 +1640,10 @@ async function handlePublicAnalysisBundle(req, res) {
   }
 }
 
-app.get("/api/public/:targetId/analysis-bundle", requireAuth, handlePublicAnalysisBundle);
-app.get("/api/public/:targetId/metrics/analysis-bundle", requireAuth, handlePublicAnalysisBundle);
+app.get("/api/public/:targetId/analysis-bundle", optionalAuth, handlePublicAnalysisBundle);
+app.get("/api/public/:targetId/metrics/analysis-bundle", optionalAuth, handlePublicAnalysisBundle);
 
-app.get("/api/public/:targetId/metrics/stock-record-bundle", requireAuth, async (req, res) => {
+app.get("/api/public/:targetId/metrics/stock-record-bundle", optionalAuth, async (req, res) => {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
     if (!gate.ok) {
