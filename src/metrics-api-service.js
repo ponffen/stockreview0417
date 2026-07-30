@@ -1269,7 +1269,8 @@ async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, cus
   const st = String(stage || "mtd").trim() || "mtd";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
-  const { start, end } = resolveStageRange(st, asOf, firstTrade, customRange);
+  const sessionAsOf = liveDateKeyShanghai();
+  const { start, end } = resolveStageRange(st, sessionAsOf, firstTrade, customRange);
   const rows = rowsAscPreload || [];
 
   const profitRes = await buildSeriesDailyProfitFromContext(ctx, st, trades, rows, customRange);
