@@ -539,6 +539,50 @@ module.exports = async function handler(req, res, context) {
   const publicDynamicsMatch = pathKey.match(/^\/api\/public\/([^/]+)\/dynamics$/);
   const communityPostMatch = pathKey.match(/^\/api\/community\/posts\/([^/]+)$/);
 
+  if (req.method === "GET" && (publicDynamicsMatch || publicDynamicsStockMatch)) {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const { readUserIdFromRequest } = require("../src/auth-session");
+      const viewerId = readUserIdFromRequest(req) || null;
+      if (viewerId) {
+        const subExpired = await getSubscriptionExpiredPayload(viewerId);
+        if (subExpired) {
+          endJsonPayload(res, subExpired, subExpired.status);
+          return;
+        }
+      }
+      const { handlePublicDynamics, handlePublicStockDynamics } = require("../src/dynamics/dynamics-api");
+      if (publicDynamicsMatch) {
+        const targetId = String(publicDynamicsMatch[1] || "").trim();
+        const result = await handlePublicDynamics(dynamicsReq(req), viewerId, targetId);
+        if (result.error === "hidden") {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
+          return;
+        }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+        return;
+      }
+      const targetId = String(publicDynamicsStockMatch[1] || "").trim();
+      const symbol = String(publicDynamicsStockMatch[2] || "").trim();
+      const result = await handlePublicStockDynamics(dynamicsReq(req), viewerId, targetId, symbol);
+      if (result.error === "hidden") {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
+        return;
+      }
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
+      return;
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ ok: false, error: error?.message || "public dynamics direct failed" }));
+      return;
+    }
+  }
+
   if (req.method === "GET" && pathKey === "/api/dynamics/images/view") {
     try {
       const { handleViewDynamicsImage } = require("../src/dynamics/dynamics-api");
@@ -558,7 +602,7 @@ module.exports = async function handler(req, res, context) {
   }
 
   const isDynamicsDirect =
-    (req.method === "GET" && (pathKey === "/api/dynamics" || !!dynamicsStockMatch || !!publicDynamicsMatch || !!publicDynamicsStockMatch || pathKey === "/api/community/feed")) ||
+    (req.method === "GET" && (pathKey === "/api/dynamics" || !!dynamicsStockMatch || pathKey === "/api/community/feed")) ||
     (req.method === "POST" && (pathKey === "/api/dynamics/images" || pathKey === "/api/community/posts")) ||
     ((req.method === "PATCH" || req.method === "DELETE") && !!communityPostMatch);
 
@@ -615,33 +659,6 @@ module.exports = async function handler(req, res, context) {
       if (req.method === "GET" && dynamicsStockMatch) {
         const symbol = String(dynamicsStockMatch[1] || "").trim();
         const result = await handleSelfStockDynamics(dynamicsReq(req), userId, symbol);
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
-        return;
-      }
-
-      if (req.method === "GET" && publicDynamicsMatch) {
-        const targetId = String(publicDynamicsMatch[1] || "").trim();
-        const result = await handlePublicDynamics(dynamicsReq(req), userId, targetId);
-        if (result.error === "hidden") {
-          res.statusCode = 404;
-          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
-          return;
-        }
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
-        return;
-      }
-
-      if (req.method === "GET" && publicDynamicsStockMatch) {
-        const targetId = String(publicDynamicsStockMatch[1] || "").trim();
-        const symbol = String(publicDynamicsStockMatch[2] || "").trim();
-        const result = await handlePublicStockDynamics(dynamicsReq(req), userId, targetId, symbol);
-        if (result.error === "hidden") {
-          res.statusCode = 404;
-          res.end(JSON.stringify({ ok: false, error: "用户未公开或不可见" }));
-          return;
-        }
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, data: result.data, pagination: result.pagination }));
         return;

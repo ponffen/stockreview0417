@@ -79,6 +79,80 @@ let sessionProfile = {
 let authSubmitting = false;
 let guestBrowsingMode = false;
 
+/** 公开主页深链别名：/xipo → 西坡（种子用户） */
+const PUBLIC_PROFILE_LINK_ALIASES = {
+  xipo: "d175359f-a856-478d-a45d-3112c10227fa",
+};
+const PUBLIC_PROFILE_LINK_RESERVED_SEGMENTS = new Set([
+  "api",
+  "app.js",
+  "styles.css",
+  "page-cache.js",
+  "favicon.ico",
+  "icon.png",
+  "public",
+  "quote-smoke-test.html",
+]);
+const PUBLIC_PROFILE_DEEP_LINK_DEFAULT_TAB = "dynamics";
+
+function parsePublicProfileDeepLinkFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const params = new URLSearchParams(window.location.search || "");
+  const userFromQuery = String(params.get("u") || "").trim();
+  let userId = userFromQuery;
+  if (!userId) {
+    const path = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
+    const seg = path.startsWith("/") ? path.slice(1) : path;
+    if (seg && !seg.includes("/")) {
+      const aliasKey = seg.toLowerCase();
+      if (!PUBLIC_PROFILE_LINK_RESERVED_SEGMENTS.has(aliasKey)) {
+        userId = String(PUBLIC_PROFILE_LINK_ALIASES[aliasKey] || "").trim();
+      }
+    }
+  }
+  if (!userId) {
+    return null;
+  }
+  const tabRaw = String(params.get("tab") || "").trim().toLowerCase();
+  const tab = ["earning", "dynamics", "analysis", "trade"].includes(tabRaw)
+    ? tabRaw
+    : PUBLIC_PROFILE_DEEP_LINK_DEFAULT_TAB;
+  return { userId, tab };
+}
+
+function applyPublicProfileDeepLinkFromLocation() {
+  const hit = parsePublicProfileDeepLinkFromLocation();
+  if (!hit) {
+    return false;
+  }
+  state.appModule = "community";
+  state.route = "community-profile";
+  state.communityProfileUserId = hit.userId;
+  state.communityProfileTab = hit.tab;
+  state.communityProfileReturnRoute = "community-feed";
+  state.lastPublicProfileDetail = null;
+  state.communityPublicTrades = [];
+  resetCommunityPublicTradesPager();
+  state.publicEarningBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
+  state.publicAnalysisBundleUi = {
+    ready: false,
+    loading: false,
+    key: "",
+    bundle: null,
+    meta: null,
+  };
+  lastCommunityDataKey = "";
+  return true;
+}
+
 function isGuest() {
   return !sessionPhone;
 }
@@ -93,7 +167,7 @@ const GUEST_ALLOWED_ROUTES = new Set([
 function isGuestAllowedRoute(route, options = {}) {
   const r = String(route || "");
   if (options.profileTab && r === "community-profile") {
-    return options.profileTab === "earning";
+    return options.profileTab === "earning" || options.profileTab === "dynamics";
   }
   if (options.module === "ai" || r === "ai-analysis") {
     return false;
@@ -138,8 +212,11 @@ function normalizeGuestRoute() {
     state.route = "community-feed";
     state.communityProfileUserId = null;
   }
-  if (state.route === "community-profile" && state.communityProfileTab !== "earning") {
-    state.communityProfileTab = "earning";
+  if (state.route === "community-profile") {
+    const tab = String(state.communityProfileTab || "earning");
+    if (tab !== "earning" && tab !== "dynamics") {
+      state.communityProfileTab = PUBLIC_PROFILE_DEEP_LINK_DEFAULT_TAB;
+    }
   }
   if (state.route === "earning") {
     state.appModule = "holdings";
@@ -2445,6 +2522,7 @@ async function hydrateState() {
   if (state.route === "trade-search") {
     state.route = "trade";
   }
+  applyPublicProfileDeepLinkFromLocation();
   normalizeModuleHomeOnColdLoad();
   invalidateOverviewMetricsUi();
 }
@@ -6994,7 +7072,7 @@ async function loadDynamicsListPage({
   if (reset) {
     resetDynamicsListState(key);
   }
-  if (!container || !apiReady || !sessionPhone) {
+  if (!container || !apiReady || (!sessionPhone && !pubTid)) {
     if (container && !apiReady) {
       container.innerHTML = `<p class="empty">连接服务端后可查看动态</p>`;
     }

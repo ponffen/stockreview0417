@@ -1306,7 +1306,7 @@ app.get("/api/dynamics/stock/:symbol", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/public/:targetId/dynamics", requireAuth, async (req, res) => {
+app.get("/api/public/:targetId/dynamics", optionalAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
     const result = await handlePublicDynamics(req, req.userId, targetId);
@@ -1320,7 +1320,7 @@ app.get("/api/public/:targetId/dynamics", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/public/:targetId/dynamics/stock/:symbol", requireAuth, async (req, res) => {
+app.get("/api/public/:targetId/dynamics/stock/:symbol", optionalAuth, async (req, res) => {
   try {
     const targetId = String(req.params.targetId || "").trim();
     const symbol = String(req.params.symbol || "").trim();
