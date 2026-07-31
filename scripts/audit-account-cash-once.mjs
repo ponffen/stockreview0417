@@ -1,13 +1,21 @@
 /**
  * One-off: load trades + cash_transfers for an account and print ledger cash / principal
- * matching app.js computeLedgerCashAndPrincipal (simplified FX: use snapshot FX when present else fallback).
+ * matching app.js computeLedgerCashAndPrincipal (FX from symbol_daily_close + snapshot; no hardcoded fallback).
  */
 import pg from "pg";
-import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+require("dotenv").config();
+
+const { initPool } = require("../src/db");
+const {
+  loadFxCloseMapsFromDb,
+  backwardThenForwardFillFxMap,
+  resolveFxRatesCny,
+} = require("../src/metrics/fx-maps");
 
 const { Client } = pg;
-
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 
 function inferMarket(symbol) {
   const s = String(symbol || "");
@@ -47,11 +55,49 @@ function buildFxMapFromSnapshots(rows) {
   return map;
 }
 
+async function loadFxByDateFromDb(dateKeys) {
+  const sorted = [...new Set((dateKeys || []).map((d) => String(d || "").slice(0, 10)).filter(Boolean))].sort();
+  if (!sorted.length) {
+    return {};
+  }
+  const { fxUsdMap, fxHkdMap } = await loadFxCloseMapsFromDb(sorted[0], sorted[sorted.length - 1]);
+  backwardThenForwardFillFxMap(fxUsdMap, sorted);
+  backwardThenForwardFillFxMap(fxHkdMap, sorted);
+  const map = {};
+  for (const dk of sorted) {
+    const usd = Number(fxUsdMap[dk]) || 0;
+    const hkd = Number(fxHkdMap[dk]) || 0;
+    if (usd > 0 || hkd > 0) {
+      map[dk] = {};
+      if (usd > 0) map[dk].USD = usd;
+      if (hkd > 0) map[dk].HKD = hkd;
+    }
+  }
+  return map;
+}
+
+function mergeFxMaps(primary, supplemental) {
+  const out = { ...primary };
+  for (const [dk, slot] of Object.entries(supplemental || {})) {
+    const merged = { ...(out[dk] || {}) };
+    for (const ccy of ["USD", "HKD"]) {
+      const hit = Number(slot?.[ccy]);
+      if (!(Number(merged[ccy]) > 0) && Number.isFinite(hit) && hit > 0) {
+        merged[ccy] = hit;
+      }
+    }
+    if (merged.USD || merged.HKD) {
+      out[dk] = merged;
+    }
+  }
+  return out;
+}
+
 function getFxRateToCny(currency, fxSpot) {
   if (currency === "CNY") return 1;
   const s = fxSpot?.[currency];
   if (Number.isFinite(s) && s > 0) return s;
-  return FX_FALLBACK[currency] || 1;
+  return 0;
 }
 
 function getFxRateForDate(currency, dateKey, fxByDate, fxSpot) {
@@ -177,6 +223,7 @@ async function main() {
   const arg2 = process.argv[3] || "";
   const client = new Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
   await client.connect();
+  await initPool();
 
   let uid;
   let aid;
@@ -231,8 +278,6 @@ async function main() {
      ORDER BY date ASC`,
     [uid, aid],
   );
-  const fxByDate = buildFxMapFromSnapshots(snapRows);
-  const fxSpot = { USD: FX_FALLBACK.USD, HKD: FX_FALLBACK.HKD };
 
   const { rows: trades } = await client.query(
     `SELECT id, account_id, type, symbol, name, side, price, quantity, amount, trade_date AS date, note, created_at
@@ -268,6 +313,19 @@ async function main() {
     note: r.note,
     createdAt: Number(r.created_at),
   }));
+
+  const snapFx = buildFxMapFromSnapshots(snapRows);
+  const today = new Date().toISOString().slice(0, 10);
+  const dateKeys = new Set([today]);
+  for (const t of tradeList) dateKeys.add(t.date);
+  for (const r of ctf) dateKeys.add(r.date);
+  const dbFx = await loadFxByDateFromDb([...dateKeys]);
+  const fxByDate = mergeFxMaps(dbFx, snapFx);
+  const fxResolved = await resolveFxRatesCny({ dateKey: today });
+  const fxSpot = { USD: fxResolved.USD, HKD: fxResolved.HKD };
+  if (!(fxSpot.USD > 0) || !(fxSpot.HKD > 0)) {
+    console.warn("[audit] missing spot FX from symbol_daily_close", fxSpot);
+  }
 
   const sumIn = ctf.filter((r) => r.direction === "in").reduce((s, r) => s + r.amount, 0);
   const sumOut = ctf.filter((r) => r.direction === "out").reduce((s, r) => s + r.amount, 0);
