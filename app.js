@@ -604,6 +604,7 @@ let previousRenderAllRouteForOverviewSnapshot = null;
 const routePanes = [...document.querySelectorAll(".route-pane")];
 const overviewGrid = document.getElementById("overviewGrid");
 const quoteTime = document.getElementById("quoteTime");
+const analysisQuoteTime = document.getElementById("analysisQuoteTime");
 const todayProfitMain = document.getElementById("todayProfitMain");
 const monthProfitMain = document.getElementById("monthProfitMain");
 const stageRangeSelect = document.getElementById("stageRangeSelect");
@@ -742,10 +743,6 @@ function analysisRangeChips() {
   const pane = document.getElementById("route-analysis");
   return pane ? [...pane.querySelectorAll(".range-chip[data-range]")] : [];
 }
-const customRangeRow = document.getElementById("customRangeRow");
-const customRangeStartInput = document.getElementById("customRangeStart");
-const customRangeEndInput = document.getElementById("customRangeEnd");
-const applyCustomRangeBtn = document.getElementById("applyCustomRangeBtn");
 const assetCurveModeSelect = document.getElementById("assetCurveMode");
 const tradeTableBody = document.getElementById("tradeTableBody");
 const tradeDialog = document.getElementById("tradeDialog");
@@ -2477,6 +2474,13 @@ async function hydrateState() {
   if (!["preset", "custom", "all"].includes(state.analysisRangeMode)) {
     state.analysisRangeMode = "preset";
   }
+  if (state.analysisRangeMode === "custom") {
+    state.analysisRangeMode = "preset";
+    state.analysisPreset = null;
+    if (![7, 30, 90].includes(Number(state.rangeDays))) {
+      state.rangeDays = 30;
+    }
+  }
   if (state.capitalTrendMode === "both") {
     state.capitalTrendMode = "total_assets";
   }
@@ -3314,16 +3318,7 @@ function captureQuoteSnapshotFromBundle(bundle) {
   }
   state.marketDataDelayed = !!state.quoteSnapshot.meta.delayed;
   state.marketDataDelaySource = state.marketDataDelayed ? "metrics-delayed" : "";
-  const quoteTimeEl = document.getElementById("quoteTime");
-  if (quoteTimeEl) {
-    quoteTimeEl.classList.toggle("is-delayed", !!state.marketDataDelayed);
-    quoteTimeEl.setAttribute(
-      "title",
-      state.marketDataDelayed
-        ? "行情或指标延迟，数字为最近一次成功计算结果"
-        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
-    );
-  }
+  paintQuoteTimeStatus();
 }
 
 function rebuildQuoteMapFromSnapshot() {
@@ -4477,12 +4472,7 @@ function bindEvents() {
       return;
     }
     const value = chip.dataset.range;
-    if (value === "custom") {
-      state.analysisRangeMode = "custom";
-      state.analysisPreset = null;
-      state.customRangeDraftStart = state.customRangeStart;
-      state.customRangeDraftEnd = state.customRangeEnd;
-    } else if (value === "all") {
+    if (value === "all") {
       state.analysisRangeMode = "all";
       state.analysisPreset = null;
     } else if (value === "mtd") {
@@ -4507,51 +4497,6 @@ function bindEvents() {
       void renderAnalysis({ blockLoading: state.route === "analysis" });
     }
     renderControls();
-  });
-
-  const syncCustomRangeDraftFromInputs = () => {
-    if (customRangeStartInput) {
-      state.customRangeDraftStart = customRangeStartInput.value || "";
-    }
-    if (customRangeEndInput) {
-      state.customRangeDraftEnd = customRangeEndInput.value || "";
-    }
-  };
-  customRangeStartInput?.addEventListener("input", syncCustomRangeDraftFromInputs);
-  customRangeStartInput?.addEventListener("change", syncCustomRangeDraftFromInputs);
-  customRangeEndInput?.addEventListener("input", syncCustomRangeDraftFromInputs);
-  customRangeEndInput?.addEventListener("change", syncCustomRangeDraftFromInputs);
-
-  applyCustomRangeBtn?.addEventListener("click", () => {
-    syncCustomRangeDraftFromInputs();
-    let start = state.customRangeDraftStart || "";
-    let end = state.customRangeDraftEnd || "";
-    if (!start && !end) {
-      return;
-    }
-    if (!start) {
-      start = getDefaultAnalysisStartDate();
-    }
-    if (!end) {
-      end = toDateKey(new Date());
-    }
-    if (start > end) {
-      [start, end] = [end, start];
-    }
-    state.customRangeStart = start;
-    state.customRangeEnd = end;
-    state.customRangeDraftStart = start;
-    state.customRangeDraftEnd = end;
-    state.analysisRangeMode = "custom";
-    state.analysisPreset = null;
-    persistState();
-    renderControls();
-    if (analysisMetricsUiActive()) {
-      state.publicAnalysisBundleUi.ready = false;
-      void refreshAnalysisMetricsView({ showLoading: false, blockLoading: true });
-    } else {
-      void renderAnalysis({ blockLoading: state.route === "analysis" });
-    }
   });
 
   assetCurveModeSelect?.addEventListener("change", () => {
@@ -5847,9 +5792,7 @@ function renderControls() {
   analysisRangeChips().forEach((chip) => {
     const value = chip.dataset.range;
     let active = false;
-    if (value === "custom") {
-      active = state.analysisRangeMode === "custom";
-    } else if (value === "all") {
+    if (value === "all") {
       active = state.analysisRangeMode === "all";
     } else if (value === "mtd") {
       active = state.analysisRangeMode === "preset" && state.analysisPreset === "mtd";
@@ -5864,21 +5807,6 @@ function renderControls() {
     }
     chip.classList.toggle("active", active);
   });
-  if (customRangeRow) {
-    customRangeRow.classList.toggle("hidden", state.analysisRangeMode !== "custom");
-  }
-  if (customRangeStartInput) {
-    customRangeStartInput.value =
-      state.analysisRangeMode === "custom"
-        ? state.customRangeDraftStart || ""
-        : state.customRangeStart || "";
-  }
-  if (customRangeEndInput) {
-    customRangeEndInput.value =
-      state.analysisRangeMode === "custom"
-        ? state.customRangeDraftEnd || ""
-        : state.customRangeEnd || "";
-  }
   if (assetCurveModeSelect) {
     assetCurveModeSelect.value = ["total_assets", "market", "cash", "cash_ratio", "principal"].includes(state.capitalTrendMode)
       ? state.capitalTrendMode
@@ -8146,7 +8074,7 @@ function mountCommunityAnalysisRoutePane() {
     mount.appendChild(pane);
   }
   pane.classList.add("route-pane--community-analysis");
-  const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
+  const accWrap = pane.querySelector(".analysis-overview-head .head-select-wrap");
   if (accWrap) {
     accWrap.style.display = "none";
   }
@@ -8172,7 +8100,7 @@ function unmountCommunityAnalysisRoutePane() {
     analysisRouteHomeParent.appendChild(pane);
   }
   pane.classList.remove("route-pane--community-analysis");
-  const accWrap = pane.querySelector(".panel-head-account .head-select-wrap");
+  const accWrap = pane.querySelector(".analysis-overview-head .head-select-wrap");
   if (accWrap) {
     accWrap.style.display = "";
   }
@@ -8986,27 +8914,36 @@ function stopMetricsRebuildPoll() {
   }
 }
 
-function applyMetricsRebuildStatusUi(rebuilding) {
-  if (!quoteTime) {
+function paintQuoteTimeStatus(rebuilding) {
+  const targets = [quoteTime, analysisQuoteTime].filter(Boolean);
+  if (!targets.length) {
     return;
   }
-  if (rebuilding) {
-    quoteTime.textContent = "历史指标重算中，请稍候…";
-    quoteTime.classList.add("is-rebuilding");
-    quoteTime.setAttribute("title", "成交或资金记录已变更，正在更新日终快照");
+  const rebuildingNow = rebuilding != null ? !!rebuilding : !!state.metricsRebuilding;
+  if (rebuildingNow) {
+    targets.forEach((el) => {
+      el.textContent = "历史指标重算中，请稍候…";
+      el.classList.add("is-rebuilding");
+      el.setAttribute("title", "成交或资金记录已变更，正在更新日终快照");
+    });
     return;
   }
-  quoteTime.classList.remove("is-rebuilding");
-  if (state.quoteTime) {
-    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
-    quoteTime.textContent = timeText;
-    quoteTime.setAttribute(
+  const timeText = state.quoteTime ? `${formatQuoteTimeForStatus(state.quoteTime)} 更新` : "-- 更新";
+  targets.forEach((el) => {
+    el.classList.remove("is-rebuilding");
+    el.textContent = timeText;
+    el.classList.toggle("is-delayed", !!state.marketDataDelayed);
+    el.setAttribute(
       "title",
       state.marketDataDelayed
         ? "行情或指标延迟，数字为最近一次成功计算结果"
         : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
     );
-  }
+  });
+}
+
+function applyMetricsRebuildStatusUi(rebuilding) {
+  paintQuoteTimeStatus(rebuilding);
 }
 
 function scheduleMetricsRebuildUiRefresh() {
@@ -9168,17 +9105,7 @@ function paintOverviewFromMetricsBundle(returns, assets, holdings, stageKeyOrOpt
   const holdRows = holdings.rows || [];
   paintOverviewStockTableFromMetricsRows(holdRows);
   applyOverviewMetricsMeta(state.overviewMetricsUi?.meta);
-  if (quoteTime) {
-    const timeText = `${formatQuoteTimeForStatus(state.quoteTime)} 更新`;
-    quoteTime.textContent = timeText;
-    quoteTime.classList.toggle("is-delayed", !!state.marketDataDelayed);
-    quoteTime.setAttribute(
-      "title",
-      state.marketDataDelayed
-        ? "行情或指标延迟，数字为最近一次成功计算结果"
-        : "数据来自 metrics 接口（昨日冻结 + 今日实时）",
-    );
-  }
+  paintQuoteTimeStatus();
   return true;
 }
 

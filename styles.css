@@ -362,6 +362,11 @@ body {
   align-items: center;
 }
 
+.analysis-overview-head.overview-head {
+  padding: 0;
+  margin-bottom: 10px;
+}
+
 .market-data-status {
   font-size: 12px;
   color: var(--muted);

@@ -258,12 +258,12 @@
 
       <section id="route-analysis" class="route-pane">
         <article class="panel">
-          <div class="panel-head panel-head-account">
-            <h2>分析范围</h2>
+          <div class="analysis-overview-head overview-head">
             <label class="head-select-wrap">
               <select id="analysisAccountSelect" class="head-select"></select>
               <span class="arrow">▼</span>
             </label>
+            <span id="analysisQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
           </div>
           <div class="form-row">
             <label for="benchmark">指数对比</label>
@@ -282,13 +282,6 @@
             <button class="range-chip" data-range="mtd">月初至今</button>
             <button class="range-chip" data-range="365">年初至今</button>
             <button class="range-chip" data-range="all">历史以来</button>
-            <button class="range-chip" data-range="custom">自定义</button>
-          </div>
-          <div id="customRangeRow" class="custom-range-row">
-            <input id="customRangeStart" type="date" />
-            <span>至</span>
-            <input id="customRangeEnd" type="date" />
-            <button id="applyCustomRangeBtn" type="button" class="btn btn-ghost">应用</button>
           </div>
         </article>
 
