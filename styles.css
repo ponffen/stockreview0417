@@ -362,9 +362,13 @@ body {
   align-items: center;
 }
 
-.analysis-overview-head.overview-head {
+.analysis-filter-panel {
   padding: 0;
-  margin-bottom: 10px;
+}
+
+.analysis-filter-panel .analysis-filter-body {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
 }
 
 .route-pane--community-analysis .analysis-overview-head.overview-head {

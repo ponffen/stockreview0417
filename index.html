@@ -257,7 +257,7 @@
       </section>
 
       <section id="route-analysis" class="route-pane">
-        <article class="panel">
+        <article class="panel analysis-filter-panel">
           <div class="analysis-overview-head overview-head">
             <label class="head-select-wrap">
               <select id="analysisAccountSelect" class="head-select"></select>
@@ -265,23 +265,25 @@
             </label>
             <span id="analysisQuoteTime" class="market-data-status" aria-live="polite">-- 更新</span>
           </div>
-          <div class="form-row">
-            <label for="benchmark">指数对比</label>
-            <select id="benchmark">
-              <option value="none">不对比</option>
-              <option value="sh000001">上证指数</option>
-              <option value="sz399001">深证成指</option>
-              <option value="rt_hkHSI">恒生指数</option>
-              <option value="gb_inx">标普500</option>
-            </select>
-          </div>
-          <div class="range-row">
-            <button class="range-chip" data-range="7">最近一周</button>
-            <button class="range-chip active" data-range="30">最近一月</button>
-            <button class="range-chip" data-range="90">最近三月</button>
-            <button class="range-chip" data-range="mtd">月初至今</button>
-            <button class="range-chip" data-range="365">年初至今</button>
-            <button class="range-chip" data-range="all">历史以来</button>
+          <div class="analysis-filter-body">
+            <div class="form-row">
+              <label for="benchmark">指数对比</label>
+              <select id="benchmark">
+                <option value="none">不对比</option>
+                <option value="sh000001">上证指数</option>
+                <option value="sz399001">深证成指</option>
+                <option value="rt_hkHSI">恒生指数</option>
+                <option value="gb_inx">标普500</option>
+              </select>
+            </div>
+            <div class="range-row">
+              <button class="range-chip" data-range="7">最近一周</button>
+              <button class="range-chip active" data-range="30">最近一月</button>
+              <button class="range-chip" data-range="90">最近三月</button>
+              <button class="range-chip" data-range="mtd">月初至今</button>
+              <button class="range-chip" data-range="365">年初至今</button>
+              <button class="range-chip" data-range="all">历史以来</button>
+            </div>
           </div>
         </article>
 
