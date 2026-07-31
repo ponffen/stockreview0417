@@ -3341,20 +3341,14 @@ function onAppScrollForInfiniteLoad() {
   }
 }
 
-/** 个股动态分页：IntersectionObserver + 加载后须滚离哨兵再允许下一页 */
+/** 个股动态：IO 触发 + scrollTop 步进，page2+ 走 cursor 保证顺序连续 */
 let stockDynamicsIo = null;
 let stockDynamicsIoKey = "";
-let stockDynamicsAwaitingLeave = false;
-let stockDynamicsAwaitScrollHandler = null;
+let stockDynamicsLastLoadScrollTop = 0;
 
 function resetStockDynamicsScrollState() {
-  stockDynamicsAwaitingLeave = false;
+  stockDynamicsLastLoadScrollTop = 0;
   teardownStockRecordDynamicsObserver();
-  const root = getStockRecordScrollRoot();
-  if (root && stockDynamicsAwaitScrollHandler) {
-    root.removeEventListener("scroll", stockDynamicsAwaitScrollHandler);
-    stockDynamicsAwaitScrollHandler = null;
-  }
 }
 
 function teardownStockRecordDynamicsObserver() {
@@ -3365,44 +3359,32 @@ function teardownStockRecordDynamicsObserver() {
   stockDynamicsIoKey = "";
 }
 
-function isSentinelVisibleInRoot(sentinel, root) {
-  if (!sentinel || !root) {
-    return false;
+function tryLoadMoreStockRecordDynamics() {
+  if (state.route !== "stock-record" || !state.activeRecordSymbol) {
+    return;
   }
-  const rr = root.getBoundingClientRect();
-  const sr = sentinel.getBoundingClientRect();
-  return sr.top < rr.bottom - 2 && sr.bottom > rr.top + 2;
-}
-
-function waitForStockDynamicsSentinelLeave(listKey) {
+  const key = stockRecordDynamicsListKey();
   const root = getStockRecordScrollRoot();
-  const sentinel = stockRecordDynamicsList?.querySelector("[data-dynamics-load-sentinel]");
-  if (!root || !sentinel) {
-    stockDynamicsAwaitingLeave = false;
-    syncStockRecordDynamicsObserver(listKey);
+  const container = stockRecordDynamicsList;
+  if (!key || !root || !container) {
     return;
   }
-  if (!isSentinelVisibleInRoot(sentinel, root)) {
-    stockDynamicsAwaitingLeave = false;
-    syncStockRecordDynamicsObserver(listKey);
+  const st = getDynamicsListState(key);
+  if (!st.hasMore || st.loading || !isNearScrollContainerBottom(root)) {
     return;
   }
-  if (stockDynamicsAwaitScrollHandler) {
+  const top = root.scrollTop;
+  if (st.page > 0 && top <= stockDynamicsLastLoadScrollTop + 64) {
     return;
   }
-  stockDynamicsAwaitingLeave = true;
-  stockDynamicsAwaitScrollHandler = () => {
-    const s = stockRecordDynamicsList?.querySelector("[data-dynamics-load-sentinel]");
-    if (!s || !isSentinelVisibleInRoot(s, root)) {
-      root.removeEventListener("scroll", stockDynamicsAwaitScrollHandler);
-      stockDynamicsAwaitScrollHandler = null;
-      stockDynamicsAwaitingLeave = false;
-      if (state.route === "stock-record" && stockRecordDynamicsListKey() === listKey) {
-        syncStockRecordDynamicsObserver(listKey);
-      }
-    }
-  };
-  root.addEventListener("scroll", stockDynamicsAwaitScrollHandler, { passive: true });
+  stockDynamicsLastLoadScrollTop = top;
+  void loadDynamicsListPage({
+    key,
+    container,
+    apiPath: st.apiPath,
+    editable: st.editable,
+    stockRecordPagination: true,
+  });
 }
 
 function syncStockRecordDynamicsObserver(listKey) {
@@ -3410,23 +3392,10 @@ function syncStockRecordDynamicsObserver(listKey) {
   const root = getStockRecordScrollRoot();
   const sentinel = container?.querySelector("[data-dynamics-load-sentinel]");
   const st = getDynamicsListState(listKey);
-  if (
-    state.route !== "stock-record" ||
-    !container ||
-    !root ||
-    !sentinel ||
-    !st.hasMore ||
-    st.loading ||
-    stockDynamicsAwaitingLeave
-  ) {
-    if (!st?.hasMore || state.route !== "stock-record") {
+  if (state.route !== "stock-record" || !container || !root || !sentinel || !st.hasMore || st.loading) {
+    if (!st?.hasMore) {
       teardownStockRecordDynamicsObserver();
     }
-    return;
-  }
-  if (isSentinelVisibleInRoot(sentinel, root)) {
-    teardownStockRecordDynamicsObserver();
-    waitForStockDynamicsSentinelLeave(listKey);
     return;
   }
   if (stockDynamicsIo && stockDynamicsIoKey === listKey) {
@@ -3436,25 +3405,11 @@ function syncStockRecordDynamicsObserver(listKey) {
   stockDynamicsIoKey = listKey;
   stockDynamicsIo = new IntersectionObserver(
     (entries) => {
-      const entry = entries[0];
-      if (!entry?.isIntersecting || stockDynamicsAwaitingLeave) {
-        return;
+      if (entries[0]?.isIntersecting) {
+        tryLoadMoreStockRecordDynamics();
       }
-      const cur = getDynamicsListState(listKey);
-      if (!cur.hasMore || cur.loading) {
-        return;
-      }
-      stockDynamicsIo?.unobserve(sentinel);
-      stockDynamicsAwaitingLeave = true;
-      void loadDynamicsListPage({
-        key: listKey,
-        container,
-        apiPath: cur.apiPath,
-        editable: cur.editable,
-        stockRecordPagination: true,
-      });
     },
-    { root, rootMargin: "0px", threshold: 0 },
+    { root, rootMargin: "80px", threshold: 0 },
   );
   stockDynamicsIo.observe(sentinel);
 }
@@ -3470,12 +3425,17 @@ function scheduleStockRecordDynamicsObserver(listKey) {
   });
 }
 
+function onStockRecordScroll() {
+  tryLoadMoreStockRecordDynamics();
+}
+
 function ensureTradeListScrollListener() {
   if (tradeListScrollListenerBound) {
     return;
   }
   tradeListScrollListenerBound = true;
   window.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
+  getStockRecordScrollRoot()?.addEventListener("scroll", onStockRecordScroll, { passive: true });
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -6367,6 +6327,7 @@ function getDynamicsListState(key) {
       key,
       items: [],
       page: 0,
+      cursor: null,
       hasMore: true,
       loading: false,
       apiPath: "",
@@ -6604,6 +6565,7 @@ function resetDynamicsListState(key) {
   const st = getDynamicsListState(key);
   st.items = [];
   st.page = 0;
+  st.cursor = null;
   st.hasMore = true;
   st.loading = false;
   if (String(key || "").startsWith("stock-dynamics:")) {
@@ -6641,9 +6603,20 @@ function invalidateStockDynamicsListForSymbols(symbols) {
     return;
   }
   for (const sym of syms) {
-    const key = stockDynamicsListKey(sym);
-    if (key) {
-      resetDynamicsListState(key);
+    if (
+      state.route === "stock-record" &&
+      !state.stockRecordFromPublicProfile &&
+      normalizeSymbol(state.activeRecordSymbol) === sym
+    ) {
+      const activeKey = stockRecordDynamicsListKey();
+      if (activeKey) {
+        resetDynamicsListState(activeKey);
+      }
+    } else {
+      const key = stockDynamicsListKey(sym);
+      if (key) {
+        resetDynamicsListState(key);
+      }
     }
   }
   if (state.route !== "stock-record" || state.stockRecordFromPublicProfile || !state.activeRecordSymbol) {
@@ -6873,6 +6846,7 @@ async function loadDynamicsListPage({
       const payload = entry.fullPayload;
       st.items = Array.isArray(payload.items) ? [...payload.items] : [];
       st.page = Number(payload.page) || 0;
+      st.cursor = payload.cursor != null ? String(payload.cursor) : null;
       st.hasMore = payload.hasMore === true;
       st.loading = false;
       renderDynamicsListContainer(container, st, { editable });
@@ -6888,15 +6862,22 @@ async function loadDynamicsListPage({
   }
   st.loading = true;
   renderDynamicsListContainer(container, st, { editable });
-  const nextPage = reset || !st.page ? 1 : st.page + 1;
+  const requestPage = reset || !st.page ? 1 : st.page + 1;
   try {
-    const qs = new URLSearchParams({ limit: "10", page: String(nextPage) });
+    const qs = new URLSearchParams({ limit: "10" });
+    if (!reset && st.cursor) {
+      qs.set("cursor", st.cursor);
+    } else {
+      qs.set("page", String(requestPage));
+    }
     const apiBase = String(apiPath || "");
     const qIdx = apiBase.indexOf("?");
     const pathOnly = qIdx >= 0 ? apiBase.slice(0, qIdx) : apiBase;
     const presetQs = qIdx >= 0 ? new URLSearchParams(apiBase.slice(qIdx + 1)) : new URLSearchParams();
     for (const [k, v] of presetQs.entries()) {
-      qs.set(k, v);
+      if (k !== "page" && k !== "cursor" && k !== "limit") {
+        qs.set(k, v);
+      }
     }
     const r = await apiFetch(`${getApiBaseForFetch()}${pathOnly}?${qs}`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
@@ -6917,9 +6898,10 @@ async function loadDynamicsListPage({
       }
     }
     const pagination = j.pagination || {};
-    st.page = Number(pagination.page) || nextPage;
+    st.page = reset ? 1 : (Number(st.page) || 0) + 1;
+    st.cursor = pagination.cursor != null ? String(pagination.cursor) : null;
     st.hasMore = pagination.hasMore === true;
-    if (reset && pageCacheEnabled(pubTid) && nextPage === 1) {
+    if (reset && pageCacheEnabled(pubTid) && requestPage === 1) {
       const meta = await ensurePageCacheMetaForScope(pubTid);
       const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
       await PageCache.writeEntry({
@@ -6927,6 +6909,7 @@ async function loadDynamicsListPage({
         fullPayload: {
           items: st.items.map((item) => ({ ...item })),
           page: st.page,
+          cursor: st.cursor,
           hasMore: st.hasMore,
         },
         epochs: { ...meta },
@@ -6938,18 +6921,13 @@ async function loadDynamicsListPage({
       container.innerHTML = `<p class="empty">网络错误</p>`;
     }
     st.hasMore = false;
-    if (container === stockRecordDynamicsList) {
-      stockDynamicsAwaitingLeave = false;
-    }
   } finally {
     st.loading = false;
     renderDynamicsListContainer(container, st, { editable });
     if (container === stockRecordDynamicsList && state.route === "stock-record") {
-      if (stockRecordPagination) {
-        waitForStockDynamicsSentinelLeave(key);
-      } else {
-        scheduleStockRecordDynamicsObserver(key);
-      }
+      const root = getStockRecordScrollRoot();
+      stockDynamicsLastLoadScrollTop = root?.scrollTop ?? stockDynamicsLastLoadScrollTop;
+      scheduleStockRecordDynamicsObserver(key);
     }
   }
 }
