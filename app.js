@@ -2812,10 +2812,28 @@ async function loadMetricsBundleWithPageCache({
   publicTargetId = "",
   mergeFn,
   skipCache = false,
-  onStaleHit = null,
+  onBundle = null,
 }) {
   const tid = String(publicTargetId || "").trim();
   const cacheOn = pageCacheEnabled(tid);
+  const notifyBundle = (bundle, phase) => {
+    if (bundle && typeof onBundle === "function") {
+      onBundle(bundle, phase);
+    }
+  };
+
+  // 1. 先读本地缓存并展示（不等待 cache-meta）
+  if (cacheOn && !skipCache && cacheKey && mergeFn) {
+    const entry = await PageCache.readEntry(cacheKey);
+    if (entry) {
+      const cached = mergeFn(entry.seriesFrozen, entry.liveHead);
+      if (cached) {
+        notifyBundle(cached, "cache");
+      }
+    }
+  }
+
+  // 2. 拉版本标识，判断缓存是否最新
   const meta = await ensurePageCacheMetaForScope(tid);
   if (cacheOn && !skipCache && cacheKey && mergeFn) {
     const hit = await PageCache.loadMergedBundle(cacheKey, mergeFn, pageKind, meta);
@@ -2823,9 +2841,6 @@ async function loadMetricsBundleWithPageCache({
       return hit.bundle;
     }
     if (hit.bundle && hit.needFetch) {
-      if (typeof onStaleHit === "function") {
-        onStaleHit(hit.bundle, hit.needLiveOnly);
-      }
       void (async () => {
         const fresh = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
         if (fresh) {
@@ -2836,17 +2851,20 @@ async function loadMetricsBundleWithPageCache({
             await ensurePageCacheMetaForScope(tid, true),
             tid,
           );
-          if (typeof onStaleHit === "function") {
-            onStaleHit(fresh, false, true);
-          }
+          notifyBundle(fresh, "fresh");
         }
       })();
       return hit.bundle;
     }
   }
+
+  // 无缓存：同步拉取最新数据
   const data = await fetchMetricsBundleFromNetwork(path, params, publicTargetId);
   if (data && cacheOn && cacheKey) {
     await persistMetricsBundlePageCache(kind, cacheKey, data, meta, tid);
+  }
+  if (data) {
+    notifyBundle(data, "fresh");
   }
   return data;
 }
@@ -2881,8 +2899,8 @@ async function fetchHomeBundleMetrics(aid, opts = {}) {
       params: { account_id: id, stages },
       mergeFn: PageCache.mergeHomeBundle,
       skipCache: opts.skipPageCache === true,
-      onStaleHit: (bundle, _needLiveOnly, isFresh) => {
-        if (isFresh && isEarningHomeRoute()) {
+      onBundle: (bundle) => {
+        if (isEarningHomeRoute()) {
           void applyHomeBundleToOverviewUi(bundle, id, overviewProfitRefreshSeq);
         }
       },
@@ -3112,6 +3130,7 @@ async function fetchStockRecordBundleMetrics(symKey, accountId = "all", publicTa
     publicTargetId,
     mergeFn: PageCache.mergeStockRecordBundle,
     skipCache: chartOpts.skipPageCache === true,
+    onBundle: chartOpts.onBundle,
   });
 }
 
@@ -3220,14 +3239,12 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
   setStockRecordPageLoading(true);
   state.stockRecordBundle = null;
   state.stockRecordChartRange = "30";
-  try {
-    const bundle =
-      !isPublic || publicTargetId
-        ? await fetchStockRecordBundleMetrics(key, bundleAccountId, publicTargetId, {
-            range: state.stockRecordChartRange,
-          })
-        : null;
+
+  const applyStockRecordBundleToPage = async (bundle, { loadDynamics = false } = {}) => {
     if (pageGen !== stockRecordPageLoadGen) {
+      return;
+    }
+    if (state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
       return;
     }
     state.stockRecordBundle = bundle;
@@ -3236,18 +3253,11 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       applyStockRecordBundleDefaults(bundle);
       fitStockRecordChartViewportFromBundle(bundle);
     }
-    if (!state.stockRecordBundle) {
-      await ensureSymbolData(key);
-    }
-    if (pageGen !== stockRecordPageLoadGen) {
-      return;
-    }
-    if (state.route !== "stock-record" || normalizeSymbol(state.activeRecordSymbol) !== key) {
-      return;
-    }
     setStockRecordPageLoading(false);
     await renderStockRecordPage(key);
-    void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
+    if (loadDynamics) {
+      void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
+    }
     window.setTimeout(() => {
       if (
         pageGen === stockRecordPageLoadGen &&
@@ -3257,6 +3267,40 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
         drawStockRecordCharts(key);
       }
     }, 40);
+  };
+
+  try {
+    let dynamicsLoaded = false;
+    const bundle =
+      !isPublic || publicTargetId
+        ? await fetchStockRecordBundleMetrics(key, bundleAccountId, publicTargetId, {
+            range: state.stockRecordChartRange,
+            onBundle: (partial, phase) => {
+              void applyStockRecordBundleToPage(partial, {
+                loadDynamics: phase === "cache" && !dynamicsLoaded,
+              });
+              if (phase === "cache") {
+                dynamicsLoaded = true;
+              }
+            },
+          })
+        : null;
+    if (pageGen !== stockRecordPageLoadGen) {
+      return;
+    }
+    if (!state.stockRecordBundle && bundle) {
+      await applyStockRecordBundleToPage(bundle, { loadDynamics: !dynamicsLoaded });
+    } else if (!bundle) {
+      await ensureSymbolData(key);
+      if (pageGen === stockRecordPageLoadGen) {
+        setStockRecordPageLoading(false);
+        if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === key) {
+          await renderStockRecordPage(key);
+        }
+      }
+    } else if (!dynamicsLoaded) {
+      void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
+    }
   } catch (error) {
     console.warn("refreshStockRecordPageData failed", error);
     if (pageGen === stockRecordPageLoadGen) {
@@ -7715,19 +7759,44 @@ function repaintPublicEarningHoldingsFromCache() {
   syncCommunityEarningSortHeaderUi();
 }
 
-async function fetchPublicHomeBundleMetrics(targetId) {
+async function fetchPublicHomeBundleMetrics(targetId, opts = {}) {
   const tid = String(targetId || "").trim();
   if (!tid || !apiReady) {
     return null;
   }
   const key = publicEarningBundleCacheKey(tid);
-  if (state.publicEarningBundleUi.ready && state.publicEarningBundleUi.key === key && state.publicEarningBundleUi.bundle) {
+  if (
+    !opts.force &&
+    state.publicEarningBundleUi.ready &&
+    state.publicEarningBundleUi.key === key &&
+    state.publicEarningBundleUi.bundle
+  ) {
     return state.publicEarningBundleUi.bundle;
   }
   if (state.publicEarningBundleUi.loading) {
     return null;
   }
   state.publicEarningBundleUi.loading = true;
+  let bundleHandled = false;
+  const syncPublicEarningUi = (bundle) => {
+    if (!bundle) {
+      return;
+    }
+    bundleHandled = true;
+    state.publicEarningBundleUi = {
+      ready: true,
+      loading: false,
+      key,
+      bundle,
+      meta: bundle.meta || null,
+    };
+    if (typeof opts.onBundle === "function") {
+      opts.onBundle(bundle);
+    } else if (state.route === "community-profile" && (state.communityProfileTab || "earning") === "earning") {
+      mountPublicCommunityStockTableHead();
+      paintPublicEarningFromBundle(bundle);
+    }
+  };
   try {
     const cacheKey = pageCacheEnabled(tid)
       ? PageCache.homeBundleCacheKey(pageCacheUserId(tid), "all", METRICS_HOME_BUNDLE_STAGES)
@@ -7740,17 +7809,14 @@ async function fetchPublicHomeBundleMetrics(targetId) {
       params: { account_id: "all", stages: METRICS_HOME_BUNDLE_STAGES },
       publicTargetId: tid,
       mergeFn: PageCache.mergeHomeBundle,
+      onBundle: syncPublicEarningUi,
     });
     if (!data) {
       return null;
     }
-    state.publicEarningBundleUi = {
-      ready: true,
-      loading: false,
-      key,
-      bundle: data,
-      meta: data.meta || null,
-    };
+    if (!bundleHandled) {
+      syncPublicEarningUi(data);
+    }
     return data;
   } finally {
     state.publicEarningBundleUi.loading = false;
@@ -7767,15 +7833,24 @@ async function loadPublicEarningTabData(targetId) {
   if (tbody) {
     tbody.innerHTML = buildAppLoadingTableRowHtml(pubColCount, "数据加载中…");
   }
-  const bundle = await fetchPublicHomeBundleMetrics(targetId);
+  let paintedViaCallback = false;
+  const bundle = await fetchPublicHomeBundleMetrics(targetId, {
+    onBundle: (partial) => {
+      paintedViaCallback = true;
+      mountPublicCommunityStockTableHead();
+      paintPublicEarningFromBundle(partial);
+    },
+  });
   if (!bundle) {
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="${pubColCount}"><p class="empty">加载失败</p></td></tr>`;
     }
     return;
   }
-  mountPublicCommunityStockTableHead();
-  paintPublicEarningFromBundle(bundle);
+  if (!paintedViaCallback) {
+    mountPublicCommunityStockTableHead();
+    paintPublicEarningFromBundle(bundle);
+  }
 }
 
 function renderPublicEarningProfileHtml(_d) {
@@ -7843,36 +7918,56 @@ function publicAnalysisBundleCacheKey(targetId) {
   return `pub-analysis::${tid}::${q.stage}::${q.from || ""}::${q.to || ""}::${bench}`;
 }
 
-async function fetchPublicAnalysisBundleMetrics(targetId) {
+async function fetchPublicAnalysisBundleMetrics(targetId, opts = {}) {
   const tid = String(targetId || "").trim();
   if (!tid || !apiReady) {
     return null;
   }
   const benchSym = state.benchmark === "none" ? "" : normalizeSymbol(state.benchmark);
   const key = publicAnalysisBundleCacheKey(tid);
-  if (state.publicAnalysisBundleUi.ready && state.publicAnalysisBundleUi.key === key && state.publicAnalysisBundleUi.bundle) {
+  if (
+    !opts.force &&
+    state.publicAnalysisBundleUi.ready &&
+    state.publicAnalysisBundleUi.key === key &&
+    state.publicAnalysisBundleUi.bundle
+  ) {
     return state.publicAnalysisBundleUi.bundle;
   }
   if (state.publicAnalysisBundleUi.loading) {
     return null;
   }
   state.publicAnalysisBundleUi.loading = true;
+  let bundleHandled = false;
+  const syncAnalysisUi = (bundle) => {
+    if (!bundle) {
+      return;
+    }
+    bundleHandled = true;
+    state.publicAnalysisBundleUi = {
+      ready: true,
+      loading: false,
+      key,
+      bundle,
+      meta: bundle.meta || null,
+    };
+    if (typeof opts.onBundle === "function") {
+      opts.onBundle(bundle);
+    }
+  };
   try {
     const params = buildAnalysisBundleQueryParams(state, { account_id: "all" });
     if (benchSym) {
       params.symbol = benchSym;
     }
-    const data = await fetchMetricsApi("/analysis-bundle", params, tid);
+    const data = await fetchMetricsApi("/analysis-bundle", params, tid, {
+      onBundle: syncAnalysisUi,
+    });
     if (!data) {
       return null;
     }
-    state.publicAnalysisBundleUi = {
-      ready: true,
-      loading: false,
-      key,
-      bundle: data,
-      meta: data.meta || null,
-    };
+    if (!bundleHandled) {
+      syncAnalysisUi(data);
+    }
     return data;
   } finally {
     state.publicAnalysisBundleUi.loading = false;
@@ -7942,7 +8037,14 @@ async function loadPublicAnalysisTabData(targetId) {
       setPublicAnalysisPanelLoading(true);
     }
     renderControls();
-    const bundle = await fetchPublicAnalysisBundleMetrics(tid);
+    let paintedViaCallback = false;
+    const bundle = await fetchPublicAnalysisBundleMetrics(tid, {
+      onBundle: (partial) => {
+        paintedViaCallback = true;
+        const renderRequestId = ++analysisRenderRequestSeq;
+        void paintAnalysisFromMetricsApi(renderRequestId, tid, { fitViewport: true, bundle: partial });
+      },
+    });
     if (!bundle) {
       clearAnalysisChartsToEmpty();
       if (analysisStockRankBody) {
@@ -7950,8 +8052,10 @@ async function loadPublicAnalysisTabData(targetId) {
       }
       return;
     }
-    const renderRequestId = ++analysisRenderRequestSeq;
-    await paintAnalysisFromMetricsApi(renderRequestId, tid, { fitViewport: true, bundle });
+    if (!paintedViaCallback) {
+      const renderRequestId = ++analysisRenderRequestSeq;
+      await paintAnalysisFromMetricsApi(renderRequestId, tid, { fitViewport: true, bundle });
+    }
   } finally {
     if (analysisMounted) {
       hideAnalysisBlockLoading();
@@ -8156,7 +8260,7 @@ async function fetchCommunityUserProfileFromNetwork(targetId) {
   }
 }
 
-async function fetchCommunityUserProfile(targetId) {
+async function fetchCommunityUserProfile(targetId, opts = {}) {
   const tid = String(targetId || "").trim();
   if (!tid || !apiReady) {
     return { data: null, status: 0, error: "" };
@@ -8164,30 +8268,43 @@ async function fetchCommunityUserProfile(targetId) {
   const viewerKey = sessionUserId || "guest";
   const cacheKey = PageCache.communityProfileCacheKey(viewerKey, tid);
   const cacheOn = pageCacheEnabled(tid);
+  const notifyProfile = (data, phase) => {
+    if (data && typeof opts.onProfile === "function") {
+      opts.onProfile(data, phase);
+    }
+  };
+
+  // 1. 先读本地缓存并回调展示
+  let entry = null;
+  if (cacheOn) {
+    entry = await PageCache.readEntry(cacheKey);
+    if (entry?.fullPayload) {
+      notifyProfile(entry.fullPayload, "cache");
+    }
+  }
+
   const viewerMeta = sessionUserId ? await ensurePageCacheMeta() : null;
   const targetMeta = await ensurePageCacheMetaForScope(tid);
 
-  if (cacheOn) {
-    const entry = await PageCache.readEntry(cacheKey);
-    if (entry?.fullPayload && !PageCache.isCommunityProfileStale(entry, viewerMeta, targetMeta)) {
+  if (cacheOn && entry?.fullPayload) {
+    if (!PageCache.isCommunityProfileStale(entry, viewerMeta, targetMeta)) {
       return { data: entry.fullPayload, status: 200, error: "", fromCache: true };
     }
-    if (entry?.fullPayload && PageCache.isCommunityProfileStale(entry, viewerMeta, targetMeta)) {
-      void (async () => {
-        const fresh = await fetchCommunityUserProfileFromNetwork(tid);
-        if (fresh.data) {
-          const vm = sessionUserId ? await ensurePageCacheMeta(true) : null;
-          const tm = await ensurePageCacheMetaForScope(tid, true);
-          await PageCache.writeEntry({
-            cacheKey,
-            fullPayload: { ...fresh.data },
-            epochs: PageCache.profileEpochsForSave(vm, tm),
-            savedAt: Date.now(),
-          });
-        }
-      })();
-      return { data: entry.fullPayload, status: 200, error: "", fromCache: true, stale: true };
-    }
+    void (async () => {
+      const fresh = await fetchCommunityUserProfileFromNetwork(tid);
+      if (fresh.data) {
+        const vm = sessionUserId ? await ensurePageCacheMeta(true) : null;
+        const tm = await ensurePageCacheMetaForScope(tid, true);
+        await PageCache.writeEntry({
+          cacheKey,
+          fullPayload: { ...fresh.data },
+          epochs: PageCache.profileEpochsForSave(vm, tm),
+          savedAt: Date.now(),
+        });
+        notifyProfile(fresh.data, "fresh");
+      }
+    })();
+    return { data: entry.fullPayload, status: 200, error: "", fromCache: true, stale: true };
   }
 
   const fresh = await fetchCommunityUserProfileFromNetwork(tid);
@@ -8199,7 +8316,28 @@ async function fetchCommunityUserProfile(targetId) {
       savedAt: Date.now(),
     });
   }
+  if (fresh.data) {
+    notifyProfile(fresh.data, "fresh");
+  }
   return fresh;
+}
+
+function applyCommunityProfileShell(d) {
+  state.lastPublicProfileDetail = d;
+  if (communityProfileTitle) {
+    communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
+  }
+  if (communityProfileFollowSlot) {
+    const uidEsc = escapeHtml(d.userId);
+    const fu = d.following && sessionUserId ? "已关注" : "关注";
+    const cl = d.following && sessionUserId ? "community-follow-btn is-on" : "community-follow-btn";
+    communityProfileFollowSlot.innerHTML = `<button type="button" class="${cl}" data-user-id="${uidEsc}">${escapeHtml(
+      fu,
+    )}</button>`;
+  }
+  communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
+  mountPublicCommunityStockTableHead();
+  renderRoute();
 }
 
 async function loadCommunityProfileDetail() {
@@ -8231,7 +8369,16 @@ async function loadCommunityProfileDetail() {
     meta: null,
   };
   try {
-    const profileResult = await fetchCommunityUserProfile(uid);
+    let shellApplied = false;
+    const profileResult = await fetchCommunityUserProfile(uid, {
+      onProfile: (data, phase) => {
+        shellApplied = true;
+        applyCommunityProfileShell(data);
+        if (phase === "cache") {
+          hideRouteLoading();
+        }
+      },
+    });
     if (profileResult.status === 404) {
       communityProfileBody.innerHTML = `<p class="empty">用户未公开或不可见</p>`;
       return;
@@ -8240,23 +8387,10 @@ async function loadCommunityProfileDetail() {
       communityProfileBody.innerHTML = `<p class="empty">${escapeHtml(profileResult.error || "加载失败")}</p>`;
       return;
     }
+    if (!shellApplied) {
+      applyCommunityProfileShell(profileResult.data);
+    }
     const d = profileResult.data;
-    state.lastPublicProfileDetail = d;
-
-    if (communityProfileTitle) {
-      communityProfileTitle.textContent = `${d.displayName || "用户"} 的持仓`;
-    }
-    if (communityProfileFollowSlot) {
-      const uidEsc = escapeHtml(d.userId);
-      const fu = d.following && sessionUserId ? "已关注" : "关注";
-      const cl = d.following && sessionUserId ? "community-follow-btn is-on" : "community-follow-btn";
-      communityProfileFollowSlot.innerHTML = `<button type="button" class="${cl}" data-user-id="${uidEsc}">${escapeHtml(
-        fu,
-      )}</button>`;
-    }
-    communityProfileBody.innerHTML = renderCommunityProfilePageHtml(d);
-    mountPublicCommunityStockTableHead();
-    renderRoute();
     const tab = state.communityProfileTab || "earning";
     if (tab === "earning") {
       void loadPublicEarningTabData(uid);
@@ -10781,6 +10915,7 @@ async function fetchMetricsApi(path, params = {}, publicTargetId = "", opts = {}
       params: bundleParams,
       publicTargetId,
       mergeFn: PageCache.mergeAnalysisBundle,
+      onBundle: opts.onBundle,
     });
   }
   return fetchMetricsBundleFromNetwork(path, params, publicTargetId);
@@ -11383,7 +11518,16 @@ async function paintAnalysisFromMetricsApi(renderRequestId, publicTargetId = "",
       bundleParams.symbol = benchSym;
     }
     const bundlePath = isPublicView ? "/analysis-bundle" : "/metrics/analysis-bundle";
-    bundle = await fetchMetricsApi(bundlePath, bundleParams, publicTargetId);
+    let paintedViaCallback = false;
+    bundle = await fetchMetricsApi(bundlePath, bundleParams, publicTargetId, {
+      onBundle: (partial) => {
+        paintedViaCallback = true;
+        void paintAnalysisFromMetricsApi(renderRequestId, publicTargetId, { ...opts, bundle: partial });
+      },
+    });
+    if (paintedViaCallback) {
+      return true;
+    }
   }
   captureQuoteSnapshotFromBundle(bundle);
   const series = bundle?.series || {};
@@ -11574,8 +11718,7 @@ async function _doRefreshOverviewProfitRow(aid, stageKey, seq, reqKey) {
     if (!apiReady) {
       return;
     }
-    const bundle = await fetchHomeBundleMetrics(aid, { stages: METRICS_HOME_BUNDLE_STAGES });
-    applyHomeBundleToOverviewUi(bundle, aid, seq);
+    await fetchHomeBundleMetrics(aid, { stages: METRICS_HOME_BUNDLE_STAGES });
   } catch {
     if (seq === overviewProfitRefreshSeq) {
       state.overviewMetricsUi.ready = false;
