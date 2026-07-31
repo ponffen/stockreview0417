@@ -3322,6 +3322,9 @@ function stockRecordDynamicsListKey() {
 }
 
 function onAppScrollForInfiniteLoad() {
+  if (state.route === "stock-record") {
+    stockDynamicsScrollArmed = true;
+  }
   if (state.route === "trade-records") {
     void maybeLoadMoreTradeListPage();
   } else if (state.route === "trade-cash") {
@@ -6483,6 +6486,9 @@ function resetDynamicsListState(key) {
   st.page = 0;
   st.hasMore = true;
   st.loading = false;
+  if (String(key || "").startsWith("stock-dynamics:")) {
+    resetStockDynamicsScrollArm();
+  }
 }
 
 function stockDynamicsListKey(symbol) {
@@ -6805,33 +6811,27 @@ async function loadDynamicsListPage({
   } finally {
     st.loading = false;
     renderDynamicsListContainer(container, st, { editable });
-    maybeLoadMoreDynamicsListAfterRender(key, container);
   }
 }
 
 function maybeLoadMoreDynamicsList(key, container) {
   const st = getDynamicsListState(key);
+  const isStockRecordDynamics =
+    state.route === "stock-record" && container === stockRecordDynamicsList && key === stockRecordDynamicsListKey();
   if (!st.hasMore || st.loading || !isNearDynamicsScrollBottom()) {
     return;
+  }
+  if (isStockRecordDynamics && !stockDynamicsScrollArmed) {
+    return;
+  }
+  if (isStockRecordDynamics) {
+    stockDynamicsScrollArmed = false;
   }
   void loadDynamicsListPage({
     key,
     container,
     apiPath: st.apiPath,
     editable: st.editable,
-  });
-}
-
-function maybeLoadMoreDynamicsListAfterRender(key, container) {
-  if (!container || state.route !== "stock-record" || container !== stockRecordDynamicsList) {
-    return;
-  }
-  const st = getDynamicsListState(key);
-  if (!st.hasMore || st.loading) {
-    return;
-  }
-  requestAnimationFrame(() => {
-    maybeLoadMoreDynamicsList(key, container);
   });
 }
 
@@ -7033,6 +7033,12 @@ async function loadProfileDynamics(targetId, { reset = false } = {}) {
 }
 
 let stockDynamicsSurfaceKey = "";
+/** 个股动态：上一页加载完成后须用户再次滚动到底才拉下一页，避免连发 page=2..N */
+let stockDynamicsScrollArmed = true;
+
+function resetStockDynamicsScrollArm() {
+  stockDynamicsScrollArmed = true;
+}
 
 async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false } = {}) {
   const sym = normalizeSymbol(symbol);
