@@ -49,22 +49,20 @@ const {
 const { xirrPeriodFromSnapshotWindow, xirrPeriodFromSymbolValueFlowPoints } = require("../home-summary-maths");
 const { mwrForFreezeStorage } = require("../mwr");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
-const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
+const { validNumber } = require("../../scripts/lib/market-fetch");
 const {
   enumerateFreezeSessionDates,
   sessionDatesAfterLatest,
   previousSessionDate,
   ledgerSessionDateKey,
-  forwardFillFxMap,
   capFrozenThroughToSnapshot,
 } = require("./freeze-calendar");
 const { resolveFrozenDate } = require("../eod-freeze-service");
+const { buildFxMaps } = require("./fx-maps");
 const {
   upsertAnalysisBatchV3,
   upsertSymbolBatchV3,
 } = require("./freeze-v3-upsert");
-
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 
 function sortTradeAsc(a, b) {
   const ad = new Date(a.date).getTime();
@@ -87,7 +85,7 @@ function accountBookCurrency(accountId, accounts) {
 function cnyToBook(amountCny, book, dateKey, fxUsdMap, fxHkdMap) {
   const v = Number(amountCny) || 0;
   if (book === "CNY") return v;
-  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, book, dateKey, FX_FALLBACK);
+  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, book, dateKey);
   return fx > 0 ? v / fx : v;
 }
 
@@ -95,7 +93,7 @@ function nativeToCny(amountNative, ccy, dateKey, fxUsdMap, fxHkdMap) {
   const v = Number(amountNative) || 0;
   const c = String(ccy || "CNY").toUpperCase();
   if (c === "CNY") return v;
-  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey, FX_FALLBACK);
+  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey);
 }
 
 function tradesForFreezeSession(allTrades) {
@@ -164,7 +162,7 @@ function marketValueCny(holdings, klineBySym, dk, fxUsdMap, fxHkdMap) {
     );
     if (!(c > 0)) continue;
     const ccy = getSymbolCurrency(sym, inferMarket(sym));
-    mv += q * c * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk, FX_FALLBACK);
+    mv += q * c * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk);
   }
   return mv;
 }
@@ -181,7 +179,7 @@ function dayCashTransferBook(sessionCash, accounts, accountId, dk, book, fxUsdMa
     const ccy = String(acc.currency || "CNY").toUpperCase();
     const signIn = String(r.direction || "").toLowerCase() === "out" ? -1 : 1;
     const nat = signIn * Math.abs(Number(r.amount) || 0);
-    const cny = ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk, FX_FALLBACK);
+    const cny = ccy === "CNY" ? nat : nat * fxToCnyOnDate(fxUsdMap, fxHkdMap, ccy, dk);
     sum += cnyToBook(cny, book, dk, fxUsdMap, fxHkdMap);
   }
   return sum;
@@ -971,24 +969,6 @@ async function freezeSymbolOneDay({
   };
 }
 
-async function buildFxMaps(allDates, logger = console) {
-  let fxUsdMap = {};
-  let fxHkdMap = {};
-  try {
-    fxUsdMap = await fetchSinaForexDayKSeries("USDCNY");
-  } catch (e) {
-    logger.warn?.("[freeze-incremental] USDCNY", e?.message || e);
-  }
-  try {
-    fxHkdMap = await fetchSinaForexDayKSeries("HKDCNY");
-  } catch (e) {
-    logger.warn?.("[freeze-incremental] HKDCNY", e?.message || e);
-  }
-  forwardFillFxMap(fxUsdMap, allDates, FX_FALLBACK.USD);
-  forwardFillFxMap(fxHkdMap, allDates, FX_FALLBACK.HKD);
-  return { fxUsdMap, fxHkdMap };
-}
-
 async function runFreezeIncrementalForUser(userId, options = {}) {
   const logger = options.logger || console;
   const uid = String(userId || "").trim();
@@ -1123,9 +1103,9 @@ async function runFreezeIncrementalForUser(userId, options = {}) {
         const book = accountBookCurrency(accountId, accounts);
         let taCny = Number(result.row.totalAssets);
         if (book === "USD") {
-          taCny *= Number(fxUsdMap[dk]) || FX_FALLBACK.USD;
+          taCny *= Number(fxUsdMap[dk]) || 0;
         } else if (book === "HKD") {
-          taCny *= Number(fxHkdMap[dk]) || FX_FALLBACK.HKD;
+          taCny *= Number(fxHkdMap[dk]) || 0;
         }
         taCnyByAccount.set(accountId, taCny);
       }

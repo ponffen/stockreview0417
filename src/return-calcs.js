@@ -25,10 +25,10 @@ function getSymbolCurrency(symbol, market = inferMarket(symbol)) {
   return "CNY";
 }
 
-function fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey, fxFallback = { USD: 7.2, HKD: 0.92 }) {
+function fxToCnyOnDate(fxUsdMap, fxHkdMap, currency, dateKey) {
   if (currency === "CNY") return 1;
-  if (currency === "USD") return validNumber(fxUsdMap[dateKey], fxFallback.USD);
-  if (currency === "HKD") return validNumber(fxHkdMap[dateKey], fxFallback.HKD);
+  if (currency === "USD") return validNumber(fxUsdMap[dateKey], 0);
+  if (currency === "HKD") return validNumber(fxHkdMap[dateKey], 0);
   return 1;
 }
 

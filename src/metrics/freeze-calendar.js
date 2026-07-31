@@ -100,18 +100,9 @@ function capFrozenThroughToSnapshot(metaFrozen, snapshotDate) {
   return m > s ? s : m;
 }
 
-function forwardFillFxMap(fxMap, dateKeys, fallback) {
-  const sorted = [...(dateKeys || [])].sort();
-  let last = Number(fallback) || 0;
-  for (const dk of sorted) {
-    const v = Number(fxMap[dk]);
-    if (Number.isFinite(v) && v > 0) {
-      last = v;
-      fxMap[dk] = v;
-    } else {
-      fxMap[dk] = last;
-    }
-  }
+function forwardFillFxMap(fxMap, dateKeys, _fallbackIgnored) {
+  const { backwardThenForwardFillFxMap } = require("./fx-maps");
+  return backwardThenForwardFillFxMap(fxMap, dateKeys);
 }
 
 module.exports = {

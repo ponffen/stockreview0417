@@ -3,8 +3,6 @@
  */
 const { fxToCnyOnDate } = require("../return-calcs");
 
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
-
 const STAGE_KEYS = ["mtd", "ytd", "inception", "last_7d", "last_30d", "last_90d"];
 
 function nativeToCny(amountNative, ccy, dateKey, fxUsdMap, fxHkdMap) {
@@ -13,7 +11,7 @@ function nativeToCny(amountNative, ccy, dateKey, fxUsdMap, fxHkdMap) {
   if (c === "CNY") {
     return v;
   }
-  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey, FX_FALLBACK);
+  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey);
 }
 
 function cnyToBook(amountCny, book, dateKey, fxUsdMap, fxHkdMap) {
@@ -22,7 +20,7 @@ function cnyToBook(amountCny, book, dateKey, fxUsdMap, fxHkdMap) {
   if (b === "CNY") {
     return v;
   }
-  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, b, dateKey, FX_FALLBACK);
+  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, b, dateKey);
   return fx > 0 ? v / fx : v;
 }
 
@@ -102,10 +100,10 @@ function computeTodayProfitTracks({
   const flowNat = Number(dayFlowNative) || 0;
   const dk = String(liveDate || "").slice(0, 10);
   const prevD = String(frozenDate || "").slice(0, 10);
-  const fxUsdMapLive = { [dk]: Number(fxLive?.USD) || FX_FALLBACK.USD };
-  const fxHkdMapLive = { [dk]: Number(fxLive?.HKD) || FX_FALLBACK.HKD };
-  const fxUsdMapFrozen = { [prevD]: Number(fxFrozen?.USD) || FX_FALLBACK.USD };
-  const fxHkdMapFrozen = { [prevD]: Number(fxFrozen?.HKD) || FX_FALLBACK.HKD };
+  const fxUsdMapLive = { [dk]: Number(fxLive?.USD) || 0 };
+  const fxHkdMapLive = { [dk]: Number(fxLive?.HKD) || 0 };
+  const fxUsdMapFrozen = { [prevD]: Number(fxFrozen?.USD) || 0 };
+  const fxHkdMapFrozen = { [prevD]: Number(fxFrozen?.HKD) || 0 };
   const fxUsdMap = { ...fxUsdMapFrozen, ...fxUsdMapLive };
   const fxHkdMap = { ...fxHkdMapFrozen, ...fxHkdMapLive };
   return computeSymbolDailyProfitTracks({
@@ -197,7 +195,6 @@ function todayProfitFromTracks(tracks, track) {
 }
 
 module.exports = {
-  FX_FALLBACK,
   STAGE_KEYS,
   nativeToCny,
   cnyToBook,

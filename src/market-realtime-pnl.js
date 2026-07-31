@@ -31,8 +31,7 @@ const {
   wasClearedOnTradingDay,
 } = require("./metrics/holdings-active-symbols");
 const { computeTodayProfitTracksForHolding } = require("./position-today-pnl");
-
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
+const { loadFxRatesOnDate } = require("./metrics/fx-maps");
 
 function resolvePreloadedAccounts(pre) {
   if (Array.isArray(pre?.accounts) && pre.accounts.length > 0) {
@@ -202,8 +201,8 @@ function buildLiveFromHomeFrozen({
     cashRatio: totalAssetsCny > 0 ? cashUse / totalAssetsCny : 0,
     principalCny: principalLive,
     positions: [],
-    fxUsdCny: fxUsdFrozen || FX_FALLBACK.USD,
-    fxHkdCny: fxHkdFrozen || FX_FALLBACK.HKD,
+    fxUsdCny: Number(fxUsdFrozen) || 0,
+    fxHkdCny: Number(fxHkdFrozen) || 0,
     clearedScope: true,
   };
 }
@@ -226,26 +225,20 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   if (!frozenThrough) {
     frozenThrough = await getLatestAnalysisSnapshotDate(uid, scope);
   }
-  let fxUsdFrozen = Number(homeAcc?.eod_fx_usd_cny) || 0;
-  let fxHkdFrozen = Number(homeAcc?.eod_fx_hkd_cny) || 0;
+  const frozenFx = frozenThrough ? await loadFxRatesOnDate(frozenThrough) : { USD: 0, HKD: 0 };
+  let fxUsdFrozen = Number(frozenFx.USD) || 0;
+  let fxHkdFrozen = Number(frozenFx.HKD) || 0;
   let lastMarketValueCny = Number(homeAcc?.last_market_value_cny) || Number(homeAcc?.eod_market_value_cny) || 0;
-  if (!homeAcc || !(fxUsdFrozen > 0) || !(fxHkdFrozen > 0) || !(lastMarketValueCny > 0)) {
-    const baseRows = frozenThrough
-      ? await getAnalysisDailySnapshots({ accountId: scope, from: frozenThrough, to: frozenThrough }, uid)
-      : [];
+  if (!(lastMarketValueCny > 0) && frozenThrough) {
+    const baseRows = await getAnalysisDailySnapshots({ accountId: scope, from: frozenThrough, to: frozenThrough }, uid);
     const lastSnap = baseRows[baseRows.length - 1] || null;
-    if (!(fxUsdFrozen > 0)) {
-      fxUsdFrozen = Number(lastSnap?.fxUsdCny ?? lastSnap?.fx_usd_cny) || FX_FALLBACK.USD;
-    }
-    if (!(fxHkdFrozen > 0)) {
-      fxHkdFrozen = Number(lastSnap?.fxHkdCny ?? lastSnap?.fx_hkd_cny) || FX_FALLBACK.HKD;
-    }
-    if (!(lastMarketValueCny > 0)) {
-      lastMarketValueCny = Number(lastSnap?.marketValue ?? lastSnap?.market_value) || 0;
-    }
+    lastMarketValueCny = Number(lastSnap?.marketValue ?? lastSnap?.market_value) || 0;
   }
-  const fxUsdMap = fxUsdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxUsdFrozen } : {};
-  const fxHkdMap = fxHkdFrozen > 0 ? { [String(frozenThrough || liveDate)]: fxHkdFrozen } : {};
+  const frozenDateKeyStored = String(frozenThrough || liveDate).slice(0, 10);
+  const fxUsdMap =
+    frozenDateKeyStored && fxUsdFrozen > 0 ? { [frozenDateKeyStored]: fxUsdFrozen } : {};
+  const fxHkdMap =
+    frozenDateKeyStored && fxHkdFrozen > 0 ? { [frozenDateKeyStored]: fxHkdFrozen } : {};
 
   const pre = opts?.preloaded || {};
   const preloadedAccounts = resolvePreloadedAccounts(pre);
@@ -292,12 +285,21 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     fetchQuoteMap(symbols, { budgetMs: QUOTE_TOTAL_BUDGET_MS }),
     fetchTencentForexMap(QUOTE_TOTAL_BUDGET_MS),
   ]);
-  const fxSpot = { CNY: 1, USD: FX_FALLBACK.USD, HKD: FX_FALLBACK.HKD };
+  const fxSpot = { CNY: 1, USD: 0, HKD: 0 };
   if (fxReq?.rates?.USD > 0) {
     fxSpot.USD = fxReq.rates.USD;
   }
   if (fxReq?.rates?.HKD > 0) {
     fxSpot.HKD = fxReq.rates.HKD;
+  }
+  if (tradingDay && (!(fxSpot.USD > 0) || !(fxSpot.HKD > 0))) {
+    const dbLiveFx = await loadFxRatesOnDate(liveDate);
+    if (!(fxSpot.USD > 0)) {
+      fxSpot.USD = dbLiveFx.USD;
+    }
+    if (!(fxSpot.HKD > 0)) {
+      fxSpot.HKD = dbLiveFx.HKD;
+    }
   }
   const bookCcy = bookCurrencyForScope(accounts, scope);
   let quoteDelayed = !!quoteReq.delayed || !!fxReq.delayed;
@@ -402,8 +404,8 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
           book: bookCcy,
           fxLive: { USD: fxSpot.USD, HKD: fxSpot.HKD },
           fxFrozen: {
-            USD: Number(fxUsdMap[frozenDateKey]) || FX_FALLBACK.USD,
-            HKD: Number(fxHkdMap[frozenDateKey]) || FX_FALLBACK.HKD,
+            USD: Number(fxUsdFrozen) || Number(fxUsdMap[frozenDateKey]) || 0,
+            HKD: Number(fxHkdFrozen) || Number(fxHkdMap[frozenDateKey]) || 0,
           },
           clearedToday,
         })

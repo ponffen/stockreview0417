@@ -41,17 +41,15 @@ const {
   mwrForFreezeStorage,
 } = require("../mwr");
 const { fetchRemoteDailyClosesForSymbol } = require("../daily-close-backfill");
-const { fetchSinaForexDayKSeries, validNumber } = require("../../scripts/lib/market-fetch");
+const { validNumber } = require("../../scripts/lib/market-fetch");
 const {
   enumerateFreezeSessionDates,
   sessionDatesAfterLatest,
   ledgerSessionDateKey,
-  forwardFillFxMap,
   capFrozenThroughToSnapshot,
 } = require("./freeze-calendar");
 const { resolveFrozenDate } = require("../eod-freeze-service");
-
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
+const { buildFxMaps } = require("./fx-maps");
 
 function sortTradeAsc(a, b) {
   const ad = new Date(a.date).getTime();
@@ -75,7 +73,7 @@ function accountBookCurrency(accountId, accounts) {
 function cnyToBook(amountCny, book, dateKey, fxUsdMap, fxHkdMap) {
   const v = Number(amountCny) || 0;
   if (book === "CNY") return v;
-  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, book, dateKey, FX_FALLBACK);
+  const fx = fxToCnyOnDate(fxUsdMap, fxHkdMap, book, dateKey);
   return fx > 0 ? v / fx : v;
 }
 
@@ -85,7 +83,7 @@ function nativeToCny(amountNative, ccy, dateKey, fxUsdMap, fxHkdMap) {
   if (c === "CNY") {
     return v;
   }
-  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey, FX_FALLBACK);
+  return v * fxToCnyOnDate(fxUsdMap, fxHkdMap, c, dateKey);
 }
 
 async function loadAccountTotalAssetsCnyMap(client, uid, accounts, minD, maxD, fxUsdMap, fxHkdMap) {
@@ -106,33 +104,15 @@ async function loadAccountTotalAssetsCnyMap(client, uid, accounts, minD, maxD, f
     const ta = Number(row.total_assets) || 0;
     let taCny = ta;
     if (book === "USD") {
-      const fx = Number(row.fx_usd_cny ?? fxUsdMap[dk]) || FX_FALLBACK.USD;
+      const fx = Number(row.fx_usd_cny ?? fxUsdMap[dk]) || 0;
       taCny = ta * fx;
     } else if (book === "HKD") {
-      const fx = Number(row.fx_hkd_cny ?? fxHkdMap[dk]) || FX_FALLBACK.HKD;
+      const fx = Number(row.fx_hkd_cny ?? fxHkdMap[dk]) || 0;
       taCny = ta * fx;
     }
     map.set(`${aid}:${dk}`, taCny);
   }
   return map;
-}
-
-async function buildFxMaps(allDates, logger = console) {
-  let fxUsdMap = {};
-  let fxHkdMap = {};
-  try {
-    fxUsdMap = await fetchSinaForexDayKSeries("USDCNY");
-  } catch (e) {
-    logger.warn?.("[freeze-v3] USDCNY", e?.message || e);
-  }
-  try {
-    fxHkdMap = await fetchSinaForexDayKSeries("HKDCNY");
-  } catch (e) {
-    logger.warn?.("[freeze-v3] HKDCNY", e?.message || e);
-  }
-  forwardFillFxMap(fxUsdMap, allDates, FX_FALLBACK.USD);
-  forwardFillFxMap(fxHkdMap, allDates, FX_FALLBACK.HKD);
-  return { fxUsdMap, fxHkdMap };
 }
 
 function tradesForFreezeSession(allTrades) {
