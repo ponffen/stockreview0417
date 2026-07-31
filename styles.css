@@ -362,10 +362,6 @@ body {
   align-items: center;
 }
 
-.analysis-filter-panel {
-  padding: 0;
-}
-
 .analysis-filter-panel .analysis-filter-body {
   padding: 12px 14px;
   border-top: 1px solid var(--line);
@@ -896,6 +892,11 @@ body {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 12px 14px;
+}
+
+.panel.analysis-filter-panel {
+  margin-top: 0;
+  padding: 0;
 }
 
 .panel-head {
