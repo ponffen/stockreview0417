@@ -32,6 +32,7 @@ function redactPublicStockRecordBundle(bundle) {
   const series = {
     ...charts,
     points: redactChartPoints(charts.points),
+    tradesByDate: charts.tradesByDate || {},
   };
   const meta = bundle.meta ? { ...bundle.meta } : {};
   delete meta.bookCurrency;

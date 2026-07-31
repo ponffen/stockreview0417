@@ -184,6 +184,50 @@ function filterTradesForScope(trades, scope, symbol) {
     .sort(sortTradeAsc);
 }
 
+/** 图表 tooltip 成交标注：按 chart 区间裁剪，公开页不含 quantity。 */
+function buildChartTradesByDate(symbolTrades, rangeFrom, rangeTo, publicLayout) {
+  const from = String(rangeFrom || "").slice(0, 10);
+  const to = String(rangeTo || "").slice(0, 10);
+  const out = {};
+  for (const t of symbolTrades || []) {
+    const dk = String(t.date || t.trade_date || "").slice(0, 10);
+    if (!dk) {
+      continue;
+    }
+    if (from && dk < from) {
+      continue;
+    }
+    if (to && dk > to) {
+      continue;
+    }
+    if (!out[dk]) {
+      out[dk] = [];
+    }
+    const side = String(t.side || "").trim() || "buy";
+    const price = Number(t.price) || 0;
+    if (publicLayout) {
+      out[dk].push({
+        side,
+        price,
+        amountShareRatio:
+          t.amountShareRatio != null && Number.isFinite(Number(t.amountShareRatio))
+            ? Number(t.amountShareRatio)
+            : null,
+      });
+    } else {
+      out[dk].push({
+        side,
+        price,
+        quantity: Number(t.quantity) || 0,
+      });
+    }
+  }
+  for (const dk of Object.keys(out)) {
+    out[dk].sort((a, b) => String(b.side).localeCompare(String(a.side)));
+  }
+  return out;
+}
+
 function closeLookupFromRows(closeRows) {
   const sorted = (closeRows || [])
     .map((r) => ({ day: String(r.date || "").slice(0, 10), close: Number(r.close) }))
@@ -786,6 +830,7 @@ async function buildStockRecordBundlePayload({
       },
       charts: {
         points: [],
+        tradesByDate: {},
         noTrades: true,
         range: chartRangeMetaFromPoints(rangePreset, stageKey, [], endDate, null),
         defaults: {
@@ -962,6 +1007,12 @@ async function buildStockRecordBundlePayload({
   const changePct = prev > 0 ? changeAbs / prev : 0;
   const displayName = resolveDisplayNameFromMap(sym, metaMap);
   const tradingInterval = computeTradingIntervalFormatted(symbolTrades, current);
+  const tradesByDate = buildChartTradesByDate(
+    symbolTrades,
+    visualChartFrom,
+    endDate,
+    publicLayout === true,
+  );
 
   const payload = {
     meta: {
@@ -995,6 +1046,7 @@ async function buildStockRecordBundlePayload({
     },
     charts: {
       points,
+      tradesByDate,
       range: chartRangeMetaFromPoints(rangePreset, stageKey, points, endDate, from),
       defaults: {
         showClose: true,
@@ -1009,6 +1061,7 @@ async function buildStockRecordBundlePayload({
 
 module.exports = {
   buildStockRecordBundlePayload,
+  buildChartTradesByDate,
   parseStockRecordChartRequest,
   stockRecordRangeChipToStage,
 };

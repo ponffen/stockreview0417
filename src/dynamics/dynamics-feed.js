@@ -132,6 +132,14 @@ function resolveFeedKinds(filter) {
   return { includeTrades: true, includePosts: true, postTypeExtra: "" };
 }
 
+function parsePage(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) {
+    return 1;
+  }
+  return Math.floor(n);
+}
+
 async function listDynamicsFeed(options = {}) {
   await initPool();
   const viewerId = String(options.viewerId || "").trim();
@@ -139,19 +147,23 @@ async function listDynamicsFeed(options = {}) {
   const scene = resolveScene(options.scene);
   const symbol = options.symbol ? normalizeSymbol(options.symbol) : "";
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(options.limit) || DEFAULT_LIMIT));
-  const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
-  const cursor = decodeCursor(options.cursor);
+  const page = options.page != null && options.page !== "" ? parsePage(options.page) : 0;
+  const cursor = page > 0 ? null : decodeCursor(options.cursor);
+  let offset = Math.max(0, Math.floor(Number(options.offset) || 0));
+  if (page > 0) {
+    offset = (page - 1) * limit;
+  }
   const isSelf = viewerId && targetUserId && viewerId === targetUserId;
   const feedKinds = resolveFeedKinds(options.filter);
 
   if (scene === SCENES.PUBLIC || scene === SCENES.STOCK_PUBLIC) {
     if (!targetUserId) {
-      return { data: [], pagination: { limit, hasMore: false, cursor: null } };
+      return { data: [], pagination: { page: page || 1, limit, hasMore: false, cursor: null } };
     }
     if (!isSelf) {
       const row = await getUserCommunityRow(targetUserId);
       if (!row || !Number(row.community_public)) {
-        return { data: [], pagination: { limit, hasMore: false, cursor: null }, error: "hidden" };
+        return { data: [], pagination: { page: page || 1, limit, hasMore: false, cursor: null }, error: "hidden" };
       }
     }
   }
@@ -324,6 +336,7 @@ async function listDynamicsFeed(options = {}) {
   return {
     data,
     pagination: {
+      page: page > 0 ? page : null,
       limit,
       hasMore,
       cursor: nextCursor,

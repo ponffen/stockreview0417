@@ -478,15 +478,13 @@ const state = {
   editingAccountId: null,
   activeRecordId: null,
   activeRecordSymbol: null,
-  /** 个股记录页：仅该标的成交（非全量 state.trades） */
-  stockRecordTrades: [],
-  stockRecordTradesLoading: false,
+  /** 个股记录页：图表与 tooltip 成交标注走 stock-record-bundle */
+  stockRecordBundle: null,
+  stockRecordPointsLoading: false,
   stockRecordPageLoading: false,
   stockRecordWindow: 30,
   stockRecordOffset: 0,
   stockRecordChartRange: "30",
-  stockRecordBundle: null,
-  stockRecordPointsLoading: false,
   stockRecordShowClose: true,
   stockRecordShowShares: true,
   stockRecordShowMarketValue: false,
@@ -559,21 +557,9 @@ const cashListPager = {
   accountId: "all",
 };
 let tradeListScrollListenerBound = false;
-let stockRecordScrollListenerBound = false;
-let stockRecordTradesLoadGen = 0;
 let stockRecordPageLoadGen = 0;
-const stockRecordTradesPager = {
-  gen: 0,
-  offset: 0,
-  hasMore: true,
-  loading: false,
-  loaded: false,
-  symbol: "",
-  accountId: "all",
-};
-let stockRecordChartTrades = [];
-let stockRecordChartTradesKey = "";
-let stockRecordChartTradesLoadGen = 0;
+let stockDynamicsLoadKey = "";
+let stockDynamicsLoadInFlight = false;
 const communityPublicTradesPager = {
   gen: 0,
   offset: 0,
@@ -2935,138 +2921,17 @@ function resetCashListPager() {
   ledgerBootstrapCompleteForUid = "";
 }
 
-function resetStockRecordTradesPager() {
-  stockRecordTradesPager.gen += 1;
-  stockRecordTradesPager.offset = 0;
-  stockRecordTradesPager.hasMore = true;
-  stockRecordTradesPager.loading = false;
-  stockRecordTradesPager.loaded = false;
-  stockRecordTradesPager.symbol = "";
-  stockRecordTradesPager.accountId = "all";
-  resetStockRecordChartTrades();
+function stockRecordTradesByDateFromBundle(bundle) {
+  const raw = bundle?.charts?.tradesByDate;
+  if (!raw || typeof raw !== "object") {
+    return Object.create(null);
+  }
+  return raw;
 }
 
-function resetStockRecordChartTrades() {
-  stockRecordChartTradesLoadGen += 1;
-  stockRecordChartTrades = [];
-  stockRecordChartTradesKey = "";
-}
-
-function stockRecordChartTradesCacheKey(symKey, accountId, isPublic, publicTargetId) {
-  const aid = resolveValidAccountFilter(accountId);
-  const owner = isPublic ? String(publicTargetId || "").trim() || "pub" : "self";
-  return `${owner}:${normalizeSymbol(symKey)}:${aid}`;
-}
-
-function stockRecordChartTradesListQuery(symbol, accountId, offset, isPublic) {
-  if (isPublic) {
-    const params = new URLSearchParams({
-      limit: "100",
-      offset: String(offset),
-    });
-    const sym = normalizeSymbol(symbol);
-    if (sym) {
-      params.set("symbol", sym);
-    }
-    const aid = resolveValidAccountFilter(accountId);
-    if (aid && aid !== "all") {
-      params.set("account_id", aid);
-    }
-    return params.toString();
-  }
-  const params = new URLSearchParams({
-    symbol: normalizeSymbol(symbol),
-    limit: "100",
-    offset: String(offset),
-  });
-  const aid = resolveValidAccountFilter(accountId);
-  if (aid && aid !== "all") {
-    params.set("accountId", aid);
-  }
-  return params.toString();
-}
-
-async function loadStockRecordChartTrades(symKey, accountId, isPublic, publicTargetId) {
-  const key = normalizeSymbol(symKey);
-  if (!key || !apiReady || (!sessionPhone && !(isPublic && publicTargetId)) || (isPublic && !publicTargetId)) {
-    resetStockRecordChartTrades();
-    return [];
-  }
-  const cacheKey = stockRecordChartTradesCacheKey(key, accountId, isPublic, publicTargetId);
-  if (stockRecordChartTradesKey === cacheKey && stockRecordChartTrades.length) {
-    return stockRecordChartTrades;
-  }
-  const gen = ++stockRecordChartTradesLoadGen;
-  const all = [];
-  let offset = 0;
-  let hasMore = true;
-  while (hasMore) {
-    const qs = stockRecordChartTradesListQuery(key, accountId, offset, isPublic);
-    const url = isPublic
-      ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}/trades?${qs}`
-      : `${API_BASE}/trades?${qs}`;
-    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 25_000 });
-    const body = await res.json().catch(() => ({}));
-    if (gen !== stockRecordChartTradesLoadGen) {
-      return stockRecordChartTrades;
-    }
-    if (!res.ok || body?.ok !== true || !Array.isArray(body.data)) {
-      break;
-    }
-    const rows = body.data.map(normalizeTrade);
-    const seen = new Set(all.map((t) => String(t.id)));
-    for (const row of rows) {
-      const id = String(row.id);
-      if (!seen.has(id)) {
-        all.push(row);
-        seen.add(id);
-      }
-    }
-    const pagination = body.pagination || {};
-    offset = Number(pagination.offset ?? offset) + rows.length;
-    hasMore = pagination.hasMore === true && rows.length > 0;
-    if (!rows.length) {
-      hasMore = false;
-    }
-  }
-  if (gen !== stockRecordChartTradesLoadGen) {
-    return stockRecordChartTrades;
-  }
-  stockRecordChartTrades = all;
-  stockRecordChartTradesKey = cacheKey;
-  return stockRecordChartTrades;
-}
-
-function getStockRecordChartTrades(symbol, accountId, usePub, fallbackTrades) {
-  const symKey = normalizeSymbol(symbol);
-  const aid = usePub ? "all" : resolveValidAccountFilter(accountId);
-  const key = stockRecordChartTradesCacheKey(symKey, aid, usePub, usePub ? stockRecordPublicTargetId() : "");
-  if (stockRecordChartTradesKey === key && stockRecordChartTrades.length) {
-    return stockRecordChartTrades.filter((item) => normalizeSymbol(item.symbol) === symKey);
-  }
-  return Array.isArray(fallbackTrades) ? fallbackTrades : [];
-}
-
-function buildStockRecordTradesByDate(trades) {
-  const byDate = Object.create(null);
-  for (const trade of trades || []) {
-    const type = trade?.type || "trade";
-    if (type !== "trade") {
-      continue;
-    }
-    const dateKey = String(trade.date || "").slice(0, 10);
-    if (!dateKey) {
-      continue;
-    }
-    if (!byDate[dateKey]) {
-      byDate[dateKey] = [];
-    }
-    byDate[dateKey].push(trade);
-  }
-  for (const dateKey of Object.keys(byDate)) {
-    byDate[dateKey].sort(sortTradeDesc);
-  }
-  return byDate;
+function stockRecordHasChartTrades(bundle) {
+  const byDate = stockRecordTradesByDateFromBundle(bundle);
+  return Object.keys(byDate).some((dk) => Array.isArray(byDate[dk]) && byDate[dk].length > 0);
 }
 
 function formatStockRecordTradeTooltipExtra(date, tradesByDate, opts = {}) {
@@ -3093,35 +2958,6 @@ function formatStockRecordTradeTooltipExtra(date, tradesByDate, opts = {}) {
   return `<div class="chart-tooltip-gap" aria-hidden="true"></div><div class="chart-tooltip-trades">${blocks}</div>`;
 }
 
-function stockRecordTradesListQuery(symbol, accountId, offset) {
-  const params = new URLSearchParams({
-    symbol: normalizeSymbol(symbol),
-    limit: String(TRADE_LIST_PAGE_SIZE),
-    offset: String(offset),
-  });
-  const aid = resolveValidAccountFilter(accountId);
-  if (aid && aid !== "all") {
-    params.set("accountId", aid);
-  }
-  return params.toString();
-}
-
-function publicTradesListQuery(symbol, accountId, offset) {
-  const params = new URLSearchParams({
-    limit: String(TRADE_LIST_PAGE_SIZE),
-    offset: String(offset),
-  });
-  const sym = symbol ? normalizeSymbol(symbol) : "";
-  if (sym) {
-    params.set("symbol", sym);
-  }
-  const aid = resolveValidAccountFilter(accountId);
-  if (aid && aid !== "all") {
-    params.set("account_id", aid);
-  }
-  return params.toString();
-}
-
 function resetCommunityPublicTradesPager() {
   communityPublicTradesPager.gen += 1;
   communityPublicTradesPager.offset = 0;
@@ -3129,84 +2965,6 @@ function resetCommunityPublicTradesPager() {
   communityPublicTradesPager.loading = false;
   communityPublicTradesPager.loaded = false;
   communityPublicTradesPager.targetId = "";
-}
-
-async function loadStockRecordTradesPage({ reset = false } = {}) {
-  const symKey = normalizeSymbol(state.activeRecordSymbol);
-  const isPublic = state.stockRecordFromPublicProfile;
-  const publicTargetId = isPublic ? stockRecordPublicTargetId() : "";
-  if (!symKey || !apiReady || (!sessionPhone && !(isPublic && publicTargetId)) || (isPublic && !publicTargetId)) {
-    state.stockRecordTrades = [];
-    state.stockRecordTradesLoading = false;
-    return;
-  }
-  if (state.route !== "stock-record") {
-    return;
-  }
-  ensureStockRecordScrollListener();
-  const aid = resolveValidAccountFilter(state.stockRecordAccountId);
-  if (reset || stockRecordTradesPager.symbol !== symKey || stockRecordTradesPager.accountId !== aid) {
-    resetStockRecordTradesPager();
-    stockRecordTradesPager.symbol = symKey;
-    stockRecordTradesPager.accountId = aid;
-    state.stockRecordTrades = [];
-  }
-  if (stockRecordTradesPager.loading || (!stockRecordTradesPager.hasMore && stockRecordTradesPager.loaded)) {
-    state.stockRecordTradesLoading = stockRecordTradesPager.loading;
-    if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === symKey) {
-      await renderStockRecordPage(symKey);
-    }
-    return;
-  }
-  const gen = stockRecordTradesPager.gen;
-  stockRecordTradesPager.loading = true;
-  state.stockRecordTradesLoading = true;
-  if (stockRecordTradesPager.loaded) {
-    await renderStockRecordPage(symKey);
-  }
-  try {
-    const qs = isPublic
-      ? publicTradesListQuery(symKey, aid, stockRecordTradesPager.offset)
-      : stockRecordTradesListQuery(symKey, aid, stockRecordTradesPager.offset);
-    const url = isPublic
-      ? `${getApiBaseForFetch()}/public/${encodeURIComponent(publicTargetId)}/trades?${qs}`
-      : `${API_BASE}/trades?${qs}`;
-    const res = await apiFetch(url, { cache: "no-store", timeoutMs: 25_000 });
-    const body = await res.json().catch(() => ({}));
-    if (gen !== stockRecordTradesPager.gen || state.route !== "stock-record") {
-      return;
-    }
-    if (!res.ok || body?.ok !== true || !Array.isArray(body.data)) {
-      stockRecordTradesPager.hasMore = false;
-      return;
-    }
-    const rows = body.data.map(normalizeTrade);
-    const seen = new Set(state.stockRecordTrades.map((t) => String(t.id)));
-    for (const row of rows) {
-      const id = String(row.id);
-      if (!seen.has(id)) {
-        state.stockRecordTrades.push(row);
-        seen.add(id);
-      }
-    }
-    const pagination = body.pagination || {};
-    stockRecordTradesPager.offset = Number(pagination.offset ?? stockRecordTradesPager.offset) + rows.length;
-    stockRecordTradesPager.hasMore = pagination.hasMore === true;
-    stockRecordTradesPager.loaded = true;
-  } catch (error) {
-    console.warn("loadStockRecordTradesPage failed", error);
-    if (gen === stockRecordTradesPager.gen) {
-      stockRecordTradesPager.hasMore = false;
-    }
-  } finally {
-    if (gen === stockRecordTradesPager.gen) {
-      stockRecordTradesPager.loading = false;
-      state.stockRecordTradesLoading = false;
-      if (state.route === "stock-record" && normalizeSymbol(state.activeRecordSymbol) === symKey) {
-        await renderStockRecordPage(symKey);
-      }
-    }
-  }
 }
 
 function setStockRecordPageLoading(loading) {
@@ -3404,7 +3162,7 @@ async function refreshStockRecordChartsOnly(symKey) {
     state.stockRecordBundle.charts = partial.charts;
     fitStockRecordChartViewportFromBundle(state.stockRecordBundle);
     syncStockRecordRangeChipUi();
-    drawStockRecordCharts(key, stockRecordTradesForActiveSymbol(key));
+    drawStockRecordCharts(key);
   } catch (error) {
     console.warn("refreshStockRecordChartsOnly failed", error);
   } finally {
@@ -3412,16 +3170,6 @@ async function refreshStockRecordChartsOnly(symKey) {
       setStockRecordChartPointsLoading(false);
     }
   }
-}
-
-function stockRecordTradesForActiveSymbol(symKey) {
-  const key = normalizeSymbol(symKey);
-  const usePub = useCommunityPublicStockRecord();
-  const detail = state.lastPublicProfileDetail;
-  const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
-  return stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
-    (t) => normalizeSymbol(t.symbol) === key,
-  );
 }
 
 function stockRecordChartPointsFromBundle(bundle) {
@@ -3499,27 +3247,14 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     }
     setStockRecordPageLoading(false);
     await renderStockRecordPage(key);
-    await loadStockRecordTradesPage({ reset: true });
-    void loadStockRecordChartTrades(key, bundleAccountId, isPublic, publicTargetId).then(() => {
-      if (
-        pageGen !== stockRecordPageLoadGen ||
-        state.route !== "stock-record" ||
-        normalizeSymbol(state.activeRecordSymbol) !== key
-      ) {
-        return;
-      }
-      void renderStockRecordPage(key);
-    });
-    if (pageGen !== stockRecordPageLoadGen) {
-      return;
-    }
+    void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
     window.setTimeout(() => {
       if (
         pageGen === stockRecordPageLoadGen &&
         state.route === "stock-record" &&
         normalizeSymbol(state.activeRecordSymbol) === key
       ) {
-        void renderStockRecordPage(key);
+        drawStockRecordCharts(key);
       }
     }, 40);
   } catch (error) {
@@ -3531,14 +3266,6 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
       }
     }
   }
-}
-
-function stockRecordTradesForScope(activeAccountId, usePub, detail) {
-  const list = Array.isArray(state.stockRecordTrades) ? state.stockRecordTrades : [];
-  if (activeAccountId === "all") {
-    return list;
-  }
-  return list.filter((t) => String(t.accountId || DEFAULT_ACCOUNT.id) === activeAccountId);
 }
 
 function ledgerListQuery(accountId, offset) {
@@ -3607,42 +3334,6 @@ function ensureTradeListScrollListener() {
     },
     { passive: true },
   );
-}
-
-function ensureStockRecordScrollListener() {
-  if (stockRecordScrollListenerBound) {
-    return;
-  }
-  const root = getStockRecordScrollRoot();
-  if (!root) {
-    return;
-  }
-  stockRecordScrollListenerBound = true;
-  root.addEventListener(
-    "scroll",
-    () => {
-      if (state.route === "stock-record") {
-        void maybeLoadMoreStockRecordTradesPage();
-      }
-    },
-    { passive: true },
-  );
-}
-
-async function maybeLoadMoreStockRecordTradesPage() {
-  if (
-    state.route !== "stock-record" ||
-    state.stockRecordPageLoading ||
-    !stockRecordTradesPager.hasMore ||
-    stockRecordTradesPager.loading
-  ) {
-    return;
-  }
-  const scrollRoot = getStockRecordScrollRoot();
-  if (!isNearScrollContainerBottom(scrollRoot)) {
-    return;
-  }
-  await loadStockRecordTradesPage();
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -4403,7 +4094,6 @@ function bindEvents() {
   stockRecordAccountSelect?.addEventListener("change", () => {
     state.stockRecordAccountId = resolveValidAccountFilter(stockRecordAccountSelect.value);
     persistState();
-    resetStockRecordTradesPager();
     if (state.route === "stock-record" && state.activeRecordSymbol) {
       void refreshStockRecordPageData(state.activeRecordSymbol, state.stockRecordAccountId);
     }
@@ -4413,14 +4103,7 @@ function bindEvents() {
     state.stockRecordShowShares = stockRecordToggleShares?.checked !== false;
     state.stockRecordShowMarketValue = stockRecordToggleMarketValue?.checked === true;
     if (state.route === "stock-record" && state.activeRecordSymbol) {
-      const sym = normalizeSymbol(state.activeRecordSymbol);
-      const detail = state.lastPublicProfileDetail;
-      const usePub = useCommunityPublicStockRecord();
-      const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
-      const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
-        (item) => normalizeSymbol(item.symbol) === sym,
-      );
-      drawStockRecordCharts(sym, scopeTrades);
+      drawStockRecordCharts(normalizeSymbol(state.activeRecordSymbol));
     }
   };
   stockRecordToggleClose?.addEventListener("change", stockRecordToggleHandler);
@@ -4755,18 +4438,12 @@ function bindEvents() {
     }
     if (editingTradeId) {
       state.trades = state.trades.filter((item) => item.id !== editingTradeId);
-      state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== editingTradeId);
     }
     state.trades.push(savedTrade);
     state.trades.sort(sortTradeAsc);
     const symKey = normalizeSymbol(savedTrade.symbol);
-    if (symKey && normalizeSymbol(state.activeRecordSymbol) === symKey) {
-      const recIdx = state.stockRecordTrades.findIndex((item) => item.id === savedTrade.id);
-      if (recIdx >= 0) {
-        state.stockRecordTrades[recIdx] = savedTrade;
-      } else if (state.route === "stock-record") {
-        void loadStockRecordTradesPage({ reset: true });
-      }
+    if (symKey && normalizeSymbol(state.activeRecordSymbol) === symKey && state.route === "stock-record") {
+      void refreshStockRecordPageData(symKey, state.stockRecordAccountId);
     }
     persistState();
     clearEditState();
@@ -6547,7 +6224,7 @@ function getDynamicsListState(key) {
     dynamicsListStore.set(key, {
       key,
       items: [],
-      cursor: null,
+      page: 0,
       hasMore: true,
       loading: false,
       apiPath: "",
@@ -6784,7 +6461,7 @@ async function refreshAfterLedgerMutation(payload = {}) {
 function resetDynamicsListState(key) {
   const st = getDynamicsListState(key);
   st.items = [];
-  st.cursor = null;
+  st.page = 0;
   st.hasMore = true;
   st.loading = false;
 }
@@ -7041,7 +6718,7 @@ async function loadDynamicsListPage({
     if (entry?.fullPayload && !PageCache.isPageStale(entry, pageKind, meta)) {
       const payload = entry.fullPayload;
       st.items = Array.isArray(payload.items) ? [...payload.items] : [];
-      st.cursor = payload.cursor ?? null;
+      st.page = Number(payload.page) || 0;
       st.hasMore = payload.hasMore === true;
       st.loading = false;
       renderDynamicsListContainer(container, st, { editable });
@@ -7054,11 +6731,9 @@ async function loadDynamicsListPage({
   }
   st.loading = true;
   renderDynamicsListContainer(container, st, { editable });
+  const nextPage = reset || !st.page ? 1 : st.page + 1;
   try {
-    const qs = new URLSearchParams({ limit: "10" });
-    if (st.cursor) {
-      qs.set("cursor", st.cursor);
-    }
+    const qs = new URLSearchParams({ limit: "10", page: String(nextPage) });
     const apiBase = String(apiPath || "");
     const qIdx = apiBase.indexOf("?");
     const pathOnly = qIdx >= 0 ? apiBase.slice(0, qIdx) : apiBase;
@@ -7085,16 +6760,16 @@ async function loadDynamicsListPage({
       }
     }
     const pagination = j.pagination || {};
-    st.cursor = pagination.cursor || null;
+    st.page = Number(pagination.page) || nextPage;
     st.hasMore = pagination.hasMore === true;
-    if (reset && pageCacheEnabled(pubTid) && !qs.get("cursor")) {
+    if (reset && pageCacheEnabled(pubTid) && nextPage === 1) {
       const meta = await ensurePageCacheMetaForScope(pubTid);
       const pageKind = key === "community-feed" ? "communityFeed" : "dynamicsPortfolio";
       await PageCache.writeEntry({
         cacheKey: PageCache.dynamicsListCacheKey(cacheOwner, key),
         fullPayload: {
           items: st.items.map((item) => ({ ...item })),
-          cursor: st.cursor,
+          page: st.page,
           hasMore: st.hasMore,
         },
         epochs: { ...meta },
@@ -7335,9 +7010,14 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
   }
   const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
   const listKey = `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}:${filter}`;
-  const surfaceKey = `${listKey}|${sym}|${usePub ? "1" : "0"}`;
-  const shouldReset = reset || stockDynamicsSurfaceKey !== surfaceKey;
-  stockDynamicsSurfaceKey = surfaceKey;
+  const surfaceKey = `${listKey}|${sym}|${usePub ? "1" : "0"}|${reset ? "reset" : "more"}`;
+  if (stockDynamicsLoadInFlight && stockDynamicsLoadKey === surfaceKey) {
+    return;
+  }
+  stockDynamicsLoadKey = surfaceKey;
+  stockDynamicsLoadInFlight = true;
+  const shouldReset = reset || stockDynamicsSurfaceKey !== `${listKey}|${sym}|${usePub ? "1" : "0"}`;
+  stockDynamicsSurfaceKey = `${listKey}|${sym}|${usePub ? "1" : "0"}`;
   let apiPath = `/dynamics/stock/${encodeURIComponent(sym)}`;
   if (usePub && detail?.userId) {
     apiPath = `/public/${encodeURIComponent(detail.userId)}/dynamics/stock/${encodeURIComponent(sym)}`;
@@ -7347,15 +7027,19 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
     qs.set("filter", filter);
   }
   const apiPathWithQuery = qs.toString() ? `${apiPath}?${qs}` : apiPath;
-  await loadDynamicsListPage({
-    key: listKey,
-    container,
-    apiPath: apiPathWithQuery,
-    reset: shouldReset,
-    editable: !usePub,
-    emptyText: "暂无个股动态",
-    publicTargetId: usePub && detail?.userId ? String(detail.userId).trim() : "",
-  });
+  try {
+    await loadDynamicsListPage({
+      key: listKey,
+      container,
+      apiPath: apiPathWithQuery,
+      reset: shouldReset,
+      editable: !usePub,
+      emptyText: "暂无个股动态",
+      publicTargetId: usePub && detail?.userId ? String(detail.userId).trim() : "",
+    });
+  } finally {
+    stockDynamicsLoadInFlight = false;
+  }
 }
 
 let publishDynamicsState = {
@@ -10448,17 +10132,13 @@ function renderTradeTable() {
   tradeTableBody.innerHTML = html;
 }
 
-/** 交易记录页分页在 state.trades；个股记录在 state.stockRecordTrades */
+/** 交易记录页分页在 state.trades */
 function findTradeById(tradeId) {
   const id = String(tradeId || "");
   if (!id) {
     return null;
   }
-  return (
-    state.trades.find((item) => String(item.id) === id) ||
-    state.stockRecordTrades.find((item) => String(item.id) === id) ||
-    null
-  );
+  return state.trades.find((item) => String(item.id) === id) || null;
 }
 
 async function fetchTradeForEdit(tradeId, symbolHint) {
@@ -10726,7 +10406,6 @@ async function removeTradeById(tradeId, opts = {}) {
   }
   state.trades = state.trades.filter((item) => item.id !== tradeId);
   bumpLedgerCount("trades", -1);
-  state.stockRecordTrades = state.stockRecordTrades.filter((item) => item.id !== tradeId);
   if (state.trades.length === 0) {
     if (sessionPhone) {
       state.useDemoData = false;
@@ -11841,10 +11520,7 @@ async function openNewTradeDialogPrefilledForSymbol(rawSymbol, opts = {}) {
   if (!symKey) {
     return;
   }
-  const tradeSource =
-    state.route === "stock-record" && Array.isArray(state.stockRecordTrades) && state.stockRecordTrades.length
-      ? state.stockRecordTrades
-      : state.trades;
+  const tradeSource = state.trades;
   const bundle = state.stockRecordBundle;
   const headlineName = bundle?.headline?.name;
   const trade = tradeSource.find((t) => normalizeSymbol(t.symbol) === symKey);
@@ -11908,9 +11584,6 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.previousRoute = state.route;
   state.stockRecordChartRange = "30";
   state.stockRecordBundle = null;
-  state.stockRecordTrades = [];
-  resetStockRecordTradesPager();
-  state.stockRecordTradesLoading = true;
 
   state.route = "stock-record";
   renderRoute();
@@ -11936,10 +11609,6 @@ async function renderStockRecordPage(symbol) {
   if (!usePub && activeAccountId !== state.stockRecordAccountId) {
     state.stockRecordAccountId = activeAccountId;
   }
-  const scopeTrades = stockRecordTradesForScope(activeAccountId, usePub, detail).filter(
-    (item) => normalizeSymbol(item.symbol) === symKey,
-  );
-  const symbolTrades = [...scopeTrades].sort(sortTradeDesc);
   const bundle = state.stockRecordBundle;
   const headline = bundle?.headline || stockRecordHeadlineFromLocalQuote(symbol);
   const positionName = headline?.name || "-";
@@ -11980,9 +11649,7 @@ async function renderStockRecordPage(symbol) {
   }
   syncStockRecordRangeChipUi();
 
-  void loadStockRecordDynamics(symbol, usePub, detail);
-
-  drawStockRecordCharts(symbol, symbolTrades);
+  drawStockRecordCharts(symKey);
 }
 
 async function ensureSymbolData(symbol) {
@@ -12010,13 +11677,11 @@ async function ensureSymbolData(symbol) {
   if (!supportsKline(symbol)) {
     return;
   }
-  const sourceTrades = state.stockRecordTrades;
-  const latestTradeDate = sourceTrades
-    .filter((trade) => normalizeSymbol(trade?.symbol) === normalizedSymbol)
-    .reduce((acc, trade) => {
-      const d = String(trade?.date || "").slice(0, 10);
-      return d && (!acc || d > acc) ? d : acc;
-    }, "");
+  const bundlePoints = stockRecordChartPointsFromBundle(state.stockRecordBundle);
+  const latestTradeDate = bundlePoints.reduce((acc, row) => {
+    const d = String(row?.date || "").slice(0, 10);
+    return d && (!acc || d > acc) ? d : acc;
+  }, "");
 
   try {
     const currentList = getKlineBySymbol(symbol);
@@ -12120,15 +11785,12 @@ function drawStockRecordChartsEmptyHint(message) {
   }
 }
 
-function drawStockRecordCharts(symbol, symbolTrades) {
+function drawStockRecordCharts(symbol) {
   const bundlePoints = stockRecordChartPointsFromBundle(state.stockRecordBundle);
-  const usePub = useCommunityPublicStockRecord();
-  const activeAccountId = usePub ? "all" : resolveValidAccountFilter(state.stockRecordAccountId);
-  const chartTrades = getStockRecordChartTrades(symbol, activeAccountId, usePub, symbolTrades);
-  drawStockRecordChartsFromBundle(symbol, chartTrades, bundlePoints);
+  drawStockRecordChartsFromBundle(symbol, bundlePoints);
 }
 
-function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
+function drawStockRecordChartsFromBundle(symbol, points) {
   const canvas = stockRecordChart;
   const profitCanvas = stockRecordProfitChart;
   const weightCanvas = stockRecordWeightChart;
@@ -12136,15 +11798,15 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     return;
   }
   const isPubChart = useCommunityPublicStockRecord();
-  const tradesByDate = buildStockRecordTradesByDate(symbolTrades);
+  const tradesByDate = stockRecordTradesByDateFromBundle(state.stockRecordBundle);
+  const hasChartTrades = stockRecordHasChartTrades(state.stockRecordBundle);
   const fmtShares = (value) => formatNumber(value, isPubChart ? 4 : 0);
   const fmtMarket = (value) => formatNumber(value, isPubChart ? 4 : 2);
   const fmtClose = (value) => formatNumber(value, 3);
   const fmtProfit = (value) => (isPubChart ? formatNumber(value, 4) : formatSignedMoney(value, 2));
   const { visible, totalCount } = stockRecordVisibleSlice(points);
   if (!visible.length) {
-    const showNoTrades =
-      state.stockRecordBundle?.charts?.noTrades === true || !symbolTrades.length;
+    const showNoTrades = state.stockRecordBundle?.charts?.noTrades === true || !hasChartTrades;
     if (showNoTrades) {
       drawStockRecordChartsEmptyHint("无历史交易");
     } else {
@@ -12255,8 +11917,8 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
   });
   bindInteractiveChart(canvas, stockRecordTooltip, () => payload, {
     mode: "stock",
-    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
-    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+    onRefresh: () => drawStockRecordCharts(symbol),
+    onRedraw: () => drawStockRecordCharts(symbol),
     chartNavTotal: () => totalCount,
     tooltipExtraHtml: (date) =>
       formatStockRecordTradeTooltipExtra(date, tradesByDate, {
@@ -12320,8 +11982,8 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
     drawCrosshairOverlay(pctx, profitPayload, profitCanvas.id, fmtProfit);
     bindInteractiveChart(profitCanvas, stockRecordProfitTooltip, () => profitPayload, {
       mode: "stock-profit",
-      onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
-      onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+      onRefresh: () => drawStockRecordCharts(symbol),
+      onRedraw: () => drawStockRecordCharts(symbol),
       chartNavTotal: () => totalCount,
       valueFormatter: fmtProfit,
     });
@@ -12371,8 +12033,8 @@ function drawStockRecordChartsFromBundle(symbol, symbolTrades, points) {
   drawCrosshairOverlay(wctx, weightPayload, weightCanvas.id, (value) => `${formatNumber(value, 2)}%`);
   bindInteractiveChart(weightCanvas, stockRecordWeightTooltip, () => weightPayload, {
     mode: "stock-weight",
-    onRefresh: () => drawStockRecordCharts(symbol, symbolTrades),
-    onRedraw: () => drawStockRecordCharts(symbol, symbolTrades),
+    onRefresh: () => drawStockRecordCharts(symbol),
+    onRedraw: () => drawStockRecordCharts(symbol),
     chartNavTotal: () => totalCount,
     valueFormatter: (value) => `${formatNumber(value, 2)}%`,
   });

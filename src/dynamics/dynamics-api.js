@@ -25,7 +25,8 @@ function parseLimit(raw) {
 
 async function handleListDynamicsFeed(req, userId, scene, options = {}) {
   const limit = parseLimit(req.query?.limit);
-  const cursor = req.query?.cursor != null ? String(req.query.cursor) : "";
+  const page = req.query?.page != null ? String(req.query.page) : "";
+  const cursor = page ? "" : req.query?.cursor != null ? String(req.query.cursor) : "";
   const filter = req.query?.filter != null ? String(req.query.filter) : options.filter || "";
   return listDynamicsFeed({
     viewerId: userId,
@@ -33,6 +34,7 @@ async function handleListDynamicsFeed(req, userId, scene, options = {}) {
     scene,
     symbol: options.symbol || "",
     limit,
+    page: page || undefined,
     cursor,
     filter,
   });
