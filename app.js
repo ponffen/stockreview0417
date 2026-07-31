@@ -3299,41 +3299,60 @@ function isNearScrollContainerBottom(el, thresholdPx = 140) {
   return el.scrollTop + el.clientHeight >= el.scrollHeight - thresholdPx;
 }
 
+/** 个股记录页在固定层内滚动，其它动态列表跟 document 滚动。 */
+function isNearDynamicsScrollBottom(thresholdPx = 140) {
+  if (state.route === "stock-record") {
+    const root = getStockRecordScrollRoot();
+    if (root?.classList?.contains("active")) {
+      return isNearScrollContainerBottom(root, thresholdPx);
+    }
+  }
+  return isNearDocumentBottom(thresholdPx);
+}
+
+function stockRecordDynamicsListKey() {
+  if (!state.activeRecordSymbol) {
+    return "";
+  }
+  const usePub = useCommunityPublicStockRecord();
+  const detail = state.lastPublicProfileDetail;
+  const sym = normalizeSymbol(state.activeRecordSymbol);
+  const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
+  return `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}:${filter}`;
+}
+
+function onAppScrollForInfiniteLoad() {
+  if (state.route === "trade-records") {
+    void maybeLoadMoreTradeListPage();
+  } else if (state.route === "trade-cash") {
+    void maybeLoadMoreCashListPage();
+  } else if (state.route === "community-feed") {
+    if (!isGuest()) {
+      maybeLoadMoreDynamicsList("community-feed", communityFeedList);
+    }
+  } else if (state.route === "dynamics") {
+    maybeLoadMoreDynamicsList("portfolio-dynamics", portfolioDynamicsList);
+  } else if (state.route === "community-profile" && state.communityProfileTab === "dynamics") {
+    const uid = state.communityProfileUserId || "";
+    const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
+    maybeLoadMoreDynamicsList(`profile-dynamics:${uid}`, container);
+  } else if (state.route === "stock-record" && state.activeRecordSymbol) {
+    const key = stockRecordDynamicsListKey();
+    if (key) {
+      maybeLoadMoreDynamicsList(key, stockRecordDynamicsList);
+    }
+  } else if (state.route === "community-profile" && state.communityProfileTab === "trade") {
+    void maybeLoadMoreCommunityPublicTradesPage();
+  }
+}
+
 function ensureTradeListScrollListener() {
   if (tradeListScrollListenerBound) {
     return;
   }
   tradeListScrollListenerBound = true;
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (state.route === "trade-records") {
-        void maybeLoadMoreTradeListPage();
-      } else if (state.route === "trade-cash") {
-        void maybeLoadMoreCashListPage();
-      } else if (state.route === "community-feed") {
-        if (!isGuest()) {
-          maybeLoadMoreDynamicsList("community-feed", communityFeedList);
-        }
-      } else if (state.route === "dynamics") {
-        maybeLoadMoreDynamicsList("portfolio-dynamics", portfolioDynamicsList);
-      } else if (state.route === "community-profile" && state.communityProfileTab === "dynamics") {
-        const uid = state.communityProfileUserId || "";
-        const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
-        maybeLoadMoreDynamicsList(`profile-dynamics:${uid}`, container);
-      } else if (state.route === "stock-record" && state.activeRecordSymbol) {
-        const usePub = useCommunityPublicStockRecord();
-        const detail = state.lastPublicProfileDetail;
-        const sym = normalizeSymbol(state.activeRecordSymbol);
-        const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
-        const key = `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}:${filter}`;
-        maybeLoadMoreDynamicsList(key, stockRecordDynamicsList);
-      } else if (state.route === "community-profile" && state.communityProfileTab === "trade") {
-        void maybeLoadMoreCommunityPublicTradesPage();
-      }
-    },
-    { passive: true },
-  );
+  window.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
+  getStockRecordScrollRoot()?.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -6520,9 +6539,11 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
     return;
   }
   const gap = '<div class="dynamics-list-gap" aria-hidden="true"></div>';
+  const loadingMore = state.loading
+    ? `<p class="empty dynamics-list-loading-more" aria-busy="true">加载中…</p>`
+    : "";
   container.innerHTML =
-    state.items.map((card) => dynamicsCardHtml(card, { editable })).join(gap) +
-    (state.loading ? `<p class="empty">加载中…</p>` : "");
+    state.items.map((card) => dynamicsCardHtml(card, { editable })).join(gap) + loadingMore;
   syncDynamicsCardBodyCollapse(container);
 }
 
@@ -6784,12 +6805,13 @@ async function loadDynamicsListPage({
   } finally {
     st.loading = false;
     renderDynamicsListContainer(container, st, { editable });
+    maybeLoadMoreDynamicsListAfterRender(key, container);
   }
 }
 
 function maybeLoadMoreDynamicsList(key, container) {
   const st = getDynamicsListState(key);
-  if (!st.hasMore || st.loading || !isNearDocumentBottom()) {
+  if (!st.hasMore || st.loading || !isNearDynamicsScrollBottom()) {
     return;
   }
   void loadDynamicsListPage({
@@ -6797,6 +6819,19 @@ function maybeLoadMoreDynamicsList(key, container) {
     container,
     apiPath: st.apiPath,
     editable: st.editable,
+  });
+}
+
+function maybeLoadMoreDynamicsListAfterRender(key, container) {
+  if (!container || state.route !== "stock-record" || container !== stockRecordDynamicsList) {
+    return;
+  }
+  const st = getDynamicsListState(key);
+  if (!st.hasMore || st.loading) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    maybeLoadMoreDynamicsList(key, container);
   });
 }
 
@@ -6865,10 +6900,7 @@ function handleDynamicsListClick(event, { editable = false } = {}) {
   const kind = cardEl.getAttribute("data-dynamics-card");
   let storeKey = "portfolio-dynamics";
   if (state.route === "stock-record" && state.activeRecordSymbol) {
-    const usePub = useCommunityPublicStockRecord();
-    const sym = normalizeSymbol(state.activeRecordSymbol);
-    const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
-    storeKey = `stock-dynamics:${usePub ? state.lastPublicProfileDetail?.userId || "pub" : "self"}:${sym}:${filter}`;
+    storeKey = stockRecordDynamicsListKey() || storeKey;
   }
   const st = getDynamicsListState(storeKey);
   const card = st.items.find((item) => item.id === id && item.cardKind === kind);
@@ -7009,7 +7041,10 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
     return;
   }
   const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
-  const listKey = `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}:${filter}`;
+  const listKey = stockRecordDynamicsListKey();
+  if (!listKey) {
+    return;
+  }
   const surfaceKey = `${listKey}|${sym}|${usePub ? "1" : "0"}|${reset ? "reset" : "more"}`;
   if (stockDynamicsLoadInFlight && stockDynamicsLoadKey === surfaceKey) {
     return;
