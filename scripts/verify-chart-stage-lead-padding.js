@@ -40,7 +40,7 @@ const series = padAnalysisSeriesBundle(
     principal: [{ date: "2026-03-03", principal: "900.00" }],
   },
   "2026-01-01",
-  { scope: "all", bookCurrency: "CNY", fxUsdCny: 7.2, fxHkdCny: 0.92 },
+  { scope: "all", bookCurrency: "CNY", fxUsdCny: 6.5, fxHkdCny: 0.88 },
 );
 assert(series.stageProfit[0].date === "2026-01-01", "profit lead date");
 assert(series.stageProfit[0].profit === "0.00", `profit zero ${series.stageProfit[0].profit}`);

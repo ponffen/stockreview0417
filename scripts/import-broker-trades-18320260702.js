@@ -17,12 +17,11 @@ const {
   initPool,
   upsertSymbolNameMapBatch,
 } = require("../src/db");
-const { fetchSinaForexDayKSeries } = require("./lib/market-fetch");
 const { previousSessionDate } = require("../src/metrics/freeze-calendar");
+const { loadFxCloseMapsFromDb, backwardThenForwardFillFxMap } = require("../src/metrics/fx-maps");
 
 const PHONE = "18320260702";
 const ACCOUNT_ID = "default";
-const FX_FALLBACK = { USD: 7.2, HKD: 0.92 };
 
 /** Manual overrides where symbol_name_map is ambiguous or missing */
 const MANUAL_NAME_MAP = {
@@ -132,7 +131,18 @@ function getFxRateForDate(currency, dateKey, fxByDate) {
   for (let i = keys.length - 1; i >= 0; i -= 1) {
     if (keys[i] <= dk && series[keys[i]] > 0) return series[keys[i]];
   }
-  return FX_FALLBACK[currency] || 1;
+  return 0;
+}
+
+async function loadFxByDateFromDb(dateKeys) {
+  const sorted = [...new Set((dateKeys || []).map((d) => String(d || "").slice(0, 10)).filter(Boolean))].sort();
+  if (!sorted.length) {
+    return { USD: {}, HKD: {} };
+  }
+  const { fxUsdMap, fxHkdMap } = await loadFxCloseMapsFromDb(sorted[0], sorted[sorted.length - 1]);
+  backwardThenForwardFillFxMap(fxUsdMap, sorted);
+  backwardThenForwardFillFxMap(fxHkdMap, sorted);
+  return { USD: fxUsdMap, HKD: fxHkdMap };
 }
 
 function parseTsv(filePath) {
@@ -306,19 +316,17 @@ async function main() {
   }
   console.log(`Parsed ${rows.length} rows from TSV`);
 
-  console.log("Fetching FX rates (USD/HKD)...");
-  let usdSeries = {};
-  let hkdSeries = {};
+  console.log("Loading FX rates from symbol_daily_close...");
+  const tradeDates = [...new Set(rows.map((r) => String(r["日期"] || "").slice(0, 10)).filter(Boolean))].sort();
+  let fxByDate = { USD: {}, HKD: {} };
   try {
-    [usdSeries, hkdSeries] = await Promise.all([
-      fetchSinaForexDayKSeries("USD"),
-      fetchSinaForexDayKSeries("HKD"),
-    ]);
-    console.log(`FX loaded: USD ${Object.keys(usdSeries).length} days, HKD ${Object.keys(hkdSeries).length} days`);
+    fxByDate = await loadFxByDateFromDb(tradeDates);
+    console.log(
+      `FX loaded from DB: USD ${Object.keys(fxByDate.USD).length} days, HKD ${Object.keys(fxByDate.HKD).length} days`,
+    );
   } catch (e) {
-    console.warn(`FX fetch failed (${e.message}); using fallback USD=${FX_FALLBACK.USD}, HKD=${FX_FALLBACK.HKD}`);
+    console.warn(`FX DB load failed (${e.message}); foreign amounts may be zero without rates`);
   }
-  const fxByDate = { USD: usdSeries, HKD: hkdSeries };
 
   const { trades, cashTransfers } = await buildPayload(rows, nameMap, fxByDate, { incremental });
 
