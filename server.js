@@ -794,7 +794,7 @@ const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
 const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
-const { resolveFxRatesCny, loadFxCloseSeriesByDate } = require("./src/metrics/fx-maps");
+const { resolveFxRatesCny } = require("./src/metrics/fx-maps");
 const {
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
@@ -1617,21 +1617,6 @@ app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/metrics/fx-close-range", requireAuth, async (req, res) => {
-  try {
-    const from = String(req.query.from || "").slice(0, 10);
-    const to = String(req.query.to || liveDateKeyShanghai()).slice(0, 10);
-    if (!from) {
-      res.status(400).json({ ok: false, error: "missing from" });
-      return;
-    }
-    const ratesByDate = await loadFxCloseSeriesByDate(from, to);
-    sendMetricsJson(res, { from, to, ratesByDate });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "fx-close-range failed" });
-  }
-});
-
 async function handlePublicAnalysisBundle(req, res) {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
@@ -2202,40 +2187,6 @@ app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
     res.json({ ok: true, ...payload });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "snapshot symbol close failed" });
-  }
-});
-
-app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
-  try {
-    const todayKey = liveDateKeyShanghai();
-    const fxReq = await fetchTencentForexMap();
-    const fxSpot = {};
-    if (fxReq.ok) {
-      if (fxReq.rates?.USD > 0) {
-        fxSpot.USD = fxReq.rates.USD;
-      }
-      if (fxReq.rates?.HKD > 0) {
-        fxSpot.HKD = fxReq.rates.HKD;
-      }
-      if (fxReq.delayed) {
-        setDelayedHeaders(res, fxReq.source || "cache");
-      }
-    }
-    const resolved = await resolveFxRatesCny({
-      dateKey: todayKey,
-      preferLiveSpot: true,
-      liveSpot: fxSpot,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      ok: true,
-      fxSpot: { USD: resolved.USD, HKD: resolved.HKD },
-      quoteTime: fxReq.ok ? fxReq.quoteTime : null,
-      delayed: !!fxReq.delayed,
-      delaySource: fxReq.ok ? fxReq.source || "" : "symbol_daily_close",
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error?.message || "realtime fx failed" });
   }
 });
 
