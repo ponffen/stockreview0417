@@ -3341,61 +3341,133 @@ function onAppScrollForInfiniteLoad() {
   }
 }
 
-/** 个股动态：仅用户滚轮/触摸滑动后才允许拉下一页，避免 DOM 更新触发的 scroll 连发 */
-let stockDynamicsUserScrollSeq = 0;
-let stockDynamicsLoadedAtScrollSeq = -1;
-let stockDynamicsGestureBound = false;
+/** 个股动态分页：IntersectionObserver + 加载后须滚离哨兵再允许下一页 */
+let stockDynamicsIo = null;
+let stockDynamicsIoKey = "";
+let stockDynamicsAwaitingLeave = false;
+let stockDynamicsAwaitScrollHandler = null;
 
 function resetStockDynamicsScrollState() {
-  stockDynamicsUserScrollSeq = 0;
-  stockDynamicsLoadedAtScrollSeq = -1;
-}
-
-function bumpStockDynamicsUserScrollSeq() {
-  stockDynamicsUserScrollSeq += 1;
-}
-
-function ensureStockRecordDynamicsGestureListener() {
-  if (stockDynamicsGestureBound) {
-    return;
-  }
+  stockDynamicsAwaitingLeave = false;
+  teardownStockRecordDynamicsObserver();
   const root = getStockRecordScrollRoot();
-  if (!root) {
-    return;
+  if (root && stockDynamicsAwaitScrollHandler) {
+    root.removeEventListener("scroll", stockDynamicsAwaitScrollHandler);
+    stockDynamicsAwaitScrollHandler = null;
   }
-  stockDynamicsGestureBound = true;
-  root.addEventListener("wheel", bumpStockDynamicsUserScrollSeq, { passive: true });
-  root.addEventListener("touchmove", bumpStockDynamicsUserScrollSeq, { passive: true });
 }
 
-function onStockRecordScrollForDynamics() {
-  if (state.route !== "stock-record" || !state.activeRecordSymbol) {
+function teardownStockRecordDynamicsObserver() {
+  if (stockDynamicsIo) {
+    stockDynamicsIo.disconnect();
+    stockDynamicsIo = null;
+  }
+  stockDynamicsIoKey = "";
+}
+
+function isSentinelVisibleInRoot(sentinel, root) {
+  if (!sentinel || !root) {
+    return false;
+  }
+  const rr = root.getBoundingClientRect();
+  const sr = sentinel.getBoundingClientRect();
+  return sr.top < rr.bottom - 2 && sr.bottom > rr.top + 2;
+}
+
+function waitForStockDynamicsSentinelLeave(listKey) {
+  const root = getStockRecordScrollRoot();
+  const sentinel = stockRecordDynamicsList?.querySelector("[data-dynamics-load-sentinel]");
+  if (!root || !sentinel) {
+    stockDynamicsAwaitingLeave = false;
+    syncStockRecordDynamicsObserver(listKey);
     return;
   }
-  const key = stockRecordDynamicsListKey();
-  const root = getStockRecordScrollRoot();
+  if (!isSentinelVisibleInRoot(sentinel, root)) {
+    stockDynamicsAwaitingLeave = false;
+    syncStockRecordDynamicsObserver(listKey);
+    return;
+  }
+  if (stockDynamicsAwaitScrollHandler) {
+    return;
+  }
+  stockDynamicsAwaitingLeave = true;
+  stockDynamicsAwaitScrollHandler = () => {
+    const s = stockRecordDynamicsList?.querySelector("[data-dynamics-load-sentinel]");
+    if (!s || !isSentinelVisibleInRoot(s, root)) {
+      root.removeEventListener("scroll", stockDynamicsAwaitScrollHandler);
+      stockDynamicsAwaitScrollHandler = null;
+      stockDynamicsAwaitingLeave = false;
+      if (state.route === "stock-record" && stockRecordDynamicsListKey() === listKey) {
+        syncStockRecordDynamicsObserver(listKey);
+      }
+    }
+  };
+  root.addEventListener("scroll", stockDynamicsAwaitScrollHandler, { passive: true });
+}
+
+function syncStockRecordDynamicsObserver(listKey) {
   const container = stockRecordDynamicsList;
-  if (!key || !root || !container) {
+  const root = getStockRecordScrollRoot();
+  const sentinel = container?.querySelector("[data-dynamics-load-sentinel]");
+  const st = getDynamicsListState(listKey);
+  if (
+    state.route !== "stock-record" ||
+    !container ||
+    !root ||
+    !sentinel ||
+    !st.hasMore ||
+    st.loading ||
+    stockDynamicsAwaitingLeave
+  ) {
+    if (!st?.hasMore || state.route !== "stock-record") {
+      teardownStockRecordDynamicsObserver();
+    }
     return;
   }
-  const st = getDynamicsListState(key);
-  if (!st.hasMore || st.loading || !isNearScrollContainerBottom(root)) {
+  if (isSentinelVisibleInRoot(sentinel, root)) {
+    teardownStockRecordDynamicsObserver();
+    waitForStockDynamicsSentinelLeave(listKey);
     return;
   }
-  if (stockDynamicsLoadedAtScrollSeq === stockDynamicsUserScrollSeq) {
+  if (stockDynamicsIo && stockDynamicsIoKey === listKey) {
     return;
   }
-  stockDynamicsLoadedAtScrollSeq = stockDynamicsUserScrollSeq;
-  void loadDynamicsListPage({
-    key,
-    container,
-    apiPath: st.apiPath,
-    editable: st.editable,
-  });
+  teardownStockRecordDynamicsObserver();
+  stockDynamicsIoKey = listKey;
+  stockDynamicsIo = new IntersectionObserver(
+    (entries) => {
+      const entry = entries[0];
+      if (!entry?.isIntersecting || stockDynamicsAwaitingLeave) {
+        return;
+      }
+      const cur = getDynamicsListState(listKey);
+      if (!cur.hasMore || cur.loading) {
+        return;
+      }
+      stockDynamicsIo?.unobserve(sentinel);
+      stockDynamicsAwaitingLeave = true;
+      void loadDynamicsListPage({
+        key: listKey,
+        container,
+        apiPath: cur.apiPath,
+        editable: cur.editable,
+        stockRecordPagination: true,
+      });
+    },
+    { root, rootMargin: "0px", threshold: 0 },
+  );
+  stockDynamicsIo.observe(sentinel);
 }
 
-function onStockRecordScroll() {
-  onStockRecordScrollForDynamics();
+function scheduleStockRecordDynamicsObserver(listKey) {
+  if (!listKey || state.route !== "stock-record") {
+    return;
+  }
+  requestAnimationFrame(() => {
+    if (state.route === "stock-record" && stockRecordDynamicsListKey() === listKey) {
+      syncStockRecordDynamicsObserver(listKey);
+    }
+  });
 }
 
 function ensureTradeListScrollListener() {
@@ -3403,9 +3475,7 @@ function ensureTradeListScrollListener() {
     return;
   }
   tradeListScrollListenerBound = true;
-  ensureStockRecordDynamicsGestureListener();
   window.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
-  getStockRecordScrollRoot()?.addEventListener("scroll", onStockRecordScroll, { passive: true });
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -6598,8 +6668,14 @@ function renderDynamicsListContainer(container, state, { editable = false } = {}
   const loadingMore = state.loading
     ? `<p class="empty dynamics-list-loading-more" aria-busy="true">加载中…</p>`
     : "";
+  const loadSentinel =
+    container === stockRecordDynamicsList && state.hasMore && !state.loading
+      ? `<div class="dynamics-list-load-sentinel" data-dynamics-load-sentinel aria-hidden="true"></div>`
+      : "";
   container.innerHTML =
-    state.items.map((card) => dynamicsCardHtml(card, { editable })).join(gap) + loadingMore;
+    state.items.map((card) => dynamicsCardHtml(card, { editable })).join(gap) +
+    loadingMore +
+    loadSentinel;
   syncDynamicsCardBodyCollapse(container);
 }
 
@@ -6767,6 +6843,7 @@ async function loadDynamicsListPage({
   editable = false,
   emptyText,
   publicTargetId = "",
+  stockRecordPagination = false,
 }) {
   ensureTradeListScrollListener();
   const pubTid = String(publicTargetId || "").trim();
@@ -6799,6 +6876,9 @@ async function loadDynamicsListPage({
       st.hasMore = payload.hasMore === true;
       st.loading = false;
       renderDynamicsListContainer(container, st, { editable });
+      if (container === stockRecordDynamicsList && state.route === "stock-record") {
+        scheduleStockRecordDynamicsObserver(key);
+      }
       return;
     }
   }
@@ -6858,9 +6938,19 @@ async function loadDynamicsListPage({
       container.innerHTML = `<p class="empty">网络错误</p>`;
     }
     st.hasMore = false;
+    if (container === stockRecordDynamicsList) {
+      stockDynamicsAwaitingLeave = false;
+    }
   } finally {
     st.loading = false;
     renderDynamicsListContainer(container, st, { editable });
+    if (container === stockRecordDynamicsList && state.route === "stock-record") {
+      if (stockRecordPagination) {
+        waitForStockDynamicsSentinelLeave(key);
+      } else {
+        scheduleStockRecordDynamicsObserver(key);
+      }
+    }
   }
 }
 

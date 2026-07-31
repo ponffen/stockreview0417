@@ -4396,6 +4396,20 @@ body.subscription-expired-mode {
   flex-shrink: 0;
 }
 
+.dynamics-list-load-sentinel {
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.dynamics-list-loading-more {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--muted);
+}
+
 .dynamics-list .empty {
   padding: 24px 12px;
 }
