@@ -3322,9 +3322,6 @@ function stockRecordDynamicsListKey() {
 }
 
 function onAppScrollForInfiniteLoad() {
-  if (state.route === "stock-record") {
-    stockDynamicsScrollArmed = true;
-  }
   if (state.route === "trade-records") {
     void maybeLoadMoreTradeListPage();
   } else if (state.route === "trade-cash") {
@@ -3339,14 +3336,66 @@ function onAppScrollForInfiniteLoad() {
     const uid = state.communityProfileUserId || "";
     const container = document.querySelector('[data-profile-panel="dynamics"] [data-profile-dynamics-list]');
     maybeLoadMoreDynamicsList(`profile-dynamics:${uid}`, container);
-  } else if (state.route === "stock-record" && state.activeRecordSymbol) {
-    const key = stockRecordDynamicsListKey();
-    if (key) {
-      maybeLoadMoreDynamicsList(key, stockRecordDynamicsList);
-    }
   } else if (state.route === "community-profile" && state.communityProfileTab === "trade") {
     void maybeLoadMoreCommunityPublicTradesPage();
   }
+}
+
+/** 个股动态：仅用户滚轮/触摸滑动后才允许拉下一页，避免 DOM 更新触发的 scroll 连发 */
+let stockDynamicsUserScrollSeq = 0;
+let stockDynamicsLoadedAtScrollSeq = -1;
+let stockDynamicsGestureBound = false;
+
+function resetStockDynamicsScrollState() {
+  stockDynamicsUserScrollSeq = 0;
+  stockDynamicsLoadedAtScrollSeq = -1;
+}
+
+function bumpStockDynamicsUserScrollSeq() {
+  stockDynamicsUserScrollSeq += 1;
+}
+
+function ensureStockRecordDynamicsGestureListener() {
+  if (stockDynamicsGestureBound) {
+    return;
+  }
+  const root = getStockRecordScrollRoot();
+  if (!root) {
+    return;
+  }
+  stockDynamicsGestureBound = true;
+  root.addEventListener("wheel", bumpStockDynamicsUserScrollSeq, { passive: true });
+  root.addEventListener("touchmove", bumpStockDynamicsUserScrollSeq, { passive: true });
+}
+
+function onStockRecordScrollForDynamics() {
+  if (state.route !== "stock-record" || !state.activeRecordSymbol) {
+    return;
+  }
+  const key = stockRecordDynamicsListKey();
+  const root = getStockRecordScrollRoot();
+  const container = stockRecordDynamicsList;
+  if (!key || !root || !container) {
+    return;
+  }
+  const st = getDynamicsListState(key);
+  if (!st.hasMore || st.loading || !isNearScrollContainerBottom(root)) {
+    return;
+  }
+  if (stockDynamicsLoadedAtScrollSeq === stockDynamicsUserScrollSeq) {
+    return;
+  }
+  stockDynamicsLoadedAtScrollSeq = stockDynamicsUserScrollSeq;
+  void loadDynamicsListPage({
+    key,
+    container,
+    apiPath: st.apiPath,
+    editable: st.editable,
+  });
+}
+
+function onStockRecordScroll() {
+  onStockRecordScrollForDynamics();
 }
 
 function ensureTradeListScrollListener() {
@@ -3354,8 +3403,9 @@ function ensureTradeListScrollListener() {
     return;
   }
   tradeListScrollListenerBound = true;
+  ensureStockRecordDynamicsGestureListener();
   window.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
-  getStockRecordScrollRoot()?.addEventListener("scroll", onAppScrollForInfiniteLoad, { passive: true });
+  getStockRecordScrollRoot()?.addEventListener("scroll", onStockRecordScroll, { passive: true });
 }
 
 async function fetchTradeCountForAccount(accountId) {
@@ -6487,7 +6537,7 @@ function resetDynamicsListState(key) {
   st.hasMore = true;
   st.loading = false;
   if (String(key || "").startsWith("stock-dynamics:")) {
-    resetStockDynamicsScrollArm();
+    resetStockDynamicsScrollState();
   }
 }
 
@@ -6816,16 +6866,8 @@ async function loadDynamicsListPage({
 
 function maybeLoadMoreDynamicsList(key, container) {
   const st = getDynamicsListState(key);
-  const isStockRecordDynamics =
-    state.route === "stock-record" && container === stockRecordDynamicsList && key === stockRecordDynamicsListKey();
   if (!st.hasMore || st.loading || !isNearDynamicsScrollBottom()) {
     return;
-  }
-  if (isStockRecordDynamics && !stockDynamicsScrollArmed) {
-    return;
-  }
-  if (isStockRecordDynamics) {
-    stockDynamicsScrollArmed = false;
   }
   void loadDynamicsListPage({
     key,
@@ -7033,12 +7075,6 @@ async function loadProfileDynamics(targetId, { reset = false } = {}) {
 }
 
 let stockDynamicsSurfaceKey = "";
-/** 个股动态：上一页加载完成后须用户再次滚动到底才拉下一页，避免连发 page=2..N */
-let stockDynamicsScrollArmed = true;
-
-function resetStockDynamicsScrollArm() {
-  stockDynamicsScrollArmed = true;
-}
 
 async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false } = {}) {
   const sym = normalizeSymbol(symbol);
@@ -11625,11 +11661,13 @@ async function openStockRecordDialog(symbol, opts = {}) {
   state.previousRoute = state.route;
   state.stockRecordChartRange = "30";
   state.stockRecordBundle = null;
+  resetStockDynamicsScrollState();
 
   state.route = "stock-record";
   renderRoute();
   setStockRecordPageLoading(true);
   window.scrollTo(0, 0);
+  getStockRecordScrollRoot()?.scrollTo(0, 0);
   persistState();
 
   void refreshStockRecordPageData(symKey, state.stockRecordAccountId);
