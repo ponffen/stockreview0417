@@ -2,10 +2,14 @@
  * 外汇日汇率：冻结/重算/盘中冻结日均读 symbol_daily_close（fx_usdcny / fx_hkdcny）。
  * 仅盘中 live 当日汇率可走实时行情；此处不调用新浪/腾讯接口。
  */
-const { getSymbolDailyCloseRange, addCalendarDays } = require("../db");
+const { addCalendarDays } = require("../db-pure");
 
 const FX_SYMBOL_USD = "fx_usdcny";
 const FX_SYMBOL_HKD = "fx_hkdcny";
+
+function getSymbolDailyCloseRange() {
+  return require("../db").getSymbolDailyCloseRange;
+}
 
 function rowsToFxMap(rows) {
   const out = {};
@@ -74,9 +78,10 @@ function backwardThenForwardFillFxMap(fxMap, dateKeys) {
 async function loadFxCloseMapsFromDb(fromDate, toDate) {
   const from = String(fromDate || "").slice(0, 10);
   const to = String(toDate || "").slice(0, 10);
+  const fetchRange = getSymbolDailyCloseRange();
   const [usdRows, hkdRows] = await Promise.all([
-    getSymbolDailyCloseRange(FX_SYMBOL_USD, from, to),
-    getSymbolDailyCloseRange(FX_SYMBOL_HKD, from, to),
+    fetchRange(FX_SYMBOL_USD, from, to),
+    fetchRange(FX_SYMBOL_HKD, from, to),
   ]);
   return {
     fxUsdMap: rowsToFxMap(usdRows),
