@@ -33,9 +33,9 @@ function getShanghaiWallClockParts(date = new Date()) {
 }
 
 function getTradingDateKey(baseDate = new Date()) {
-  const { y, m, d, h, min } = getShanghaiWallClockParts(baseDate);
+  const { y, m, d, h } = getShanghaiWallClockParts(baseDate);
   const current = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  if (h < 8 || (h === 8 && min < 30)) {
+  if (h < 8) {
     return addCalendarDays(current, -1);
   }
   return current;
@@ -227,7 +227,7 @@ async function runDailyFreeze(options = {}) {
   return payload;
 }
 
-/** Vercel 定时：先全局 sync 日 K，再日终冻结（周二～六 08:35 北京）。 */
+/** Vercel 定时：先全局 sync 日 K，再日终冻结（周二～六 08:00 北京）。 */
 async function runScheduledEodPipeline(options = {}) {
   const logger = options.logger || console;
   const pipelineStartedAt = Date.now();

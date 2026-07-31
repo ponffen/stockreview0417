@@ -2212,10 +2212,10 @@ function addCalendarDaysShanghai(y, m, d, deltaDays) {
   }).format(t);
 }
 
-/** 交易日：以北京时间 08:30 为界，区间 [D 08:30, D+1 08:30) 记为 D 日。 */
+/** 交易日：以北京时间 08:00 为界，区间 [D 08:00, D+1 08:00) 记为 D 日。 */
 function getTradingDateKey(baseDate = new Date()) {
-  const { y, m, d, h, min } = getShanghaiWallClockParts(baseDate);
-  if (h < 8 || (h === 8 && min < 30)) {
+  const { y, m, d, h } = getShanghaiWallClockParts(baseDate);
+  if (h < 8) {
     return addCalendarDaysShanghai(y, m, d, -1);
   }
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -9593,7 +9593,7 @@ function parseQuoteTimeToDateKey(timeStr) {
 }
 
 /**
- * 「交易日期」：北京时间当日 08:30 至次日 08:30 算同一交易日（与列表/日界一致）。
+ * 「交易日期」：北京时间当日 08:00 至次日 08:00 算同一交易日（与列表/日界一致）。
  */
 function getBeijingTradingDateKey(now = new Date()) {
   const CUTOFF = 8 * 60 + 30;
@@ -14299,7 +14299,7 @@ function tradeDirectionCellLabel(trade) {
   return String(trade.side || "buy").toLowerCase() === "sell" ? "卖出" : "买入";
 }
 
-/** 日历日期一律按北京时间（Asia/Shanghai）的「年月日」，与交易日 08:30 划分一致。 */
+/** 日历日期一律按北京时间（Asia/Shanghai）的「年月日」，与交易日 08:00 划分一致。 */
 function toDateKey(date) {
   const d = date instanceof Date ? date : new Date(date);
   const base = Number.isNaN(d.getTime()) ? new Date() : d;

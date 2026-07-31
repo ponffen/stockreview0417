@@ -36,7 +36,7 @@ function todayProfitCnyFromTotals(live) {
 }
 
 /**
- * 账户「今日」是否与个股一致：至少一只持仓的行情日 = 当前交易日期（08:30 北京）。
+ * 账户「今日」是否与个股一致：至少一只持仓的行情日 = 当前交易日期（08:00 北京）。
  * 无持仓或行情均未切到今日 → 不计账户今日收益。
  */
 function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date(), ledgerSessionKey = null }) {

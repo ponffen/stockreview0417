@@ -292,10 +292,10 @@ function getShanghaiWallClockParts(date = new Date()) {
   };
 }
 
-function getTradingDateKeyBy0830(baseDate = new Date()) {
-  const { y, m, d, h, min } = getShanghaiWallClockParts(baseDate);
+function getTradingDateKeyBy0800(baseDate = new Date()) {
+  const { y, m, d, h } = getShanghaiWallClockParts(baseDate);
   const current = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  if (h < 8 || (h === 8 && min < 30)) {
+  if (h < 8) {
     return addCalendarDays(current, -1);
   }
   return current;

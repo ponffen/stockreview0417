@@ -21,7 +21,7 @@ const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live")
 const { symbolMwrFromValueFlowPoints } = require("../mwr");
 const {
   getPositionDayTradeContext,
-  getTradingDateKeyBy0830,
+  getTradingDateKeyBy0800,
 } = require("../position-today-pnl");
 const { resolveFrozenStageProfits } = require("./profit-tracks");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
@@ -203,7 +203,7 @@ function symbolTotalRates({
   const prev = Number(liveP?.prevClose) || current;
   const qty = Number(liveP?.quantity) || 0;
   const mvNat = qty * current;
-  const todayKey = live.tradingDay ? String(live.liveDate || getTradingDateKeyBy0830()).slice(0, 10) : "";
+  const todayKey = live.tradingDay ? String(live.liveDate || getTradingDateKeyBy0800()).slice(0, 10) : "";
   const dayCtx = todayKey ? getPositionDayTradeContext(sym, todayKey, trades) : { startQuantity: 0, dayFlowNative: 0 };
   const startMv = (Number(dayCtx.startQuantity) || 0) * prev;
   const flowNat = Number(dayCtx.dayFlowNative) || 0;

@@ -1,5 +1,5 @@
 /**
- * 持仓「今日收益」口径：08:30 北京交易日期门控 + 含当日买卖现金流。
+ * 持仓「今日收益」口径：08:00 北京交易日期门控 + 含当日买卖现金流。
  * 与 app.js computePortfolio 中 todayProfitNative 一致。
  */
 const { normalizeSymbol, addCalendarDays } = require("./db");
@@ -31,7 +31,7 @@ function parseQuoteTimeToDateKey(timeStr) {
   return null;
 }
 
-function getTradingDateKeyBy0830(baseDate = new Date()) {
+function getTradingDateKeyBy0800(baseDate = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -46,9 +46,8 @@ function getTradingDateKeyBy0830(baseDate = new Date()) {
   const m = Number(get("month"));
   const d = Number(get("day"));
   const h = Number(get("hour"));
-  const min = Number(get("minute"));
   const current = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  if (h < 8 || (h === 8 && min < 30)) {
+  if (h < 8) {
     return addCalendarDays(current, -1);
   }
   return current;
@@ -70,7 +69,7 @@ function getShanghaiCalendarDate(baseDate = new Date()) {
 }
 
 function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
-  const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0830(now)).slice(0, 10);
+  const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0800(now)).slice(0, 10);
   const quoteKey =
     (quote && quote.marketDate) ||
     (quote && quote.quoteDate) ||
@@ -83,7 +82,7 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSes
   if (quoteKey === tradingKey) {
     return true;
   }
-  // 08:30 前：行情北京时间戳常落在 ledger 日的次日（美股 regular/夜盘均可能），仍属同一交易日。
+  // 08:00 前：行情北京时间戳常落在 ledger 日的次日（美股 regular/夜盘均可能），仍属同一交易日。
   const calendarToday = getShanghaiCalendarDate(now);
   if (calendarToday > tradingKey && quoteKey === addCalendarDays(tradingKey, 1)) {
     return true;
@@ -282,7 +281,7 @@ function computeTodayProfitTracksForHolding({
 
 module.exports = {
   parseQuoteTimeToDateKey,
-  getTradingDateKeyBy0830,
+  getTradingDateKeyBy0800,
   getShanghaiCalendarDate,
   shouldCountTodayPositionPnlFromQuote,
   tradeSignedAmount,

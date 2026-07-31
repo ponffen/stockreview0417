@@ -77,7 +77,7 @@ function hintDatesForRebuild(dates) {
   return out;
 }
 
-/** 日终 cron（周二～六 08:35 北京）：周日、周一若手动触发则跳过；周六照常（冻周五）。 */
+/** 日终 cron（周二～六 08:00 北京）：周日、周一若手动触发则跳过；周六照常（冻周五）。 */
 function shouldSkipScheduledFreezeCron(now = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Shanghai",
