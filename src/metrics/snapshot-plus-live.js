@@ -2,6 +2,7 @@
  * 冻结日 EOD（analysis_daily_snapshot v3）+ 盘中实时增量。
  */
 const { normalizeSymbol } = require("../db");
+const { homeAccountEod } = require("./home-account-scalars");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
 const { computeLedgerCashBookUpToDate, externalFlowBookForRange } = require("../ledger-metrics");
 const { shouldCountTodayPositionPnlFromQuote } = require("../position-today-pnl");
@@ -99,9 +100,10 @@ function applyEodPlusLiveTotals({
   fxUsdMap,
   fxHkdMap,
 }) {
-  const eodTa = Number(homeAcc?.eod_total_assets_cny) || 0;
-  const eodMv = Number(homeAcc?.eod_market_value_cny) || 0;
-  const eodCash = Number(homeAcc?.eod_cash_cny) || 0;
+  const eod = homeAccountEod(homeAcc);
+  const eodTa = eod.totalAssets;
+  const eodMv = eod.marketValue;
+  const eodCash = eod.cash;
   const ft = String(frozenThrough || "").slice(0, 10);
   if (!ft) {
     return null;

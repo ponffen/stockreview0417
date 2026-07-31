@@ -34,6 +34,7 @@ const {
 } = require("./home-summary-maths");
 const { getComputeLiveMetrics } = require("./market-realtime-pnl");
 const { getLiveMetricsWithFrozenPack } = require("./metrics/live-metrics-context");
+const { homeAccountStageMetrics } = require("./metrics/home-account-scalars");
 const { resolveFxRatesCny } = require("./metrics/fx-maps");
 const {
   ALL_STAGES,
@@ -446,15 +447,15 @@ function stageProfitFromFrozenAndLive(
   let rateMwr = 0;
   if (!freshPeriod) {
     if (stageKey === "mtd") {
-      frozenProfit = frozenMetrics.monthProfitCny;
+      frozenProfit = frozenMetrics.monthProfit;
       rateTwr = frozenMetrics.monthRateTwr;
       rateMwr = frozenMetrics.monthRateMwr;
     } else if (stageKey === "ytd") {
-      frozenProfit = frozenMetrics.ytdProfitCny;
+      frozenProfit = frozenMetrics.ytdProfit;
       rateTwr = frozenMetrics.ytdRateTwr;
       rateMwr = frozenMetrics.ytdRateMwr;
     } else if (stageKey === "inception") {
-      frozenProfit = frozenMetrics.totalProfitCny;
+      frozenProfit = frozenMetrics.totalProfit;
       rateTwr = frozenMetrics.totalRateTwr;
       rateMwr = frozenMetrics.totalRateMwr;
     } else if (stageKey !== "today") {
@@ -482,7 +483,7 @@ function stageProfitFromFrozenAndLive(
     rateMwr = m.rateMwr;
   }
   const frozenTa =
-    Number(live.eodTotalAssetsCny) || Number(frozenMetrics.eodTotalAssetsCny) || 0;
+    Number(live.eodTotalAssetsCny) || Number(frozenMetrics.eodTotalAssets) || 0;
   const flowToday = liveProfitScalarToBook(
     Number(live.externalFlowTodayCny) || 0,
     scope,
@@ -495,7 +496,7 @@ function stageProfitFromFrozenAndLive(
     ? liveTaRaw
     : liveProfitScalarToBook(liveTaRaw, scope, book, fxU, fxH) || frozenTa;
   let profitCny = frozenProfit;
-  const baseMvToday = Number(live.lastMarketValueCny) || frozenTa;
+  const baseMvToday = Number(live.lastMarketValueCny) || Number(frozenMetrics.eodMarketValue) || frozenTa;
   const baseMvTodayBook = isAggregateScope(scope)
     ? baseMvToday
     : liveProfitScalarToBook(baseMvToday, scope, book, fxU, fxH) || frozenTa;
@@ -531,7 +532,7 @@ function stageProfitFromFrozenAndLive(
   } else if (STANDARD_RETURN_STAGES.has(stageKey) && stageUsesFrozenCumulativeFields(stageKey)) {
     const taEnd = live.tradingDay
       ? liveTa
-      : Number(frozenMetrics.eodTotalAssetsCny) || liveTa;
+      : Number(frozenMetrics.eodTotalAssets) || liveTa;
     rateMwr = rowsAsc.length ? xirrStageToLive(rowsAsc, start, rangeAsOf, taEnd) : rateMwr;
   }
   return { profitCny, rateTwr, rateMwr };
@@ -574,35 +575,36 @@ function appendLiveSnapshotRow(rowsAsc, live, liveDate, scopeCtx = null) {
 function frozenMetricsFromHomeAccount(acc) {
   if (!acc) {
     return {
-      monthProfitCny: 0,
+      monthProfit: 0,
       monthRateTwr: 0,
       monthRateMwr: 0,
-      ytdProfitCny: 0,
+      ytdProfit: 0,
       ytdRateTwr: 0,
       ytdRateMwr: 0,
-      totalProfitCny: 0,
+      totalProfit: 0,
       totalRateTwr: 0,
       totalRateMwr: 0,
-      lastMarketValueCny: 0,
-      eodTotalAssetsCny: 0,
-      eodMarketValueCny: 0,
-      eodCashCny: 0,
+      lastMarketValue: 0,
+      eodTotalAssets: 0,
+      eodMarketValue: 0,
+      eodCash: 0,
     };
   }
+  const s = homeAccountStageMetrics(acc);
   return {
-    monthProfitCny: Number(acc.month_profit_cny) || 0,
-    monthRateTwr: Number(acc.month_rate_twr) || 0,
-    monthRateMwr: Number(acc.month_rate_mwr) || 0,
-    ytdProfitCny: Number(acc.ytd_profit_cny) || 0,
-    ytdRateTwr: Number(acc.ytd_rate_twr) || 0,
-    ytdRateMwr: Number(acc.ytd_rate_mwr) || 0,
-    totalProfitCny: Number(acc.total_profit_cny) || 0,
-    totalRateTwr: Number(acc.total_rate_twr) || 0,
-    totalRateMwr: Number(acc.total_rate_mwr) || 0,
-    lastMarketValueCny: Number(acc.last_market_value_cny) || Number(acc.eod_market_value_cny) || 0,
-    eodTotalAssetsCny: Number(acc.eod_total_assets_cny) || 0,
-    eodMarketValueCny: Number(acc.eod_market_value_cny) || 0,
-    eodCashCny: Number(acc.eod_cash_cny) || 0,
+    monthProfit: s.monthProfit,
+    monthRateTwr: s.monthRateTwr,
+    monthRateMwr: s.monthRateMwr,
+    ytdProfit: s.ytdProfit,
+    ytdRateTwr: s.ytdRateTwr,
+    ytdRateMwr: s.ytdRateMwr,
+    totalProfit: s.totalProfit,
+    totalRateTwr: s.totalRateTwr,
+    totalRateMwr: s.totalRateMwr,
+    lastMarketValue: s.eodMarketValue,
+    eodTotalAssets: s.eodTotalAssets,
+    eodMarketValue: s.eodMarketValue,
+    eodCash: s.eodCash,
   };
 }
 
@@ -690,10 +692,9 @@ async function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
 
 async function frozenOnlyLiveFromHomeAccount(homeAcc) {
   const ft = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
-  const ta = Number(homeAcc?.eod_total_assets_cny) || 0;
-  const mv = Number(homeAcc?.eod_market_value_cny) || 0;
-  const cash = Number(homeAcc?.eod_cash_cny) || 0;
-  const total = ta || mv + cash;
+  const { homeAccountEod } = require("./metrics/home-account-scalars");
+  const eod = homeAccountEod(homeAcc);
+  const ta = eod.totalAssets || eod.marketValue + eod.cash;
   const fx = ft
     ? await resolveFxRatesCny({
         dateKey: ft,
@@ -708,12 +709,12 @@ async function frozenOnlyLiveFromHomeAccount(homeAcc) {
     delayed: true,
     quoteTime: null,
     todayProfitCny: 0,
-    liveMarketValueCny: mv,
-    lastMarketValueCny: Number(homeAcc?.last_market_value_cny) || mv,
-    cashCny: cash,
-    totalAssetsCny: total,
-    cashRatio: total > 0 ? cash / total : (Number(homeAcc?.eod_cash_ratio) || 0) / 100,
-    principalCny: Number(homeAcc?.eod_principal_cny) || 0,
+    liveMarketValueCny: eod.marketValue,
+    lastMarketValueCny: Number(homeAcc?.last_market_value ?? homeAcc?.last_market_value_cny) || eod.marketValue,
+    cashCny: eod.cash,
+    totalAssetsCny: ta,
+    cashRatio: ta > 0 ? eod.cash / ta : (Number(homeAcc?.eod_cash_ratio) || 0) / 100,
+    principalCny: eod.principal,
     positions: [],
     fxUsdCny: fx.fxUsdCny,
     fxHkdCny: fx.fxHkdCny,

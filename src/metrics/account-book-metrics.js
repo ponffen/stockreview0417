@@ -1,6 +1,6 @@
 /**
- * 单账户 scope：analysis_daily_snapshot / home 映射字段已是记账币（历史 *_cny 命名）。
- * scope=all：金额为人民币汇总。展示层勿对单账户再做 CNY→记账币换汇。
+ * 子账户 scope：金额为记账币；scope=all：金额为 CNY 汇总。
+ * home 映射见 home-account-scalars（eod_total_assets / month_profit 等）。
  */
 const {
   cnyScalarToBookAmount,
@@ -9,6 +9,7 @@ const {
   fmtPlainSignedAmountInBook,
   fmtMoney,
 } = require("../account-kpi-surface");
+const { homeAccountEod } = require("./home-account-scalars");
 
 function isAggregateScope(scope) {
   return String(scope || "all").trim() === "all";
@@ -53,16 +54,13 @@ function formatMoneyAssetForScope(amount, scope, bookCurrency, fxUsdCny, fxHkdCn
 }
 
 function frozenHomeScalars(homeAcc) {
-  const acc = homeAcc || {};
-  const eodMv = acc.eod_market_value_cny ?? acc.eodMarketValueCny;
-  const marketValue =
-    eodMv != null && Number.isFinite(Number(eodMv)) ? Number(eodMv) : 0;
+  const eod = homeAccountEod(homeAcc);
   return {
-    totalAssets: Number(acc.eod_total_assets_cny) || 0,
-    marketValue,
-    cash: Number(acc.eod_cash_cny) || 0,
-    principal: Number(acc.eod_principal_cny) || 0,
-    cashRatioPct: Number(acc.eod_cash_ratio) || 0,
+    totalAssets: eod.totalAssets,
+    marketValue: eod.marketValue,
+    cash: eod.cash,
+    principal: eod.principal,
+    cashRatioPct: eod.cashRatioPct,
   };
 }
 

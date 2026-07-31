@@ -32,6 +32,7 @@ const {
 } = require("./metrics/holdings-active-symbols");
 const { computeTodayProfitTracksForHolding } = require("./position-today-pnl");
 const { loadFxRatesOnDate } = require("./metrics/fx-maps");
+const { homeAccountEod } = require("./metrics/home-account-scalars");
 
 function resolvePreloadedAccounts(pre) {
   if (Array.isArray(pre?.accounts) && pre.accounts.length > 0) {
@@ -108,11 +109,15 @@ function rateSymbolToBook(symCcy, bookCcy, fxSpot) {
   return bookCny > 0 ? symCny / bookCny : symCny;
 }
 
-/** 冻结日市值：0 为有效值，勿用 total_assets 或 lastMarketValue 顶替。 */
+/** 冻结日市值（scope 计价）：0 为有效值，勿用 total_assets 顶替。 */
 function frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny = 0) {
-  const eod = homeAcc?.eod_market_value_cny ?? homeAcc?.eodMarketValueCny;
-  if (eod != null && Number.isFinite(Number(eod))) {
-    return Number(eod);
+  const scoped = homeAcc?.eod_market_value ?? homeAcc?.eodMarketValue;
+  if (scoped != null && Number.isFinite(Number(scoped))) {
+    return Number(scoped);
+  }
+  const legacy = homeAcc?.eod_market_value_cny ?? homeAcc?.eodMarketValueCny;
+  if (legacy != null && Number.isFinite(Number(legacy))) {
+    return Number(legacy);
   }
   const last = Number(lastMarketValueCny);
   return Number.isFinite(last) && last > 0 ? last : 0;
@@ -136,14 +141,15 @@ function buildLiveFromHomeFrozen({
   const asOf = tradingDay ? liveDate : frozenThrough || liveDate;
   const cashBook = computeLedgerCashBookUpToDate(trades, cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
   const principalBook = principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMap, fxHkdMap, asOf);
+  const eodFrozen = homeAccountEod(homeAcc);
   const mv = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
-  let cashUse = Number(homeAcc?.eod_cash_cny) || cashBook;
+  let cashUse = eodFrozen.cash > 0 ? eodFrozen.cash : cashBook;
   let totalAssetsCny =
-    Number(homeAcc?.eod_total_assets_cny) ||
-    (Number.isFinite(mv) ? mv : 0) + (Number.isFinite(cashUse) ? cashUse : 0) ||
-    0;
+    eodFrozen.totalAssets > 0
+      ? eodFrozen.totalAssets
+      : (Number.isFinite(mv) ? mv : 0) + (Number.isFinite(cashUse) ? cashUse : 0) || 0;
   let liveMv = mv;
-  let principalLive = Number(homeAcc?.eod_principal_cny) || principalBook;
+  let principalLive = eodFrozen.principal > 0 ? eodFrozen.principal : principalBook;
 
   if (tradingDay) {
     const hybrid = applyEodPlusLiveTotals({
@@ -163,7 +169,7 @@ function buildLiveFromHomeFrozen({
       liveMv = hybrid.liveMarketValueCny;
       cashUse = hybrid.cashCny;
       totalAssetsCny = hybrid.totalAssetsCny;
-      const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
+      const eodPrincipal = eodFrozen.principal || 0;
       principalLive =
         eodPrincipal > 0
           ? eodPrincipal + hybrid.externalFlowTodayCny
@@ -178,7 +184,7 @@ function buildLiveFromHomeFrozen({
         fxHkdMap,
         frozenThrough,
       );
-      const eodCash = Number(homeAcc?.eod_cash_cny) || 0;
+      const eodCash = eodFrozen.cash || 0;
       cashUse = eodCash + (cashBook - cashFrozen);
       totalAssetsCny = liveMv + cashUse;
     }
@@ -228,7 +234,12 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const frozenFx = frozenThrough ? await loadFxRatesOnDate(frozenThrough) : { USD: 0, HKD: 0 };
   let fxUsdFrozen = Number(frozenFx.USD) || 0;
   let fxHkdFrozen = Number(frozenFx.HKD) || 0;
-  let lastMarketValueCny = Number(homeAcc?.last_market_value_cny) || Number(homeAcc?.eod_market_value_cny) || 0;
+  let lastMarketValueCny =
+    Number(homeAcc?.last_market_value) ||
+    Number(homeAcc?.last_market_value_cny) ||
+    Number(homeAcc?.eod_market_value) ||
+    Number(homeAcc?.eod_market_value_cny) ||
+    0;
   if (!(lastMarketValueCny > 0) && frozenThrough) {
     const baseRows = await getAnalysisDailySnapshots({ accountId: scope, from: frozenThrough, to: frozenThrough }, uid);
     const lastSnap = baseRows[baseRows.length - 1] || null;
@@ -447,7 +458,8 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   let liveMarketValueCny = liveMarketValue;
   let totalAssetsCny = liveMarketValue + cashCny;
   let cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
-  let eodTotalAssetsCny = Number(homeAcc?.eod_total_assets_cny) || 0;
+  const eodScalars = homeAccountEod(homeAcc);
+  let eodTotalAssetsCny = eodScalars.totalAssets || 0;
   let externalFlowTodayCny = 0;
   let todayProfitCny = 0;
   let principalLive = principalBase;
@@ -482,7 +494,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       externalFlowTodayCny,
     };
     todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap);
-    const eodPrincipal = Number(homeAcc?.eod_principal_cny) || 0;
+    const eodPrincipal = eodScalars.principal || 0;
     principalLive =
       eodPrincipal > 0
         ? eodPrincipal + externalFlowTodayCny
@@ -518,13 +530,11 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const mvFrozen = frozenMarketValueCnyFromHome(homeAcc, lastMarketValueCny);
   liveMarketValueCny = liveMarketValue > 0 ? liveMarketValue : mvFrozen;
   const taFrozen =
-    Number(homeAcc?.eod_total_assets_cny) ||
-    mvFrozen + (Number(homeAcc?.eod_cash_cny) || 0) ||
-    0;
-  cashCny = Number(homeAcc?.eod_cash_cny) > 0 ? Number(homeAcc.eod_cash_cny) : cashCny;
+    eodScalars.totalAssets > 0 ? eodScalars.totalAssets : mvFrozen + (eodScalars.cash || 0) || 0;
+  cashCny = eodScalars.cash > 0 ? eodScalars.cash : cashCny;
   totalAssetsCny = taFrozen > 0 ? taFrozen : liveMarketValueCny + cashCny;
   cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
-  principalLive = Number(homeAcc?.eod_principal_cny) || principalBase;
+  principalLive = eodScalars.principal > 0 ? eodScalars.principal : principalBase;
 
   return {
     tradingDay: false,
