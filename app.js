@@ -492,10 +492,6 @@ const state = {
   stockRecordShowMarketValue: false,
   chartCrosshairMap: {},
   lastPinchDistanceMap: {},
-  fxRatesToCnyByDate: {},
-  /** 腾讯 qt 外汇实时：USD / HKD → 兑 CNY 中间价 */
-  fxSpot: {},
-  fxLoaded: false,
   communityProfileStage: "month",
   communityProfileTab: "earning",
   /** 查看他人主页时临时覆盖总览展示币种（与对方 selectedAccountId 一致） */
@@ -1233,60 +1229,11 @@ function bindAuthUi() {
   });
 }
 
-async function hydrateFxSpotFromApi() {
-  if (!apiReady) {
-    return;
-  }
-  try {
-    const r = await apiFetch(`${API_BASE}/realtime/fx`, { cache: "no-store", timeoutMs: 12_000 });
-    if (!r.ok) {
-      return;
-    }
-    const j = await r.json().catch(() => ({}));
-    if (!j?.ok || !j.fxSpot) {
-      return;
-    }
-    state.fxSpot = {
-      USD: Number(j.fxSpot.USD) > 0 ? Number(j.fxSpot.USD) : 0,
-      HKD: Number(j.fxSpot.HKD) > 0 ? Number(j.fxSpot.HKD) : 0,
-    };
-  } catch {
-    // ignore
-  }
-}
-
-async function hydrateFxCloseSeriesFromApi() {
-  if (!apiReady) {
-    return;
-  }
-  try {
-    const to = toDateKey(new Date());
-    const from = shiftDateKeyByDays(to, -DAILY_CLOSE_HYDRATE_WINDOW_DAYS);
-    const r = await apiFetch(
-      `${API_BASE}/metrics/fx-close-range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-      { cache: "no-store", timeoutMs: 15_000 },
-    );
-    if (!r.ok) {
-      return;
-    }
-    const j = await r.json().catch(() => ({}));
-    const rates = j?.data?.ratesByDate;
-    if (!rates || typeof rates !== "object") {
-      return;
-    }
-    state.fxRatesToCnyByDate = { ...state.fxRatesToCnyByDate, ...rates };
-  } catch {
-    // ignore
-  }
-}
-
 async function startAppAfterAuth(options = {}) {
   if (!options.sessionAlreadyFresh) {
     await refreshSessionFromServer();
   }
   await hydrateState();
-  void hydrateFxSpotFromApi();
-  void hydrateFxCloseSeriesFromApi();
   void ensurePageCacheMeta();
   normalizeModuleHomeOnColdLoad();
   applyEmptyLedgerCommunityDefault();
@@ -14195,45 +14142,13 @@ function getFxRateToCny(currency) {
   if (currency === "CNY") {
     return 1;
   }
-  const spot = state.fxSpot?.[currency];
-  if (Number.isFinite(spot) && spot > 0) {
-    return spot;
-  }
-  const today = toDateKey(new Date());
-  const todayHit = state.fxRatesToCnyByDate?.[today]?.[currency];
-  if (Number.isFinite(todayHit) && todayHit > 0) {
-    return todayHit;
-  }
+  // 汇率由 Bundle / 冻结快照在服务端计算；前端不做独立 FX 拉取。
   return 0;
 }
 
 function getFxRateForDate(currency, dateKey) {
   if (currency === "CNY") {
     return 1;
-  }
-  const dk = String(dateKey || "").slice(0, 10);
-  const today = toDateKey(new Date());
-  if (!dk || dk >= today) {
-    return getFxRateToCny(currency);
-  }
-  const mapByDate = state.fxRatesToCnyByDate || {};
-  const keys = Object.keys(mapByDate).sort();
-  if (!keys.length) {
-    return getFxRateToCny(currency);
-  }
-  for (let i = keys.length - 1; i >= 0; i -= 1) {
-    if (keys[i] <= dk) {
-      const hit = Number(mapByDate[keys[i]]?.[currency]);
-      if (Number.isFinite(hit) && hit > 0) {
-        return hit;
-      }
-    }
-  }
-  for (const key of keys) {
-    const hit = Number(mapByDate[key]?.[currency]);
-    if (Number.isFinite(hit) && hit > 0) {
-      return hit;
-    }
   }
   return getFxRateToCny(currency);
 }
