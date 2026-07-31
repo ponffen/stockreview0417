@@ -9,6 +9,7 @@ const {
   getSymbolDailyPnl,
   getSymbolDailyPnlRowsOnOrBefore,
 } = require("../db");
+const { resolveFxRatesCny } = require("./fx-maps");
 const {
   fmtPlainAmount,
   fmtPlainSignedAmount,
@@ -239,8 +240,18 @@ async function buildHoldingsPayload({
   trades,
   overviewStages,
 }) {
-  const fxU = Number(accountRow?.eod_fx_usd_cny) || live.fxUsdCny || 7.2;
-  const fxH = Number(accountRow?.eod_fx_hkd_cny) || live.fxHkdCny || 0.92;
+  const frozenThrough = String(
+    accountRow?.frozen_through || symbolRows?.[0]?.frozen_through || live.frozenThrough || "",
+  ).slice(0, 10);
+  const fxResolved = await resolveFxRatesCny({
+    dateKey: live.tradingDay ? live.liveDate || frozenThrough : frozenThrough,
+    snapshotUsd: accountRow?.eod_fx_usd_cny,
+    snapshotHkd: accountRow?.eod_fx_hkd_cny,
+    liveSpot: { USD: live.fxUsdCny, HKD: live.fxHkdCny },
+    preferLiveSpot: !!live.tradingDay,
+  });
+  const fxU = fxResolved.fxUsdCny;
+  const fxH = fxResolved.fxHkdCny;
   const book = resolveBookCurrencyForAccountScope(settings, accountScope);
   const mwrMode = String(settings?.algoMode || "twr").toLowerCase() === "mwr";
   const overviewMonthCny = Number(overviewStages?.mtd?.profitCny) || 0;
@@ -260,9 +271,6 @@ async function buildHoldingsPayload({
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
   const valuationBySym = userId ? await getLatestValuationBySymbolForUser(userId) : new Map();
   const scopeId = String(accountScope || "all").trim() || "all";
-  const frozenThrough = String(
-    accountRow?.frozen_through || symbolRows?.[0]?.frozen_through || live.frozenThrough || "",
-  ).slice(0, 10);
   const sessionAsOf = liveDateKeyShanghai();
   const freshMonth = isFreshStagePeriod(monthStartKeyShanghai(sessionAsOf), frozenThrough);
   const freshYear = isFreshStagePeriod(yearStartKeyShanghai(sessionAsOf), frozenThrough);

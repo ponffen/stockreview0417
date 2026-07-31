@@ -34,14 +34,13 @@ const {
 } = require("./symbol-name-resolve");
 const { redactPublicTradeRow } = require("./metrics/public-trades-redact");
 const { getMetricsPublicHomeBundle } = require("./metrics-api-service");
+const { resolveFxRatesCny } = require("./metrics/fx-maps");
 
 const HOME_BUNDLE_CARD_STAGES = "today,mtd,ytd,inception";
 
 const NORMALIZATION_VERSION = 1;
 /** 排行缓存：过长会导致 TOP3 等与个人页（按人民币市值）脱节；1h 折中 */
 const CACHE_TTL_MS = 3600000;
-const FX_USD_CNY = 7.2;
-const FX_HKD_CNY = 0.92;
 
 function maskPhone(phone) {
   const p = String(phone || "").trim();
@@ -94,17 +93,19 @@ function displayStockMeta(symbol) {
   return { marketTag, displayCode };
 }
 
-function tradeAmountCny(trade) {
+async function tradeAmountCnyForTrade(trade) {
   const m = inferMarket(normalizeSymbol(trade.symbol));
   const amt = Math.abs(Number(trade.amount) || 0);
   if (m === "A股" || m === "其他") {
     return amt;
   }
+  const dk = String(trade.date || "").slice(0, 10);
+  const fx = await resolveFxRatesCny({ dateKey: dk });
   if (m === "美股") {
-    return amt * FX_USD_CNY;
+    return amt * (fx.fxUsdCny || 0);
   }
   if (m === "港股") {
-    return amt * FX_HKD_CNY;
+    return amt * (fx.fxHkdCny || 0);
   }
   return amt;
 }
@@ -135,13 +136,13 @@ async function findNormalizationBaseTrade(userId) {
     .filter((t) => t.type === "trade")
     .sort((a, b) => a.createdAt - b.createdAt);
   for (const t of trades) {
-    const cny = tradeAmountCny(t);
+    const cny = await tradeAmountCnyForTrade(t);
     if (cny >= 1000) {
       return { trade: t, amountCny: cny };
     }
   }
   for (const t of trades) {
-    const cny = tradeAmountCny(t);
+    const cny = await tradeAmountCnyForTrade(t);
     if (cny > 0) {
       return { trade: t, amountCny: Math.max(cny, 100) };
     }
@@ -291,12 +292,12 @@ async function snapshotFxForDate(userId, dateKey) {
     (r) => String(r.date) === String(dateKey),
   );
   const hit = rows.length ? rows[rows.length - 1] : null;
-  if (!hit) {
-    return { fxUsd: FX_USD_CNY, fxHkd: FX_HKD_CNY };
-  }
-  const fxUsd = Number(hit.fx_usd_cny) > 0 ? Number(hit.fx_usd_cny) : FX_USD_CNY;
-  const fxHkd = Number(hit.fx_hkd_cny) > 0 ? Number(hit.fx_hkd_cny) : FX_HKD_CNY;
-  return { fxUsd, fxHkd };
+  const fx = await resolveFxRatesCny({
+    dateKey,
+    snapshotUsd: hit?.fx_usd_cny,
+    snapshotHkd: hit?.fx_hkd_cny,
+  });
+  return { fxUsd: fx.fxUsdCny, fxHkd: fx.fxHkdCny };
 }
 
 /**
@@ -313,7 +314,10 @@ async function buildTopPositions(userId, factor) {
   const lastSnapD = snapRows.length ? String(snapRows[snapRows.length - 1].date) : null;
   const { fxUsd, fxHkd } = lastSnapD
     ? await snapshotFxForDate(userId, lastSnapD)
-    : { fxUsd: FX_USD_CNY, fxHkd: FX_HKD_CNY };
+    : await resolveFxRatesCny({ dateKey: new Date().toISOString().slice(0, 10) }).then((fx) => ({
+        fxUsd: fx.fxUsdCny,
+        fxHkd: fx.fxHkdCny,
+      }));
 
   const scored = [];
   for (const [symNorm, rawQty] of qtyMap.entries()) {

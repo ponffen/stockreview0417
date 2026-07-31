@@ -794,6 +794,7 @@ const { parseSinaSuggestText, suggestLineToItem, publicSearchResults } = require
 const { runDailyCloseSync } = require("./src/daily-close-sync-service");
 const { todayProfitCnyForHolding } = require("./src/position-today-pnl");
 const { liveDateKeyShanghai } = require("./src/metrics/trading-calendar");
+const { resolveFxRatesCny, loadFxCloseSeriesByDate } = require("./src/metrics/fx-maps");
 const {
   getMetricsHomeBundle,
   getMetricsPublicHomeBundle,
@@ -1616,6 +1617,21 @@ app.get("/api/metrics/stock-record-bundle", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/metrics/fx-close-range", requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || "").slice(0, 10);
+    const to = String(req.query.to || liveDateKeyShanghai()).slice(0, 10);
+    if (!from) {
+      res.status(400).json({ ok: false, error: "missing from" });
+      return;
+    }
+    const ratesByDate = await loadFxCloseSeriesByDate(from, to);
+    sendMetricsJson(res, { from, to, ratesByDate });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || "fx-close-range failed" });
+  }
+});
+
 async function handlePublicAnalysisBundle(req, res) {
   try {
     const gate = await assertPublicMetricsTarget(req.userId, req.params.targetId);
@@ -2191,28 +2207,32 @@ app.get("/api/snapshot/symbol-close", requireAuth, async (req, res) => {
 
 app.get("/api/realtime/fx", requireAuth, async (_req, res) => {
   try {
+    const todayKey = liveDateKeyShanghai();
     const fxReq = await fetchTencentForexMap();
-    if (!fxReq.ok) {
-      res.status(502).json({ ok: false, error: "realtime fx failed" });
-      return;
-    }
-    if (fxReq.delayed) {
-      setDelayedHeaders(res, fxReq.source || "cache");
-    }
     const fxSpot = {};
-    if (fxReq.rates?.USD > 0) {
-      fxSpot.USD = fxReq.rates.USD;
+    if (fxReq.ok) {
+      if (fxReq.rates?.USD > 0) {
+        fxSpot.USD = fxReq.rates.USD;
+      }
+      if (fxReq.rates?.HKD > 0) {
+        fxSpot.HKD = fxReq.rates.HKD;
+      }
+      if (fxReq.delayed) {
+        setDelayedHeaders(res, fxReq.source || "cache");
+      }
     }
-    if (fxReq.rates?.HKD > 0) {
-      fxSpot.HKD = fxReq.rates.HKD;
-    }
+    const resolved = await resolveFxRatesCny({
+      dateKey: todayKey,
+      preferLiveSpot: true,
+      liveSpot: fxSpot,
+    });
     res.setHeader("Cache-Control", "no-store");
     res.json({
       ok: true,
-      fxSpot,
-      quoteTime: fxReq.quoteTime,
+      fxSpot: { USD: resolved.USD, HKD: resolved.HKD },
+      quoteTime: fxReq.ok ? fxReq.quoteTime : null,
       delayed: !!fxReq.delayed,
-      delaySource: fxReq.source || "",
+      delaySource: fxReq.ok ? fxReq.source || "" : "symbol_daily_close",
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error?.message || "realtime fx failed" });
@@ -2255,10 +2275,16 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
     if (fxReq?.rates?.HKD > 0) {
       fxSpot.HKD = fxReq.rates.HKD;
     }
+    const todayKey = liveDateKeyShanghai();
+    const resolvedFx = await resolveFxRatesCny({
+      dateKey: todayKey,
+      preferLiveSpot: true,
+      liveSpot: fxSpot,
+    });
     const fxRate = (currency) => {
       if (currency === "CNY") return 1;
-      if (currency === "USD") return Number(fxSpot.USD) > 0 ? Number(fxSpot.USD) : 7.2;
-      if (currency === "HKD") return Number(fxSpot.HKD) > 0 ? Number(fxSpot.HKD) : 0.92;
+      if (currency === "USD") return Number(resolvedFx.USD) > 0 ? Number(resolvedFx.USD) : 0;
+      if (currency === "HKD") return Number(resolvedFx.HKD) > 0 ? Number(resolvedFx.HKD) : 0;
       return 1;
     };
 
@@ -2284,7 +2310,6 @@ app.post("/api/realtime/patch", requireAuth, async (req, res) => {
 
     let liveMarketValue = 0;
     let todayProfitCny = 0;
-    const todayKey = liveDateKeyShanghai();
     for (const [symbol, item] of holdings.entries()) {
       if (!(Math.abs(Number(item.quantity) || 0) > 1e-6)) {
         continue;

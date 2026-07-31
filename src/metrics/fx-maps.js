@@ -133,6 +133,55 @@ async function loadFxRatesOnDate(dateKey, logger = console) {
   return { USD: usd, HKD: hkd };
 }
 
+/**
+ * 统一汇率解析：盘中优先 live 实时 > 快照/入参 > symbol_daily_close。
+ */
+async function resolveFxRatesCny(opts = {}, logger = console) {
+  const dk = String(opts.dateKey || "").slice(0, 10);
+  let usd = Number(opts.snapshotUsd) || 0;
+  let hkd = Number(opts.snapshotHkd) || 0;
+  if (opts.preferLiveSpot) {
+    const liveUsd = Number(opts.liveSpot?.USD ?? opts.liveUsd) || 0;
+    const liveHkd = Number(opts.liveSpot?.HKD ?? opts.liveHkd) || 0;
+    if (liveUsd > 0) {
+      usd = liveUsd;
+    }
+    if (liveHkd > 0) {
+      hkd = liveHkd;
+    }
+  }
+  if (usd > 0 && hkd > 0) {
+    return { USD: usd, HKD: hkd, fxUsdCny: usd, fxHkdCny: hkd };
+  }
+  const db = dk ? await loadFxRatesOnDate(dk, logger) : { USD: 0, HKD: 0 };
+  if (!(usd > 0)) {
+    usd = Number(db.USD) || 0;
+  }
+  if (!(hkd > 0)) {
+    hkd = Number(db.HKD) || 0;
+  }
+  return { USD: usd, HKD: hkd, fxUsdCny: usd, fxHkdCny: hkd };
+}
+
+/** 返回 dateKey→{USD,HKD}，供前端历史汇率缓存。 */
+async function loadFxCloseSeriesByDate(fromDate, toDate) {
+  const from = String(fromDate || "").slice(0, 10);
+  const to = String(toDate || "").slice(0, 10);
+  const { fxUsdMap, fxHkdMap } = await loadFxCloseMapsFromDb(from, to);
+  const dates = [...new Set([...Object.keys(fxUsdMap), ...Object.keys(fxHkdMap)])].sort();
+  backwardThenForwardFillFxMap(fxUsdMap, dates);
+  backwardThenForwardFillFxMap(fxHkdMap, dates);
+  const out = {};
+  for (const dk of dates) {
+    const usd = Number(fxUsdMap[dk]) || 0;
+    const hkd = Number(fxHkdMap[dk]) || 0;
+    if (usd > 0 || hkd > 0) {
+      out[dk] = { USD: usd, HKD: hkd };
+    }
+  }
+  return out;
+}
+
 module.exports = {
   FX_SYMBOL_USD,
   FX_SYMBOL_HKD,
@@ -141,4 +190,6 @@ module.exports = {
   loadFxCloseMapsFromDb,
   buildFxMaps,
   loadFxRatesOnDate,
+  resolveFxRatesCny,
+  loadFxCloseSeriesByDate,
 };

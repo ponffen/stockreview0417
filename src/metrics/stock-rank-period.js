@@ -83,10 +83,10 @@ function profitNativeToAnalysisCny(profitNative, currency, market, fxUsd, fxHkd)
     return n;
   }
   if (ccy === "USD") {
-    return n * (validNumber(fxUsd, 7.2) || 7.2);
+    return n * (validNumber(fxUsd, 0) || 0);
   }
   if (ccy === "HKD") {
-    return n * (validNumber(fxHkd, 0.92) || 0.92);
+    return n * (validNumber(fxHkd, 0) || 0);
   }
   return n;
 }
@@ -517,11 +517,11 @@ function symbolFxEod(currency, fxUsdEod, fxHkdEod) {
   const ccy = String(currency || "CNY").toUpperCase();
   if (ccy === "USD") {
     const fx = Number(fxUsdEod) || 0;
-    return fx > 0 ? fx : 7.2;
+    return fx > 0 ? fx : 0;
   }
   if (ccy === "HKD") {
     const fx = Number(fxHkdEod) || 0;
-    return fx > 0 ? fx : 0.92;
+    return fx > 0 ? fx : 0;
   }
   return 1;
 }

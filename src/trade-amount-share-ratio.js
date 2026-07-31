@@ -4,8 +4,6 @@
 
 const { normalizeSymbol } = require("./db-pure");
 
-const FX_USD_CNY_DEFAULT = 7.2;
-const FX_HKD_CNY_DEFAULT = 0.92;
 const RATIO_DECIMALS = 6;
 
 function inferMarket(symbol) {
@@ -40,10 +38,8 @@ function inferMarket(symbol) {
 function tradeAmountCny({ amount, symbol, fxUsdCny, fxHkdCny }) {
   const m = inferMarket(normalizeSymbol(symbol));
   const amt = Math.abs(Number(amount) || 0);
-  const fxUsd =
-    Number(fxUsdCny) > 0 ? Number(fxUsdCny) : FX_USD_CNY_DEFAULT;
-  const fxHkd =
-    Number(fxHkdCny) > 0 ? Number(fxHkdCny) : FX_HKD_CNY_DEFAULT;
+  const fxUsd = Number(fxUsdCny) > 0 ? Number(fxUsdCny) : 0;
+  const fxHkd = Number(fxHkdCny) > 0 ? Number(fxHkdCny) : 0;
   if (m === "A股" || m === "其他") {
     return amt;
   }
@@ -83,8 +79,6 @@ function computeTradeAmountShareRatio(input = {}) {
 }
 
 module.exports = {
-  FX_USD_CNY_DEFAULT,
-  FX_HKD_CNY_DEFAULT,
   RATIO_DECIMALS,
   inferMarket,
   tradeAmountCny,

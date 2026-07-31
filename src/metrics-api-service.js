@@ -34,6 +34,7 @@ const {
 } = require("./home-summary-maths");
 const { getComputeLiveMetrics } = require("./market-realtime-pnl");
 const { getLiveMetricsWithFrozenPack } = require("./metrics/live-metrics-context");
+const { resolveFxRatesCny } = require("./metrics/fx-maps");
 const {
   ALL_STAGES,
   parseStagesParam,
@@ -174,12 +175,21 @@ function buildBundleMeta(ctx, extra = {}) {
   };
 }
 
-function fxFromCtx(ctx) {
+async function fxFromCtx(ctx) {
   const { home, live } = ctx;
   const acc = home?.account;
+  const frozenThrough = String(acc?.frozen_through || acc?.frozenThrough || live?.frozenThrough || "").slice(0, 10);
+  const dateKey = live?.tradingDay && live?.liveDate ? String(live.liveDate).slice(0, 10) : frozenThrough;
+  const fx = await resolveFxRatesCny({
+    dateKey,
+    snapshotUsd: acc?.eod_fx_usd_cny,
+    snapshotHkd: acc?.eod_fx_hkd_cny,
+    liveSpot: { USD: live?.fxUsdCny, HKD: live?.fxHkdCny },
+    preferLiveSpot: !!live?.tradingDay,
+  });
   return {
-    fxU: Number(acc?.eod_fx_usd_cny) || live.fxUsdCny || 0,
-    fxH: Number(acc?.eod_fx_hkd_cny) || live.fxHkdCny || 0,
+    fxU: fx.fxUsdCny,
+    fxH: fx.fxHkdCny,
     book: resolveBookCurrencyForAccountScope(ctx.settings, ctx.scope),
   };
 }
@@ -230,7 +240,7 @@ async function computeReturnStages(ctx, stagesRaw, customRange = null) {
     }
     rowsAsc = await loadSnapshotRowsAsc(userId, scope, minStart, asOf);
   }
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
   const stages = {};
   for (const key of want) {
@@ -248,8 +258,8 @@ async function computeReturnStages(ctx, stagesRaw, customRange = null) {
   return { stages, mwrMode, rowsAsc, firstTrade };
 }
 
-function formatReturnStagesApi(stages, ctx) {
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+async function formatReturnStagesApi(stages, ctx) {
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const out = {};
   for (const [key, row] of Object.entries(stages || {})) {
@@ -262,9 +272,9 @@ function formatReturnStagesApi(stages, ctx) {
   return out;
 }
 
-function buildAssetsApi(ctx) {
+async function buildAssetsApi(ctx) {
   const { live, scope } = ctx;
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const scalars = resolveAccountAssetScalars({
     ...ctx,
     bookCurrency: book,
@@ -652,8 +662,8 @@ function filterSymbolHomeRowsByEod(symbolRows, scope, lastEodRows) {
   return (symbolRows || []).filter((r) => active.has(normalizeSymbol(r.symbol)));
 }
 
-function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
-  const base = frozenOnlyLiveFromHomeAccount(homeAcc);
+async function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
+  const base = await frozenOnlyLiveFromHomeAccount(homeAcc);
   const positions = [];
   const wanted = String(scope || "all").trim() || "all";
   for (const row of lastEodRows || []) {
@@ -678,12 +688,19 @@ function liveFromFrozenPack(homeAcc, lastEodRows, scope) {
 }
 
 
-function frozenOnlyLiveFromHomeAccount(homeAcc) {
+async function frozenOnlyLiveFromHomeAccount(homeAcc) {
   const ft = String(homeAcc?.frozen_through || homeAcc?.frozenThrough || "").slice(0, 10) || null;
   const ta = Number(homeAcc?.eod_total_assets_cny) || 0;
   const mv = Number(homeAcc?.eod_market_value_cny) || 0;
   const cash = Number(homeAcc?.eod_cash_cny) || 0;
   const total = ta || mv + cash;
+  const fx = ft
+    ? await resolveFxRatesCny({
+        dateKey: ft,
+        snapshotUsd: homeAcc?.eod_fx_usd_cny,
+        snapshotHkd: homeAcc?.eod_fx_hkd_cny,
+      })
+    : { fxUsdCny: 0, fxHkdCny: 0 };
   return {
     tradingDay: false,
     liveDate: null,
@@ -698,8 +715,8 @@ function frozenOnlyLiveFromHomeAccount(homeAcc) {
     cashRatio: total > 0 ? cash / total : (Number(homeAcc?.eod_cash_ratio) || 0) / 100,
     principalCny: Number(homeAcc?.eod_principal_cny) || 0,
     positions: [],
-    fxUsdCny: Number(homeAcc?.eod_fx_usd_cny) || 7.2,
-    fxHkdCny: Number(homeAcc?.eod_fx_hkd_cny) || 0.92,
+    fxUsdCny: fx.fxUsdCny,
+    fxHkdCny: fx.fxHkdCny,
     degradedFrozen: true,
   };
 }
@@ -752,7 +769,7 @@ async function loadMetricsScopeContext(userId, accountScope, diag = null) {
   }
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
   let liveFallback = false;
-  const live = await mark("live", () => {
+  const live = await mark("live", async () => {
     if (scopeCleared) {
       liveFallback = true;
       return frozenOnlyLiveFromHomeAccount(home.account);
@@ -810,7 +827,7 @@ async function loadMetricsScopeContextDbOnly(userId, accountScope, diag = null) 
     lastEodRows = await mark("db.lastEodShares", () => getLastEodSharesForUser(userId));
   }
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
-  const live = frozenOnlyLiveFromHomeAccount(home.account);
+  const live = await frozenOnlyLiveFromHomeAccount(home.account);
   if (phases) {
     phases.live = 0;
     phases.liveSkipped = true;
@@ -835,7 +852,7 @@ async function loadMetricsScopeContextSnapshotOnly(userId, accountScope, diag = 
     const scopeCleared = isScopeMetricsCleared(scope, pack.um, pack.accountMetaList);
     const symbols = filterSymbolHomeRowsByEod(pack.home.symbols, scope, pack.lastEodRows);
     pack.home.symbols = symbols;
-    const live = liveFromFrozenPack(pack.home.account, pack.lastEodRows, scope);
+    const live = await liveFromFrozenPack(pack.home.account, pack.lastEodRows, scope);
     if (phases) {
       phases.live = 0;
       phases.liveSkipped = true;
@@ -892,7 +909,7 @@ async function loadMetricsScopeContextLiveFromPack(userId, accountScope, diag = 
   home.symbols = filterActiveSymbolHomeRows(home.symbols, trades, scope, lastEodRows);
 
   let liveFallback = false;
-  const live = await mark("live", () => {
+  const live = await mark("live", async () => {
     if (scopeCleared) {
       liveFallback = true;
       return frozenOnlyLiveFromHomeAccount(home.account);
@@ -983,8 +1000,8 @@ async function assembleHomeBundleFromContext(ctx, stagesRaw, diag, extraDiag = {
   }
   const value = {
     meta: buildBundleMeta(ctx),
-    returns: { stages: formatReturnStagesApi(stages, ctx) },
-    assets: buildAssetsApi(ctx),
+    returns: { stages: await formatReturnStagesApi(stages, ctx) },
+    assets: await buildAssetsApi(ctx),
     holdings: await buildMetricsHoldingsFromContext(ctx, overviewInternal),
   };
   if (diag) {
@@ -1054,7 +1071,7 @@ function firstTradeDateFromTrades(trades, fallback) {
 
 async function buildSeriesDailyProfitFromContext(ctx, stage, trades, rowsAsc, customRange = null) {
   const { userId, scope, settings, live, um, home } = ctx;
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const sessionAsOf = liveDateKeyShanghai();
   const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
@@ -1153,7 +1170,7 @@ async function buildSeriesDailyTwrFromContext(ctx, stage, trades, rowsAscPreload
       rate: fmtSignedPercentRatio(rateFromRow(r)),
     }));
   }
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const scopeCtx = { scope, bookCurrency: book, fxUsdCny: fxU, fxHkdCny: fxH };
   if (live.tradingDay) {
     const liveDate = String(live.liveDate || "").slice(0, 10);
@@ -1229,7 +1246,7 @@ async function buildSeriesDailyAssetFromContext(ctx, stage, trades, rowsAsc, met
 async function buildStockRankFromContext(ctx, stage, rankOpts = {}) {
   const { userId, scope, settings, live, um } = ctx;
   const st = String(stage || "mtd").trim() || "mtd";
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const payload = await buildStockRankPayload({
     userId,
     accountScope: scope,
@@ -1265,7 +1282,7 @@ function mergeSeriesLivePoint(points, liveRow, valueKey) {
 /** 分析页 series：六条曲线同级，点为已格式化字符串 */
 async function buildAnalysisSeriesBundle(ctx, stage, trades, rowsAscPreload, customRange = null) {
   const { live, scope } = ctx;
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const st = String(stage || "mtd").trim() || "mtd";
   const asOf = live.frozenThrough || liveDateKeyShanghai();
   const firstTrade = firstTradeDateFromCtx({ ...ctx, trades: trades ?? ctx.trades }, asOf);
@@ -1351,7 +1368,7 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
   const stageRow = stages[st] || { profitCny: 0, rateTwr: 0, rateMwr: 0 };
   const mwrMode = String(ctx.settings?.algoMode || "twr").toLowerCase() === "mwr";
   const rateVal = mwrMode ? stageRow.rateMwr : stageRow.rateTwr;
-  const { fxU, fxH, book } = fxFromCtx(ctx);
+  const { fxU, fxH, book } = await fxFromCtx(ctx);
   const rankOpts = {
     publicLayout: bundleOpts.publicRankLayout === true,
     accountProfitCny: Number(stageRow.profitCny) || 0,
@@ -1382,7 +1399,7 @@ async function assembleAnalysisBundleFromContext(ctx, stage, benchmarkSymbol, di
       profit: formatSignedProfitForScope(stageRow.profitCny, scope, book, fxU, fxH),
       rate: fmtSignedPercentRatio(rateVal),
     },
-    assets: buildAssetsApi(ctx),
+    assets: await buildAssetsApi(ctx),
     series: paddedSeries,
     stockRank,
     benchmark,

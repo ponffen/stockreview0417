@@ -13,6 +13,7 @@ const {
 } = require("../db");
 const { resolveStageRange } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
+const { resolveFxRatesCny } = require("./fx-maps");
 const {
   sortTradeAsc,
   countHeldDaysFromPnl,
@@ -94,8 +95,8 @@ function formatStockRankRowsForBundle(rows, accountProfitCny, scopeCtx = {}) {
   const accountProfit = Number(accountProfitCny);
   const scope = scopeCtx.scope ?? "all";
   const bookCurrency = scopeCtx.bookCurrency ?? "CNY";
-  const fxUsdCny = scopeCtx.fxUsdCny ?? 7.2;
-  const fxHkdCny = scopeCtx.fxHkdCny ?? 0.92;
+  const fxUsdCny = Number(scopeCtx.fxUsdCny) || 0;
+  const fxHkdCny = Number(scopeCtx.fxHkdCny) || 0;
   return (rows || []).map((r) => {
     const profitCny = Number(r.profitCny) || 0;
     const profitBook = stockRankRowProfitToBook(profitCny, scope, bookCurrency, fxUsdCny, fxHkdCny);
@@ -133,8 +134,15 @@ async function buildStockRankPayloadLegacy({
 }) {
   const scope = String(accountScope || "all").trim() || "all";
   const asOf = String(live.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
-  const fxUsd = Number(live.fxUsdCny) || 7.2;
-  const fxHkd = Number(live.fxHkdCny) || 0.92;
+  const fxResolved = await resolveFxRatesCny({
+    dateKey: live.tradingDay ? live.liveDate || asOf : asOf,
+    snapshotUsd: scopeCtx?.fxUsdCny,
+    snapshotHkd: scopeCtx?.fxHkdCny,
+    liveSpot: { USD: live.fxUsdCny, HKD: live.fxHkdCny },
+    preferLiveSpot: !!live.tradingDay,
+  });
+  const fxUsd = fxResolved.fxUsdCny;
+  const fxHkd = fxResolved.fxHkdCny;
   const trades = preloadedTrades ?? (await getTrades(userId));
   const scopeTrades =
     scope === "all" ? trades : trades.filter((t) => String(t.accountId || "default") === scope);
@@ -243,8 +251,15 @@ async function buildStockRankPayloadV3({
   const stageKey = String(stage || "mtd").trim() || "mtd";
   const asOf = String(live.frozenThrough || liveDateKeyShanghai()).slice(0, 10);
   const frozenThrough = asOf;
-  const fxUsdEod = Number(scopeCtx?.fxUsdCny) || Number(live.fxUsdCny) || 7.2;
-  const fxHkdEod = Number(scopeCtx?.fxHkdCny) || Number(live.fxHkdCny) || 0.92;
+  const fxResolved = await resolveFxRatesCny({
+    dateKey: live.tradingDay ? live.liveDate || asOf : asOf,
+    snapshotUsd: scopeCtx?.fxUsdCny,
+    snapshotHkd: scopeCtx?.fxHkdCny,
+    liveSpot: { USD: live.fxUsdCny, HKD: live.fxHkdCny },
+    preferLiveSpot: !!live.tradingDay,
+  });
+  const fxUsdEod = fxResolved.fxUsdCny;
+  const fxHkdEod = fxResolved.fxHkdCny;
   const bookCurrency = scopeCtx?.bookCurrency ?? "CNY";
   const accountIdForPnl = scope === "all" ? "all" : scope;
 

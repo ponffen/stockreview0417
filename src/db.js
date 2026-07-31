@@ -37,6 +37,7 @@ const {
   addCalendarDays,
 } = require("./db-pure");
 const { computeTradeAmountShareRatio } = require("./trade-amount-share-ratio");
+const { loadFxRatesOnDate } = require("./metrics/fx-maps");
 const { toDateKey: shanghaiCalendarDateKey } = require("../scripts/lib/market-fetch");
 const {
   LEGACY_USER_VALID_UNTIL,
@@ -2861,12 +2862,23 @@ async function backfillTradeAmountShareRatiosForUser(userId, options = {}) {
         snapCache.set(asOf, snap);
       }
       if (snap) {
+        let fxUsdCny = snap.fxUsdCny;
+        let fxHkdCny = snap.fxHkdCny;
+        if (!(Number(fxUsdCny) > 0) || !(Number(fxHkdCny) > 0)) {
+          const dbFx = await loadFxRatesOnDate(asOf);
+          if (!(Number(fxUsdCny) > 0)) {
+            fxUsdCny = dbFx.USD;
+          }
+          if (!(Number(fxHkdCny) > 0)) {
+            fxHkdCny = dbFx.HKD;
+          }
+        }
         ratio = computeTradeAmountShareRatio({
           amount: Number(row.amount),
           symbol: row.symbol,
           totalAssetsCny: snap.totalAssets,
-          fxUsdCny: snap.fxUsdCny,
-          fxHkdCny: snap.fxHkdCny,
+          fxUsdCny,
+          fxHkdCny,
         });
       }
     }

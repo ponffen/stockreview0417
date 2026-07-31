@@ -384,11 +384,6 @@ const DEFAULT_BENCHMARK_PRICE = {
   gb_inx: 0,
 };
 const ALLOWED_PUBLIC_BENCHMARKS = new Set(["none", "sh000001", "sz399001", "rt_hkHSI", "gb_inx"]);
-const FX_RATE_FALLBACK = {
-  CNY: 1,
-  HKD: 0.92,
-  USD: 7.2,
-};
 /** 腾讯财经外汇实时：与主行情接口同源 qt.gtimg.cn */
 const TENCENT_FOREX_SPOT_CODES = ["whUSDCNY", "whHKDCNY"];
 const TENCENT_FOREX_CODE_TO_CCY = { whUSDCNY: "USD", whHKDCNY: "HKD" };
@@ -1238,11 +1233,60 @@ function bindAuthUi() {
   });
 }
 
+async function hydrateFxSpotFromApi() {
+  if (!apiReady) {
+    return;
+  }
+  try {
+    const r = await apiFetch(`${API_BASE}/realtime/fx`, { cache: "no-store", timeoutMs: 12_000 });
+    if (!r.ok) {
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!j?.ok || !j.fxSpot) {
+      return;
+    }
+    state.fxSpot = {
+      USD: Number(j.fxSpot.USD) > 0 ? Number(j.fxSpot.USD) : 0,
+      HKD: Number(j.fxSpot.HKD) > 0 ? Number(j.fxSpot.HKD) : 0,
+    };
+  } catch {
+    // ignore
+  }
+}
+
+async function hydrateFxCloseSeriesFromApi() {
+  if (!apiReady) {
+    return;
+  }
+  try {
+    const to = toDateKey(new Date());
+    const from = shiftDateKeyByDays(to, -DAILY_CLOSE_HYDRATE_WINDOW_DAYS);
+    const r = await apiFetch(
+      `${API_BASE}/metrics/fx-close-range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { cache: "no-store", timeoutMs: 15_000 },
+    );
+    if (!r.ok) {
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    const rates = j?.data?.ratesByDate;
+    if (!rates || typeof rates !== "object") {
+      return;
+    }
+    state.fxRatesToCnyByDate = { ...state.fxRatesToCnyByDate, ...rates };
+  } catch {
+    // ignore
+  }
+}
+
 async function startAppAfterAuth(options = {}) {
   if (!options.sessionAlreadyFresh) {
     await refreshSessionFromServer();
   }
   await hydrateState();
+  void hydrateFxSpotFromApi();
+  void hydrateFxCloseSeriesFromApi();
   void ensurePageCacheMeta();
   normalizeModuleHomeOnColdLoad();
   applyEmptyLedgerCommunityDefault();
@@ -9389,8 +9433,8 @@ function amountBookFromCny(amountCny, bookCcy) {
   if (c === "CNY") {
     return x;
   }
-  const usd = validNumber(getFxRateToCny("USD"), FX_RATE_FALLBACK.USD);
-  const hkd = validNumber(getFxRateToCny("HKD"), FX_RATE_FALLBACK.HKD);
+  const usd = getFxRateToCny("USD");
+  const hkd = getFxRateToCny("HKD");
   if (c === "USD" && usd > 0) {
     return x / usd;
   }
@@ -14155,7 +14199,12 @@ function getFxRateToCny(currency) {
   if (Number.isFinite(spot) && spot > 0) {
     return spot;
   }
-  return FX_RATE_FALLBACK[currency] || 1;
+  const today = toDateKey(new Date());
+  const todayHit = state.fxRatesToCnyByDate?.[today]?.[currency];
+  if (Number.isFinite(todayHit) && todayHit > 0) {
+    return todayHit;
+  }
+  return 0;
 }
 
 function getFxRateForDate(currency, dateKey) {
