@@ -20,6 +20,7 @@ const { StageAccumulator } = require("./stage-accumulator");
 const { StageTradeCounter, countTradeRecordsOnDate, isTradeRecord, resolveTradeSnapForFreezeDay } = require("./stage-trade-counter");
 const { windowStartForStage } = require("./stage-accumulator");
 const { addCalendarDays, monthStartKeyShanghai, yearStartKeyShanghai } = require("./stages");
+const { lastNdStageSnapshotsFromInception } = require("./last-nd");
 const {
   buildPortfolioDayPoints,
   computeTwrFromDayPoints,
@@ -340,6 +341,8 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
   const stageTradeAcc = new StageTradeCounter();
   const flowPts = [];
   const dailyOut = [];
+  const inceptionSeries = [];
+  const firstTrade = symTrades.length ? String(symTrades[0].date).slice(0, 10) : D;
   let pi = 0;
   let qty = 0;
   let prevTradeSnapRow = null;
@@ -365,6 +368,12 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       dayTrades.length > 0 || Math.abs(qBod) > 1e-6 || Math.abs(qEod) > 1e-6;
     if (!hasActivity) {
       stageAcc.onDay(day, 0, 0);
+      const snapInactive = stageAcc.snapshotTwr();
+      inceptionSeries.push({
+        date: day,
+        profit: snapInactive.stageInceptionProfit,
+        rate: snapInactive.stageInceptionRateTwr,
+      });
       continue;
     }
 
@@ -394,6 +403,12 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       flowPts.push({ date: day, value: qEod * closeD, flow: dayFlow });
     }
     const snap = stageAcc.snapshotTwr();
+    inceptionSeries.push({
+      date: day,
+      profit: snap.stageInceptionProfit,
+      rate: snap.stageInceptionRateTwr,
+    });
+    const lastNdSnap = lastNdStageSnapshotsFromInception(snap, inceptionSeries, day, firstTrade);
     const tradeSnap = resolveTradeSnapForFreezeDay(dailyTradeCount, stageTradeAcc.snapshot(), prevTradeSnapRow);
     const endVal = qEod * closeD;
     const mwrRate = mwrForFreezeStorage(symbolMwrFromValueFlowPoints(flowPts, day, endVal));
@@ -408,6 +423,7 @@ function replaySymbolDailyRows(sym, accountId, accTrades, allDates, kline, froze
       eodPrice: closeD,
       dailyTradeCount,
       ...snap,
+      ...lastNdSnap,
       ...tradeSnap,
       stageMtdRateMwr: mwrRate,
       stageYtdRateMwr: mwrRate,

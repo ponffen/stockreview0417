@@ -6,6 +6,11 @@ const { fmtPlainSignedAmount } = require("../account-kpi-surface");
 const { liveCnyToBookAmount, isAggregateScope } = require("./account-book-metrics");
 const { isFreshStagePeriod, stageUsesFrozenCumulativeFields } = require("./stages");
 const {
+  isLastNdStage,
+  lastNdProfitFromFrozenRows,
+  lastNdRateTwrFromFrozenRows,
+} = require("./last-nd");
+const {
   stageTradeCountFromRow,
   countTradeRecordsOnDate,
   countTradeRecordsInRange,
@@ -536,6 +541,17 @@ function nativeFrozenPlusTodayToCny(frozenNative, todayProfitCny, currency, mark
   return frozen * symbolFxEod(currency, fxUsdEod, fxHkdEod) + today;
 }
 
+function lastNdProfitCnyFromFrozenRows(endRow, anchorRow, currency, market, fxUsdEod, fxHkdEod) {
+  if (endRow) {
+    const cnyDelta = lastNdProfitFromFrozenRows(endRow, anchorRow, "cny");
+    if (endRow.stageInceptionProfitCny != null || anchorRow?.stageInceptionProfitCny != null) {
+      return cnyDelta;
+    }
+  }
+  const nativeDelta = lastNdProfitFromFrozenRows(endRow, anchorRow, "native");
+  return profitNativeToAnalysisCny(nativeDelta, currency, market, fxUsdEod, fxHkdEod);
+}
+
 function frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough) {
   const st = String(stageKey || "mtd").trim() || "mtd";
   if (st === "today") {
@@ -651,7 +667,7 @@ function computeMainRowTradeCount({
   const ft = String(frozenThrough || "").slice(0, 10);
   const tradeList = symbolTrades || [];
 
-  if (st === "custom") {
+  if (st === "custom" || isLastNdStage(st)) {
     return countTradeRecordsInRange(tradeList, ps, pe);
   }
 
@@ -680,10 +696,24 @@ function computeMainRowTradeCount({
   return count;
 }
 
+function computeMainRowPxChange({ stageKey, frozenRow, anchorRow, segments, closeLookup }) {
+  if (isLastNdStage(stageKey) && frozenRow) {
+    const rate = lastNdRateTwrFromFrozenRows(frozenRow, anchorRow, "native");
+    if (Number.isFinite(rate)) {
+      return rate;
+    }
+  }
+  if (segments.length > 0) {
+    return pxChangeMainRowFromSegments(segments, closeLookup);
+  }
+  return NaN;
+}
+
 function computeMainRowProfitCny({
   stageKey,
   stageStart,
   frozenRow,
+  anchorRow,
   live,
   livePosition,
   currency,
@@ -693,6 +723,20 @@ function computeMainRowProfitCny({
   fxUsdEod,
   fxHkdEod,
 }) {
+  if (isLastNdStage(stageKey)) {
+    const frozenCny = lastNdProfitCnyFromFrozenRows(
+      frozenRow,
+      anchorRow,
+      currency,
+      market,
+      fxUsdEod,
+      fxHkdEod,
+    );
+    const todayCny = shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })
+      ? Number(livePosition?.todayProfitCny) || 0
+      : 0;
+    return frozenCny + todayCny;
+  }
   const frozenNative = frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough);
   const todayCny = shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })
     ? Number(livePosition?.todayProfitCny) || 0
@@ -932,6 +976,8 @@ module.exports = {
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
   computeMainRowTradeCount,
+  computeMainRowPxChange,
+  lastNdProfitCnyFromFrozenRows,
   scopeSymbolTrades,
   nativeFrozenPlusTodayToCny,
   profitNativeToAnalysisCny,

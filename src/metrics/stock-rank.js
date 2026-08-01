@@ -14,6 +14,7 @@ const {
 const { resolveStageRange } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
 const { resolveFxRatesCny } = require("./fx-maps");
+const { isLastNdStage, lastNdAnchorAsOf } = require("./last-nd");
 const {
   sortTradeAsc,
   countHeldDaysFromPnl,
@@ -27,10 +28,10 @@ const {
   computePeriodMetricsFromPnl,
   computeMainRowProfitCny,
   computeMainRowTradeCount,
+  computeMainRowPxChange,
   scopeSymbolTrades,
   countTradeRecordsInRange,
   profitNativeToAnalysisCny,
-  pxChangeMainRowFromSegments,
   formatHoldingSegmentsLabel,
   formatHoldingSegmentsLabelPublic,
   groupPnlRowsBySymbol,
@@ -306,18 +307,27 @@ async function buildStockRankPayloadV3({
   }
 
   const candidateSyms = candidates.map(({ sym }) => sym);
-  const frozenRowBySym =
+  const anchorAsOf = isLastNdStage(stageKey) ? lastNdAnchorAsOf(periodStart) : "";
+  const [frozenRowBySym, anchorRowBySym] = await Promise.all([
     candidateSyms.length > 0
-      ? await getSymbolDailyPnlRowsOnOrBefore(
+      ? getSymbolDailyPnlRowsOnOrBefore(
           { accountId: accountIdForPnl, symbols: candidateSyms, asOf: frozenThrough },
           userId,
         )
-      : new Map();
+      : Promise.resolve(new Map()),
+    anchorAsOf && candidateSyms.length > 0
+      ? getSymbolDailyPnlRowsOnOrBefore(
+          { accountId: accountIdForPnl, symbols: candidateSyms, asOf: anchorAsOf },
+          userId,
+        )
+      : Promise.resolve(new Map()),
+  ]);
 
   const rows = [];
 
   for (const { sym, pnlRows, segments, livePos } of candidates) {
     const frozenRow = frozenRowBySym.get(sym) || null;
+    const anchorRow = anchorRowBySym.get(sym) || null;
     const currency = inferSymbolCurrency([], frozenRow ? [{ currency: frozenRow.currency }] : pnlRows);
     const market = inferMarket(sym);
     const closeLookup = buildCloseLookupFromPnl(pnlRows, livePos, live.liveDate, live.tradingDay);
@@ -326,6 +336,7 @@ async function buildStockRankPayloadV3({
       stageKey,
       stageStart: periodStart,
       frozenRow,
+      anchorRow,
       live,
       livePosition: livePos,
       currency,
@@ -336,7 +347,13 @@ async function buildStockRankPayloadV3({
       fxHkdEod,
     });
     const heldDays = heldDaysFromSegmentDates(segments);
-    const pxChange = segments.length > 0 ? pxChangeMainRowFromSegments(segments, closeLookup) : NaN;
+    const pxChange = computeMainRowPxChange({
+      stageKey,
+      frozenRow,
+      anchorRow,
+      segments,
+      closeLookup,
+    });
     const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
     const tradeCount = computeMainRowTradeCount({
       stageKey,
