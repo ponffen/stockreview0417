@@ -5,20 +5,29 @@ const {
   listAllUserIds,
   getTrades,
   upsertSymbolDailyCloseBatch,
-  getSymbolDailyCloseBounds,
   getSymbolDailyCloseRange,
 } = require("./db");
+const { resolveFrozenDate } = require("./eod-freeze-service");
 const {
   fetchRemoteDailyClosesForSymbol,
   diffMissingCloseDates,
   summarizeGapRanges,
 } = require("./daily-close-backfill");
+const {
+  SOURCE_SINA,
+  SOURCE_TENCENT,
+  LEN_INCREMENTAL,
+  pickBarOnDate,
+  tencentQuoteMatchesFrozenDate,
+  fetchSinaDailyKBatchMulti,
+  fetchBackfillClosesForSymbol,
+} = require("./daily-close-fetch");
+const { fetchTencentQuoteMap } = require("./quotes/tencent-quote");
 
 const POSITION_EPSILON = 1e-6;
 const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
-const BENCHMARK_DAILY_SYMBOLS = ["sh000001", "sz399001", "rt_hkHSI", "gb_inx"];
 const FX_DAILY_LOOKBACK_DAYS = 7;
-const BENCHMARK_LOOKBACK_DAYS = 400;
+const SINA_BATCH_CHUNK = 25;
 
 function normalizeLifecycleTrade(raw) {
   const symbol = normalizeSymbol(raw?.symbol);
@@ -71,7 +80,6 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
   const lastTradeDate = sorted[sorted.length - 1].date;
   const currentlyHolding = eodQty > POSITION_EPSILON;
   const from = addCalendarDays(firstTradeDate, -1);
-  // 曾持仓标的：日 K 一旦纳入同步就持续拉到 asOfDate，清仓后也不停。
   return {
     from,
     to: asOfDate,
@@ -143,7 +151,6 @@ async function buildGlobalDailyClosePlan(asOfDate) {
       });
       continue;
     }
-    // 即使该 symbol 已由交易生命周期计划覆盖，也强制把范围延伸到 asOfDate，确保每日外汇更新。
     prev.from = prev.from < fxFrom ? prev.from : fxFrom;
     prev.to = prev.to > dateKey ? prev.to : dateKey;
     prev.active = true;
@@ -209,87 +216,127 @@ async function auditDailyCloseGapsForPlan(plan, options = {}) {
   return audits;
 }
 
-async function symbolDailyCloseNeedsSync(item) {
-  if (item.active) {
-    const local = await getSymbolDailyCloseRange(item.symbol, item.from, item.to);
-    let remote = [];
-    try {
-      remote = await fetchRemoteDailyClosesForSymbol(item.symbol, item.from, item.to);
-    } catch {
-      return { shouldSync: true, reason: "active-fetch-failed" };
-    }
-    const missing = diffMissingCloseDates(local, remote, item.from, item.to);
-    if (missing.length > 0) {
-      return { shouldSync: true, reason: "active-missing", missingCount: missing.length };
-    }
-    return { shouldSync: false, reason: "active-complete" };
-  }
-  const bounds = await getSymbolDailyCloseBounds(item.symbol, item.from, item.to);
-  const edgeCovered = !!(
-    bounds &&
-    bounds.minDate &&
-    bounds.maxDate &&
-    bounds.minDate <= item.from &&
-    bounds.maxDate >= item.to
-  );
-  if (!edgeCovered) {
-    return { shouldSync: true, reason: "dormant-backfill" };
-  }
-  const local = await getSymbolDailyCloseRange(item.symbol, item.from, item.to);
-  let remote = [];
-  try {
-    remote = await fetchRemoteDailyClosesForSymbol(item.symbol, item.from, item.to);
-  } catch {
-    return { shouldSync: true, reason: "dormant-fetch-failed" };
-  }
-  const missing = diffMissingCloseDates(local, remote, item.from, item.to);
-  if (missing.length > 0) {
-    return { shouldSync: true, reason: "dormant-gap", missingCount: missing.length };
-  }
-  return { shouldSync: false, reason: "dormant-complete" };
+function symbolsInPlanForFrozenDate(plan, frozenDate) {
+  const fd = String(frozenDate || "").slice(0, 10);
+  return (plan || []).filter((item) => item.from <= fd && item.to >= fd);
 }
 
-async function runDailyCloseSync(options = {}) {
-  const logger = options.logger || console;
-  const asOfDate = toDateKey(options.asOfDate || new Date());
-  const symbolFilter = new Set(
-    (Array.isArray(options.symbols) ? options.symbols : [])
-      .map((s) => normalizeSymbol(String(s || "")))
-      .filter(Boolean)
-  );
-  const plan = await buildGlobalDailyClosePlan(asOfDate);
-  const targets = symbolFilter.size ? plan.filter((item) => symbolFilter.has(item.symbol)) : plan;
+/**
+ * 定时增量：冻结日单行；新浪 DailyK_Batch(len=2) + 腾讯 qt 兜底。
+ */
+async function runIncrementalDailyCloseSync(frozenDate, targets, logger) {
+  const fd = String(frozenDate || "").slice(0, 10);
+  const symbols = targets.map((t) => t.symbol);
+  const sinaBarsBySymbol = new Map();
+
+  for (let i = 0; i < symbols.length; i += SINA_BATCH_CHUNK) {
+    const chunk = symbols.slice(i, i + SINA_BATCH_CHUNK);
+    const batch = await fetchSinaDailyKBatchMulti(chunk, { len: LEN_INCREMENTAL });
+    for (const [sym, bars] of batch.entries()) {
+      sinaBarsBySymbol.set(sym, bars);
+    }
+  }
+
+  const rowsToWrite = [];
+  const perSymbol = [];
+  const tencentCandidates = [];
+
+  for (const item of targets) {
+    const sym = item.symbol;
+    const bars = sinaBarsBySymbol.get(sym) || [];
+    const bar = pickBarOnDate(bars, fd);
+    if (bar) {
+      rowsToWrite.push({ symbol: sym, date: fd, close: bar.close, source: SOURCE_SINA });
+      perSymbol.push({
+        symbol: sym,
+        synced: true,
+        source: SOURCE_SINA,
+        close: bar.close,
+        frozenDate: fd,
+      });
+    } else {
+      tencentCandidates.push({ item, bars });
+    }
+  }
+
+  if (tencentCandidates.length) {
+    const tencentRes = await fetchTencentQuoteMap(tencentCandidates.map((c) => c.item.symbol));
+    for (const { item, bars } of tencentCandidates) {
+      const sym = item.symbol;
+      const quote = tencentRes.map?.get(sym);
+      const current = Number(quote?.current);
+      if (!quote || !(current > 0)) {
+        perSymbol.push({
+          symbol: sym,
+          synced: false,
+          reason: "no-sina-bar-and-no-tencent-quote",
+          frozenDate: fd,
+          sinaDays: bars.map((b) => b.date),
+        });
+        continue;
+      }
+      if (!tencentQuoteMatchesFrozenDate(quote, fd, sym)) {
+        perSymbol.push({
+          symbol: sym,
+          synced: false,
+          reason: "tencent-date-mismatch",
+          frozenDate: fd,
+          quoteTime: String(quote.time || ""),
+          sinaDays: bars.map((b) => b.date),
+        });
+        continue;
+      }
+      rowsToWrite.push({ symbol: sym, date: fd, close: current, source: SOURCE_TENCENT });
+      perSymbol.push({
+        symbol: sym,
+        synced: true,
+        source: SOURCE_TENCENT,
+        close: current,
+        frozenDate: fd,
+        quoteTime: String(quote.time || ""),
+      });
+    }
+  }
+
+  const rowsWritten = rowsToWrite.length ? await upsertSymbolDailyCloseBatch(rowsToWrite) : 0;
+  const failedSymbols = perSymbol.filter((r) => !r.synced).length;
+  if (failedSymbols) {
+    logger.warn?.(
+      `[daily-close-sync] incremental frozenDate=${fd} failed=${failedSymbols}`,
+      perSymbol.filter((r) => !r.synced).slice(0, 5),
+    );
+  }
+  return {
+    mode: "incremental",
+    frozenDate: fd,
+    symbolsPlanned: targets.length,
+    symbolsSynced: perSymbol.filter((r) => r.synced).length,
+    symbolsFailed: failedSymbols,
+    symbolsSkipped: 0,
+    rowsFetched: rowsToWrite.length,
+    rowsWritten,
+    plan: perSymbol,
+  };
+}
+
+/**
+ * 多天回填：DailyK_Batch(len=5000, start/end)，按 bar 日期逐日写库。
+ */
+async function runBackfillDailyCloseSync(targets, logger) {
   const perSymbol = [];
   let rowsFetched = 0;
   let rowsWritten = 0;
   let failedSymbols = 0;
-  let skippedSymbols = 0;
+
   for (const item of targets) {
-    const syncDecision = await symbolDailyCloseNeedsSync(item);
-    const shouldSync = syncDecision.shouldSync;
-    const reason = syncDecision.reason;
-    if (!shouldSync) {
-      skippedSymbols += 1;
-      perSymbol.push({
-        symbol: item.symbol,
-        from: item.from,
-        to: item.to,
-        active: item.active,
-        synced: false,
-        reason,
-        fetched: 0,
-        written: 0,
-      });
-      continue;
-    }
     try {
-      const rows = await fetchRemoteDailyClosesForSymbol(item.symbol, item.from, item.to);
+      const rows = await fetchBackfillClosesForSymbol(item.symbol, item.from, item.to);
       rowsFetched += rows.length;
       const payload = rows.map((row) => ({
         symbol: item.symbol,
-        date: String(row.date || "").slice(0, 10),
-        close: Number(row.close),
-        source: String(row.source || "sina"),
+        date: row.date,
+        close: row.close,
+        source: row.source || SOURCE_SINA,
       }));
       const written = payload.length ? await upsertSymbolDailyCloseBatch(payload) : 0;
       rowsWritten += written;
@@ -297,39 +344,60 @@ async function runDailyCloseSync(options = {}) {
         symbol: item.symbol,
         from: item.from,
         to: item.to,
-        active: item.active,
         synced: true,
-        reason,
         fetched: rows.length,
         written,
       });
     } catch (error) {
       failedSymbols += 1;
-      logger.warn?.(`[daily-close-sync] failed symbol=${item.symbol}`, error?.message || error);
+      logger.warn?.(`[daily-close-sync] backfill failed symbol=${item.symbol}`, error?.message || error);
       perSymbol.push({
         symbol: item.symbol,
         from: item.from,
         to: item.to,
-        active: item.active,
         synced: false,
-        reason: "failed",
         fetched: 0,
         written: 0,
         error: String(error?.message || error || "unknown error"),
       });
     }
   }
+
   return {
-    ok: true,
-    asOfDate,
+    mode: "backfill",
     symbolsPlanned: targets.length,
-    symbolsSynced: perSymbol.filter((item) => item.synced).length,
-    symbolsSkipped: skippedSymbols,
+    symbolsSynced: perSymbol.filter((r) => r.synced).length,
     symbolsFailed: failedSymbols,
+    symbolsSkipped: 0,
     rowsFetched,
     rowsWritten,
     plan: perSymbol,
   };
+}
+
+async function runDailyCloseSync(options = {}) {
+  const logger = options.logger || console;
+  const mode = String(options.mode || (options.backfill ? "backfill" : "incremental")).trim() || "incremental";
+  const asOfDate = toDateKey(options.asOfDate || new Date());
+  const frozenDate = options.frozenDate
+    ? String(options.frozenDate).slice(0, 10)
+    : resolveFrozenDate(options.asOfDate || new Date());
+  const symbolFilter = new Set(
+    (Array.isArray(options.symbols) ? options.symbols : [])
+      .map((s) => normalizeSymbol(String(s || "")))
+      .filter(Boolean),
+  );
+  const plan = await buildGlobalDailyClosePlan(asOfDate);
+  const targets = symbolFilter.size ? plan.filter((item) => symbolFilter.has(item.symbol)) : plan;
+
+  if (mode === "backfill") {
+    const result = await runBackfillDailyCloseSync(targets, logger);
+    return { ok: true, asOfDate, frozenDate, ...result };
+  }
+
+  const incrementalTargets = symbolsInPlanForFrozenDate(targets, frozenDate);
+  const result = await runIncrementalDailyCloseSync(frozenDate, incrementalTargets, logger);
+  return { ok: true, asOfDate, ...result };
 }
 
 module.exports = {
@@ -337,4 +405,7 @@ module.exports = {
   auditDailyCloseGapsForSymbol,
   auditDailyCloseGapsForPlan,
   runDailyCloseSync,
+  runIncrementalDailyCloseSync,
+  runBackfillDailyCloseSync,
+  symbolsInPlanForFrozenDate,
 };

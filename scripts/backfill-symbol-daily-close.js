@@ -11,6 +11,7 @@ async function main() {
   const asOfDate = process.argv[2] ? String(process.argv[2]).slice(0, 10) : "";
   const result = await runDailyCloseSync({
     asOfDate: asOfDate || undefined,
+    mode: "backfill",
     logger: console,
   });
   console.log(

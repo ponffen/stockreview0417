@@ -2061,11 +2061,14 @@ app.all("/api/cron/sync-daily-close", async (req, res) => {
   try {
     await ensureAppDerivedTables();
     const asOfDate = req.query?.asOfDate || req.body?.asOfDate;
+    const modeRaw = req.query?.mode || req.body?.mode;
+    const mode = String(modeRaw || "backfill").trim() === "incremental" ? "incremental" : "backfill";
     const bodySymbols = Array.isArray(req.body?.symbols) ? req.body.symbols : [];
     const querySymbols = sanitizeSymbolList(req.query?.symbols);
     const symbols = [...new Set([...bodySymbols, ...querySymbols].map((s) => normalizeSymbol(String(s || ""))).filter(Boolean))];
     const result = await runDailyCloseSync({
       asOfDate,
+      mode,
       symbols,
       logger: console,
     });

@@ -239,6 +239,8 @@ async function runScheduledEodPipeline(options = {}) {
     logger.info?.("[eod-pipeline] daily-close-sync start");
     dailyClose = await runDailyCloseSync({
       asOfDate: options.asOfDate,
+      frozenDate: resolveFrozenDate(options.frozenDate || options.asOfDate),
+      mode: "incremental",
       symbols: options.symbols,
       logger,
     });
