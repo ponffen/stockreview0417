@@ -68,14 +68,19 @@ function getShanghaiCalendarDate(baseDate = new Date()) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
-  const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0800(now)).slice(0, 10);
-  const quoteKey =
+function quoteSessionDateKey(quote) {
+  return (
     (quote && quote.marketDate) ||
     (quote && quote.quoteDate) ||
     (quote && parseQuoteTimeToDateKey(quote.rawTime)) ||
     (quote && parseQuoteTimeToDateKey(quote.time)) ||
-    null;
+    null
+  );
+}
+
+function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSessionKey = null) {
+  const tradingKey = String(ledgerSessionKey || getTradingDateKeyBy0800(now)).slice(0, 10);
+  const quoteKey = quoteSessionDateKey(quote);
   if (!quoteKey) {
     return false;
   }
@@ -85,6 +90,12 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSes
   // 08:00 前：行情北京时间戳常落在 ledger 日的次日（美股 regular/夜盘均可能），仍属同一交易日。
   const calendarToday = getShanghaiCalendarDate(now);
   if (calendarToday > tradingKey && quoteKey === addCalendarDays(tradingKey, 1)) {
+    return true;
+  }
+  // 周一早盘等：美股行情 marketDate 仍停在上一个交易日（如周五），但 current 已随盘更新。
+  const { previousSessionDate } = require("./metrics/freeze-calendar");
+  const prevSession = previousSessionDate(tradingKey);
+  if (prevSession && quoteKey === prevSession) {
     return true;
   }
   return false;
@@ -132,12 +143,18 @@ function isExtendedQuoteSession(quote) {
   return s === "pre" || s === "post" || s === "overnight";
 }
 
-function resolveTodayStartMvNat({ frozenMvNat, startQuantity, prevClose, quote }) {
+function resolveTodayStartMvNat({ frozenMvNat, startQuantity, prevClose, quote, tradingKey = null }) {
   const startQty = Number(startQuantity) || 0;
   const prev = Number(prevClose) || 0;
   const fromQuote = startQty > 0 && prev > 0 ? startQty * prev : 0;
   const frozen = Number(frozenMvNat) || 0;
   const liveCurrent = Number(quote?.current) || 0;
+  const tk = String(tradingKey || "").slice(0, 10);
+  const quoteKey = quoteSessionDateKey(quote);
+  // 行情日落后于 ledger 日（跨周末美股等）：基准对齐冻结日市值，与 freeze-v3 增量一致。
+  if (tk && quoteKey && quoteKey < tk && frozen > 0) {
+    return frozen;
+  }
   // 盘前/盘后/夜盘：今日收益基准优先对齐最近日冻结市值，其次昨收×期初数量
   if (isExtendedQuoteSession(quote)) {
     if (frozen > 0) {
@@ -179,6 +196,7 @@ function computeTodayProfitNative({
     startQuantity: dayCtx.startQuantity,
     prevClose,
     quote,
+    tradingKey: todayKey,
   });
 
   const isClearedToday =
@@ -251,6 +269,7 @@ function computeTodayProfitTracksForHolding({
     startQuantity: dayCtx.startQuantity,
     prevClose,
     quote,
+    tradingKey: todayKey,
   });
   const startQty = Number(dayCtx.startQuantity) || 0;
   const effectivePrev =
@@ -264,7 +283,7 @@ function computeTodayProfitTracksForHolding({
     };
   }
   const pxEnd = isClearedToday && Math.abs(endQty) <= 1e-6 ? 0 : Number(current) || 0;
-  return computeTodayProfitTracks({
+  const tracks = computeTodayProfitTracks({
     endQty,
     startQty: dayCtx.startQuantity,
     current: pxEnd,
@@ -277,10 +296,19 @@ function computeTodayProfitTracksForHolding({
     fxLive,
     fxFrozen,
   });
+  if (Math.abs(Number(tracks.native?.profit) || 0) < 1e-4) {
+    return {
+      native: { profit: 0, rateTwr: 0 },
+      book: { profit: 0, rateTwr: 0 },
+      cny: { profit: 0, rateTwr: 0 },
+    };
+  }
+  return tracks;
 }
 
 module.exports = {
   parseQuoteTimeToDateKey,
+  quoteSessionDateKey,
   getTradingDateKeyBy0800,
   getShanghaiCalendarDate,
   shouldCountTodayPositionPnlFromQuote,

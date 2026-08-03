@@ -9523,7 +9523,6 @@ function parseQuoteTimeToDateKey(timeStr) {
  * 「交易日期」：北京时间当日 08:00 至次日 08:00 算同一交易日（与列表/日界一致）。
  */
 function getBeijingTradingDateKey(now = new Date()) {
-  const CUTOFF = 8 * 60 + 30;
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -9543,8 +9542,8 @@ function getBeijingTradingDateKey(now = new Date()) {
   const y = Number(m.year);
   const mo = Number(m.month);
   const d = Number(m.day);
-  const mins = Number(m.hour || 0) * 60 + Number(m.minute || 0);
-  if (mins >= CUTOFF) {
+  const h = Number(m.hour || 0);
+  if (h >= 8) {
     return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
   const yest = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -9561,6 +9560,19 @@ function getBeijingTradingDateKey(now = new Date()) {
     }
   }
   return `${Number(m2.year)}-${String(Number(m2.month)).padStart(2, "0")}-${String(Number(m2.day)).padStart(2, "0")}`;
+}
+
+function previousBeijingSessionDate(dateKey) {
+  let cur = addCalendarDaysToDateKey(String(dateKey || "").slice(0, 10), -1);
+  while (cur) {
+    const d = new Date(`${cur}T12:00:00+08:00`);
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6) {
+      return cur;
+    }
+    cur = addCalendarDaysToDateKey(cur, -1);
+  }
+  return null;
 }
 
 function getShanghaiCalendarDate(now = new Date()) {
@@ -9599,6 +9611,10 @@ function shouldCountTodayPositionPnlFromQuote(quote, now = new Date(), ledgerSes
   }
   const calendarToday = getShanghaiCalendarDate(now);
   if (calendarToday > tradingKey && quoteKey === addCalendarDaysToDateKey(tradingKey, 1)) {
+    return true;
+  }
+  const prevSession = previousBeijingSessionDate(tradingKey);
+  if (prevSession && quoteKey === prevSession) {
     return true;
   }
   return false;
