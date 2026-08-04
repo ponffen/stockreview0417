@@ -65,7 +65,15 @@ function normalizeDispatchBody(payload) {
 }
 
 function isFreezeUserFailure(row) {
-  return row?.skipped && row?.reason !== "already-up-to-date";
+  const reason = row?.reason;
+  if (!row?.skipped) {
+    return false;
+  }
+  // 无成交账户跳过是正常情况，不算 cron 失败。
+  if (reason === "already-up-to-date" || reason === "no-trades") {
+    return false;
+  }
+  return true;
 }
 
 async function runAndVerifyFreeze(body) {

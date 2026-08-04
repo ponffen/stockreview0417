@@ -1507,6 +1507,7 @@ module.exports = async function handler(req, res, context) {
       }
 
       if (isCronFreezeDirect) {
+        const startedAt = Date.now();
         const body = req.method === "POST" ? await readJsonBody(req) : {};
         const cronHeader = req.headers?.["x-vercel-cron"];
         const configuredSecret = cronSecretFromEnv();
@@ -1535,6 +1536,25 @@ module.exports = async function handler(req, res, context) {
           ? body.userIds
           : userIdFromQuery ? [userIdFromQuery] : [];
         const fromCron = cronHeader != null;
+        const cronJobName = fromCron ? "eod-pipeline" : "freeze-eod";
+        const { insertCronJobRun } = require("../src/db");
+        const freezeEodCronMeta = (result) =>
+          JSON.stringify({
+            frozenDate: result?.frozenDate,
+            users: result?.users?.length,
+            catchUpRounds: result?.catchUpRounds,
+            lagRemaining: result?.lagRemaining,
+            watermark: result?.watermark?.status,
+            pipelineElapsedMs: result?.pipelineElapsedMs,
+            dailyClose: result?.dailyClose
+              ? {
+                  rowsWritten: result.dailyClose.rowsWritten,
+                  symbolsSynced: result.dailyClose.symbolsSynced,
+                  symbolsFailed: result.dailyClose.symbolsFailed,
+                }
+              : null,
+            dailyCloseError: result?.dailyCloseError || null,
+          });
 
         if (runAsync) {
           const { runInBackground } = require("../src/background-task");
@@ -1568,67 +1588,103 @@ module.exports = async function handler(req, res, context) {
         }
 
         console.log(
-          "[api/index.js] freeze-eod start userIds=%s rebuildFromDate=%s force=%s fullRebuild=%s",
+          "[api/index.js] freeze-eod start userIds=%s rebuildFromDate=%s force=%s fullRebuild=%s fromCron=%s",
           userIds.join(",") || "-",
           rebuildFromDate || "-",
           force,
           fullRebuild,
+          fromCron,
         );
-        const data = fromCron
-          ? await (async () => {
-              const { runScheduledEodPipeline } = require("../src/eod-freeze-service");
-              return runScheduledEodPipeline({
+        try {
+          const data = fromCron
+            ? await (async () => {
+                const { runScheduledEodPipeline } = require("../src/eod-freeze-service");
+                return runScheduledEodPipeline({
+                  frozenDate,
+                  force,
+                  userIds,
+                  rebuildFromDate,
+                  fullRebuild,
+                  logger: console,
+                });
+              })()
+            : await runDailyFreeze({
                 frozenDate,
                 force,
+                syncDailyClose,
                 userIds,
+                fromCron,
                 rebuildFromDate,
                 fullRebuild,
                 logger: console,
               });
-            })()
-          : await runDailyFreeze({
-              frozenDate,
-              force,
-              syncDailyClose,
-              userIds,
-              fromCron,
-              rebuildFromDate,
-              fullRebuild,
-              logger: console,
-            });
-        const { isFreezeUserFailure } = require("../src/metrics-rebuild-trigger");
-        const lagRemaining = Array.isArray(data?.lagRemaining) ? data.lagRemaining : [];
-        const failedUsers = (data.users || []).filter(isFreezeUserFailure);
-        if (lagRemaining.length) {
-          console.warn(
-            "[api/index.js] freeze-eod lag remaining count=%s ids=%s catchUpRounds=%s",
-            lagRemaining.length,
-            lagRemaining.join(","),
-            data.catchUpRounds ?? 0,
+          const { isFreezeUserFailure } = require("../src/metrics-rebuild-trigger");
+          const lagRemaining = Array.isArray(data?.lagRemaining) ? data.lagRemaining : [];
+          const failedUsers = (data.users || []).filter(isFreezeUserFailure);
+          if (lagRemaining.length) {
+            console.warn(
+              "[api/index.js] freeze-eod lag remaining count=%s ids=%s catchUpRounds=%s",
+              lagRemaining.length,
+              lagRemaining.join(","),
+              data.catchUpRounds ?? 0,
+            );
+            await insertCronJobRun({
+              jobName: cronJobName,
+              startedAt,
+              finishedAt: Date.now(),
+              ok: false,
+              metaJson: freezeEodCronMeta(data),
+              errorMessage: `lag=${lagRemaining.length}`,
+            }).catch(() => {});
+            res.statusCode = 207;
+            res.end(JSON.stringify({ ok: false, error: "freeze-eod partial", data }));
+            return;
+          }
+          if (failedUsers.length) {
+            console.warn(
+              "[api/index.js] freeze-eod partial-fail users=%s",
+              failedUsers.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(","),
+            );
+            await insertCronJobRun({
+              jobName: cronJobName,
+              startedAt,
+              finishedAt: Date.now(),
+              ok: false,
+              errorMessage: failedUsers
+                .map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`)
+                .join(","),
+            }).catch(() => {});
+            res.statusCode = 500;
+            res.end(JSON.stringify({ ok: false, error: "freeze-eod failed", data }));
+            return;
+          }
+          console.log(
+            "[api/index.js] freeze-eod done elapsedMs=%s pipelineElapsedMs=%s userIds=%s dailyCloseRows=%s",
+            data.elapsedMs,
+            data.pipelineElapsedMs,
+            userIds.join(",") || "-",
+            data.dailyClose?.rowsWritten,
           );
-          res.statusCode = 207;
-          res.end(JSON.stringify({ ok: false, error: "freeze-eod partial", data }));
+          await insertCronJobRun({
+            jobName: cronJobName,
+            startedAt,
+            finishedAt: Date.now(),
+            ok: true,
+            metaJson: freezeEodCronMeta(data),
+          }).catch(() => {});
+          res.statusCode = 200;
+          res.end(JSON.stringify({ ok: true, data }));
           return;
+        } catch (error) {
+          await insertCronJobRun({
+            jobName: cronJobName,
+            startedAt,
+            finishedAt: Date.now(),
+            ok: false,
+            errorMessage: error?.message || String(error),
+          }).catch(() => {});
+          throw error;
         }
-        if (failedUsers.length) {
-          console.warn(
-            "[api/index.js] freeze-eod partial-fail users=%s",
-            failedUsers.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(","),
-          );
-          res.statusCode = 500;
-          res.end(JSON.stringify({ ok: false, error: "freeze-eod failed", data }));
-          return;
-        }
-        console.log(
-          "[api/index.js] freeze-eod done elapsedMs=%s pipelineElapsedMs=%s userIds=%s dailyCloseRows=%s",
-          data.elapsedMs,
-          data.pipelineElapsedMs,
-          userIds.join(",") || "-",
-          data.dailyClose?.rowsWritten,
-        );
-        res.statusCode = 200;
-        res.end(JSON.stringify({ ok: true, data }));
-        return;
       }
 
       if (isCronDailyCloseDirect) {
