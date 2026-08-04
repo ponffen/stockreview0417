@@ -28,8 +28,8 @@ resources:
           triggerType: timer
           qualifier: LATEST
           triggerConfig:
-            # 北京时间 08:00，周二～六（1=周日 … 7=周六）
-            cronExpression: "CRON_TZ=Asia/Shanghai 0 0 8 ? * 3-7"
+            # UTC 00:00 = 北京时间 08:00；周字段 0=周日，2-6=周二～六
+            cronExpression: "0 0 0 * * 2-6"
             enable: true
             payload: "eod-pipeline"
         - triggerName: httpTrigger

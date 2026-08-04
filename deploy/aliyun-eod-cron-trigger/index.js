@@ -1,9 +1,5 @@
 /**
  * 阿里云 FC 定时器：北京时间 08:00（周二～六）触发 Vercel EOD 流水线。
- * 环境变量：
- *   EOD_CRON_TARGET_URL — 默认 https://www.higcc.com/api/cron/freeze-eod
- *   CRON_SECRET — 与 Vercel 生产环境 CRON_SECRET 一致
- *   EOD_CRON_TIMEOUT_MS — 等待 Vercel 响应超时，默认 280000
  */
 const DEFAULT_TARGET = "https://www.higcc.com/api/cron/freeze-eod";
 const DEFAULT_TIMEOUT_MS = 280000;
@@ -21,8 +17,46 @@ function timeoutMs() {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
 }
 
-function isHttpEvent(event) {
-  return !!(event?.requestContext || event?.headers || event?.httpMethod);
+function parseHttpEvent(event) {
+  const base = { method: "GET", path: "/", headers: {} };
+  if (!event) {
+    return base;
+  }
+  let parsed = event;
+  if (Buffer.isBuffer(event)) {
+    try {
+      parsed = JSON.parse(event.toString("utf8"));
+    } catch {
+      return base;
+    }
+  } else if (typeof event === "string") {
+    try {
+      parsed = JSON.parse(event);
+    } catch {
+      return base;
+    }
+  }
+  const method = String(
+    parsed?.httpMethod || parsed?.requestContext?.http?.method || "GET",
+  ).toUpperCase();
+  const path = String(parsed?.path || parsed?.rawPath || parsed?.requestContext?.http?.path || "/");
+  const headers =
+    parsed?.headers && typeof parsed.headers === "object"
+      ? parsed.headers
+      : parsed?.requestContext?.http?.headers && typeof parsed.requestContext.http.headers === "object"
+        ? parsed.requestContext.http.headers
+        : {};
+  return { method, path: path.split("?")[0], headers };
+}
+
+function headerValue(headers, name) {
+  const want = String(name || "").toLowerCase();
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (String(k).toLowerCase() === want) {
+      return String(v || "").trim();
+    }
+  }
+  return "";
 }
 
 function httpResponse(statusCode, bodyObj) {
@@ -30,7 +64,18 @@ function httpResponse(statusCode, bodyObj) {
     statusCode,
     headers: { "content-type": "application/json; charset=utf-8" },
     body: JSON.stringify(bodyObj),
+    isBase64Encoded: false,
   };
+}
+
+function isTimerEvent(event) {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  if (Buffer.isBuffer(event) || typeof event === "string") {
+    return false;
+  }
+  return !!(event.triggerName || event.triggerTime || event.payload != null);
 }
 
 async function invokeEodPipeline(meta = {}) {
@@ -88,12 +133,10 @@ async function invokeEodPipeline(meta = {}) {
   return result;
 }
 
-exports.handler = async (event, context) => {
-  if (isHttpEvent(event)) {
-    const path = String(
-      event?.requestContext?.http?.path || event?.path || event?.rawPath || "/",
-    ).split("?")[0];
-    if (path === "/health" || path === "/api/health") {
+exports.handler = async (event) => {
+  if (!isTimerEvent(event)) {
+    const req = parseHttpEvent(event);
+    if (req.path === "/health" || req.path === "/api/health") {
       return httpResponse(200, {
         ok: true,
         service: "eod-cron-trigger",
@@ -101,23 +144,21 @@ exports.handler = async (event, context) => {
         hasSecret: !!cronSecret(),
       });
     }
-    if (path === "/run" && String(event?.requestContext?.http?.method || event?.httpMethod || "GET") === "POST") {
-      const hdr = event?.headers || {};
+    if (req.path === "/run" && req.method === "POST") {
       const provided =
-        String(hdr["x-cron-secret"] || hdr["X-Cron-Secret"] || "").trim() ||
-        String(hdr["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+        headerValue(req.headers, "x-cron-secret") ||
+        headerValue(req.headers, "authorization").replace(/^Bearer\s+/i, "").trim();
       if (!provided || provided !== cronSecret()) {
         return httpResponse(401, { ok: false, error: "unauthorized" });
       }
       const data = await invokeEodPipeline({ manual: true });
       return httpResponse(200, { ok: true, data });
     }
-    return httpResponse(404, { ok: false, error: "not found" });
+    return httpResponse(404, { ok: false, error: "not found", path: req.path });
   }
 
-  const triggerName = event?.triggerName || "timer";
   const data = await invokeEodPipeline({
-    triggerName,
+    triggerName: event?.triggerName || "timer",
     triggerTime: event?.triggerTime || null,
   });
   return { ok: true, ...data };

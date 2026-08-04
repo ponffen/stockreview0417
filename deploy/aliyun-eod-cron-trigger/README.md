@@ -38,8 +38,9 @@ curl -X POST "https://<fc-url>/run" -H "x-cron-secret: $CRON_SECRET"
 curl "https://<fc-url>/health"
 ```
 
-## 资源
+当前生产 URL：`https://stockre-trigger-dynlpdhjao.cn-hangzhou.fcapp.run`
 
-- 区域：`cn-hangzhou`（与行情代理同区）
-- 超时：300s（等待 Vercel EOD 跑完）
-- 内存：256 MB
+## 实现说明
+
+- 定时表达式 `0 0 0 * * 2-6`（UTC 00:00 = 北京时间 08:00，周二～六）
+- 周日/周一服务端 `shouldSkipScheduledFreezeCron` 仍会跳过（若误触发）
