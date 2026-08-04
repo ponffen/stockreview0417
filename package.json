@@ -25,6 +25,8 @@
     "rebuild:metrics": "VERCEL=1 node scripts/rebuild-all-metrics.js",
     "repair:metrics-from-date": "node scripts/repair-metrics-from-date.js",
     "deploy:aliyun-market-proxy": "cd deploy/aliyun-market-proxy && npm ci && cd ../.. && s deploy -t s.aliyun-market-proxy.yaml -a aliyun-fc",
+    "deploy:aliyun-eod-cron": "s deploy -t s.aliyun-eod-cron.yaml -a aliyun-fc --use-local",
+    "setup:aliyun-eod-cron": "bash scripts/setup-and-deploy-aliyun-eod-cron.sh",
     "test": "echo \"No tests configured\""
   },
   "repository": {

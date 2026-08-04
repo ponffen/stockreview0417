@@ -12,9 +12,6 @@
       "includeFiles": "api/public/**"
     }
   },
-  "crons": [
-    { "path": "/api/cron/freeze-eod", "schedule": "0 0 * * 2-6" }
-  ],
   "rewrites": [
     { "source": "/api/health", "destination": "/api/health" },
     { "source": "/api/health/", "destination": "/api/health" },

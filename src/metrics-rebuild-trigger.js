@@ -76,6 +76,25 @@ function isFreezeUserFailure(row) {
   return true;
 }
 
+/** Vercel cron 头，或带 CRON_SECRET 的全局调度（如阿里云 FC 定时器）。 */
+function useScheduledEodPipeline(options = {}) {
+  const fromVercelCron = options.fromVercelCron === true;
+  const secretMatched = options.secretMatched === true;
+  const sessionUserId = String(options.sessionUserId || "").trim();
+  const runAsync = options.runAsync === true;
+  const userIds = Array.isArray(options.userIds) ? options.userIds : [];
+  if (fromVercelCron) {
+    return true;
+  }
+  if (runAsync || sessionUserId) {
+    return false;
+  }
+  if (!secretMatched) {
+    return false;
+  }
+  return userIds.length === 0;
+}
+
 async function runAndVerifyFreeze(body) {
   const userIdsLabel = body.userIds.join(",");
   const t0 = Date.now();
@@ -279,5 +298,6 @@ module.exports = {
   triggerLedgerMetricsFreeze,
   runAndVerifyFreeze,
   isFreezeUserFailure,
+  useScheduledEodPipeline,
   resolveInternalApiOrigin,
 };

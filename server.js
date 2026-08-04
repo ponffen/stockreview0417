@@ -1918,6 +1918,21 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     const runAsync = parseBooleanInput(req.query?.async ?? req.body?.async, false);
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
     const fromCron = req.headers["x-vercel-cron"] != null;
+    const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+    const secretMatched =
+      !!configuredSecret &&
+      (extractBearerToken(req) === configuredSecret ||
+        String(req.query?.token || req.body?.token || "").trim() === configuredSecret ||
+        String(req.headers?.["x-cron-secret"] || "").trim() === configuredSecret);
+    const { useScheduledEodPipeline } = require("./src/metrics-rebuild-trigger");
+    const runScheduledPipeline = useScheduledEodPipeline({
+      fromVercelCron: fromCron,
+      secretMatched,
+      sessionUserId: sessionUser,
+      userIds,
+      runAsync,
+    });
+    const cronJobName = runScheduledPipeline ? "eod-pipeline" : "freeze-eod";
 
     if (runAsync) {
       const { runInBackground } = require("./src/background-task");
@@ -1947,7 +1962,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
       return;
     }
 
-    const result = fromCron
+    const result = runScheduledPipeline
       ? await (async () => {
           const { runScheduledEodPipeline } = require("./src/eod-freeze-service");
           return runScheduledEodPipeline({
@@ -1973,7 +1988,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     const lagRemaining = Array.isArray(result?.lagRemaining) ? result.lagRemaining : [];
     if (lagRemaining.length) {
       await insertCronJobRun({
-        jobName: fromCron ? "eod-pipeline" : "freeze-eod",
+        jobName: cronJobName,
         startedAt,
         finishedAt: Date.now(),
         ok: false,
@@ -2016,7 +2031,7 @@ app.all("/api/cron/freeze-eod", async (req, res) => {
     dailyCloseForTradesMemoryCache.clear();
     realtimePatchMemoryCache.clear();
     await insertCronJobRun({
-      jobName: fromCron ? "eod-pipeline" : "freeze-eod",
+      jobName: cronJobName,
       startedAt,
       finishedAt: Date.now(),
       ok: true,

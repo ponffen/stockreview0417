@@ -1,0 +1,43 @@
+edition: 3.0.0
+name: stockreview-aliyun-eod-cron
+access: aliyun-fc
+
+vars:
+  region: cn-hangzhou
+
+resources:
+  eodCronTrigger:
+    component: fc3
+    props:
+      region: ${vars.region}
+      functionName: stockreview-eod-cron-trigger
+      description: "Trigger higcc.com EOD pipeline at 08:00 Asia/Shanghai Tue-Sat"
+      runtime: nodejs20
+      handler: index.handler
+      code: ./deploy/aliyun-eod-cron-trigger
+      timeout: 300
+      memorySize: 256
+      cpu: 0.25
+      diskSize: 512
+      internetAccess: true
+      environmentVariables:
+        EOD_CRON_TARGET_URL: https://www.higcc.com/api/cron/freeze-eod
+        CRON_SECRET: ${env(CRON_SECRET)}
+      triggers:
+        - triggerName: eodMorningTimer
+          triggerType: timer
+          qualifier: LATEST
+          triggerConfig:
+            # 北京时间 08:00，周二～六（1=周日 … 7=周六）
+            cronExpression: "CRON_TZ=Asia/Shanghai 0 0 8 ? * 3-7"
+            enable: true
+            payload: "eod-pipeline"
+        - triggerName: httpTrigger
+          triggerType: http
+          qualifier: LATEST
+          triggerConfig:
+            authType: anonymous
+            disableURLInternet: false
+            methods:
+              - GET
+              - POST

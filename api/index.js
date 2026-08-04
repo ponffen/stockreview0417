@@ -1538,6 +1538,15 @@ module.exports = async function handler(req, res, context) {
         const fromCron = cronHeader != null;
         const cronJobName = fromCron ? "eod-pipeline" : "freeze-eod";
         const { insertCronJobRun } = require("../src/db");
+        const { useScheduledEodPipeline } = require("../src/metrics-rebuild-trigger");
+        const runScheduledPipeline = useScheduledEodPipeline({
+          fromVercelCron: fromCron,
+          secretMatched,
+          sessionUserId,
+          userIds,
+          runAsync,
+        });
+        const effectiveCronJobName = runScheduledPipeline ? "eod-pipeline" : cronJobName;
         const freezeEodCronMeta = (result) =>
           JSON.stringify({
             frozenDate: result?.frozenDate,
@@ -1596,7 +1605,7 @@ module.exports = async function handler(req, res, context) {
           fromCron,
         );
         try {
-          const data = fromCron
+          const data = runScheduledPipeline
             ? await (async () => {
                 const { runScheduledEodPipeline } = require("../src/eod-freeze-service");
                 return runScheduledEodPipeline({
@@ -1629,7 +1638,7 @@ module.exports = async function handler(req, res, context) {
               data.catchUpRounds ?? 0,
             );
             await insertCronJobRun({
-              jobName: cronJobName,
+              jobName: effectiveCronJobName,
               startedAt,
               finishedAt: Date.now(),
               ok: false,
@@ -1646,7 +1655,7 @@ module.exports = async function handler(req, res, context) {
               failedUsers.map((row) => `${row.userId || "?"}:${row.reason || "skipped"}`).join(","),
             );
             await insertCronJobRun({
-              jobName: cronJobName,
+              jobName: effectiveCronJobName,
               startedAt,
               finishedAt: Date.now(),
               ok: false,
@@ -1666,7 +1675,7 @@ module.exports = async function handler(req, res, context) {
             data.dailyClose?.rowsWritten,
           );
           await insertCronJobRun({
-            jobName: cronJobName,
+            jobName: effectiveCronJobName,
             startedAt,
             finishedAt: Date.now(),
             ok: true,
@@ -1677,7 +1686,7 @@ module.exports = async function handler(req, res, context) {
           return;
         } catch (error) {
           await insertCronJobRun({
-            jobName: cronJobName,
+            jobName: effectiveCronJobName,
             startedAt,
             finishedAt: Date.now(),
             ok: false,
