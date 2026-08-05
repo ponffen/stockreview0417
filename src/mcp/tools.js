@@ -164,7 +164,6 @@ const TOOL_DEFS = [
     description:
       `新增或更新本人交易记录（单笔 trade 或批量 trades，最多 ${MCP_LEDGER_WRITE_BATCH_MAX} 条）。需要 scope write:ledger。` +
       "普通买卖(type=trade 或省略)必填：date、symbol、side、price、quantity、amount，以及 account_id 或 account_name 二选一（无默认账户）。" +
-      "date 必须为实际成交日（YYYY-MM-DD），不要用录入当天代替成交日；录入前可先 get_trades 核对，避免重复新增。" +
       "分红/送股/拆股/并股字段要求见 inputSchema。校验失败返回 errors、format_spec 与 available_accounts。",
     inputSchema: MCP_UPSERT_TRADES_INPUT_SCHEMA,
   },

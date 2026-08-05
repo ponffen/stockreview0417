@@ -6,7 +6,6 @@ const {
   upsertTrade,
   upsertCashTransfer,
   getTradeByIdForUser,
-  findLikelyDuplicateTrade,
   getCashTransferByIdForUser,
   getAccounts,
 } = require("../db");
@@ -164,27 +163,6 @@ function countDecimalPlaces(value) {
 
 function isPresent(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
-}
-
-function tradeDedupFingerprint(trade) {
-  const t = trade || {};
-  return [
-    String(t.accountId || "default"),
-    String(t.symbol || "").toLowerCase(),
-    String(t.side || ""),
-    String(t.type || "trade"),
-    Number(t.price).toFixed(3),
-    Number(t.quantity).toFixed(4),
-    Number(t.amount).toFixed(2),
-  ].join("|");
-}
-
-function stripClientTimestampsForNewRow(raw) {
-  const row = { ...raw };
-  delete row.timestamp;
-  delete row.createdAt;
-  delete row.created_at;
-  return row;
 }
 
 function pushError(errors, index, field, code, message, received, expected) {
@@ -493,9 +471,8 @@ async function validateTradeRow(raw, index, accounts, userId, errors) {
     return null;
   }
 
-  const rowForNormalize = isPresent(idRaw) ? raw : stripClientTimestampsForNewRow(raw);
   const trade = normalizeTrade({
-    ...rowForNormalize,
+    ...raw,
     id: isPresent(idRaw) ? String(idRaw) : undefined,
     accountId,
     account_id: accountId,
@@ -508,22 +485,6 @@ async function validateTradeRow(raw, index, accounts, userId, errors) {
     date: String(dateRaw).slice(0, 10),
     note,
   });
-
-  if (!isPresent(idRaw)) {
-    const dup = await findLikelyDuplicateTrade(userId, trade);
-    if (dup) {
-      pushError(
-        errors,
-        index,
-        "trade",
-        "duplicate_trade",
-        `疑似重复成交：${dup.date} 已有相同记录（id=${dup.id}）。若需修改请传 id 更新，勿重复新增`,
-        { date: trade.date, symbol: trade.symbol, side: trade.side },
-        `已有 id=${dup.id}`,
-      );
-      return null;
-    }
-  }
 
   return { trade, prior, symbolInput: isPresent(symbolInput) ? String(symbolInput).trim() : "" };
 }
@@ -680,31 +641,6 @@ async function upsertTradesViaMcp(userId, input) {
     }
   }
 
-  if (errors.length) {
-    throw new McpValidationError(buildValidationFailure(errors, rows.length, accounts));
-  }
-
-  const batchFingerprints = new Map();
-  for (let index = 0; index < normalized.length; index += 1) {
-    const item = normalized[index];
-    if (item.prior) {
-      continue;
-    }
-    const fp = tradeDedupFingerprint(item.trade);
-    const prevIdx = batchFingerprints.get(fp);
-    if (prevIdx != null) {
-      errors.push({
-        index,
-        field: "trade",
-        code: "duplicate_trade",
-        message: `本批次第 ${prevIdx + 1} 条与第 ${index + 1} 条疑似重复，请只保留一条`,
-        received: { date: item.trade.date, symbol: item.trade.symbol, side: item.trade.side },
-        expected: "单条成交",
-      });
-    } else {
-      batchFingerprints.set(fp, index);
-    }
-  }
   if (errors.length) {
     throw new McpValidationError(buildValidationFailure(errors, rows.length, accounts));
   }
