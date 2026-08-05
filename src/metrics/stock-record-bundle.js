@@ -376,6 +376,24 @@ function chartPointFromPnlRow(pnl, closeLookup, profitOf) {
   };
 }
 
+/** 清仓段补点：ytd/mtd 跨自然年/月时收益归零；成立以来沿用平仓日锚点。 */
+function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf) {
+  const dk = String(dayKey || "").slice(0, 10);
+  const st = String(stageKey || "").trim() || "last_30d";
+  if (!anchorPnlRow || !dk) {
+    return 0;
+  }
+  const anchorDate = pnlRowDateKey(anchorPnlRow);
+  if (st === "ytd" && dk.slice(0, 4) !== anchorDate.slice(0, 4)) {
+    return 0;
+  }
+  if (st === "mtd" && dk.slice(0, 7) !== anchorDate.slice(0, 7)) {
+    return 0;
+  }
+  const anchorProfit = profitOf(anchorPnlRow);
+  return Number.isFinite(anchorProfit) ? anchorProfit : 0;
+}
+
 /** 清仓标的：区间内每个交易日一个点；缺冻结行则股数/市值/占比为 0，收益拉最近 EOD 直线。 */
 function buildClearedStableChartPoints({
   sessionDates,
@@ -383,8 +401,8 @@ function buildClearedStableChartPoints({
   closeLookup,
   profitOf,
   anchorPnlRow,
+  stageKey,
 }) {
-  const anchorProfit = profitOf(anchorPnlRow);
   const pnlByDate = new Map();
   for (const row of pnlRows || []) {
     const dk = String(row.date || row.dk || "").slice(0, 10);
@@ -406,13 +424,14 @@ function buildClearedStableChartPoints({
     if (!(close > 0)) {
       continue;
     }
+    const profitNat = clearedSegmentProfitForDay(anchorPnlRow, dk, stageKey, profitOf);
     raw.push({
       date: dk,
       close,
       shares: 0,
       mvNat: 0,
       weight: 0,
-      profitNat: Number.isFinite(anchorProfit) ? anchorProfit : 0,
+      profitNat,
     });
   }
   return raw.map((p) => ({
@@ -637,7 +656,14 @@ async function applyLiveChartPoint(raw, {
 }
 
 /** 在已有点基础上，为历史清仓段补工作日点（股数/市值/占比 0，收益拉平仓日 EOD 直线）。 */
-function appendClearedSegmentChartPoints(raw, { clearedSegments, chartFrom, endDate, closeLookup, profitOf }) {
+function appendClearedSegmentChartPoints(raw, {
+  clearedSegments,
+  chartFrom,
+  endDate,
+  closeLookup,
+  profitOf,
+  stageKey,
+}) {
   const out = Array.isArray(raw) ? [...raw] : [];
   const dates = new Set(out.map((p) => p.date));
   const chartStart = String(chartFrom || "").slice(0, 10);
@@ -649,7 +675,6 @@ function appendClearedSegmentChartPoints(raw, { clearedSegments, chartFrom, endD
     if (!segFrom || !segTo || segFrom > segTo) {
       continue;
     }
-    const anchorProfit = profitOf(seg.anchorPnlRow);
     const sessionDates = enumerateFreezeSessionDates(segFrom, segTo);
     for (const dk of sessionDates) {
       if (dates.has(dk)) {
@@ -659,13 +684,14 @@ function appendClearedSegmentChartPoints(raw, { clearedSegments, chartFrom, endD
       if (!(close > 0)) {
         continue;
       }
+      const profitNat = clearedSegmentProfitForDay(seg.anchorPnlRow, dk, stageKey, profitOf);
       out.push({
         date: dk,
         close,
         shares: 0,
         mvNat: 0,
         weight: 0,
-        profitNat: Number.isFinite(anchorProfit) ? anchorProfit : 0,
+        profitNat,
       });
       dates.add(dk);
     }
@@ -689,6 +715,7 @@ async function buildChartPointsForPage({
   frozenMvNat,
   clearedSegments,
   chartFrom,
+  stageKey,
 }) {
   if (!pnlRows.length && !includeLive && !(clearedSegments || []).length) {
     return [];
@@ -717,6 +744,7 @@ async function buildChartPointsForPage({
     endDate: end,
     closeLookup,
     profitOf,
+    stageKey,
   });
 
   raw = await applyLiveChartPoint(raw, {
@@ -958,6 +986,7 @@ async function buildStockRecordBundlePayload({
       closeLookup: pageCloseLookup,
       profitOf,
       anchorPnlRow,
+      stageKey,
     });
   } else {
     points = await buildChartPointsForPage({
@@ -975,6 +1004,7 @@ async function buildStockRecordBundlePayload({
       frozenMvNat: frozenMvNatFromPnlRow(frozenProfitRow),
       clearedSegments,
       chartFrom,
+      stageKey,
     });
   }
 
