@@ -4643,7 +4643,7 @@ function bindEvents() {
       void loadStockRecordDynamics(
         state.activeRecordSymbol,
         useCommunityPublicStockRecord(),
-        state.lastPublicProfileDetail,
+        stockRecordPublicProfileDetail(),
         { reset: true },
       );
     }
