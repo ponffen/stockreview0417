@@ -3138,7 +3138,18 @@ function stockRecordPublicTargetId() {
   if (!state.stockRecordFromPublicProfile) {
     return "";
   }
-  return String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim();
+  return String(state.communityProfileUserId || state.lastPublicProfileDetail?.userId || "").trim();
+}
+
+function stockRecordPublicProfileDetail() {
+  const uid = stockRecordPublicTargetId();
+  if (!uid) {
+    return null;
+  }
+  if (String(state.lastPublicProfileDetail?.userId || "").trim() === uid) {
+    return state.lastPublicProfileDetail;
+  }
+  return { userId: uid };
 }
 
 function syncStockRecordRangeChipUi() {
@@ -3256,7 +3267,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
     setStockRecordPageLoading(false);
     await renderStockRecordPage(key);
     if (loadDynamics) {
-      void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
+      void loadStockRecordDynamics(key, isPublic, stockRecordPublicProfileDetail(), { reset: true });
     }
     window.setTimeout(() => {
       if (
@@ -3299,7 +3310,7 @@ async function refreshStockRecordPageData(symKey, accountId = "all") {
         }
       }
     } else if (!dynamicsLoaded) {
-      void loadStockRecordDynamics(key, isPublic, state.lastPublicProfileDetail, { reset: true });
+      void loadStockRecordDynamics(key, isPublic, stockRecordPublicProfileDetail(), { reset: true });
     }
   } catch (error) {
     console.warn("refreshStockRecordPageData failed", error);
@@ -3359,7 +3370,7 @@ function stockRecordDynamicsListKey() {
     return "";
   }
   const usePub = useCommunityPublicStockRecord();
-  const detail = state.lastPublicProfileDetail;
+  const detail = stockRecordPublicProfileDetail();
   const sym = normalizeSymbol(state.activeRecordSymbol);
   const filter = String(stockRecordDynamicsFilter?.value || "all").trim() || "all";
   return `stock-dynamics:${usePub ? detail?.userId || "pub" : "self"}:${sym}:${filter}`;
@@ -6391,9 +6402,7 @@ function detectLedgerMutationSurface() {
       surface: "stock-record",
       symbol: normalizeSymbol(state.activeRecordSymbol),
       stockRecordPublic: Boolean(state.stockRecordFromPublicProfile),
-      profileUserId: state.stockRecordFromPublicProfile
-        ? String(state.lastPublicProfileDetail?.userId || state.communityProfileUserId || "").trim()
-        : "",
+      profileUserId: state.stockRecordFromPublicProfile ? stockRecordPublicTargetId() : "",
     };
   }
   if (route === "dynamics") {
@@ -11864,6 +11873,10 @@ async function openStockRecordDialog(symbol, opts = {}) {
     const uid = publicOwnerUserId || String(state.communityProfileUserId || "").trim();
     if (uid) {
       state.communityProfileUserId = uid;
+      const cachedUid = String(state.lastPublicProfileDetail?.userId || "").trim();
+      if (cachedUid && cachedUid !== uid) {
+        state.lastPublicProfileDetail = null;
+      }
     }
   }
   state.stockRecordFromPublicProfile = fromPublicProfile;
