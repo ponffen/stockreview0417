@@ -1039,6 +1039,68 @@ async function getTradeByIdForUser(tradeId, userId) {
   };
 }
 
+/** MCP 防重：同账户/标的/方向/量价金额在邻近交易日已存在则视为重复。 */
+async function findLikelyDuplicateTrade(userId, trade, { excludeId = null, windowDays = 7 } = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return null;
+  }
+  const safe = normalizeTrade(trade);
+  const date = String(safe.date || "").slice(0, 10);
+  if (!date) {
+    return null;
+  }
+  const win = Math.max(1, Math.min(30, Number(windowDays) || 7));
+  const from = addCalendarDays(date, -win);
+  const to = addCalendarDays(date, win);
+  const { rows } = await q(
+    `SELECT id, account_id, symbol, side, type, price, quantity, amount, trade_date::text AS date, created_at
+     FROM trades
+     WHERE user_id = $1
+       AND account_id = $2
+       AND symbol = $3
+       AND side = $4
+       AND type = $5
+       AND trade_date >= $6
+       AND trade_date <= $7
+       AND abs(price - $8) < 0.001
+       AND abs(quantity - $9) < 0.0001
+       AND abs(amount - $10) < 0.01
+       AND ($11::text IS NULL OR id <> $11)
+     ORDER BY trade_date ASC, created_at ASC
+     LIMIT 1`,
+    [
+      uid,
+      safe.accountId || "default",
+      safe.symbol,
+      safe.side,
+      safe.type,
+      from,
+      to,
+      Number(safe.price) || 0,
+      Number(safe.quantity) || 0,
+      Number(safe.amount) || 0,
+      excludeId ? String(excludeId) : null,
+    ],
+  );
+  if (!rows.length) {
+    return null;
+  }
+  const r = rows[0];
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    symbol: r.symbol,
+    side: r.side,
+    type: r.type,
+    price: Number(r.price),
+    quantity: Number(r.quantity),
+    amount: Number(r.amount),
+    date: String(r.date || "").slice(0, 10),
+    createdAt: Number(r.created_at) || 0,
+  };
+}
+
 async function deleteTradeById(tradeId, userId) {
   const uid = String(userId || "").trim();
   const tid = String(tradeId || "");
@@ -3469,6 +3531,7 @@ module.exports = {
   getTradesPage,
   upsertTrade,
   getTradeByIdForUser,
+  findLikelyDuplicateTrade,
   importTrades,
   deleteTradeById,
   normalizeCashTransfer,
