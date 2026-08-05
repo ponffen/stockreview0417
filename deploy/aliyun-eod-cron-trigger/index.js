@@ -17,24 +17,43 @@ function timeoutMs() {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
 }
 
+function parseEventPayload(event) {
+  if (event == null) {
+    return null;
+  }
+  if (Buffer.isBuffer(event)) {
+    const text = event.toString("utf8").trim();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof event === "string") {
+    const text = event.trim();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof event === "object") {
+    return event;
+  }
+  return null;
+}
+
 function parseHttpEvent(event) {
   const base = { method: "GET", path: "/", headers: {} };
-  if (!event) {
+  const parsed = parseEventPayload(event);
+  if (!parsed || typeof parsed !== "object") {
     return base;
-  }
-  let parsed = event;
-  if (Buffer.isBuffer(event)) {
-    try {
-      parsed = JSON.parse(event.toString("utf8"));
-    } catch {
-      return base;
-    }
-  } else if (typeof event === "string") {
-    try {
-      parsed = JSON.parse(event);
-    } catch {
-      return base;
-    }
   }
   const method = String(
     parsed?.httpMethod || parsed?.requestContext?.http?.method || "GET",
@@ -69,13 +88,23 @@ function httpResponse(statusCode, bodyObj) {
 }
 
 function isTimerEvent(event) {
-  if (!event || typeof event !== "object") {
+  const parsed = parseEventPayload(event);
+  if (!parsed || typeof parsed !== "object") {
     return false;
   }
-  if (Buffer.isBuffer(event) || typeof event === "string") {
+  if (parsed.httpMethod || parsed.requestContext?.http || parsed.rawPath) {
     return false;
   }
-  return !!(event.triggerName || event.triggerTime || event.payload != null);
+  return !!(parsed.triggerName || parsed.triggerTime || parsed.payload != null);
+}
+
+function timerEventMeta(event) {
+  const parsed = parseEventPayload(event) || {};
+  return {
+    triggerName: parsed.triggerName || "timer",
+    triggerTime: parsed.triggerTime || null,
+    payload: parsed.payload ?? null,
+  };
 }
 
 async function invokeEodPipeline(meta = {}) {
@@ -134,32 +163,30 @@ async function invokeEodPipeline(meta = {}) {
 }
 
 exports.handler = async (event) => {
-  if (!isTimerEvent(event)) {
-    const req = parseHttpEvent(event);
-    if (req.path === "/health" || req.path === "/api/health") {
-      return httpResponse(200, {
-        ok: true,
-        service: "eod-cron-trigger",
-        targetUrl: targetUrl(),
-        hasSecret: !!cronSecret(),
-      });
-    }
-    if (req.path === "/run" && req.method === "POST") {
-      const provided =
-        headerValue(req.headers, "x-cron-secret") ||
-        headerValue(req.headers, "authorization").replace(/^Bearer\s+/i, "").trim();
-      if (!provided || provided !== cronSecret()) {
-        return httpResponse(401, { ok: false, error: "unauthorized" });
-      }
-      const data = await invokeEodPipeline({ manual: true });
-      return httpResponse(200, { ok: true, data });
-    }
-    return httpResponse(404, { ok: false, error: "not found", path: req.path });
+  if (isTimerEvent(event)) {
+    const meta = timerEventMeta(event);
+    const data = await invokeEodPipeline(meta);
+    return { ok: true, ...data };
   }
 
-  const data = await invokeEodPipeline({
-    triggerName: event?.triggerName || "timer",
-    triggerTime: event?.triggerTime || null,
-  });
-  return { ok: true, ...data };
+  const req = parseHttpEvent(event);
+  if (req.path === "/health" || req.path === "/api/health") {
+    return httpResponse(200, {
+      ok: true,
+      service: "eod-cron-trigger",
+      targetUrl: targetUrl(),
+      hasSecret: !!cronSecret(),
+    });
+  }
+  if (req.path === "/run" && req.method === "POST") {
+    const provided =
+      headerValue(req.headers, "x-cron-secret") ||
+      headerValue(req.headers, "authorization").replace(/^Bearer\s+/i, "").trim();
+    if (!provided || provided !== cronSecret()) {
+      return httpResponse(401, { ok: false, error: "unauthorized" });
+    }
+    const data = await invokeEodPipeline({ manual: true });
+    return httpResponse(200, { ok: true, data });
+  }
+  return httpResponse(404, { ok: false, error: "not found", path: req.path });
 };
