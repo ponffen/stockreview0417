@@ -168,12 +168,6 @@ function buildCloseLookup(pnlRows, livePos, liveDate, tradingDay, snapshotCloses
     if (fromTrade != null) {
       return fromTrade;
     }
-    if (fallbackCurrent > 0) {
-      return fallbackCurrent;
-    }
-    if (fallbackPrev > 0) {
-      return fallbackPrev;
-    }
     return 0;
   }
 
@@ -453,7 +447,7 @@ function heldDaysFromSegmentDates(segments) {
 }
 
 function pxChangeFromCloseDates(closeLookup, startKey, endKey) {
-  const startClose = closeLookup.closeOnOrBefore(startKey);
+  const startClose = closeLookup.closeBefore(startKey);
   const endClose = closeLookup.closeOnOrBefore(endKey);
   if (!(startClose > 0) || !(endClose > 0)) {
     return NaN;
@@ -696,7 +690,7 @@ function computeMainRowTradeCount({
   return count;
 }
 
-function computeMainRowPxChange({ stageKey, frozenRow, anchorRow, segments, closeLookup }) {
+function computeMainRowPxChange({ stageKey, frozenRow, anchorRow, segments, closeLookup, symbolTrades }) {
   if (isLastNdStage(stageKey) && frozenRow) {
     const rate = lastNdRateTwrFromFrozenRows(frozenRow, anchorRow, "native");
     if (Number.isFinite(rate)) {
@@ -704,7 +698,7 @@ function computeMainRowPxChange({ stageKey, frozenRow, anchorRow, segments, clos
     }
   }
   if (segments.length > 0) {
-    return pxChangeMainRowFromSegments(segments, closeLookup);
+    return pxChangeMainRow(symbolTrades, segments, closeLookup);
   }
   return NaN;
 }

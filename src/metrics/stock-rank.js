@@ -10,6 +10,7 @@ const {
   getSymbolEodCarryBeforeDate,
   getSymbolNameMap,
   normalizeSymbol,
+  addCalendarDays,
 } = require("../db");
 const { resolveStageRange } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
@@ -273,11 +274,12 @@ async function buildStockRankPayloadV3({
   const { start: periodStart, end: periodEndRaw } = resolveStageRange(stageKey, asOf, firstDataDate, null);
   const periodEnd =
     live.tradingDay && live.liveDate ? String(live.liveDate).slice(0, 10) : String(periodEndRaw).slice(0, 10);
+  const pnlFetchFrom = addCalendarDays(periodStart, -14);
 
   const liveBySym = new Map((live.positions || []).map((p) => [normalizeSymbol(p.symbol), p]));
 
   const [allPnlRows, carryRows] = await Promise.all([
-    getSymbolDailyPnl({ accountId: accountIdForPnl, from: periodStart, to: periodEnd }, userId),
+    getSymbolDailyPnl({ accountId: accountIdForPnl, from: pnlFetchFrom, to: periodEnd }, userId),
     getSymbolEodCarryBeforeDate(userId, accountIdForPnl, periodStart),
   ]);
   const pnlBySym = groupPnlRowsBySymbol(allPnlRows);
@@ -347,14 +349,15 @@ async function buildStockRankPayloadV3({
       fxHkdEod,
     });
     const heldDays = heldDaysFromSegmentDates(segments);
+    const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
     const pxChange = computeMainRowPxChange({
       stageKey,
       frozenRow,
       anchorRow,
       segments,
       closeLookup,
+      symbolTrades,
     });
-    const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
     const tradeCount = computeMainRowTradeCount({
       stageKey,
       stageStart: periodStart,
