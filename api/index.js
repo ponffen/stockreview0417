@@ -1208,6 +1208,7 @@ module.exports = async function handler(req, res, context) {
         upsertTrade,
         deleteTradeById,
         normalizeSymbol: dbNormalizeSymbol,
+        TRADE_SOURCE,
       } = require("../src/db");
       const { notifyLedgerMutation, hintDatesFromTradeMutation } = require("../src/metrics-invalidate");
       const {
