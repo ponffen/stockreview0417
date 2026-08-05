@@ -1266,7 +1266,7 @@ module.exports = async function handler(req, res, context) {
           return;
         }
         const prior = trade.id ? await getTradeByIdForUser(trade.id, userId) : null;
-        const saved = await upsertTrade(trade, userId);
+        const saved = await upsertTrade(trade, userId, { source: TRADE_SOURCE.WEB });
         if (!prior) {
           await ensureSymbolNameMapOnNewTrade(saved.symbol, saved.name);
         }

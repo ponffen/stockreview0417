@@ -721,6 +721,7 @@ const STATIC_ASSET_LONG_CACHE =
   process.env.NODE_ENV === "production";
 
 const {
+  TRADE_SOURCE,
   DEFAULT_SETTINGS,
   normalizeSymbol,
   normalizeTrade,
@@ -1780,7 +1781,7 @@ app.post("/api/trades", requireAuth, async (req, res) => {
       return;
     }
     const prior = trade.id ? await getTradeByIdForUser(trade.id, req.userId) : null;
-    const saved = await upsertTrade(trade, req.userId);
+    const saved = await upsertTrade(trade, req.userId, { source: TRADE_SOURCE.WEB });
     if (!prior) {
       await ensureSymbolNameMapOnNewTrade(saved.symbol, saved.name);
     }

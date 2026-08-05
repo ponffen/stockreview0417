@@ -394,9 +394,11 @@ function normalizeTrade(input) {
   };
 }
 
-function tradeToRow(trade, userId) {
+function tradeToRow(trade, userId, timestamps = null) {
   const safe = normalizeTrade(trade);
-  const updatedAt = nowMs();
+  const now = nowMs();
+  const updatedAt = timestamps?.updatedAt ?? now;
+  const createdAt = timestamps?.createdAt ?? updatedAt;
   const ratio = safe.amountShareRatio;
   return {
     id: safe.id,
@@ -411,7 +413,7 @@ function tradeToRow(trade, userId) {
     amount: safe.amount,
     trade_date: safe.date,
     note: safe.note,
-    created_at: safe.createdAt,
+    created_at: createdAt,
     updated_at: updatedAt,
     amount_share_ratio: ratio == null || !Number.isFinite(Number(ratio)) ? null : Number(ratio),
     image_urls: serializeJsonStringArray(safe.imageUrls),

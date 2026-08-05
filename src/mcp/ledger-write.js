@@ -8,6 +8,7 @@ const {
   getTradeByIdForUser,
   getCashTransferByIdForUser,
   getAccounts,
+  TRADE_SOURCE,
 } = require("../db");
 const { parseType } = require("../db-pure");
 const { enrichTradesWithSymbolNames, ensureSymbolNameMapOnNewTrade } = require("../symbol-name-resolve");
@@ -650,7 +651,7 @@ async function upsertTradesViaMcp(userId, input) {
   let updated = 0;
 
   for (const item of normalized) {
-    const savedRow = await upsertTrade(item.trade, userId);
+    const savedRow = await upsertTrade(item.trade, userId, { source: TRADE_SOURCE.WORKBUDDY_MCP });
     if (!item.prior) {
       created += 1;
       await ensureSymbolNameMapOnNewTrade(savedRow.symbol, savedRow.name);

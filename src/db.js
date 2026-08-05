@@ -11,6 +11,14 @@ const {
   isValidPhone,
   isValidPasswordDigits,
 } = require("./password");
+
+/** trades.source：仅服务端写入，不通过 GET /api/trades 返回 */
+const TRADE_SOURCE = {
+  WEB: "web",
+  WORKBUDDY_MCP: "WorkBuddy_mcp",
+  CURSOR_SCRIPT: "Cursor_script",
+};
+
 const {
   SEED_USER_PHONE,
   DEFAULT_SETTINGS,
@@ -306,7 +314,8 @@ const DDL = [
     trade_date TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL
+    updated_at BIGINT NOT NULL,
+    source TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades (user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_trades_trade_date_created_at ON trades (trade_date ASC, created_at ASC)`,
@@ -890,36 +899,66 @@ async function resolveAmountShareRatioForTrade(userId, trade) {
   });
 }
 
-async function upsertTrade(trade, userId) {
+let tradesSourceColumnPromise = null;
+
+function ensureTradesSourceColumn() {
+  if (!tradesSourceColumnPromise) {
+    tradesSourceColumnPromise = q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS source TEXT`).catch(() => {});
+  }
+  return tradesSourceColumnPromise;
+}
+
+async function upsertTrade(trade, userId, opts = {}, dbClient = null) {
+  await ensureTradesSourceColumn();
   const safe = normalizeTrade(trade);
   const { normalizeStoredImageUrls } = require("./dynamics/blob-images");
   safe.imageUrls = normalizeStoredImageUrls(safe.imageUrls);
   const amountShareRatio =
     safe.type === "trade" ? await resolveAmountShareRatioForTrade(userId, safe) : null;
-  const row = tradeToRow({ ...safe, amountShareRatio }, userId);
-  if (!row.user_id) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
     throw new Error("userId required");
   }
+
+  const run = dbClient
+    ? (text, params) => dbClient.query(text, params)
+    : (text, params) => q(text, params);
+
+  let priorCreatedAt = null;
   let priorImageUrls = [];
   if (safe.id) {
-    const { rows: priorRows } = await q(
-      `SELECT image_urls FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
-      [row.user_id, row.id],
+    const { rows: priorRows } = await run(
+      `SELECT created_at, image_urls FROM trades WHERE user_id = $1 AND id = $2 LIMIT 1`,
+      [uid, safe.id],
     );
     if (priorRows.length) {
+      priorCreatedAt = Number(priorRows[0].created_at);
       const { parseImageUrlsField } = require("./dynamics/blob-images");
       priorImageUrls = parseImageUrlsField(priorRows[0].image_urls);
     }
   }
-  await q(
+
+  const now = nowMs();
+  const isNew = priorCreatedAt == null;
+  const createdAt = isNew ? now : priorCreatedAt;
+  const sourceRaw = opts.source != null ? String(opts.source).trim() : "";
+  const source = sourceRaw || null;
+
+  const row = tradeToRow({ ...safe, amountShareRatio }, uid, {
+    createdAt,
+    updatedAt: now,
+  });
+
+  await run(
     `INSERT INTO trades (
-      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio, image_urls
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio, image_urls, source
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
     ON CONFLICT (id) DO UPDATE SET
       user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
       name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
       amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-      amount_share_ratio = EXCLUDED.amount_share_ratio, image_urls = EXCLUDED.image_urls`,
+      amount_share_ratio = EXCLUDED.amount_share_ratio, image_urls = EXCLUDED.image_urls,
+      source = COALESCE(EXCLUDED.source, trades.source)`,
     [
       row.id,
       row.user_id,
@@ -937,6 +976,7 @@ async function upsertTrade(trade, userId) {
       row.updated_at,
       row.amount_share_ratio,
       row.image_urls,
+      source,
     ],
   );
   if (priorImageUrls.length) {
@@ -946,19 +986,18 @@ async function upsertTrade(trade, userId) {
       await deleteBlobUrls(removed);
     }
   }
-  // Reset clearing flags so the next cron re-evaluates this user/account
   const tradeNow = nowMs();
   await q(
     `UPDATE user_metrics_meta SET is_cleared = FALSE, updated_at = $2 WHERE user_id = $1`,
-    [row.user_id, tradeNow]
+    [row.user_id, tradeNow],
   ).catch(() => {});
   await q(
     `INSERT INTO account_metrics_meta (user_id, account_id, is_cleared, updated_at)
      VALUES ($1, $2, FALSE, $3)
      ON CONFLICT (user_id, account_id) DO UPDATE SET is_cleared = FALSE, updated_at = EXCLUDED.updated_at`,
-    [row.user_id, row.account_id, tradeNow]
+    [row.user_id, row.account_id, tradeNow],
   ).catch(() => {});
-  return normalizeTrade({ ...safe, id: row.id, amountShareRatio });
+  return normalizeTrade({ ...safe, id: row.id, amountShareRatio, createdAt });
 }
 
 async function importTrades(trades, mode = "append", userId = null) {
@@ -966,46 +1005,14 @@ async function importTrades(trades, mode = "append", userId = null) {
   const list = Array.isArray(trades) ? trades : [];
   const p = await initPool();
   const client = await p.connect();
+  const importSource = TRADE_SOURCE.CURSOR_SCRIPT;
   try {
     await client.query("BEGIN");
     if (mode === "replace") {
       await client.query("DELETE FROM trades WHERE user_id = $1", [uid]);
     }
     for (const trade of list) {
-      const safe = normalizeTrade(trade);
-      const { normalizeStoredImageUrls } = require("./dynamics/blob-images");
-      safe.imageUrls = normalizeStoredImageUrls(safe.imageUrls);
-      const amountShareRatio =
-        safe.type === "trade" ? await resolveAmountShareRatioForTrade(uid, safe) : null;
-      const row = tradeToRow({ ...safe, amountShareRatio }, uid);
-      await client.query(
-        `INSERT INTO trades (
-          id, user_id, account_id, type, symbol, name, side, price, quantity, amount, trade_date, note, created_at, updated_at, amount_share_ratio, image_urls
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-        ON CONFLICT (id) DO UPDATE SET
-          user_id = EXCLUDED.user_id, account_id = EXCLUDED.account_id, type = EXCLUDED.type, symbol = EXCLUDED.symbol,
-          name = EXCLUDED.name, side = EXCLUDED.side, price = EXCLUDED.price, quantity = EXCLUDED.quantity,
-          amount = EXCLUDED.amount, trade_date = EXCLUDED.trade_date, note = EXCLUDED.note, updated_at = EXCLUDED.updated_at,
-          amount_share_ratio = EXCLUDED.amount_share_ratio, image_urls = EXCLUDED.image_urls`,
-        [
-          row.id,
-          row.user_id,
-          row.account_id,
-          row.type,
-          row.symbol,
-          row.name,
-          row.side,
-          row.price,
-          row.quantity,
-          row.amount,
-          row.trade_date,
-          row.note,
-          row.created_at,
-          row.updated_at,
-          row.amount_share_ratio,
-          row.image_urls,
-        ],
-      );
+      await upsertTrade(trade, uid, { source: importSource }, client);
     }
     await client.query("COMMIT");
   } catch (e) {
@@ -2751,6 +2758,7 @@ async function ensurePerformanceSchemaV2() {
     ).catch(() => {});
     await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS amount_share_ratio DOUBLE PRECISION`).catch(() => {});
     await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS image_urls TEXT NOT NULL DEFAULT '[]'`).catch(() => {});
+    await q(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS source TEXT`).catch(() => {});
     await q(`
       CREATE TABLE IF NOT EXISTS community_posts (
         id TEXT PRIMARY KEY,
@@ -3450,6 +3458,7 @@ async function runSchemaDdl(sql) {
 }
 
 module.exports = {
+  TRADE_SOURCE,
   DEFAULT_SETTINGS,
   DB_PATH,
   runSchemaDdl,
