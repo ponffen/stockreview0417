@@ -1020,6 +1020,101 @@ h2 {
   }
 }
 
+.dyn-fmt-toolbar-host:empty {
+  display: none;
+}
+
+.dyn-fmt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.dyn-fmt-toolbar__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 2px;
+}
+
+.dyn-fmt-tool {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dyn-fmt-tool--red {
+  color: var(--rise, #e54545);
+}
+
+.dyn-fmt-tool--gray {
+  color: #8a94a3;
+}
+
+.dyn-fmt-tool.is-active {
+  border-color: var(--primary, #2f6bff);
+  background: rgb(47 107 255 / 8%);
+}
+
+.dyn-fmt-editor__surface {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.dyn-fmt-editor__surface[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9aa3b2;
+  pointer-events: none;
+}
+
+.dyn-fmt--b {
+  font-weight: 600;
+}
+
+.dyn-fmt--lg {
+  font-size: 1.125em;
+}
+
+.dyn-fmt--sm {
+  font-size: 0.875em;
+}
+
+.dyn-fmt--red {
+  color: var(--rise, #e54545);
+}
+
+.dyn-fmt--gray {
+  color: #8a94a3;
+}
+
+.dyn-fmt-toolbar-host + .dyn-fmt-editor__surface.ledger-note-textarea {
+  min-height: calc(1.45em * 3 + 16px);
+  padding: 8px 10px;
+  line-height: 1.45;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-content);
+}
+
+.dynamics-compose-editor > .dyn-fmt-toolbar-host {
+  margin-bottom: 10px;
+}
+
 .ledger-note-suggest {
   position: absolute;
   right: 0;

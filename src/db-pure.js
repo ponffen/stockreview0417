@@ -288,14 +288,19 @@ function parseType(rawType) {
 const NOTE_MAX_LENGTH = 500;
 
 function normalizeNoteText(raw) {
-  const text = String(raw ?? "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .trim();
-  if (!text) {
-    return "";
+  try {
+    const { sanitizeFormattedText } = require("../text-format");
+    return sanitizeFormattedText(raw, NOTE_MAX_LENGTH);
+  } catch {
+    const text = String(raw ?? "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .trim();
+    if (!text) {
+      return "";
+    }
+    return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
   }
-  return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
 }
 
 function parseJsonStringArray(raw, maxLen = 9) {

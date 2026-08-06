@@ -861,15 +861,15 @@
               aria-label="历史备注"
               hidden
             ></ul>
-            <textarea
+            <div id="cashTransferNoteToolbar" class="dyn-fmt-toolbar-host"></div>
+            <div
               id="cashTransferNote"
-              name="note"
-              class="ledger-note-textarea"
-              rows="3"
-              maxlength="500"
-              placeholder="可选"
-              autocomplete="off"
-            ></textarea>
+              class="dyn-fmt-editor__surface ledger-note-textarea"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="可选"
+            ></div>
           </div>
         </div>
         <button id="cashTransferSubmitBtn" type="submit" class="btn btn-primary full">保存</button>
@@ -892,14 +892,15 @@
         </header>
         <div class="dynamics-compose-body">
           <div class="dynamics-compose-editor">
-            <textarea
+            <div id="publishDynamicsContentToolbar" class="dyn-fmt-toolbar-host"></div>
+            <div
               id="publishDynamicsContent"
-              class="dynamics-compose-textarea dynamics-compose-textarea--solo"
-              rows="1"
-              maxlength="2000"
-              placeholder="分享你的投资观点…"
-              autocomplete="off"
-            ></textarea>
+              class="dyn-fmt-editor__surface dynamics-compose-textarea dynamics-compose-textarea--solo"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="分享你的投资观点…"
+            ></div>
             <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
             <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
           </div>
@@ -1078,15 +1079,15 @@
               aria-label="历史备注"
               hidden
             ></ul>
-            <textarea
+            <div id="tradeNoteToolbar" class="dyn-fmt-toolbar-host"></div>
+            <div
               id="tradeNote"
-              name="note"
-              class="ledger-note-textarea"
-              rows="3"
-              maxlength="500"
-              placeholder="可选"
-              autocomplete="off"
-            ></textarea>
+              class="dyn-fmt-editor__surface ledger-note-textarea"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="可选"
+            ></div>
           </div>
         </div>
         <div class="form-row">
@@ -1322,6 +1323,8 @@
       </form>
     </dialog>
 
+    <script src="./text-format.js"></script>
+    <script src="./text-format-editor.js"></script>
     <script src="./page-cache.js"></script>
     <script src="./app.js?v=dynamics-toggle-inline-1"></script>
   </body>

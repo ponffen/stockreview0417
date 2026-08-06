@@ -13,6 +13,7 @@ const {
   diffRemovedImageUrls,
   normalizeStoredImageUrls,
 } = require("./blob-images");
+const { sanitizeFormattedText } = require("../../text-format");
 
 const CONTENT_MAX = 2000;
 const POST_TYPES = new Set(["viewpoint", "valuation"]);
@@ -83,10 +84,7 @@ function rowToPost(row) {
 
 function normalizePostInput(body) {
   const raw = body || {};
-  const content = String(raw.content ?? "").trim();
-  if (content.length > CONTENT_MAX) {
-    throw new Error(`正文最长 ${CONTENT_MAX} 个字符`);
-  }
+  const content = sanitizeFormattedText(raw.content ?? "", CONTENT_MAX);
   const imageUrls = normalizeStoredImageUrls(raw.imageUrls ?? raw.image_urls);
   if (imageUrls.length > 9) {
     throw new Error("最多 9 张图片");

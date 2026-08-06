@@ -540,6 +540,9 @@ let pendingSettingsSyncTimer = null;
 let ledgerBootstrapCompleteForUid = "";
 const TRADE_LIST_PAGE_SIZE = 10;
 const NOTE_MAX_LENGTH = 500;
+const DYNAMICS_CONTENT_MAX = 2000;
+const DYN_FMT = typeof DynamicsTextFormat !== "undefined" ? DynamicsTextFormat : null;
+const DYN_FMT_EDITOR = typeof DynamicsTextFormatEditor !== "undefined" ? DynamicsTextFormatEditor : null;
 const tradeListPager = {
   gen: 0,
   offset: 0,
@@ -669,6 +672,7 @@ const publishDynamicsDialog = document.getElementById("publishDynamicsDialog");
 const publishDynamicsForm = document.getElementById("publishDynamicsForm");
 const publishDynamicsDialogTitle = document.getElementById("publishDynamicsDialogTitle");
 const publishDynamicsContent = document.getElementById("publishDynamicsContent");
+const publishDynamicsContentToolbar = document.getElementById("publishDynamicsContentToolbar");
 const publishDynamicsSymbols = document.getElementById("publishDynamicsSymbols");
 const publishDynamicsAddSymbolBtn = document.getElementById("publishDynamicsAddSymbolBtn");
 const publishDynamicsImages = document.getElementById("publishDynamicsImages");
@@ -787,6 +791,7 @@ const tradeSymbolInput = document.getElementById("tradeSymbol");
 const tradeNameInput = document.getElementById("tradeName");
 const tradeDateInput = document.getElementById("tradeDate");
 const tradeNoteInput = document.getElementById("tradeNote");
+const tradeNoteToolbar = document.getElementById("tradeNoteToolbar");
 const tradeNoteSuggest = document.getElementById("tradeNoteSuggest");
 const tradeAccountInput = document.getElementById("tradeAccount");
 const tradeSubtabTrades = document.getElementById("tradeSubtabTrades");
@@ -803,6 +808,7 @@ const cashTransferDate = document.getElementById("cashTransferDate");
 const cashTransferDirection = document.getElementById("cashTransferDirection");
 const cashTransferAmount = document.getElementById("cashTransferAmount");
 const cashTransferNote = document.getElementById("cashTransferNote");
+const cashTransferNoteToolbar = document.getElementById("cashTransferNoteToolbar");
 const cashTransferNoteSuggest = document.getElementById("cashTransferNoteSuggest");
 const cashTransferSubmitBtn = document.getElementById("cashTransferSubmitBtn");
 const cashTransferDeleteBtn = document.getElementById("cashTransferDeleteBtn");
@@ -3782,6 +3788,7 @@ async function deleteTradeFromApi(tradeId) {
 }
 
 function bindEvents() {
+  initFormatEditors();
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && pageCacheEnabled()) {
       void ensurePageCacheMeta(true);
@@ -4414,7 +4421,7 @@ function bindEvents() {
       date: String(formData.get("date") || toDateKey(new Date())),
       direction: String(formData.get("direction") || "in") === "out" ? "out" : "in",
       amount: Number(formData.get("amount") || 0),
-      note: normalizeNoteInput(formData.get("note")),
+      note: normalizeNoteInput(getLedgerNoteMarkup(cashTransferNote)),
       createdAt: existing?.createdAt || Date.now(),
     };
     const normalized = normalizeCashTransferRow(row);
@@ -4577,7 +4584,7 @@ function bindEvents() {
       quantity,
       amount,
       date: String(formData.get("date") || toDateKey(new Date())),
-      note: normalizeNoteInput(formData.get("note")),
+      note: normalizeNoteInput(getLedgerNoteMarkup(tradeNoteInput)),
       imageUrls: tradeFormImageUrls,
       createdAt: Date.now(),
     });
@@ -4784,7 +4791,7 @@ function bindEvents() {
       publishDynamicsError.textContent = "";
     }
     const body = {
-      content: publishDynamicsContent?.value || "",
+      content: getPublishDynamicsContent(),
       imageUrls: publishDynamicsState.imageUrls,
       symbols: publishDynamicsState.symbols.map((s) => s.symbol),
       postType: publishDynamicsState.postType === "valuation" ? "valuation" : "viewpoint",
@@ -5207,7 +5214,7 @@ function openNewTradeDialog(prefill, contextOverrides = {}) {
   resetTradeFormImages();
   setLedgerMutationContext("trade", contextOverrides);
   tradeDialog.showModal();
-  resetLedgerNoteTextarea(tradeNoteInput);
+  setLedgerNoteMarkup(tradeNoteInput, "");
   syncTradeAmountFromPriceQuantity();
 }
 
@@ -6257,7 +6264,7 @@ function dynamicsCardBodyHtml(card, view) {
   }
   return `<div class="dyn-card__slot dyn-card__slot--body">
     <div class="dyn-card__body-wrap" data-dynamics-body-wrap>
-      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${linkifyDynamicsText(text)}</div>
+      <div class="dyn-card__body community-feed-note community-feed-card__content" data-dynamics-body>${renderDynamicsFormattedText(text)}</div>
       <button type="button" class="dyn-card__body-toggle hidden" data-dynamics-body-toggle aria-expanded="false">展开</button>
     </div>
   </div>`;
@@ -7240,6 +7247,97 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
   }
 }
 
+let publishDynamicsContentEditor = null;
+let tradeNoteEditor = null;
+let cashTransferNoteEditor = null;
+
+function renderDynamicsFormattedText(text) {
+  if (DYN_FMT) {
+    return DYN_FMT.renderFormattedTextToHtml(text);
+  }
+  return linkifyDynamicsText(text);
+}
+
+function getPublishDynamicsContent() {
+  if (publishDynamicsContentEditor) {
+    return publishDynamicsContentEditor.getMarkup();
+  }
+  return String(publishDynamicsContent?.textContent || "").trim();
+}
+
+function getLedgerNoteMarkup(surface) {
+  if (!surface) {
+    return "";
+  }
+  if (surface === tradeNoteInput && tradeNoteEditor) {
+    return tradeNoteEditor.getMarkup();
+  }
+  if (surface === cashTransferNote && cashTransferNoteEditor) {
+    return cashTransferNoteEditor.getMarkup();
+  }
+  if (DYN_FMT_EDITOR) {
+    return DYN_FMT_EDITOR.getEditorMarkup(surface, NOTE_MAX_LENGTH);
+  }
+  return String(surface.textContent || "").trim();
+}
+
+function setLedgerNoteMarkup(surface, markup) {
+  if (!surface) {
+    return;
+  }
+  if (surface === tradeNoteInput && tradeNoteEditor) {
+    tradeNoteEditor.setMarkup(markup || "");
+    return;
+  }
+  if (surface === cashTransferNote && cashTransferNoteEditor) {
+    cashTransferNoteEditor.setMarkup(markup || "");
+    return;
+  }
+  if (DYN_FMT_EDITOR) {
+    DYN_FMT_EDITOR.setEditorContent(surface, markup || "");
+    autoResizeLedgerNoteTextarea(surface);
+    return;
+  }
+  surface.textContent = markup || "";
+  autoResizeLedgerNoteTextarea(surface);
+}
+
+function initFormatEditors() {
+  if (!DYN_FMT_EDITOR) {
+    return;
+  }
+  if (publishDynamicsContent && !publishDynamicsContentEditor) {
+    publishDynamicsContentEditor = DYN_FMT_EDITOR.mountFormatEditor({
+      surface: publishDynamicsContent,
+      toolbar: publishDynamicsContentToolbar,
+      maxLength: DYNAMICS_CONTENT_MAX,
+      minHeightPx: 72,
+      onChange: () => {
+        syncPublishDynamicsTextareaHeight();
+        syncPublishDynamicsUi();
+      },
+    });
+  }
+  if (tradeNoteInput && !tradeNoteEditor) {
+    tradeNoteEditor = DYN_FMT_EDITOR.mountFormatEditor({
+      surface: tradeNoteInput,
+      toolbar: tradeNoteToolbar,
+      maxLength: NOTE_MAX_LENGTH,
+      minHeightPx: 48,
+      onChange: () => autoResizeLedgerNoteTextarea(tradeNoteInput),
+    });
+  }
+  if (cashTransferNote && !cashTransferNoteEditor) {
+    cashTransferNoteEditor = DYN_FMT_EDITOR.mountFormatEditor({
+      surface: cashTransferNote,
+      toolbar: cashTransferNoteToolbar,
+      maxLength: NOTE_MAX_LENGTH,
+      minHeightPx: 48,
+      onChange: () => autoResizeLedgerNoteTextarea(cashTransferNote),
+    });
+  }
+}
+
 let publishDynamicsState = {
   editingPostId: null,
   imageUrls: [],
@@ -7249,6 +7347,10 @@ let publishDynamicsState = {
 };
 
 function syncPublishDynamicsTextareaHeight() {
+  if (publishDynamicsContentEditor) {
+    publishDynamicsContentEditor.resize();
+    return;
+  }
   if (!publishDynamicsContent) {
     return;
   }
@@ -7273,7 +7375,9 @@ function reopenPublishDynamicsDialog() {
 }
 
 function syncPublishDynamicsUi() {
-  const contentLen = String(publishDynamicsContent?.value || "").length;
+  const contentLen = DYN_FMT
+    ? DYN_FMT.visibleLength(getPublishDynamicsContent())
+    : String(getPublishDynamicsContent() || "").length;
   const hasContent = contentLen > 0;
   const hasImages = publishDynamicsState.imageUrls.length > 0;
   const hasSymbols = publishDynamicsState.symbols.length > 0;
@@ -7337,8 +7441,10 @@ function resetPublishDynamicsForm() {
     originalSymbols: [],
     postType: "viewpoint",
   };
-  if (publishDynamicsContent) {
-    publishDynamicsContent.value = "";
+  if (publishDynamicsContentEditor) {
+    publishDynamicsContentEditor.setMarkup("");
+  } else if (publishDynamicsContent) {
+    publishDynamicsContent.textContent = "";
   }
   if (publishDynamicsLowPrice) {
     publishDynamicsLowPrice.value = "";
@@ -7368,8 +7474,10 @@ function openPublishDynamicsDialog(postCard, contextOverrides = {}) {
   if (postCard) {
     publishDynamicsState.editingPostId = postCard.id;
     publishDynamicsState.postType = postCard.postType === "valuation" ? "valuation" : "viewpoint";
-    if (publishDynamicsContent) {
-      publishDynamicsContent.value = String(postCard.content || "");
+    if (publishDynamicsContentEditor) {
+      publishDynamicsContentEditor.setMarkup(String(postCard.content || ""));
+    } else if (publishDynamicsContent) {
+      publishDynamicsContent.textContent = String(postCard.content || "");
     }
     publishDynamicsState.imageUrls = Array.isArray(postCard.imageUrls) ? [...postCard.imageUrls] : [];
     publishDynamicsState.symbols = Array.isArray(postCard.symbols)
@@ -10054,7 +10162,7 @@ function openNewCashTransferDialog() {
   }
   hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
-  resetLedgerNoteTextarea(cashTransferNote);
+  setLedgerNoteMarkup(cashTransferNote, "");
 }
 
 function openEditCashTransferDialog(rawId) {
@@ -10084,14 +10192,16 @@ function openEditCashTransferDialog(rawId) {
     cashTransferAmount.value = String(r.amount);
   }
   if (cashTransferNote) {
-    cashTransferNote.value = r.note || "";
-    resetLedgerNoteTextarea(cashTransferNote);
+    setLedgerNoteMarkup(cashTransferNote, r.note || "");
   }
   hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
 }
 
 function normalizeNoteInput(raw) {
+  if (DYN_FMT) {
+    return DYN_FMT.sanitizeFormattedText(raw, NOTE_MAX_LENGTH);
+  }
   const text = String(raw ?? "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
@@ -10104,6 +10214,10 @@ function normalizeNoteInput(raw) {
 
 function autoResizeLedgerNoteTextarea(el) {
   if (!el) {
+    return;
+  }
+  if (DYN_FMT_EDITOR) {
+    DYN_FMT_EDITOR.autoResizeSurface(el, 48);
     return;
   }
   el.style.height = "auto";
@@ -10164,7 +10278,8 @@ function renderLedgerNoteSuggestList(suggestEl, notes) {
   suggestEl._ledgerNotes = notes;
   suggestEl.innerHTML = notes
     .map((note, i) => {
-      const firstLine = note.split("\n")[0] || "";
+      const plain = DYN_FMT ? DYN_FMT.stripFormatting(note) : note;
+      const firstLine = plain.split("\n")[0] || "";
       const preview = firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
       return `<li role="option" tabindex="-1" data-note-idx="${i}">${escapeHtml(preview)}</li>`;
     })
@@ -10199,8 +10314,12 @@ function setupLedgerNoteField(textarea, suggestEl) {
     if (!picked) {
       return;
     }
-    textarea.value = picked;
-    autoResizeLedgerNoteTextarea(textarea);
+    if (textarea === tradeNoteInput || textarea === cashTransferNote) {
+      setLedgerNoteMarkup(textarea, picked);
+    } else {
+      textarea.value = picked;
+      autoResizeLedgerNoteTextarea(textarea);
+    }
     hideLedgerNoteSuggest(suggestEl);
     textarea.focus();
   });
@@ -10223,7 +10342,7 @@ function tradeRecordNoteSubrowHtml(note, colspan, rowAttrs = {}, opts = {}) {
     <tr class="trade-note-subrow${clickableClass}"${attrStr}>
       <td colspan="${colspan}">
         <div class="trade-record-note-wrap">
-          <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${escapeHtml(text)}</span></p>
+          <p class="trade-record-note"><span class="trade-record-note-label">备注：</span><span class="trade-record-note-text">${renderDynamicsFormattedText(text)}</span></p>
         </div>
       </td>
     </tr>`;
@@ -10663,8 +10782,7 @@ function openEditTradeDialog(tradeId, tradeOverride) {
   tradeQuantityInput.value = trade.quantity;
   tradeAmountInput.value = trade.amount;
   tradeDateInput.value = trade.date;
-  tradeNoteInput.value = trade.note || "";
-  resetLedgerNoteTextarea(tradeNoteInput);
+  setLedgerNoteMarkup(tradeNoteInput, trade.note || "");
   hideLedgerNoteSuggest(tradeNoteSuggest);
   if (tradeAccountInput) {
     tradeAccountInput.value = trade.accountId || DEFAULT_ACCOUNT.id;
