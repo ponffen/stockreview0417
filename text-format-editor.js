@@ -150,6 +150,7 @@
   function fragmentToSegments(root) {
     const segments = [];
     const baseStyle = defaultStyle();
+    let pendingBlankLine = false;
 
     function mergeStyle(inherited, local) {
       if (!local) {
@@ -163,21 +164,26 @@
     }
 
     function pushNewline(inherited) {
-      const last = segments[segments.length - 1];
-      if (last && last.text === "\n") {
+      segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
+    }
+
+    function pushText(text, inherited) {
+      const value = String(text || "");
+      if (!value) {
         return;
       }
-      segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
+      if (pendingBlankLine) {
+        pushNewline(inherited);
+        pendingBlankLine = false;
+      }
+      segments.push({ text: value, ...normalizeEditorStyle(inherited) });
     }
 
     function walkNodes(nodes, inherited) {
       const list = [...nodes];
       list.forEach((node, idx) => {
         if (node.nodeType === Node.TEXT_NODE) {
-          const text = node.nodeValue || "";
-          if (text) {
-            segments.push({ text, ...normalizeEditorStyle(inherited) });
-          }
+          pushText(node.nodeValue || "", inherited);
           return;
         }
         if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -189,20 +195,25 @@
           return;
         }
         if (isBlockElement(el)) {
-          if (idx > 0) {
-            if (isBlockPlaceholder(el)) {
+          if (isBlockPlaceholder(el)) {
+            if (idx > 0) {
               pushNewline(inherited);
-              return;
             }
-            pushNewline(inherited);
-          } else if (isBlockPlaceholder(el)) {
-            pushNewline(inherited);
+            pendingBlankLine = true;
             return;
+          }
+          if (idx > 0) {
+            pushNewline(inherited);
+            pendingBlankLine = false;
           }
           walkNodes([...el.childNodes], inherited);
           return;
         }
         const nextInherited = mergeStyle(inherited, styleFromElement(el));
+        if (pendingBlankLine) {
+          pushNewline(inherited);
+          pendingBlankLine = false;
+        }
         walkNodes([...el.childNodes], nextInherited);
       });
     }
