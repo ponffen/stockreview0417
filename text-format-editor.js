@@ -134,6 +134,19 @@
     parent.appendChild(document.createElement("br"));
   }
 
+  function isBlockPlaceholder(el) {
+    if (!isBlockElement(el)) {
+      return false;
+    }
+    const children = [...el.childNodes].filter((node) => {
+      return !(node.nodeType === Node.TEXT_NODE && !String(node.nodeValue || "").length);
+    });
+    if (!children.length) {
+      return true;
+    }
+    return children.length === 1 && children[0].nodeType === Node.ELEMENT_NODE && children[0].tagName === "BR";
+  }
+
   function fragmentToSegments(root) {
     const segments = [];
     const baseStyle = defaultStyle();
@@ -149,33 +162,60 @@
       };
     }
 
-    function walk(node, inherited) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.nodeValue || "";
-        if (text) {
-          segments.push({ text, ...normalizeEditorStyle(inherited) });
-        }
+    function pushNewline(inherited) {
+      const last = segments[segments.length - 1];
+      if (last && last.text === "\n") {
         return;
       }
-      if (node.nodeType !== Node.ELEMENT_NODE) {
-        return;
-      }
-      const el = node;
-      if (el.tagName === "BR") {
-        segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
-        return;
-      }
-      const nextInherited = mergeStyle(inherited, styleFromElement(el));
-      el.childNodes.forEach((child) => walk(child, nextInherited));
+      segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
     }
 
-    const nodes = root instanceof DocumentFragment ? [...root.childNodes] : [root];
-    nodes.forEach((child, idx) => {
-      if (idx > 0 && isBlockElement(child) && isBlockElement(nodes[idx - 1])) {
-        segments.push({ text: "\n", ...baseStyle });
-      }
-      walk(child, baseStyle);
-    });
+    function walkNodes(nodes, inherited) {
+      const list = [...nodes];
+      list.forEach((node, idx) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.nodeValue || "";
+          if (text) {
+            segments.push({ text, ...normalizeEditorStyle(inherited) });
+          }
+          return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) {
+          return;
+        }
+        const el = node;
+        if (el.tagName === "BR") {
+          pushNewline(inherited);
+          return;
+        }
+        if (isBlockElement(el)) {
+          if (idx > 0) {
+            if (isBlockPlaceholder(el)) {
+              pushNewline(inherited);
+              return;
+            }
+            pushNewline(inherited);
+          } else if (isBlockPlaceholder(el)) {
+            pushNewline(inherited);
+            return;
+          }
+          walkNodes([...el.childNodes], inherited);
+          return;
+        }
+        const nextInherited = mergeStyle(inherited, styleFromElement(el));
+        walkNodes([...el.childNodes], nextInherited);
+      });
+    }
+
+    const nodes =
+      root instanceof DocumentFragment
+        ? [...root.childNodes]
+        : root && root.nodeType === Node.ELEMENT_NODE
+          ? [...root.childNodes]
+          : root
+            ? [root]
+            : [];
+    walkNodes(nodes, baseStyle);
     return segments;
   }
 
