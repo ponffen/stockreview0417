@@ -1150,6 +1150,26 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.dyn-fmt-editor__surface .dyn-fmt--b {
+  font-weight: 600;
+}
+
+.dyn-fmt-editor__surface .dyn-fmt--lg {
+  font-size: 1.125em;
+}
+
+.dyn-fmt-editor__surface .dyn-fmt--sm {
+  font-size: 0.875em;
+}
+
+.dyn-fmt-editor__surface .dyn-fmt--red {
+  color: var(--rise, #e54545);
+}
+
+.dyn-fmt-editor__surface .dyn-fmt--gray {
+  color: #8a94a3;
+}
+
 .dyn-fmt-editor__surface[data-placeholder]:empty::before {
   content: attr(data-placeholder);
   color: #9aa3b2;

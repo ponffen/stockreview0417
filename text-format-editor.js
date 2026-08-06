@@ -8,6 +8,40 @@
   }
   root.DynamicsTextFormatEditor = factory(fmt);
 })(typeof globalThis !== "undefined" ? globalThis : this, function createEditorApi(fmt) {
+  const VISUAL_CLASSES = ["dyn-fmt--b", "dyn-fmt--lg", "dyn-fmt--sm", "dyn-fmt--red", "dyn-fmt--gray"];
+
+  function defaultStyle() {
+    return { bold: false, size: "md", color: "black" };
+  }
+
+  function normalizeEditorStyle(style) {
+    const base = defaultStyle();
+    const next = { ...base, ...(style || {}) };
+    next.bold = !!next.bold;
+    next.size = next.size === "lg" || next.size === "sm" ? next.size : "md";
+    next.color = next.color === "red" || next.color === "gray" ? next.color : "black";
+    return next;
+  }
+
+  function visualClassesForStyle(style) {
+    const s = normalizeEditorStyle(style);
+    const cls = [];
+    if (s.bold) {
+      cls.push("dyn-fmt--b");
+    }
+    if (s.size === "lg") {
+      cls.push("dyn-fmt--lg");
+    } else if (s.size === "sm") {
+      cls.push("dyn-fmt--sm");
+    }
+    if (s.color === "red") {
+      cls.push("dyn-fmt--red");
+    } else if (s.color === "gray") {
+      cls.push("dyn-fmt--gray");
+    }
+    return cls;
+  }
+
   function isBlockElement(el) {
     const tag = String(el?.tagName || "").toUpperCase();
     return tag === "DIV" || tag === "P";
@@ -18,40 +52,80 @@
       return null;
     }
     const bold =
-      el.dataset.dynBold === "1" || el.tagName === "B" || el.tagName === "STRONG";
-    const size = el.dataset.dynSize || "md";
-    const color = el.dataset.dynColor || "black";
+      el.classList.contains("dyn-fmt--b") ||
+      el.dataset.dynBold === "1" ||
+      el.tagName === "B" ||
+      el.tagName === "STRONG";
+    let size = "md";
+    if (el.classList.contains("dyn-fmt--lg") || el.dataset.dynSize === "lg") {
+      size = "lg";
+    } else if (el.classList.contains("dyn-fmt--sm") || el.dataset.dynSize === "sm") {
+      size = "sm";
+    }
+    let color = "black";
+    if (el.classList.contains("dyn-fmt--red") || el.dataset.dynColor === "red") {
+      color = "red";
+    } else if (el.classList.contains("dyn-fmt--gray") || el.dataset.dynColor === "gray") {
+      color = "gray";
+    }
     if (!bold && size === "md" && color === "black") {
       return null;
     }
     return { bold, size, color };
   }
 
-  function applyStyleToElement(el, style) {
-    if (!style) {
+  function syncElementStyle(el, style) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) {
       return;
     }
-    if (style.bold) {
+    const s = normalizeEditorStyle(style);
+    el.classList.remove(...VISUAL_CLASSES);
+    delete el.dataset.dynBold;
+    delete el.dataset.dynSize;
+    delete el.dataset.dynColor;
+    if (!s.bold && s.size === "md" && s.color === "black") {
+      return;
+    }
+    if (s.bold) {
       el.dataset.dynBold = "1";
     }
-    if (style.size && style.size !== "md") {
-      el.dataset.dynSize = style.size;
+    if (s.size !== "md") {
+      el.dataset.dynSize = s.size;
     }
-    if (style.color && style.color !== "black") {
-      el.dataset.dynColor = style.color;
+    if (s.color !== "black") {
+      el.dataset.dynColor = s.color;
     }
+    for (const cls of visualClassesForStyle(s)) {
+      el.classList.add(cls);
+    }
+  }
+
+  function mergeStyles(base, patch) {
+    const prev = normalizeEditorStyle(base);
+    const next = { ...prev };
+    if (patch.bold != null) {
+      next.bold = !!patch.bold;
+    }
+    if (patch.size != null) {
+      next.size = patch.size;
+    }
+    if (patch.color != null) {
+      next.color = patch.color;
+    }
+    return normalizeEditorStyle(next);
   }
 
   function appendStyledText(parent, text, style) {
     if (!text) {
       return;
     }
-    if (!style || (!style.bold && style.size === "md" && style.color === "black")) {
+    const s = normalizeEditorStyle(style);
+    if (!s.bold && s.size === "md" && s.color === "black") {
       parent.appendChild(document.createTextNode(text));
       return;
     }
     const span = document.createElement("span");
-    applyStyleToElement(span, style);
+    syncElementStyle(span, s);
     span.textContent = text;
     parent.appendChild(span);
   }
@@ -60,13 +134,54 @@
     parent.appendChild(document.createElement("br"));
   }
 
-  function markupToFragment(markup) {
-    const frag = document.createDocumentFragment();
-    const segments = fmt.parseToSegments(markup);
-    if (!segments.length) {
-      return frag;
+  function fragmentToSegments(root) {
+    const segments = [];
+    const baseStyle = defaultStyle();
+
+    function mergeStyle(inherited, local) {
+      if (!local) {
+        return inherited;
+      }
+      return {
+        bold: !!(inherited.bold || local.bold),
+        size: local.size !== "md" ? local.size : inherited.size,
+        color: local.color !== "black" ? local.color : inherited.color,
+      };
     }
-    for (const seg of segments) {
+
+    function walk(node, inherited) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.nodeValue || "";
+        if (text) {
+          segments.push({ text, ...normalizeEditorStyle(inherited) });
+        }
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return;
+      }
+      const el = node;
+      if (el.tagName === "BR") {
+        segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
+        return;
+      }
+      const nextInherited = mergeStyle(inherited, styleFromElement(el));
+      el.childNodes.forEach((child) => walk(child, nextInherited));
+    }
+
+    const nodes = root instanceof DocumentFragment ? [...root.childNodes] : [root];
+    nodes.forEach((child, idx) => {
+      if (idx > 0 && isBlockElement(child) && isBlockElement(nodes[idx - 1])) {
+        segments.push({ text: "\n", ...baseStyle });
+      }
+      walk(child, baseStyle);
+    });
+    return segments;
+  }
+
+  function segmentsToFragment(segments) {
+    const frag = document.createDocumentFragment();
+    for (const seg of segments || []) {
       const parts = String(seg.text || "").split("\n");
       parts.forEach((part, idx) => {
         if (idx > 0) {
@@ -76,6 +191,10 @@
       });
     }
     return frag;
+  }
+
+  function markupToFragment(markup) {
+    return segmentsToFragment(fmt.parseToSegments(markup));
   }
 
   function setEditorContent(surface, markup) {
@@ -103,48 +222,7 @@
   }
 
   function domToSegments(surface) {
-    const segments = [];
-    const baseStyle = { bold: false, size: "md", color: "black" };
-
-    function mergeStyle(inherited, local) {
-      if (!local) {
-        return inherited;
-      }
-      return {
-        bold: !!(inherited.bold || local.bold),
-        size: local.size !== "md" ? local.size : inherited.size,
-        color: local.color !== "black" ? local.color : inherited.color,
-      };
-    }
-
-    function walk(node, inherited) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.nodeValue || "";
-        if (text) {
-          segments.push({ text, ...inherited });
-        }
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) {
-        return;
-      }
-      const el = node;
-      if (el.tagName === "BR") {
-        segments.push({ text: "\n", ...inherited });
-        return;
-      }
-      const nextInherited = mergeStyle(inherited, styleFromElement(el));
-      el.childNodes.forEach((child) => walk(child, nextInherited));
-    }
-
-    const children = [...surface.childNodes];
-    children.forEach((child, idx) => {
-      if (idx > 0 && isBlockElement(child) && isBlockElement(children[idx - 1])) {
-        segments.push({ text: "\n", ...baseStyle });
-      }
-      walk(child, baseStyle);
-    });
-    return segments;
+    return fragmentToSegments(surface);
   }
 
   function getEditorMarkup(surface, maxLen) {
@@ -176,45 +254,33 @@
     return { sel, range };
   }
 
-  function wrapRange(range, style) {
-    if (range.collapsed) {
-      return false;
-    }
-    const span = document.createElement("span");
-    applyStyleToElement(span, style);
-    try {
-      const contents = range.extractContents();
-      span.appendChild(contents);
-      range.insertNode(span);
-      range.selectNodeContents(span);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   function applyFormat(surface, format) {
     const picked = selectionInSurface(surface);
     if (!picked) {
       return false;
     }
     const { sel, range } = picked;
-    const style = {};
-    if (format.bold != null) {
-      style.bold = !!format.bold;
+    if (range.collapsed) {
+      return false;
     }
-    if (format.size) {
-      style.size = format.size;
+    const extracted = range.extractContents();
+    const segments = fragmentToSegments(extracted);
+    if (!segments.length) {
+      return false;
     }
-    if (format.color) {
-      style.color = format.color;
-    }
-    const ok = wrapRange(range, style);
-    if (ok) {
+    const nextSegments = segments.map((seg) => mergeStyles(seg, format));
+    const frag = segmentsToFragment(nextSegments);
+    const first = frag.firstChild;
+    const last = frag.lastChild;
+    range.insertNode(frag);
+    if (first && last) {
+      const nextRange = document.createRange();
+      nextRange.setStartBefore(first);
+      nextRange.setEndAfter(last);
       sel.removeAllRanges();
-      sel.addRange(range);
+      sel.addRange(nextRange);
     }
-    return ok;
+    return true;
   }
 
   function toolbarButtonHtml({ action, label, title, pressed, variant }) {
@@ -246,15 +312,25 @@
     if (!toolbar || !surface) {
       return;
     }
+    let savedRange = null;
+
     toolbar.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      const picked = selectionInSurface(surface);
+      savedRange = picked ? picked.range.cloneRange() : null;
     });
+
     toolbar.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-dyn-fmt-action]");
       if (!btn || !toolbar.contains(btn)) {
         return;
       }
       const action = btn.getAttribute("data-dyn-fmt-action");
+      const sel = window.getSelection();
+      if (savedRange && sel) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+      }
       surface.focus();
       if (action === "bold") {
         applyFormat(surface, { bold: true });
@@ -271,6 +347,7 @@
       } else if (action === "color-gray") {
         applyFormat(surface, { color: "gray" });
       }
+      savedRange = null;
       onChange?.();
     });
   }
