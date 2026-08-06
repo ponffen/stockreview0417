@@ -992,14 +992,82 @@ h2 {
   align-items: flex-start;
 }
 
+.form-row--note-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.form-row--note-stack label {
+  width: auto;
+  padding-top: 0;
+}
+
 .form-row--note label {
   padding-top: 8px;
+}
+
+.form-row--note-stack label {
+  padding-top: 0;
 }
 
 .ledger-note-field {
   position: relative;
   flex: 1;
   min-width: 0;
+  width: 100%;
+}
+
+.form-row--note-stack .ledger-note-field {
+  flex: none;
+}
+
+.dyn-fmt-field {
+  position: relative;
+  box-sizing: border-box;
+}
+
+.dyn-fmt-field__toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-content);
+}
+
+.dyn-fmt-field__toolbar .dyn-fmt-toolbar {
+  margin-bottom: 0;
+}
+
+.dyn-fmt-field--compose {
+  min-height: 120px;
+}
+
+.dyn-fmt-field--compose .dyn-fmt-editor__surface {
+  min-height: 72px;
+  padding-bottom: 46px;
+}
+
+.dyn-fmt-field--compose .dyn-fmt-field__toolbar {
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.dyn-fmt-field--ledger {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-content);
+}
+
+.dyn-fmt-field--ledger .dyn-fmt-editor__surface {
+  min-height: calc(1.45em * 3 + 16px);
+  padding: 8px 10px 46px;
+  border: none;
+  border-radius: 8px;
+  line-height: 1.45;
 }
 
 .ledger-note-textarea {
@@ -1022,6 +1090,12 @@ h2 {
 
 .dyn-fmt-toolbar-host:empty {
   display: none;
+}
+
+.dyn-fmt-field__toolbar.dyn-fmt-toolbar-host:empty {
+  display: none;
+  border-top: none;
+  padding: 0;
 }
 
 .dyn-fmt-toolbar {
@@ -1100,37 +1174,6 @@ h2 {
 
 .dyn-fmt--gray {
   color: #8a94a3;
-}
-
-.dyn-fmt-toolbar-host--compose:not(:empty) {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  margin-right: 4px;
-}
-
-.dyn-fmt-toolbar-host--compose .dyn-fmt-toolbar {
-  margin-bottom: 0;
-  gap: 4px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-}
-
-.dyn-fmt-toolbar-host--compose .dyn-fmt-tool {
-  min-width: 32px;
-  height: 32px;
-  padding: 0 6px;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.dyn-fmt-toolbar-host + .dyn-fmt-editor__surface.ledger-note-textarea {
-  min-height: calc(1.45em * 3 + 16px);
-  padding: 8px 10px;
-  line-height: 1.45;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-content);
 }
 
 .ledger-note-suggest {
@@ -4950,7 +4993,10 @@ html.dynamics-compose-open body {
 .dynamics-compose-tools {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .dynamics-compose-tool {

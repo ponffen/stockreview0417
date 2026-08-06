@@ -851,7 +851,7 @@
           <input id="cashTransferAmount" name="amount" type="number" step="0.01" min="0" required />
         </div>
         <p class="form-hint">金额按该账户默认币种计（与账户设置中币种一致）。</p>
-        <div class="form-row form-row--note">
+        <div class="form-row form-row--note form-row--note-stack">
           <label for="cashTransferNote">备注</label>
           <div class="ledger-note-field">
             <ul
@@ -861,15 +861,17 @@
               aria-label="历史备注"
               hidden
             ></ul>
-            <div id="cashTransferNoteToolbar" class="dyn-fmt-toolbar-host"></div>
-            <div
-              id="cashTransferNote"
-              class="dyn-fmt-editor__surface ledger-note-textarea"
-              contenteditable="true"
-              role="textbox"
-              aria-multiline="true"
-              data-placeholder="可选"
-            ></div>
+            <div class="dyn-fmt-field dyn-fmt-field--ledger">
+              <div
+                id="cashTransferNote"
+                class="dyn-fmt-editor__surface ledger-note-textarea"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                data-placeholder="可选"
+              ></div>
+              <div id="cashTransferNoteToolbar" class="dyn-fmt-field__toolbar dyn-fmt-toolbar-host"></div>
+            </div>
           </div>
         </div>
         <button id="cashTransferSubmitBtn" type="submit" class="btn btn-primary full">保存</button>
@@ -892,14 +894,20 @@
         </header>
         <div class="dynamics-compose-body">
           <div class="dynamics-compose-editor">
-            <div
-              id="publishDynamicsContent"
-              class="dyn-fmt-editor__surface dynamics-compose-textarea dynamics-compose-textarea--solo"
-              contenteditable="true"
-              role="textbox"
-              aria-multiline="true"
-              data-placeholder="分享你的投资观点…"
-            ></div>
+            <div class="dyn-fmt-field dyn-fmt-field--compose">
+              <div
+                id="publishDynamicsContent"
+                class="dyn-fmt-editor__surface dynamics-compose-textarea dynamics-compose-textarea--solo"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                data-placeholder="分享你的投资观点…"
+              ></div>
+              <div
+                id="publishDynamicsContentToolbar"
+                class="dyn-fmt-field__toolbar dyn-fmt-toolbar-host"
+              ></div>
+            </div>
             <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
             <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
           </div>
@@ -930,10 +938,6 @@
         </div>
         <footer class="dynamics-compose-toolbar">
           <div class="dynamics-compose-tools">
-            <div
-              id="publishDynamicsContentToolbar"
-              class="dyn-fmt-toolbar-host dyn-fmt-toolbar-host--compose"
-            ></div>
             <button
               type="button"
               id="publishDynamicsPickImageBtn"
@@ -1072,7 +1076,7 @@
           <label for="tradeDate">成交日期</label>
           <input id="tradeDate" name="date" type="date" required />
         </div>
-        <div class="form-row form-row--note">
+        <div class="form-row form-row--note form-row--note-stack">
           <label for="tradeNote">备注</label>
           <div class="ledger-note-field">
             <ul
@@ -1082,15 +1086,17 @@
               aria-label="历史备注"
               hidden
             ></ul>
-            <div id="tradeNoteToolbar" class="dyn-fmt-toolbar-host"></div>
-            <div
-              id="tradeNote"
-              class="dyn-fmt-editor__surface ledger-note-textarea"
-              contenteditable="true"
-              role="textbox"
-              aria-multiline="true"
-              data-placeholder="可选"
-            ></div>
+            <div class="dyn-fmt-field dyn-fmt-field--ledger">
+              <div
+                id="tradeNote"
+                class="dyn-fmt-editor__surface ledger-note-textarea"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                data-placeholder="可选"
+              ></div>
+              <div id="tradeNoteToolbar" class="dyn-fmt-field__toolbar dyn-fmt-toolbar-host"></div>
+            </div>
           </div>
         </div>
         <div class="form-row">
