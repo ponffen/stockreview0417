@@ -890,29 +890,25 @@
         <header class="dynamics-compose-head">
           <button type="button" id="closePublishDynamicsBtn" class="dynamics-compose-cancel">取消</button>
           <h2 id="publishDynamicsDialogTitle" class="dynamics-compose-title">发布动态</h2>
-          <button type="submit" id="publishDynamicsSubmitBtn" class="dynamics-compose-submit" disabled>发布</button>
+          <div class="dynamics-compose-head-actions">
+            <button type="button" id="publishDynamicsDeleteBtn" class="dynamics-compose-delete hidden">删除</button>
+            <button type="submit" id="publishDynamicsSubmitBtn" class="dynamics-compose-submit" disabled>发布</button>
+          </div>
         </header>
         <div class="dynamics-compose-body">
           <div class="dynamics-compose-editor">
-            <div class="dyn-fmt-field dyn-fmt-field--compose">
-              <div
-                id="publishDynamicsContent"
-                class="dyn-fmt-editor__surface dynamics-compose-textarea dynamics-compose-textarea--solo"
-                contenteditable="true"
-                role="textbox"
-                aria-multiline="true"
-                data-placeholder="分享你的投资观点…"
-              ></div>
-              <div
-                id="publishDynamicsContentToolbar"
-                class="dyn-fmt-field__toolbar dyn-fmt-toolbar-host"
-              ></div>
-            </div>
+            <div
+              id="publishDynamicsContent"
+              class="dyn-fmt-editor__surface dynamics-compose-textarea dynamics-compose-textarea--solo"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              data-placeholder="分享你的投资观点…"
+            ></div>
             <div id="publishDynamicsSymbols" class="dynamics-symbol-tags dynamics-compose-symbols"></div>
             <div id="publishDynamicsImages" class="dynamics-image-picker dynamics-compose-images"></div>
           </div>
           <p id="publishDynamicsError" class="auth-error dynamics-compose-error hidden" role="alert"></p>
-          <button type="button" id="publishDynamicsDeleteBtn" class="dynamics-compose-delete hidden">删除动态</button>
         </div>
         <div id="publishDynamicsValuationFields" class="dynamics-compose-valuation hidden" aria-hidden="true">
           <label class="dynamics-compose-valuation-field">
@@ -935,6 +931,9 @@
               autocomplete="off"
             />
           </label>
+        </div>
+        <div class="dynamics-compose-dock">
+          <div id="publishDynamicsContentToolbar" class="dyn-fmt-toolbar-host"></div>
         </div>
         <footer class="dynamics-compose-toolbar">
           <div class="dynamics-compose-tools">

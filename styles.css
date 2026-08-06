@@ -1042,20 +1042,6 @@ h2 {
   margin-bottom: 0;
 }
 
-.dyn-fmt-field--compose {
-  min-height: 120px;
-}
-
-.dyn-fmt-field--compose .dyn-fmt-editor__surface {
-  min-height: 72px;
-  padding-bottom: 46px;
-}
-
-.dyn-fmt-field--compose .dyn-fmt-field__toolbar {
-  padding: 8px 0 0;
-  border-top: 1px solid var(--line);
-}
-
 .dyn-fmt-field--ledger {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4771,13 +4757,21 @@ html.dynamics-compose-open body {
 
 .dynamics-compose-head {
   display: grid;
-  grid-template-columns: 72px 1fr 72px;
+  grid-template-columns: 72px 1fr auto;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
   padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-content);
+}
+
+.dynamics-compose-head-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .dynamics-compose-cancel {
@@ -4814,7 +4808,6 @@ html.dynamics-compose-open body {
 }
 
 .dynamics-compose-submit {
-  justify-self: end;
   border: none;
   border-radius: 999px;
   background: var(--blue);
@@ -4824,6 +4817,8 @@ html.dynamics-compose-open body {
   padding: 7px 16px;
   cursor: pointer;
   min-width: 56px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dynamics-compose-submit:disabled {
@@ -4852,6 +4847,17 @@ html.dynamics-compose-open body {
 
 .dynamics-compose-textarea--solo {
   min-height: 72px;
+}
+
+.dynamics-compose-dock {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-content);
+}
+
+.dynamics-compose-dock .dyn-fmt-toolbar {
+  margin-bottom: 0;
 }
 
 .dynamics-compose-valuation {
@@ -4982,17 +4988,15 @@ html.dynamics-compose-open body {
 }
 
 .dynamics-compose-delete {
-  display: block;
-  width: 100%;
-  margin-top: 20px;
-  padding: 10px 0;
   border: none;
   background: transparent;
   color: var(--up);
   font-size: 15px;
   font-weight: 500;
+  padding: 7px 4px;
   cursor: pointer;
-  text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dynamics-compose-delete.hidden {
