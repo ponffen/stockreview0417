@@ -543,6 +543,9 @@ const NOTE_MAX_LENGTH = 500;
 const DYNAMICS_CONTENT_MAX = 2000;
 const DYN_FMT = typeof DynamicsTextFormat !== "undefined" ? DynamicsTextFormat : null;
 const DYN_FMT_EDITOR = typeof DynamicsTextFormatEditor !== "undefined" ? DynamicsTextFormatEditor : null;
+let publishDynamicsContentEditor = null;
+let tradeNoteEditor = null;
+let cashTransferNoteEditor = null;
 const tradeListPager = {
   gen: 0,
   offset: 0,
@@ -7246,10 +7249,6 @@ async function loadStockRecordDynamics(symbol, usePub, detail, { reset = false }
     stockDynamicsLoadInFlight = false;
   }
 }
-
-let publishDynamicsContentEditor = null;
-let tradeNoteEditor = null;
-let cashTransferNoteEditor = null;
 
 function renderDynamicsFormattedText(text) {
   if (DYN_FMT) {
