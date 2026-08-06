@@ -9,6 +9,8 @@ const ASSET_META = {
   "styles.css": "text/css; charset=utf-8",
   "app.js": "application/javascript; charset=utf-8",
   "page-cache.js": "application/javascript; charset=utf-8",
+  "text-format.js": "application/javascript; charset=utf-8",
+  "text-format-editor.js": "application/javascript; charset=utf-8",
   "quote-smoke-test.html": "text/html; charset=utf-8",
   "favicon.ico": "image/x-icon",
   "icon.png": "image/png",

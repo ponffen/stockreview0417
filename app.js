@@ -7304,6 +7304,7 @@ function setLedgerNoteMarkup(surface, markup) {
 
 function initFormatEditors() {
   if (!DYN_FMT_EDITOR) {
+    console.warn("[format] text-format-editor.js not loaded; rich text toolbar disabled");
     return;
   }
   if (publishDynamicsContent && !publishDynamicsContentEditor) {

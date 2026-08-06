@@ -1102,6 +1102,28 @@ h2 {
   color: #8a94a3;
 }
 
+.dyn-fmt-toolbar-host--compose:not(:empty) {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 4px;
+}
+
+.dyn-fmt-toolbar-host--compose .dyn-fmt-toolbar {
+  margin-bottom: 0;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.dyn-fmt-toolbar-host--compose .dyn-fmt-tool {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 .dyn-fmt-toolbar-host + .dyn-fmt-editor__surface.ledger-note-textarea {
   min-height: calc(1.45em * 3 + 16px);
   padding: 8px 10px;
@@ -1109,10 +1131,6 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-content);
-}
-
-.dynamics-compose-editor > .dyn-fmt-toolbar-host {
-  margin-bottom: 10px;
 }
 
 .ledger-note-suggest {

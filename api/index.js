@@ -141,6 +141,8 @@ function apiPathKey(pathOnly) {
 const SPA_SHELL_RESERVED_EXACT = new Set([
   "/app.js",
   "/page-cache.js",
+  "/text-format.js",
+  "/text-format-editor.js",
   "/styles.css",
   "/favicon.ico",
   "/icon.png",

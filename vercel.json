@@ -52,6 +52,8 @@
     { "source": "/styles.css", "destination": "/api/assets?file=styles.css" },
     { "source": "/app.js", "destination": "/api/assets?file=app.js" },
     { "source": "/page-cache.js", "destination": "/api/assets?file=page-cache.js" },
+    { "source": "/text-format.js", "destination": "/api/assets?file=text-format.js" },
+    { "source": "/text-format-editor.js", "destination": "/api/assets?file=text-format-editor.js" },
     { "source": "/quote-smoke-test.html", "destination": "/api/assets?file=quote-smoke-test.html" },
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/api/index" }
