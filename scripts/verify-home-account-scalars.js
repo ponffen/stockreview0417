@@ -9,7 +9,7 @@ const {
   homeAccountStageMetrics,
 } = require("../src/metrics/home-account-scalars");
 const { mapAnalysisRowToHomeAccount } = require("../src/metrics/frozen-pack-v3");
-const { accountDailyTwrReturn } = require("../src/metrics/snapshot-plus-live");
+const { accountDailyTwrReturn, positionTodayProfitForScope, resolveAccountTodayProfitCny } = require("../src/metrics/snapshot-plus-live");
 
 const usdRow = {
   account_id: "acc_1778565511579_482",
@@ -52,6 +52,17 @@ assert.ok(twr > -0.1 && twr < 0.2, `mtd daily TWR sane: ${twr}`);
 const badTwr = accountDailyTwrReturn(homeAcc.eod_total_assets_cny, liveTaUsd, 0);
 assert.ok(badTwr < -0.5, `old bug path still ~-85%: ${badTwr}`);
 
+const usdPositions = [
+  { todayProfitNative: -100, todayProfitBook: -100, todayProfitCny: -720 },
+  { todayProfitNative: -50, todayProfitBook: -50, todayProfitCny: -360 },
+];
+const subToday = resolveAccountTodayProfitCny({ tradingDay: true, liveDate: "2026-08-12" }, usdPositions, {}, new Date(), usdRow.account_id);
+assert.equal(subToday, -150, "sub-account today = sum book/native, not cny");
+const allToday = resolveAccountTodayProfitCny({ tradingDay: true, liveDate: "2026-08-12" }, usdPositions, {}, new Date(), "all");
+assert.equal(allToday, -1080, "all-account today = sum cny track");
+assert.equal(positionTodayProfitForScope(usdPositions[0], usdRow.account_id), -100);
+assert.equal(positionTodayProfitForScope(usdPositions[0], "all"), -720);
+
 async function verifyLiveBundle() {
   if (!process.env.DATABASE_URL) {
     console.log("verify-home-account-scalars: unit ok (skip DB — no DATABASE_URL)");
@@ -70,7 +81,17 @@ async function verifyLiveBundle() {
     rateNum > -20 && rateNum < 50,
     `长桥 mtd rate should not cliff: got ${rateStr} profit=${profitStr}`,
   );
-  console.log(`verify-home-account-scalars: DB ok mtd rate=${rateStr} profit=${profitStr}`);
+  const { getMetricsHomeBundle } = require("../src/metrics-api-service");
+  const home = await getMetricsHomeBundle(uid, accountId, "today");
+  const todayHeader = parseFloat(String(home?.returns?.stages?.today?.profit || "0").replace(/,/g, ""));
+  const todayRows = (home?.holdings?.rows || []).reduce((s, r) => {
+    return s + parseFloat(String(r.todayProfit || "0").replace(/,/g, ""));
+  }, 0);
+  assert.ok(
+    Math.abs(todayHeader - todayRows) < 0.05,
+    `today header should match holdings sum: header=${todayHeader} rows=${todayRows}`,
+  );
+  console.log(`verify-home-account-scalars: DB ok mtd rate=${rateStr} profit=${profitStr} today=${todayHeader}`);
 }
 
 verifyLiveBundle()

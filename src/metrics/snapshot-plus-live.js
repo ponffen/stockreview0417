@@ -6,6 +6,22 @@ const { homeAccountEod } = require("./home-account-scalars");
 const { hasOpenPositionQuantity } = require("./holdings-active-symbols");
 const { computeLedgerCashBookUpToDate, externalFlowBookForRange } = require("../ledger-metrics");
 const { shouldCountTodayPositionPnlFromQuote } = require("../position-today-pnl");
+const { isAggregateScope } = require("./account-book-metrics");
+
+/** 账户汇总今日收益：全部账户=各持仓 cny 轨之和；子账户=各持仓 book 轨之和。 */
+function positionTodayProfitForScope(position, scope) {
+  const p = position || {};
+  if (isAggregateScope(scope)) {
+    return Number(p.todayProfitCny) || 0;
+  }
+  if (p.todayProfitBook != null && Number.isFinite(Number(p.todayProfitBook))) {
+    return Number(p.todayProfitBook);
+  }
+  if (p.todayProfitNative != null && Number.isFinite(Number(p.todayProfitNative))) {
+    return Number(p.todayProfitNative);
+  }
+  return Number(p.todayProfitCny) || 0;
+}
 
 function chainTwrRate(frozenRate, todayRate) {
   const f = Number(frozenRate) || 0;
@@ -40,12 +56,18 @@ function todayProfitCnyFromTotals(live) {
  * 账户「今日」是否与个股一致：至少一只持仓的行情日 = 当前交易日期（08:00 北京）。
  * 无持仓或行情均未切到今日 → 不计账户今日收益。
  */
-function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date(), ledgerSessionKey = null }) {
+function shouldCountAccountTodayPnl({
+  positions,
+  quoteBySymbol,
+  now = new Date(),
+  ledgerSessionKey = null,
+  scope = "all",
+}) {
   const quotes = quoteBySymbol && typeof quoteBySymbol === "object" ? quoteBySymbol : {};
   for (const p of positions || []) {
     const qty = Number(p.quantity) || 0;
     if (!hasOpenPositionQuantity(qty)) {
-      if (Math.abs(Number(p.todayProfitCny) || 0) > 1e-6) {
+      if (Math.abs(positionTodayProfitForScope(p, scope)) > 1e-6) {
         return true;
       }
       continue;
@@ -59,16 +81,20 @@ function shouldCountAccountTodayPnl({ positions, quoteBySymbol, now = new Date()
   return false;
 }
 
-/** 账户今日收益：门控通过后为各持仓 todayProfitCny 之和；否则 0（不用总资产差，避免现金/汇率假增量）。 */
-function resolveAccountTodayProfitCny(live, positions, quoteBySymbol, now = new Date()) {
+/**
+ * 账户今日收益（live.todayProfitCny 字段）：门控通过后为各持仓 scope 口径之和，否则 0。
+ * 历史字段名带 Cny：全部账户=人民币轨；子账户=记账币（book）轨。
+ */
+function resolveAccountTodayProfitCny(live, positions, quoteBySymbol, now = new Date(), scope = "all") {
   if (!live?.tradingDay) {
     return 0;
   }
   const ledgerSessionKey = String(live.liveDate || "").slice(0, 10) || null;
-  if (!shouldCountAccountTodayPnl({ positions, quoteBySymbol, now, ledgerSessionKey })) {
+  const scopeNorm = String(scope || "all").trim() || "all";
+  if (!shouldCountAccountTodayPnl({ positions, quoteBySymbol, now, ledgerSessionKey, scope: scopeNorm })) {
     return 0;
   }
-  return (positions || []).reduce((s, p) => s + (Number(p.todayProfitCny) || 0), 0);
+  return (positions || []).reduce((s, p) => s + positionTodayProfitForScope(p, scopeNorm), 0);
 }
 
 /** 个股日 TWR：市值=总资产，当日买卖=出入金 */
@@ -147,6 +173,7 @@ module.exports = {
   chainTwrRate,
   accountDailyTwrReturn,
   todayProfitCnyFromTotals,
+  positionTodayProfitForScope,
   shouldCountAccountTodayPnl,
   resolveAccountTodayProfitCny,
   positionDailyTwrReturn,

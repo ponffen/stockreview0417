@@ -18,7 +18,7 @@ const {
   cnyScalarToBookAmount,
 } = require("../account-kpi-surface");
 const { isAggregateScope } = require("./account-book-metrics");
-const { chainTwrRate, positionDailyTwrReturn } = require("./snapshot-plus-live");
+const { chainTwrRate, positionDailyTwrReturn, positionTodayProfitForScope } = require("./snapshot-plus-live");
 const { symbolMwrFromValueFlowPoints } = require("../mwr");
 const {
   getPositionDayTradeContext,
@@ -303,7 +303,7 @@ async function buildHoldingsPayload({
     if (hasOpenPositionQuantity(qty)) {
       return true;
     }
-    const todayP = live.tradingDay ? Number(liveBySym.get(sym)?.todayProfitCny) || 0 : 0;
+    const todayP = live.tradingDay ? positionTodayProfitForScope(liveBySym.get(sym), scopeId) : 0;
     return Math.abs(todayP) > 1e-6;
   });
   const frozenRowBySym =
@@ -321,7 +321,7 @@ async function buildHoldingsPayload({
     const frozenRow = frozenRowBySym.get(sym) || null;
     const qty = Number(liveP?.quantity) || 0;
     const sessionLabel = liveP?.sessionLabel ? String(liveP.sessionLabel) : null;
-    const todayProfitBookRow = live.tradingDay ? Number(liveP?.todayProfitCny) || 0 : 0;
+    const todayProfitBookRow = live.tradingDay ? positionTodayProfitForScope(liveP, scopeId) : 0;
     if (!hasOpenPositionQuantity(qty) && Math.abs(todayProfitBookRow) <= 1e-6) {
       continue;
     }

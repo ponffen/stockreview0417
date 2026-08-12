@@ -493,7 +493,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       totalAssetsCny,
       externalFlowTodayCny,
     };
-    todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap);
+    todayProfitCny = resolveAccountTodayProfitCny(liveForToday, positions, quoteMap, new Date(), scope);
     const eodPrincipal = eodScalars.principal || 0;
     principalLive =
       eodPrincipal > 0
