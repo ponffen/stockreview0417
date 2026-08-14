@@ -3343,6 +3343,22 @@ function ledgerListQuery(accountId, offset) {
   return params.toString();
 }
 
+function publicTradesListQuery(symbol, accountId, offset) {
+  const params = new URLSearchParams({
+    limit: String(TRADE_LIST_PAGE_SIZE),
+    offset: String(offset),
+  });
+  const sym = symbol ? normalizeSymbol(symbol) : "";
+  if (sym) {
+    params.set("symbol", sym);
+  }
+  const aid = resolveValidAccountFilter(accountId);
+  if (aid && aid !== "all") {
+    params.set("account_id", aid);
+  }
+  return params.toString();
+}
+
 function tradeListLoadingRowHtml(colspan) {
   return buildAppLoadingTableRowHtml(colspan, "加载中…");
 }
@@ -8318,7 +8334,8 @@ async function loadCommunityPublicTradesPage({ targetId, reset = false } = {}) {
       Number(pagination.offset ?? communityPublicTradesPager.offset) + rows.length;
     communityPublicTradesPager.hasMore = pagination.hasMore === true;
     communityPublicTradesPager.loaded = true;
-  } catch {
+  } catch (error) {
+    console.warn("loadCommunityPublicTradesPage failed", error);
     if (gen === communityPublicTradesPager.gen) {
       communityPublicTradesPager.hasMore = false;
     }
