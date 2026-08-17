@@ -3306,6 +3306,37 @@ body.subscription-expired-mode {
   white-space: nowrap;
 }
 
+#route-trade-stock-columns.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.stock-col-prefs-panel {
+  margin-top: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stock-col-prefs-panel .mine-sub-head {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  padding: 0 16px;
+  min-height: 48px;
+}
+
+.stock-col-prefs-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 .stock-col-prefs-head,
 .stock-col-prefs-row {
   display: grid;
@@ -3316,6 +3347,7 @@ body.subscription-expired-mode {
 }
 
 .stock-col-prefs-head {
+  flex-shrink: 0;
   margin-top: 4px;
   padding-bottom: 8px;
   font-size: 12px;
@@ -3324,7 +3356,6 @@ body.subscription-expired-mode {
 
 .stock-col-prefs-head-vis,
 .stock-col-prefs-head-sort,
-.stock-col-prefs-vis,
 .stock-col-prefs-drag {
   justify-self: center;
 }
@@ -3338,7 +3369,6 @@ body.subscription-expired-mode {
 .stock-col-prefs-row {
   min-height: 52px;
   border-top: 1px solid var(--line);
-  touch-action: none;
 }
 
 .stock-col-prefs-row.is-dragging {
@@ -3354,8 +3384,38 @@ body.subscription-expired-mode {
   color: var(--text);
 }
 
+.stock-col-prefs-vis {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  height: 28px;
+}
+
 .stock-col-prefs-vis .mine-switch {
-  margin: 0 auto;
+  display: block;
+  width: 48px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.stock-col-prefs-vis .mine-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.stock-col-prefs-vis .mine-switch input:checked + .mine-switch-slider {
+  background: var(--blue);
+}
+
+.stock-col-prefs-vis .mine-switch input:checked + .mine-switch-slider::after {
+  transform: translateX(20px);
 }
 
 .stock-col-prefs-drag {
@@ -3371,10 +3431,14 @@ body.subscription-expired-mode {
   font-size: 18px;
   line-height: 1;
   cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .stock-col-prefs-drag:active {
   cursor: grabbing;
+  background: #f0f2f6;
 }
 
 .mine-community-msg {
