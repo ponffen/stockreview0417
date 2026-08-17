@@ -230,24 +230,24 @@
             <table class="stock-table">
               <thead>
                 <tr>
-                  <th class="name-head">名称</th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="todayProfit">今日收益<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="currentPrice">现价/涨跌<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="marketValue">市值/数量<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="weight">仓位<span class="sort-icon"></span></button></th>
-                  <th>成本</th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="monthProfit">月收益<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="yearProfit">年收益<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="totalProfit">总收益<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="totalWeight">总收益占比<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="lowEstimateChange">低估价<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="highEstimateChange">高估价<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn th-sort-btn--right" type="button" data-sort-key="valuationPercentile">估值分位<span class="sort-icon"></span></button></th>
-                  <th><button class="th-sort-btn" type="button" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
-                  <th class="stock-table-op-head">操作</th>
+                  <th class="name-head" data-stock-col="0">名称</th>
+                  <th data-stock-col="1"><button class="th-sort-btn" type="button" data-sort-key="todayProfit">今日收益<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="2"><button class="th-sort-btn" type="button" data-sort-key="currentPrice">现价/涨跌<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="3"><button class="th-sort-btn" type="button" data-sort-key="marketValue">市值/数量<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="4"><button class="th-sort-btn" type="button" data-sort-key="weight">仓位<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="5">成本</th>
+                  <th data-stock-col="6"><button class="th-sort-btn" type="button" data-sort-key="monthProfit">月收益<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="7"><button class="th-sort-btn" type="button" data-sort-key="monthWeight">月收益占比<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="8"><button class="th-sort-btn" type="button" data-sort-key="yearProfit">年收益<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="9"><button class="th-sort-btn" type="button" data-sort-key="yearWeight">年收益占比<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="10"><button class="th-sort-btn" type="button" data-sort-key="totalProfit">总收益<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="11"><button class="th-sort-btn" type="button" data-sort-key="totalWeight">总收益占比<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="12"><button class="th-sort-btn" type="button" data-sort-key="totalRate">总收益率<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="13"><button class="th-sort-btn" type="button" data-sort-key="lowEstimateChange">低估价<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="14"><button class="th-sort-btn" type="button" data-sort-key="highEstimateChange">高估价<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="15"><button class="th-sort-btn th-sort-btn--right" type="button" data-sort-key="valuationPercentile">估值分位<span class="sort-icon"></span></button></th>
+                  <th data-stock-col="16"><button class="th-sort-btn" type="button" data-sort-key="regretRate">交易间隔<span class="sort-icon"></span></button></th>
+                  <th class="stock-table-op-head" data-stock-col="17">操作</th>
                 </tr>
               </thead>
               <tbody id="stockTableBody"></tbody>
@@ -399,6 +399,12 @@
               </div>
               <span class="mine-nav-chevron" aria-hidden="true">›</span>
             </button>
+            <button type="button" class="mine-nav-row" data-trade-open="stock-columns" aria-label="个股列表指标设置">
+              <div class="mine-nav-main">
+                <span class="mine-nav-title">个股列表指标设置</span>
+              </div>
+              <span class="mine-nav-chevron" aria-hidden="true">›</span>
+            </button>
           </article>
           <article class="mine-panel mine-panel--prefs trade-hub-card">
             <div class="mine-switch-row mine-switch-row--home mine-public-community-row">
@@ -480,6 +486,22 @@
               </table>
             </div>
           </div>
+        </article>
+      </section>
+
+      <section id="route-trade-stock-columns" class="route-pane">
+        <article class="panel">
+          <div class="panel-head mine-sub-head">
+            <button type="button" class="btn btn-ghost mine-back-btn" data-mine-back>返回</button>
+            <h2>个股列表指标设置</h2>
+            <button type="button" class="btn btn-ghost stock-col-prefs-reset-btn" id="stockListColumnsResetBtn">恢复默认</button>
+          </div>
+          <div class="stock-col-prefs-head" aria-hidden="true">
+            <span class="stock-col-prefs-head-name">指标名称</span>
+            <span class="stock-col-prefs-head-vis">显示/隐藏</span>
+            <span class="stock-col-prefs-head-sort">排序</span>
+          </div>
+          <ul id="stockListColumnsList" class="stock-col-prefs-list"></ul>
         </article>
       </section>
 

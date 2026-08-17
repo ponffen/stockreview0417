@@ -2,6 +2,32 @@ const { randomUUID } = require("node:crypto");
 
 const SEED_USER_PHONE = "18310270720";
 
+const STOCK_LIST_COLUMN_IDS = [
+  "todayProfit",
+  "currentPrice",
+  "marketValue",
+  "weight",
+  "cost",
+  "monthProfit",
+  "monthWeight",
+  "yearProfit",
+  "yearWeight",
+  "totalProfit",
+  "totalWeight",
+  "totalRate",
+  "lowEstimateChange",
+  "highEstimateChange",
+  "valuationPercentile",
+  "regretRate",
+];
+
+function defaultStockListColumns() {
+  return {
+    version: 1,
+    columns: STOCK_LIST_COLUMN_IDS.map((id) => ({ id, visible: true })),
+  };
+}
+
 const DEFAULT_SETTINGS = {
   route: "community-feed",
   useDemoData: true,
@@ -21,6 +47,7 @@ const DEFAULT_SETTINGS = {
   stockSortKey: "default",
   stockSortOrder: "default",
   stockAmountDisplay: "native",
+  stockListColumns: defaultStockListColumns(),
 };
 
 function nowMs() {

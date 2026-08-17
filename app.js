@@ -26,6 +26,9 @@ function clearSessionState() {
   sessionValidUntil = "";
   sessionSubscriptionExpired = false;
   sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
+  state.stockListColumns = null;
+  _privateStockTableHeadPool = null;
+  applyStockListColumns(buildDefaultStockListColumns(), { writeCache: false, repaintHoldings: false });
 }
 
 function handleSubscriptionExpiredFromApi(path = "") {
@@ -456,6 +459,7 @@ const state = {
   stockSortKey: "default",
   stockSortOrder: "default",
   stockAmountDisplay: "native",
+  stockListColumns: null,
   analysisPanOffset: 0,
   /** 分析图可见窗口（交易日点数），捏合只改此项，不重新请求 */
   analysisChartWindow: 30,
@@ -619,6 +623,138 @@ const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
   "交易间隔",
   "操作",
 ];
+/** 私有页持仓表列注册表（公开页不受 stockListColumns 影响） */
+const STOCK_LIST_COLUMN_REGISTRY = [
+  { id: "name", colIndex: 0, label: "名称", lockVisible: true, configurable: false },
+  {
+    id: "todayProfit",
+    colIndex: 1,
+    label: "今日收益",
+    sortKey: "todayProfit",
+    defaultVisible: true,
+    defaultOrder: 1,
+  },
+  {
+    id: "currentPrice",
+    colIndex: 2,
+    label: "现价/涨跌",
+    sortKey: "currentPrice",
+    defaultVisible: true,
+    defaultOrder: 2,
+  },
+  {
+    id: "marketValue",
+    colIndex: 3,
+    label: "市值/数量",
+    sortKey: "marketValue",
+    defaultVisible: true,
+    defaultOrder: 3,
+  },
+  { id: "weight", colIndex: 4, label: "仓位", sortKey: "weight", defaultVisible: true, defaultOrder: 4 },
+  { id: "cost", colIndex: 5, label: "成本", defaultVisible: true, defaultOrder: 5 },
+  {
+    id: "monthProfit",
+    colIndex: 6,
+    label: "月收益",
+    sortKey: "monthProfit",
+    defaultVisible: true,
+    defaultOrder: 6,
+  },
+  {
+    id: "monthWeight",
+    colIndex: 7,
+    label: "月收益占比",
+    sortKey: "monthWeight",
+    defaultVisible: true,
+    defaultOrder: 7,
+  },
+  {
+    id: "yearProfit",
+    colIndex: 8,
+    label: "年收益",
+    sortKey: "yearProfit",
+    defaultVisible: true,
+    defaultOrder: 8,
+  },
+  {
+    id: "yearWeight",
+    colIndex: 9,
+    label: "年收益占比",
+    sortKey: "yearWeight",
+    defaultVisible: true,
+    defaultOrder: 9,
+  },
+  {
+    id: "totalProfit",
+    colIndex: 10,
+    label: "总收益",
+    sortKey: "totalProfit",
+    defaultVisible: true,
+    defaultOrder: 10,
+  },
+  {
+    id: "totalWeight",
+    colIndex: 11,
+    label: "总收益占比",
+    sortKey: "totalWeight",
+    defaultVisible: true,
+    defaultOrder: 11,
+  },
+  {
+    id: "totalRate",
+    colIndex: 12,
+    label: "总收益率",
+    sortKey: "totalRate",
+    defaultVisible: true,
+    defaultOrder: 12,
+  },
+  {
+    id: "lowEstimateChange",
+    colIndex: 13,
+    label: "低估价",
+    sortKey: "lowEstimateChange",
+    defaultVisible: true,
+    defaultOrder: 13,
+  },
+  {
+    id: "highEstimateChange",
+    colIndex: 14,
+    label: "高估价",
+    sortKey: "highEstimateChange",
+    defaultVisible: true,
+    defaultOrder: 14,
+  },
+  {
+    id: "valuationPercentile",
+    colIndex: 15,
+    label: "估值分位",
+    sortKey: "valuationPercentile",
+    defaultVisible: true,
+    defaultOrder: 15,
+  },
+  {
+    id: "regretRate",
+    colIndex: 16,
+    label: "交易间隔",
+    sortKey: "regretRate",
+    defaultVisible: true,
+    defaultOrder: 16,
+  },
+  { id: "action", colIndex: 17, label: "操作", lockVisible: true, configurable: false },
+];
+const STOCK_LIST_COLUMN_BY_ID = Object.fromEntries(STOCK_LIST_COLUMN_REGISTRY.map((item) => [item.id, item]));
+const STOCK_LIST_COLUMN_BY_SORT_KEY = Object.fromEntries(
+  STOCK_LIST_COLUMN_REGISTRY.filter((item) => item.sortKey).map((item) => [item.sortKey, item]),
+);
+const STOCK_LIST_CONFIGURABLE_COLUMNS = STOCK_LIST_COLUMN_REGISTRY.filter((item) => item.configurable !== false);
+const STOCK_LIST_COLUMNS_LS_PREFIX = "stockreview_stock_list_columns:";
+const STOCK_LIST_COLUMNS_PATCH_DEBOUNCE_MS = 300;
+let stockListColumnsPatchTimer = null;
+let stockListColumnsPendingPatch = null;
+let stockListColumnsPrefsBound = false;
+let stockListColumnsDragId = null;
+let stockListColumnsRefreshGen = 0;
+let _privateStockTableHeadPool = null;
 const STOCK_TABLE_MEASURE_FONT_TH =
   '500 13px -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
 const STOCK_TABLE_MEASURE_FONT_TD =
@@ -650,6 +786,8 @@ const tradeHubAddTradeBtn = document.getElementById("tradeHubAddTradeBtn");
 const tradeHubAddCashBtn = document.getElementById("tradeHubAddCashBtn");
 const tradeHubOpenRecordsBtn = document.getElementById("tradeHubOpenRecordsBtn");
 const tradeHubOpenCashBtn = document.getElementById("tradeHubOpenCashBtn");
+const stockListColumnsList = document.getElementById("stockListColumnsList");
+const stockListColumnsResetBtn = document.getElementById("stockListColumnsResetBtn");
 const setCapitalBtn = document.getElementById("setCapitalBtn");
 const algoModeSelectMine = document.getElementById("algoModeSelectMine");
 const tradeHubAlgoSummary = document.getElementById("tradeHubAlgoSummary");
@@ -2531,6 +2669,7 @@ async function hydrateState() {
     "trade-records",
     "trade-cash",
     "trade-search",
+    "trade-stock-columns",
   ]);
   if (holdingsRoutes.has(state.route)) {
     state.appModule = "holdings";
@@ -2545,6 +2684,11 @@ async function hydrateState() {
   }
   applyPublicProfileDeepLinkFromLocation();
   normalizeModuleHomeOnColdLoad();
+  if (sessionUserId) {
+    bootstrapStockListColumnsFromCacheAndSettings(parsed);
+  } else {
+    applyStockListColumns(buildDefaultStockListColumns(), { writeCache: false, repaintHoldings: false });
+  }
   invalidateOverviewMetricsUi();
 }
 
@@ -2584,6 +2728,9 @@ let initialSettingsSyncTimer = null;
 function buildPersistStateSyncPayload() {
   let routeForSync = state.route;
   if (routeForSync === "trade-search" || routeForSync === "trade-records" || routeForSync === "trade-cash") {
+    routeForSync = "trade";
+  }
+  if (routeForSync === "trade-stock-columns") {
     routeForSync = "trade";
   }
   return {
@@ -4407,6 +4554,8 @@ function bindEvents() {
       state.mineReturnRoute = "trade";
       if (target === "accounts") {
         state.route = "mine-accounts";
+      } else if (target === "stock-columns") {
+        state.route = "trade-stock-columns";
       } else {
         state.route = "mine-algo";
       }
@@ -5011,6 +5160,7 @@ function bindEvents() {
       openStockRecordFromAnalysisRank(symbol);
     }
   });
+  bindStockListColumnsPrefsEvents();
 }
 
 function resetStockRankHelpBubbleLayout(bubble) {
@@ -5586,6 +5736,8 @@ function renderAll() {
     void ensureTradeListRouteReady();
   } else if (state.route === "trade" || state.route === "trade-search") {
     /* 交易首页 / 搜索页不预拉 trades、cash-transfers */
+  } else if (state.route === "trade-stock-columns") {
+    renderStockListColumnsPrefs();
   } else if (state.route === "stock-record" && state.activeRecordSymbol) {
     if (!state.stockRecordPageLoading) {
       void renderStockRecordPage(state.activeRecordSymbol);
@@ -7736,6 +7888,448 @@ async function withPublicTradesContextAsync(d, asyncFn) {
 /** 他人收益 Tab：物理渲染列（与私人表同列索引的 th/td 规则，不含金额列） */
 const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 17];
 
+function buildDefaultStockListColumns() {
+  return {
+    version: 1,
+    columns: STOCK_LIST_CONFIGURABLE_COLUMNS.map((item) => ({
+      id: item.id,
+      visible: item.defaultVisible !== false,
+    })),
+  };
+}
+
+function stockListColumnsCacheKey() {
+  const uid = String(sessionUserId || "").trim();
+  return uid ? `${STOCK_LIST_COLUMNS_LS_PREFIX}${uid}` : "";
+}
+
+function readStockListColumnsCache() {
+  const key = stockListColumnsCacheKey();
+  if (!key) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return normalizeStockListColumns(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeStockListColumnsCache(cfg) {
+  const key = stockListColumnsCacheKey();
+  if (!key || !cfg) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ ...cfg, savedAt: Date.now() }));
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function clearStockListColumnsCache() {
+  const key = stockListColumnsCacheKey();
+  if (!key) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function stockListColumnsConfigEqual(a, b) {
+  return JSON.stringify(normalizeStockListColumns(a)) === JSON.stringify(normalizeStockListColumns(b));
+}
+
+function normalizeStockListColumns(raw) {
+  const defaults = buildDefaultStockListColumns();
+  const defaultById = Object.fromEntries(defaults.columns.map((item) => [item.id, item]));
+  const inputCols = Array.isArray(raw?.columns) ? raw.columns : [];
+  const seen = new Set();
+  const merged = [];
+  for (const item of inputCols) {
+    const id = String(item?.id || "").trim();
+    const meta = STOCK_LIST_COLUMN_BY_ID[id];
+    if (!meta || meta.configurable === false || seen.has(id)) {
+      continue;
+    }
+    merged.push({ id, visible: item?.visible !== false });
+    seen.add(id);
+  }
+  const missing = STOCK_LIST_CONFIGURABLE_COLUMNS.filter((item) => !seen.has(item.id)).sort(
+    (a, b) => (a.defaultOrder || 0) - (b.defaultOrder || 0),
+  );
+  for (const item of missing) {
+    merged.push({ id: item.id, visible: defaultById[item.id]?.visible !== false });
+  }
+  if (!merged.some((item) => item.visible)) {
+    merged[0].visible = true;
+  }
+  return {
+    version: Number(raw?.version) || 1,
+    columns: merged,
+  };
+}
+
+function ensureStockListColumnsState() {
+  if (!state.stockListColumns) {
+    state.stockListColumns = buildDefaultStockListColumns();
+  } else {
+    state.stockListColumns = normalizeStockListColumns(state.stockListColumns);
+  }
+  return state.stockListColumns;
+}
+
+function stockListColumnsToVisibleIndices(cfg) {
+  const normalized = normalizeStockListColumns(cfg);
+  const indices = [0];
+  for (const item of normalized.columns) {
+    if (!item.visible) {
+      continue;
+    }
+    const meta = STOCK_LIST_COLUMN_BY_ID[item.id];
+    if (meta && meta.colIndex > 0 && meta.colIndex < 17) {
+      indices.push(meta.colIndex);
+    }
+  }
+  indices.push(17);
+  return indices;
+}
+
+function stockListSortKeyVisible(sortKey) {
+  if (!sortKey || sortKey === "default") {
+    return true;
+  }
+  const meta = STOCK_LIST_COLUMN_BY_SORT_KEY[sortKey];
+  if (!meta) {
+    return true;
+  }
+  const cfg = ensureStockListColumnsState();
+  const hit = cfg.columns.find((item) => item.id === meta.id);
+  return hit ? hit.visible !== false : true;
+}
+
+function reconcileStockSortKeyWithColumnPrefs() {
+  if (stockListSortKeyVisible(state.stockSortKey)) {
+    return;
+  }
+  state.stockSortKey = "default";
+  state.stockSortOrder = "default";
+  persistState();
+}
+
+function ensurePrivateStockTableHeadPool() {
+  if (_privateStockTableHeadPool) {
+    return _privateStockTableHeadPool;
+  }
+  const table = stockTableBody?.closest("table.stock-table");
+  const tr = table?.querySelector("thead tr");
+  if (!tr) {
+    return new Map();
+  }
+  const pool = new Map();
+  tr.querySelectorAll("th").forEach((th, index) => {
+    const fromAttr = Number(th.getAttribute("data-stock-col"));
+    const colIndex = Number.isFinite(fromAttr) ? fromAttr : index;
+    th.setAttribute("data-stock-col", String(colIndex));
+    pool.set(colIndex, th);
+  });
+  _privateStockTableHeadPool = pool;
+  return pool;
+}
+
+function applyPrivateStockTableHead() {
+  const table = stockTableBody?.closest("table.stock-table");
+  const tr = table?.querySelector("thead tr");
+  if (!tr) {
+    return;
+  }
+  const pool = ensurePrivateStockTableHeadPool();
+  const indices = stockListColumnsToVisibleIndices(ensureStockListColumnsState());
+  const frag = document.createDocumentFragment();
+  for (const col of indices) {
+    const th = pool.get(col);
+    if (th) {
+      frag.appendChild(th);
+    }
+  }
+  tr.replaceChildren(frag);
+}
+
+function repaintPrivateStockTableIfVisible() {
+  if (!isEarningHomeRoute()) {
+    return;
+  }
+  const rows = state.overviewMetricsUi.holdings?.rows;
+  if (!rows?.length) {
+    applyPrivateStockTableHead();
+    return;
+  }
+  clearOverviewStockTableColLayout();
+  applyPrivateStockTableHead();
+  paintOverviewStockTableFromMetricsRows(rows);
+}
+
+function applyStockListColumns(cfg, options = {}) {
+  const normalized = normalizeStockListColumns(cfg);
+  state.stockListColumns = normalized;
+  if (options.writeCache !== false && sessionUserId) {
+    writeStockListColumnsCache(normalized);
+  }
+  reconcileStockSortKeyWithColumnPrefs();
+  applyPrivateStockTableHead();
+  if (options.repaintHoldings !== false) {
+    repaintPrivateStockTableIfVisible();
+  }
+  if (state.route === "trade-stock-columns") {
+    renderStockListColumnsPrefs();
+  }
+}
+
+function bootstrapStockListColumnsFromCacheAndSettings(parsed) {
+  const cached = readStockListColumnsCache();
+  if (cached) {
+    applyStockListColumns(cached, { writeCache: false, repaintHoldings: false });
+  } else if (parsed?.stockListColumns) {
+    applyStockListColumns(parsed.stockListColumns, { repaintHoldings: false });
+  } else {
+    applyStockListColumns(buildDefaultStockListColumns(), { repaintHoldings: false });
+  }
+  const fromServer = parsed?.stockListColumns ? normalizeStockListColumns(parsed.stockListColumns) : null;
+  if (fromServer && !stockListColumnsConfigEqual(fromServer, state.stockListColumns)) {
+    applyStockListColumns(fromServer, { repaintHoldings: true });
+  }
+}
+
+async function pushStockListColumnsToApi(cfg) {
+  if (!apiReady || !sessionUserId) {
+    return;
+  }
+  try {
+    const body = { stockListColumns: normalizeStockListColumns(cfg) };
+    await apiFetch(`${API_BASE}/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // next debounced flush retries with latest config
+  }
+}
+
+function queueStockListColumnsSync(cfg) {
+  if (!apiReady || !sessionUserId) {
+    return;
+  }
+  stockListColumnsPendingPatch = normalizeStockListColumns(cfg);
+  if (stockListColumnsPatchTimer) {
+    window.clearTimeout(stockListColumnsPatchTimer);
+  }
+  stockListColumnsPatchTimer = window.setTimeout(() => {
+    const merged = stockListColumnsPendingPatch;
+    stockListColumnsPendingPatch = null;
+    stockListColumnsPatchTimer = null;
+    if (merged) {
+      void pushStockListColumnsToApi(merged);
+    }
+  }, STOCK_LIST_COLUMNS_PATCH_DEBOUNCE_MS);
+}
+
+async function refreshStockListColumnsFromServerBackground() {
+  if (!apiReady || !sessionUserId || state.route !== "trade-stock-columns") {
+    return;
+  }
+  const gen = ++stockListColumnsRefreshGen;
+  try {
+    const response = await apiFetch(`${getApiBaseForFetch()}/settings`, {
+      cache: "no-store",
+      timeoutMs: 12_000,
+    });
+    if (!response.ok || gen !== stockListColumnsRefreshGen || state.route !== "trade-stock-columns") {
+      return;
+    }
+    const result = await response.json().catch(() => ({}));
+    const fromServer = result?.data?.stockListColumns;
+    if (!fromServer || gen !== stockListColumnsRefreshGen) {
+      return;
+    }
+    if (!stockListColumnsConfigEqual(fromServer, state.stockListColumns)) {
+      applyStockListColumns(fromServer, { repaintHoldings: true });
+    }
+  } catch {
+    // keep cache on failure
+  }
+}
+
+function moveStockListColumnRelative(dragId, targetId, after = false) {
+  const dragKey = String(dragId || "").trim();
+  const targetKey = String(targetId || "").trim();
+  if (!dragKey || !targetKey || dragKey === targetKey) {
+    return;
+  }
+  const cfg = normalizeStockListColumns(state.stockListColumns);
+  const from = cfg.columns.findIndex((item) => item.id === dragKey);
+  const to = cfg.columns.findIndex((item) => item.id === targetKey);
+  if (from < 0 || to < 0) {
+    return;
+  }
+  const nextCols = cfg.columns.slice();
+  const [moved] = nextCols.splice(from, 1);
+  let insertAt = to;
+  if (from < to) {
+    insertAt -= 1;
+  }
+  if (after) {
+    insertAt += 1;
+  }
+  nextCols.splice(insertAt, 0, moved);
+  const next = { ...cfg, columns: nextCols };
+  applyStockListColumns(next);
+  queueStockListColumnsSync(next);
+}
+
+function setStockListColumnVisible(colId, visible) {
+  const id = String(colId || "").trim();
+  const meta = STOCK_LIST_COLUMN_BY_ID[id];
+  if (!meta || meta.configurable === false) {
+    return;
+  }
+  const cfg = normalizeStockListColumns(state.stockListColumns);
+  const nextCols = cfg.columns.map((item) =>
+    item.id === id ? { ...item, visible: visible !== false } : item,
+  );
+  const nextVisible = nextCols.filter((item) => item.visible).length;
+  if (!nextVisible) {
+    return;
+  }
+  const next = { ...cfg, columns: nextCols };
+  applyStockListColumns(next);
+  queueStockListColumnsSync(next);
+}
+
+function resetStockListColumnsToDefault() {
+  const next = buildDefaultStockListColumns();
+  applyStockListColumns(next);
+  queueStockListColumnsSync(next);
+}
+
+function renderStockListColumnsPrefs() {
+  if (!stockListColumnsList) {
+    return;
+  }
+  const cfg = ensureStockListColumnsState();
+  stockListColumnsList.innerHTML = cfg.columns
+    .map((item) => {
+      const meta = STOCK_LIST_COLUMN_BY_ID[item.id];
+      const label = meta?.label || item.id;
+      const checked = item.visible !== false ? " checked" : "";
+      return `
+        <li class="stock-col-prefs-row" data-col-id="${escapeHtml(item.id)}">
+          <span class="stock-col-prefs-name">${escapeHtml(label)}</span>
+          <div class="stock-col-prefs-vis">
+            <label class="mine-switch">
+              <input type="checkbox" data-stock-col-visible="${escapeHtml(item.id)}"${checked} />
+              <span class="mine-switch-slider" aria-hidden="true"></span>
+            </label>
+          </div>
+          <button type="button" class="stock-col-prefs-drag" data-stock-col-drag="${escapeHtml(item.id)}" aria-label="拖动排序">≡</button>
+        </li>`;
+    })
+    .join("");
+}
+
+function bindStockListColumnsPrefsEvents() {
+  if (stockListColumnsPrefsBound) {
+    return;
+  }
+  stockListColumnsPrefsBound = true;
+  stockListColumnsResetBtn?.addEventListener("click", () => {
+    resetStockListColumnsToDefault();
+  });
+  stockListColumnsList?.addEventListener("change", (event) => {
+    const input = event.target.closest("input[data-stock-col-visible]");
+    if (!input || !stockListColumnsList.contains(input)) {
+      return;
+    }
+    setStockListColumnVisible(input.getAttribute("data-stock-col-visible"), input.checked);
+  });
+  stockListColumnsList?.addEventListener("dragstart", (event) => {
+    const handle = event.target.closest("[data-stock-col-drag]");
+    const row = handle?.closest("[data-col-id]");
+    if (!handle || !row) {
+      event.preventDefault();
+      return;
+    }
+    stockListColumnsDragId = row.getAttribute("data-col-id");
+    row.classList.add("is-dragging");
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", stockListColumnsDragId || "");
+    }
+  });
+  stockListColumnsList?.addEventListener("dragend", (event) => {
+    stockListColumnsDragId = null;
+    stockListColumnsList.querySelectorAll(".stock-col-prefs-row").forEach((row) => {
+      row.classList.remove("is-dragging", "is-drop-target");
+    });
+  });
+  stockListColumnsList?.addEventListener("dragover", (event) => {
+    if (!stockListColumnsDragId) {
+      return;
+    }
+    event.preventDefault();
+    const row = event.target.closest("[data-col-id]");
+    if (!row || row.getAttribute("data-col-id") === stockListColumnsDragId) {
+      return;
+    }
+    stockListColumnsList.querySelectorAll(".stock-col-prefs-row.is-drop-target").forEach((el) => {
+      if (el !== row) {
+        el.classList.remove("is-drop-target");
+      }
+    });
+    row.classList.add("is-drop-target");
+  });
+  stockListColumnsList?.addEventListener("dragleave", (event) => {
+    const row = event.target.closest("[data-col-id]");
+    row?.classList.remove("is-drop-target");
+  });
+  stockListColumnsList?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const row = event.target.closest("[data-col-id]");
+    const targetId = row?.getAttribute("data-col-id");
+    if (!stockListColumnsDragId || !targetId) {
+      return;
+    }
+    moveStockListColumnRelative(stockListColumnsDragId, targetId);
+    stockListColumnsDragId = null;
+    stockListColumnsList.querySelectorAll(".stock-col-prefs-row").forEach((el) => {
+      el.classList.remove("is-dragging", "is-drop-target");
+    });
+  });
+  stockListColumnsList?.addEventListener("mousedown", (event) => {
+    const handle = event.target.closest("[data-stock-col-drag]");
+    const row = handle?.closest("[data-col-id]");
+    if (row) {
+      row.setAttribute("draggable", "true");
+    }
+  });
+  stockListColumnsList?.addEventListener("mouseup", () => {
+    stockListColumnsList?.querySelectorAll(".stock-col-prefs-row[draggable]").forEach((row) => {
+      row.removeAttribute("draggable");
+    });
+  });
+}
+
 function stockTableAllColIndices() {
   return Array.from({ length: OVERVIEW_STOCK_TABLE_COL_COUNT }, (_, i) => i);
 }
@@ -7815,7 +8409,7 @@ function getPrivateStockTableCtx() {
   return {
     tbody: stockTableBody,
     table: stockTableBody?.closest("table.stock-table") || null,
-    visibleColIndices: null,
+    visibleColIndices: stockListColumnsToVisibleIndices(ensureStockListColumnsState()),
     showTradeLink: true,
     opProbeText: "分析  交易",
     layoutCacheKey: overviewStockTableLayoutCacheKey,
@@ -8749,6 +9343,7 @@ function renderRoute() {
     "trade-records",
     "trade-cash",
     "trade-search",
+    "trade-stock-columns",
     "ai-analysis",
     "mine",
     "mine-accounts",
@@ -8798,6 +9393,7 @@ function renderRoute() {
     "trade-cash",
     "mine-accounts",
     "mine-algo",
+    "trade-stock-columns",
     "mine-community",
     "community-profile",
     "stock-record",
@@ -8821,7 +9417,8 @@ function renderRoute() {
         (state.route === "trade" ||
           state.route === "trade-records" ||
           state.route === "trade-cash" ||
-          state.route === "trade-search");
+          state.route === "trade-search" ||
+          state.route === "trade-stock-columns");
       button.classList.toggle("active", r === state.route || tradeTabActive);
     }
   });
@@ -8842,6 +9439,7 @@ function renderRoute() {
     state.route === "trade-search" ||
     state.route === "trade-records" ||
     state.route === "trade-cash" ||
+    state.route === "trade-stock-columns" ||
     state.route === "community-profile" ||
     state.route === "ai-analysis" ||
     isMineRoute(state.route);
@@ -8875,6 +9473,12 @@ function renderRoute() {
   lastRenderedRouteForPaneUnmount = state.route;
   if (state.route === "trade-search" && routeChanged) {
     void loadTradeSearchHistory();
+  }
+  if (state.route === "trade-stock-columns") {
+    renderStockListColumnsPrefs();
+    if (routeChanged) {
+      void refreshStockListColumnsFromServerBackground();
+    }
   }
 }
 
@@ -11518,6 +12122,7 @@ function paintStockTableFromMetricsRows(rows, ctx) {
 }
 
 function paintOverviewStockTableFromMetricsRows(rows) {
+  applyPrivateStockTableHead();
   paintStockTableFromMetricsRows(rows, getPrivateStockTableCtx());
 }
 function analysisAssetChartRowsFromSeries(series, opts = {}) {

@@ -3298,6 +3298,85 @@ body.subscription-expired-mode {
   transform: translateX(20px);
 }
 
+.stock-col-prefs-reset-btn {
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 14px;
+  color: var(--blue);
+  white-space: nowrap;
+}
+
+.stock-col-prefs-head,
+.stock-col-prefs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+.stock-col-prefs-head {
+  margin-top: 4px;
+  padding-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stock-col-prefs-head-vis,
+.stock-col-prefs-head-sort,
+.stock-col-prefs-vis,
+.stock-col-prefs-drag {
+  justify-self: center;
+}
+
+.stock-col-prefs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 16px;
+}
+
+.stock-col-prefs-row {
+  min-height: 52px;
+  border-top: 1px solid var(--line);
+  touch-action: none;
+}
+
+.stock-col-prefs-row.is-dragging {
+  opacity: 0.55;
+}
+
+.stock-col-prefs-row.is-drop-target {
+  background: rgb(37 99 235 / 6%);
+}
+
+.stock-col-prefs-name {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.stock-col-prefs-vis .mine-switch {
+  margin: 0 auto;
+}
+
+.stock-col-prefs-drag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: grab;
+}
+
+.stock-col-prefs-drag:active {
+  cursor: grabbing;
+}
+
 .mine-community-msg {
   margin: 0 16px 10px;
   font-size: 13px;
