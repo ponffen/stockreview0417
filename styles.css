@@ -3383,6 +3383,7 @@ body.subscription-expired-mode {
     0 4px 12px rgb(15 23 42 / 10%);
   opacity: 1;
   will-change: transform;
+  pointer-events: none;
 }
 
 .stock-col-prefs-row.is-drop-target {

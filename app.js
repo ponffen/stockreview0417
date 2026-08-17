@@ -8251,6 +8251,38 @@ function renderStockListColumnsPrefs() {
     .join("");
 }
 
+function stockColDropTargetFromPoint(clientX, clientY, dragId) {
+  if (!stockListColumnsList) {
+    return null;
+  }
+  const elements = document.elementsFromPoint(clientX, clientY);
+  for (const el of elements) {
+    const row = el.closest?.("[data-col-id]");
+    if (!row || !stockListColumnsList.contains(row)) {
+      continue;
+    }
+    const id = row.getAttribute("data-col-id");
+    if (id && id !== dragId) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function highlightStockColDropTarget(targetRow, dragId) {
+  if (!stockListColumnsList) {
+    return;
+  }
+  stockListColumnsList.querySelectorAll(".stock-col-prefs-row.is-drop-target").forEach((el) => {
+    if (el !== targetRow) {
+      el.classList.remove("is-drop-target");
+    }
+  });
+  if (targetRow) {
+    targetRow.classList.add("is-drop-target");
+  }
+}
+
 function clearStockColPointerDragUi() {
   stockListColumnsList?.querySelectorAll(".stock-col-prefs-row").forEach((row) => {
     row.classList.remove("is-dragging", "is-drop-target");
@@ -8298,6 +8330,7 @@ function bindStockListColumnsPrefsEvents() {
       pointerId: event.pointerId,
       row,
       startY: event.clientY,
+      dropTargetId: null,
     };
     row.classList.add("is-dragging");
     updateStockColDragTransform(row, 0);
@@ -8309,25 +8342,24 @@ function bindStockListColumnsPrefsEvents() {
     event.preventDefault();
     const offsetY = event.clientY - stockColPointerDrag.startY;
     updateStockColDragTransform(stockColPointerDrag.row, offsetY);
-    const under = document.elementFromPoint(event.clientX, event.clientY);
-    const targetRow = under?.closest?.("[data-col-id]");
-    stockListColumnsList.querySelectorAll(".stock-col-prefs-row.is-drop-target").forEach((el) => {
-      if (el !== targetRow) {
-        el.classList.remove("is-drop-target");
-      }
-    });
-    if (targetRow && targetRow.getAttribute("data-col-id") !== stockColPointerDrag.id) {
-      targetRow.classList.add("is-drop-target");
-    }
+    const targetRow = stockColDropTargetFromPoint(
+      event.clientX,
+      event.clientY,
+      stockColPointerDrag.id,
+    );
+    highlightStockColDropTarget(targetRow, stockColPointerDrag.id);
+    stockColPointerDrag.dropTargetId = targetRow?.getAttribute("data-col-id") || null;
   });
   const finishStockColPointerDrag = (event) => {
     if (!stockColPointerDrag || event.pointerId !== stockColPointerDrag.pointerId) {
       return;
     }
-    const under = document.elementFromPoint(event.clientX, event.clientY);
-    const targetRow = under?.closest?.("[data-col-id]");
     const dragId = stockColPointerDrag.id;
-    const targetId = targetRow?.getAttribute("data-col-id");
+    let targetId = stockColPointerDrag.dropTargetId;
+    if (!targetId) {
+      const targetRow = stockColDropTargetFromPoint(event.clientX, event.clientY, dragId);
+      targetId = targetRow?.getAttribute("data-col-id") || null;
+    }
     clearStockColPointerDragUi();
     stockColPointerDrag = null;
     if (dragId && targetId && dragId !== targetId) {
