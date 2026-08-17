@@ -8314,6 +8314,12 @@ function bindStockListColumnsPrefsEvents() {
     }
     setStockListColumnVisible(input.getAttribute("data-stock-col-visible"), input.checked);
   });
+  stockListColumnsList?.addEventListener("selectstart", (event) => {
+    event.preventDefault();
+  });
+  stockListColumnsList?.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+  });
   stockListColumnsList?.addEventListener("pointerdown", (event) => {
     const handle = event.target.closest("[data-stock-col-drag]");
     if (!handle || !stockListColumnsList.contains(handle)) {

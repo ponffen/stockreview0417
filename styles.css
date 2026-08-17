@@ -3335,6 +3335,9 @@ body.subscription-expired-mode {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .stock-col-prefs-head,
@@ -3344,6 +3347,9 @@ body.subscription-expired-mode {
   align-items: center;
   gap: 8px;
   padding: 0 16px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .stock-col-prefs-head {
@@ -3404,6 +3410,9 @@ body.subscription-expired-mode {
 .stock-col-prefs-name {
   font-size: 15px;
   color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .stock-col-prefs-vis {
