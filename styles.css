@@ -3367,16 +3367,37 @@ body.subscription-expired-mode {
 }
 
 .stock-col-prefs-row {
+  position: relative;
   min-height: 52px;
   border-top: 1px solid var(--line);
 }
 
 .stock-col-prefs-row.is-dragging {
-  opacity: 0.55;
+  position: relative;
+  z-index: 30;
+  background: #fff;
+  border-radius: 12px;
+  border-top-color: transparent;
+  box-shadow:
+    0 12px 32px rgb(15 23 42 / 16%),
+    0 4px 12px rgb(15 23 42 / 10%);
+  opacity: 1;
+  will-change: transform;
 }
 
 .stock-col-prefs-row.is-drop-target {
   background: rgb(37 99 235 / 6%);
+}
+
+.stock-col-prefs-row.is-drop-target::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: -1px;
+  height: 2px;
+  background: var(--blue);
+  border-radius: 1px;
 }
 
 .stock-col-prefs-name {

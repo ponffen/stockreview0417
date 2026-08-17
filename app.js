@@ -760,6 +760,9 @@ const STOCK_TABLE_MEASURE_FONT_TH =
 const STOCK_TABLE_MEASURE_FONT_TD =
   '12px -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif';
 const STOCK_TABLE_MEASURE_PAD_X = 20;
+const STOCK_TABLE_COL_SORT_ICON_EXTRA_PX = 16;
+const STOCK_TABLE_VALUATION_PCT_MIN_PX = 88;
+const STOCK_TABLE_SORTABLE_COLS = new Set([1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 /** 首页持仓表名称列固定展示宽度（汉字个数，超出 clip） */
 const OVERVIEW_STOCK_NAME_COL_CHARS = 7;
 const OVERVIEW_STOCK_NAME_COL_PROBE = "测".repeat(OVERVIEW_STOCK_NAME_COL_CHARS);
@@ -8251,7 +8254,17 @@ function renderStockListColumnsPrefs() {
 function clearStockColPointerDragUi() {
   stockListColumnsList?.querySelectorAll(".stock-col-prefs-row").forEach((row) => {
     row.classList.remove("is-dragging", "is-drop-target");
+    row.style.transform = "";
+    row.style.zIndex = "";
   });
+}
+
+function updateStockColDragTransform(row, offsetY) {
+  if (!row) {
+    return;
+  }
+  const lift = Math.abs(offsetY) > 2 ? " scale(1.02)" : "";
+  row.style.transform = `translate3d(0, ${offsetY}px, 0)${lift}`;
 }
 
 function bindStockListColumnsPrefsEvents() {
@@ -8283,14 +8296,19 @@ function bindStockListColumnsPrefsEvents() {
     stockColPointerDrag = {
       id: row.getAttribute("data-col-id"),
       pointerId: event.pointerId,
+      row,
+      startY: event.clientY,
     };
     row.classList.add("is-dragging");
+    updateStockColDragTransform(row, 0);
   });
   stockListColumnsList?.addEventListener("pointermove", (event) => {
     if (!stockColPointerDrag || event.pointerId !== stockColPointerDrag.pointerId) {
       return;
     }
     event.preventDefault();
+    const offsetY = event.clientY - stockColPointerDrag.startY;
+    updateStockColDragTransform(stockColPointerDrag.row, offsetY);
     const under = document.elementFromPoint(event.clientX, event.clientY);
     const targetRow = under?.closest?.("[data-col-id]");
     stockListColumnsList.querySelectorAll(".stock-col-prefs-row.is-drop-target").forEach((el) => {
@@ -11828,7 +11846,14 @@ function measureStockTableColWidths(measureCellText, ctx) {
   const allHeaders = readOverviewStockTableHeaderLabels();
   const widths = indices.map((col) => {
     const label = allHeaders[col] || "";
-    return Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X);
+    let w = Math.ceil(measureStockTableTextPx(label, STOCK_TABLE_MEASURE_FONT_TH) + STOCK_TABLE_MEASURE_PAD_X);
+    if (STOCK_TABLE_SORTABLE_COLS.has(col)) {
+      w += STOCK_TABLE_COL_SORT_ICON_EXTRA_PX;
+    }
+    if (col === 15) {
+      w = Math.max(w, STOCK_TABLE_VALUATION_PCT_MIN_PX);
+    }
+    return w;
   });
   const modes = ["cny", "native"];
   for (const row of measureCellText.rows || []) {
@@ -11857,7 +11882,7 @@ function measureStockTableColWidths(measureCellText, ctx) {
   if (nameVi >= 0) {
     widths[nameVi] = overviewStockNameColWidthPx();
   }
-  const opVi = indices.indexOf(14);
+  const opVi = indices.indexOf(17);
   if (opVi >= 0) {
     widths[opVi] = Math.max(
       widths[opVi],
