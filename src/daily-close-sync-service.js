@@ -21,13 +21,99 @@ const {
   tencentQuoteMatchesFrozenDate,
   fetchSinaDailyKBatchMulti,
   fetchBackfillClosesForSymbol,
+  fetchIncrementalCloseForSymbol,
 } = require("./daily-close-fetch");
 const { fetchTencentQuoteMap } = require("./quotes/tencent-quote");
 
 const POSITION_EPSILON = 1e-6;
 const FX_DAILY_SYNC_SYMBOLS = ["fx_usdcny", "fx_hkdcny"];
 const FX_DAILY_LOOKBACK_DAYS = 7;
+const FX_INCREMENTAL_K_LEN = 10;
 const SINA_BATCH_CHUNK = 25;
+
+function isFxDailySymbol(symbol) {
+  const sym = String(symbol || "").trim().toLowerCase();
+  return sym === "fx_usdcny" || sym === "fx_hkdcny";
+}
+
+/**
+ * 外汇增量：自本地最后有效日 → frozenDate 用新浪日 K 区间拉取补缺口；
+ * 仍缺 frozenDate 时再走腾讯 wh* 兜底（需 toTencentQuoteKey 映射正确）。
+ */
+async function syncFxIncrementalCloses(frozenDate, logger = console) {
+  const fd = String(frozenDate || "").slice(0, 10);
+  const rowsToWrite = [];
+  const perSymbol = [];
+
+  for (const sym of FX_DAILY_SYNC_SYMBOLS) {
+    try {
+      const lookbackFrom = addCalendarDays(fd, -Math.max(FX_DAILY_LOOKBACK_DAYS, 14));
+      const localRows = await getSymbolDailyCloseRange(sym, lookbackFrom, fd);
+      const lastLocal = localRows.length ? String(localRows[localRows.length - 1].date).slice(0, 10) : "";
+      if (lastLocal >= fd) {
+        perSymbol.push({
+          symbol: sym,
+          synced: true,
+          source: "existing",
+          close: Number(localRows[localRows.length - 1].close),
+          frozenDate: fd,
+        });
+        continue;
+      }
+      const fetchFrom = lastLocal ? addCalendarDays(lastLocal, 1) : lookbackFrom;
+      let remote = await fetchRemoteDailyClosesForSymbol(sym, fetchFrom, fd);
+      if (!remote.length) {
+        const bars =
+          (await fetchSinaDailyKBatchMulti([sym], { len: FX_INCREMENTAL_K_LEN })).get(sym) || [];
+        const bar = pickBarOnDate(bars, fd);
+        if (bar) {
+          remote = [{ symbol: sym, date: fd, close: bar.close, source: SOURCE_SINA }];
+        }
+      }
+      if (!remote.length) {
+        const inc = await fetchIncrementalCloseForSymbol(sym, fd);
+        if (inc.row) {
+          remote = [{ symbol: sym, date: fd, close: inc.row.close, source: inc.row.source }];
+        } else {
+          perSymbol.push({
+            symbol: sym,
+            synced: false,
+            reason: inc.result?.reason || "fx-fetch-empty",
+            frozenDate: fd,
+          });
+          continue;
+        }
+      }
+      for (const row of remote) {
+        rowsToWrite.push({
+          symbol: sym,
+          date: String(row.date).slice(0, 10),
+          close: Number(row.close),
+          source: row.source || SOURCE_SINA,
+        });
+      }
+      const frozenRow = remote.find((r) => String(r.date).slice(0, 10) === fd) || remote[remote.length - 1];
+      perSymbol.push({
+        symbol: sym,
+        synced: true,
+        source: frozenRow?.source || SOURCE_SINA,
+        close: Number(frozenRow?.close),
+        frozenDate: fd,
+        gapFilled: remote.length,
+      });
+    } catch (error) {
+      logger.warn?.(`[daily-close-sync] fx incremental failed symbol=${sym}`, error?.message || error);
+      perSymbol.push({
+        symbol: sym,
+        synced: false,
+        frozenDate: fd,
+        error: String(error?.message || error || "unknown error"),
+      });
+    }
+  }
+
+  return { rowsToWrite, perSymbol };
+}
 
 function normalizeLifecycleTrade(raw) {
   const symbol = normalizeSymbol(raw?.symbol);
@@ -226,7 +312,9 @@ function symbolsInPlanForFrozenDate(plan, frozenDate) {
  */
 async function runIncrementalDailyCloseSync(frozenDate, targets, logger) {
   const fd = String(frozenDate || "").slice(0, 10);
-  const symbols = targets.map((t) => t.symbol);
+  const fxTargets = (targets || []).filter((t) => isFxDailySymbol(t.symbol));
+  const stockTargets = (targets || []).filter((t) => !isFxDailySymbol(t.symbol));
+  const symbols = stockTargets.map((t) => t.symbol);
   const sinaBarsBySymbol = new Map();
 
   for (let i = 0; i < symbols.length; i += SINA_BATCH_CHUNK) {
@@ -241,7 +329,7 @@ async function runIncrementalDailyCloseSync(frozenDate, targets, logger) {
   const perSymbol = [];
   const tencentCandidates = [];
 
-  for (const item of targets) {
+  for (const item of stockTargets) {
     const sym = item.symbol;
     const bars = sinaBarsBySymbol.get(sym) || [];
     const bar = pickBarOnDate(bars, fd);
@@ -296,6 +384,12 @@ async function runIncrementalDailyCloseSync(frozenDate, targets, logger) {
         quoteTime: String(quote.time || ""),
       });
     }
+  }
+
+  if (fxTargets.length) {
+    const fxSync = await syncFxIncrementalCloses(fd, logger);
+    rowsToWrite.push(...fxSync.rowsToWrite);
+    perSymbol.push(...fxSync.perSymbol);
   }
 
   const rowsWritten = rowsToWrite.length ? await upsertSymbolDailyCloseBatch(rowsToWrite) : 0;
@@ -401,11 +495,13 @@ async function runDailyCloseSync(options = {}) {
 }
 
 module.exports = {
+  FX_DAILY_SYNC_SYMBOLS,
   buildGlobalDailyClosePlan,
   auditDailyCloseGapsForSymbol,
   auditDailyCloseGapsForPlan,
   runDailyCloseSync,
   runIncrementalDailyCloseSync,
   runBackfillDailyCloseSync,
+  syncFxIncrementalCloses,
   symbolsInPlanForFrozenDate,
 };

@@ -23,52 +23,62 @@ function rowsToFxMap(rows) {
   return out;
 }
 
-/** 先向后填充缺口，再向前填充；不使用硬编码兜底汇率。 */
+/** 已知 K 线日期（升序）。 */
+function sortedPositiveFxKeys(fxMap) {
+  return Object.keys(fxMap || {})
+    .filter((k) => Number(fxMap[k]) > 0)
+    .sort();
+}
+
+/** 目标日缺 bar 时：用不晚于该日的最近有效收盘价；仍无则保持缺失。 */
+function fxRateOnOrBefore(fxMap, dateKey) {
+  const dk = String(dateKey || "").slice(0, 10);
+  const direct = Number(fxMap?.[dk]);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  let pick = 0;
+  for (const k of sortedPositiveFxKeys(fxMap)) {
+    if (k <= dk) {
+      pick = Number(fxMap[k]);
+    } else {
+      break;
+    }
+  }
+  return pick;
+}
+
+/** 先向前用最近有效日填充，再向后延续；不使用 map 全表最早日兜底。 */
 function backwardThenForwardFillFxMap(fxMap, dateKeys) {
   const sorted = [...new Set((dateKeys || []).map((d) => String(d || "").slice(0, 10)).filter(Boolean))].sort();
   if (!sorted.length) {
     return fxMap;
   }
 
-  let firstKnown = null;
-  let firstKnownDate = null;
-  for (const dk of sorted) {
-    const v = Number(fxMap[dk]);
-    if (Number.isFinite(v) && v > 0) {
-      firstKnown = v;
-      firstKnownDate = dk;
-      break;
-    }
-  }
-  if (firstKnown == null) {
-    for (const k of Object.keys(fxMap || {}).sort()) {
-      const v = Number(fxMap[k]);
-      if (Number.isFinite(v) && v > 0) {
-        firstKnown = v;
-        firstKnownDate = k;
-        break;
-      }
-    }
-  }
+  const knownKeys = sortedPositiveFxKeys(fxMap);
+  let last = fxRateOnOrBefore(fxMap, sorted[0]);
 
-  let last = firstKnown;
   for (const dk of sorted) {
     const v = Number(fxMap[dk]);
     if (Number.isFinite(v) && v > 0) {
       last = v;
       fxMap[dk] = v;
-    } else if (last != null && last > 0) {
-      fxMap[dk] = last;
+    } else {
+      const prior = fxRateOnOrBefore(fxMap, dk);
+      if (prior > 0) {
+        fxMap[dk] = prior;
+        last = prior;
+      } else if (last > 0) {
+        fxMap[dk] = last;
+      }
     }
   }
 
-  if (firstKnown != null && firstKnownDate) {
-    for (const dk of sorted) {
-      if (dk >= firstKnownDate) {
-        break;
-      }
-      if (!(Number(fxMap[dk]) > 0)) {
-        fxMap[dk] = firstKnown;
+  for (const dk of sorted) {
+    if (!(Number(fxMap[dk]) > 0) && knownKeys.length) {
+      const prior = fxRateOnOrBefore(fxMap, dk);
+      if (prior > 0) {
+        fxMap[dk] = prior;
       }
     }
   }
@@ -125,10 +135,8 @@ async function loadFxRatesOnDate(dateKey, logger = console) {
   }
   const from = addCalendarDays(dk, -120);
   const { fxUsdMap, fxHkdMap } = await loadFxCloseMapsFromDb(from, dk);
-  backwardThenForwardFillFxMap(fxUsdMap, [dk]);
-  backwardThenForwardFillFxMap(fxHkdMap, [dk]);
-  const usd = Number(fxUsdMap[dk]) || 0;
-  const hkd = Number(fxHkdMap[dk]) || 0;
+  const usd = fxRateOnOrBefore(fxUsdMap, dk);
+  const hkd = fxRateOnOrBefore(fxHkdMap, dk);
   if (!(usd > 0)) {
     logger.warn?.("[loadFxRatesOnDate] missing USDCNY in symbol_daily_close for", dk);
   }
@@ -191,6 +199,7 @@ module.exports = {
   FX_SYMBOL_USD,
   FX_SYMBOL_HKD,
   rowsToFxMap,
+  fxRateOnOrBefore,
   backwardThenForwardFillFxMap,
   loadFxCloseMapsFromDb,
   buildFxMaps,

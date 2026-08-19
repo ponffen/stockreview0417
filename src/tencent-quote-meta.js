@@ -30,6 +30,12 @@ function toTencentQuoteKey(rawSymbol) {
     const code = raw.replace(/^rt_hk/i, "").replace(/\D/g, "").padStart(5, "0");
     return `hk${code}`;
   }
+  if (/^fx_usdcny$/i.test(raw) || /^whusdcny$/i.test(raw) || raw === "usdcny") {
+    return "whUSDCNY";
+  }
+  if (/^fx_hkdcny$/i.test(raw) || /^whhkdcny$/i.test(raw) || raw === "hkdcny") {
+    return "whHKDCNY";
+  }
   if (/^[a-z][a-z0-9._-]*$/i.test(raw)) {
     return `us${raw.toUpperCase()}`;
   }
