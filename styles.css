@@ -648,6 +648,15 @@ body {
   transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
 }
 
+/* 钉住时首列标题不随 tr 横移：用反向 transform 抵消 */
+.stock-table thead.is-viewport-stuck th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  transform: translateX(var(--stock-table-hscroll, 0px));
+  background: #f6f8fb;
+}
+
 .stock-table.is-head-stuck {
   padding-top: var(--stock-table-head-height, 0px);
 }

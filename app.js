@@ -12178,14 +12178,16 @@ function bindStockTableViewportStickyHead(table) {
     const theadH = thead.offsetHeight;
     const wrapRect = scrollWrap.getBoundingClientRect();
     const tableRect = table.getBoundingClientRect();
-    const headTop = thead.getBoundingClientRect().top;
-    const shouldStick = headTop <= stickyTop && tableRect.bottom > stickyTop + theadH;
+    const scrollLeft = scrollWrap.scrollLeft;
+    /* 用 table 顶边（文档流位置），勿读 fixed thead 的 rect，否则滚回时无法取消钉住 */
+    const naturalHeadTop = tableRect.top;
+    const shouldStick = naturalHeadTop <= stickyTop && tableRect.bottom > stickyTop + theadH;
 
     if (shouldStick) {
       thead.classList.add("is-viewport-stuck");
       table.classList.add("is-head-stuck");
       table.style.setProperty("--stock-table-head-height", `${theadH}px`);
-      table.style.setProperty("--stock-table-hscroll", `${scrollWrap.scrollLeft}px`);
+      table.style.setProperty("--stock-table-hscroll", `${scrollLeft}px`);
       thead.style.left = `${wrapRect.left}px`;
       thead.style.width = `${scrollWrap.clientWidth}px`;
     } else {
@@ -12203,6 +12205,7 @@ function bindStockTableViewportStickyHead(table) {
     requestAnimationFrame(update);
   };
   window.addEventListener("scroll", scheduleUpdate, { passive: true });
+  document.addEventListener("scroll", scheduleUpdate, { passive: true, capture: true });
   scrollWrap.addEventListener("scroll", scheduleUpdate, { passive: true });
   window.addEventListener("resize", scheduleUpdate, { passive: true });
   update();
