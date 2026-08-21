@@ -8067,6 +8067,7 @@ function applyPrivateStockTableHead() {
     }
   }
   tr.replaceChildren(frag);
+  syncStockTableViewportStickyHead(table);
 }
 
 function repaintPrivateStockTableIfVisible() {
@@ -8449,6 +8450,8 @@ function mountPublicCommunityStockTableHead() {
     tr.appendChild(th);
   }
   thead.replaceChildren(tr);
+  bindStockTableViewportStickyHead(pubTable);
+  syncStockTableViewportStickyHead(pubTable);
 }
 
 function getPrivateStockTableCtx() {
@@ -12154,6 +12157,70 @@ function buildMetricsHoldingsRowHtml(row, ctx) {
   return `<tr>${cells}</tr>`;
 }
 
+function getAppTopBarHeightPx() {
+  const bar = document.querySelector(".app-top-bar");
+  return bar ? bar.getBoundingClientRect().height : 56;
+}
+
+function bindStockTableViewportStickyHead(table) {
+  if (!table || table.dataset.viewportStickyHead === "1") {
+    return;
+  }
+  const scrollWrap = table.closest(".table-scroll");
+  const thead = table.querySelector("thead");
+  if (!scrollWrap || !thead) {
+    return;
+  }
+  table.dataset.viewportStickyHead = "1";
+
+  const update = () => {
+    const stickyTop = getAppTopBarHeightPx();
+    const theadH = thead.offsetHeight;
+    const wrapRect = scrollWrap.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const headTop = thead.getBoundingClientRect().top;
+    const shouldStick = headTop <= stickyTop && tableRect.bottom > stickyTop + theadH;
+
+    if (shouldStick) {
+      thead.classList.add("is-viewport-stuck");
+      table.classList.add("is-head-stuck");
+      table.style.setProperty("--stock-table-head-height", `${theadH}px`);
+      table.style.setProperty("--stock-table-hscroll", `${scrollWrap.scrollLeft}px`);
+      thead.style.left = `${wrapRect.left}px`;
+      thead.style.width = `${scrollWrap.clientWidth}px`;
+    } else {
+      thead.classList.remove("is-viewport-stuck");
+      table.classList.remove("is-head-stuck");
+      table.style.removeProperty("--stock-table-head-height");
+      table.style.setProperty("--stock-table-hscroll", "0px");
+      thead.style.removeProperty("left");
+      thead.style.removeProperty("width");
+    }
+  };
+
+  table._stockTableStickyHeadUpdate = update;
+  const scheduleUpdate = () => {
+    requestAnimationFrame(update);
+  };
+  window.addEventListener("scroll", scheduleUpdate, { passive: true });
+  scrollWrap.addEventListener("scroll", scheduleUpdate, { passive: true });
+  window.addEventListener("resize", scheduleUpdate, { passive: true });
+  update();
+}
+
+function syncStockTableViewportStickyHead(table) {
+  if (table?._stockTableStickyHeadUpdate) {
+    table._stockTableStickyHeadUpdate();
+  }
+}
+
+function bindAllStockTableViewportStickyHeads() {
+  document.querySelectorAll(".stock-card .stock-table").forEach((table) => {
+    bindStockTableViewportStickyHead(table);
+    syncStockTableViewportStickyHead(table);
+  });
+}
+
 function paintStockTableFromMetricsRows(rows, ctx) {
   const tbody = ctx.tbody;
   if (!tbody) {
@@ -12172,6 +12239,10 @@ function paintStockTableFromMetricsRows(rows, ctx) {
   });
   tbody.innerHTML = sorted.map((row) => buildMetricsHoldingsRowHtml(row, ctx)).join("");
   syncStockTableSortHeaderUi(ctx);
+  if (ctx.table) {
+    bindStockTableViewportStickyHead(ctx.table);
+    syncStockTableViewportStickyHead(ctx.table);
+  }
 }
 
 function paintOverviewStockTableFromMetricsRows(rows) {

@@ -594,8 +594,8 @@ body {
 }
 
 .table-scroll {
-  /* 不可设 overflow-x:auto：会截断纵向 sticky，表头会卡在容器内 top:56px 处（首行跑到表头上方） */
-  overflow: visible;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-top: 1px solid var(--line);
 }
 
@@ -630,11 +630,26 @@ body {
   text-align: right;
 }
 
-/* 首页 + 公开页：上滑时列标题钉在顶栏下方（「个股收益」标题行仍正常滚走） */
-.stock-card .stock-table thead th {
-  position: sticky;
+/* 纵向钉住由 JS（is-viewport-stuck）处理：overflow-x 容器内 pure CSS sticky 无法相对视口 */
+.stock-table thead.is-viewport-stuck {
+  position: fixed;
   top: var(--stock-table-head-sticky-top);
-  z-index: 4;
+  z-index: 17;
+  overflow: hidden;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.stock-table thead.is-viewport-stuck tr {
+  display: table;
+  table-layout: fixed;
+  width: max(100%, var(--stock-table-layout-width-px, 1050px));
+  min-width: max(1050px, var(--stock-table-layout-width-px, 1050px));
+  transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
+}
+
+.stock-table.is-head-stuck {
+  padding-top: var(--stock-table-head-height, 0px);
 }
 
 .stock-table .name-head {
@@ -755,7 +770,7 @@ body {
   text-align: left;
 }
 
-/* 首页/公开页「个股收益」：除首列外各列为内容宽度；宽表由页面级横向滚动（table-scroll 不设 overflow，以便表头纵向 sticky） */
+/* 首页/公开页「个股收益」：除首列外各列为内容宽度；横向滚动在 .table-scroll，表头纵向钉住由 JS 同步 */
 .public-profile-stock-table {
   width: max-content;
   min-width: 100%;
