@@ -594,8 +594,8 @@ body {
 }
 
 .table-scroll {
-  overflow-x: auto;
-  overflow-y: clip;
+  /* 不可设 overflow-x:auto：会截断纵向 sticky，表头会卡在容器内 top:56px 处（首行跑到表头上方） */
+  overflow: visible;
   border-top: 1px solid var(--line);
 }
 
@@ -603,6 +603,12 @@ body {
   width: 100%;
   min-width: 1050px;
   border-collapse: collapse;
+}
+
+.stock-card .stock-table {
+  /* collapse 在部分 WebKit 下会破坏 thead/th 的 position:sticky */
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 /* 首页持仓表：列宽由 JS 按 max(表头, 人民币/原币内容) 锁定，切换 ¥ 不再抖动 */
@@ -749,7 +755,7 @@ body {
   text-align: left;
 }
 
-/* 个人页首页「个股收益」：除首列外各列为内容宽度（单行、不挤压），表宽随内容；容器横向滚动保证能看全 */
+/* 首页/公开页「个股收益」：除首列外各列为内容宽度；宽表由页面级横向滚动（table-scroll 不设 overflow，以便表头纵向 sticky） */
 .public-profile-stock-table {
   width: max-content;
   min-width: 100%;
