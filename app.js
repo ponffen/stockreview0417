@@ -11933,6 +11933,64 @@ function measureStockTableColWidths(measureCellText, ctx) {
   return widths.map((w) => w + 2);
 }
 
+function applyStockTableHeadColWidthStyles(table, widths, indices) {
+  if (!table || !widths?.length) {
+    return;
+  }
+  const ths = table.querySelectorAll("thead th");
+  for (let vi = 0; vi < widths.length; vi += 1) {
+    const th = ths[vi];
+    if (!th) {
+      continue;
+    }
+    const px = `${widths[vi]}px`;
+    th.style.width = px;
+    th.style.minWidth = px;
+    th.style.maxWidth = px;
+    th.setAttribute("data-stock-col", String(indices[vi]));
+  }
+}
+
+function clearStockTableHeadColWidthStyles(table) {
+  table?.querySelectorAll("thead th").forEach((th) => {
+    th.style.removeProperty("width");
+    th.style.removeProperty("min-width");
+    th.style.removeProperty("max-width");
+  });
+  table?.querySelectorAll("thead tr").forEach((tr) => {
+    tr.style.removeProperty("width");
+    tr.style.removeProperty("min-width");
+  });
+}
+
+/** 钉住时 thead 为独立 display:table，按 tbody 首行实测列宽对齐 */
+function syncStockTableStuckHeadColWidths(table) {
+  const thead = table?.querySelector("thead");
+  const row = table?.querySelector("tbody tr");
+  if (!thead?.classList.contains("is-viewport-stuck") || !row || row.querySelector(".empty")) {
+    return;
+  }
+  const ths = thead.querySelectorAll("th");
+  const tds = row.querySelectorAll("td");
+  if (!ths.length || ths.length !== tds.length) {
+    return;
+  }
+  let sum = 0;
+  tds.forEach((td, i) => {
+    const w = td.offsetWidth;
+    sum += w;
+    const px = `${w}px`;
+    ths[i].style.width = px;
+    ths[i].style.minWidth = px;
+    ths[i].style.maxWidth = px;
+  });
+  const tr = thead.querySelector("tr");
+  if (tr) {
+    tr.style.width = `${sum}px`;
+    tr.style.minWidth = `${sum}px`;
+  }
+}
+
 function applyStockTableColWidths(ctx, widths) {
   const table = ctx.table;
   if (!table || !widths?.length) {
@@ -11959,6 +12017,8 @@ function applyStockTableColWidths(ctx, widths) {
   const nameVi = indices.indexOf(0);
   const nameW = nameVi >= 0 ? widths[nameVi] : widths[0];
   table.style.setProperty("--stock-table-name-col-px", `${nameW}px`);
+  applyStockTableHeadColWidthStyles(table, widths, indices);
+  syncStockTableStuckHeadColWidths(table);
   if (ctx.visibleColIndices) {
     table.style.minWidth = `max(100%, ${sum}px)`;
   } else {
@@ -11978,6 +12038,7 @@ function clearStockTableColLayout(ctx) {
   table.style.removeProperty("--stock-table-name-col-px");
   table.style.removeProperty("min-width");
   table.querySelector("colgroup")?.remove();
+  clearStockTableHeadColWidthStyles(table);
 }
 
 function ensureStockTableColWidths(rows, ctx, measureCell) {
@@ -12190,6 +12251,7 @@ function bindStockTableViewportStickyHead(table) {
       table.style.setProperty("--stock-table-hscroll", `${scrollLeft}px`);
       thead.style.left = `${wrapRect.left}px`;
       thead.style.width = `${scrollWrap.clientWidth}px`;
+      syncStockTableStuckHeadColWidths(table);
     } else {
       thead.classList.remove("is-viewport-stuck");
       table.classList.remove("is-head-stuck");

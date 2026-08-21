@@ -643,8 +643,9 @@ body {
 .stock-table thead.is-viewport-stuck tr {
   display: table;
   table-layout: fixed;
-  width: max(100%, var(--stock-table-layout-width-px, 1050px));
-  min-width: max(1050px, var(--stock-table-layout-width-px, 1050px));
+  border-collapse: separate;
+  border-spacing: 0;
+  /* width/min-width 由 JS 按 colgroup/首行 td 精确写入，避免与 tbody 列宽漂移 */
   transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
 }
 
