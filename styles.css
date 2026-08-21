@@ -594,8 +594,43 @@ body {
 }
 
 .table-scroll {
-  overflow: visible;
+  position: relative;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-top: 1px solid var(--line);
+}
+
+.stock-table-sticky-overlay {
+  display: none;
+  position: fixed;
+  z-index: 17;
+  overflow: hidden;
+  pointer-events: none;
+  box-sizing: border-box;
+  background: #f6f8fb;
+}
+
+.stock-table-sticky-overlay.is-active {
+  display: block;
+}
+
+.stock-table-sticky-overlay-table {
+  margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.stock-table-sticky-overlay-table thead tr {
+  transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
+}
+
+.stock-table-sticky-overlay-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  transform: translateX(var(--stock-table-hscroll, 0px));
+  background: #f6f8fb;
 }
 
 .stock-table {
@@ -605,47 +640,8 @@ body {
 }
 
 .stock-card .stock-table {
-  /* collapse 在部分 WebKit 下会破坏 thead/th 的 position:sticky */
   border-collapse: separate;
   border-spacing: 0;
-  display: block;
-}
-
-.stock-card .stock-table thead {
-  display: block;
-  position: sticky;
-  top: var(--stock-table-head-sticky-top);
-  z-index: 4;
-  background: #f6f8fb;
-}
-
-.stock-card .stock-table tbody {
-  display: block;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.stock-card .stock-table thead tr,
-.stock-card .stock-table tbody tr {
-  display: table;
-  table-layout: fixed;
-  width: 100%;
-  min-width: 1050px;
-}
-
-.stock-card .stock-table.stock-table--layout-locked thead tr,
-.stock-card .stock-table.stock-table--layout-locked tbody tr {
-  width: max(100%, var(--stock-table-layout-width-px, 1050px));
-  min-width: max(1050px, var(--stock-table-layout-width-px, 1050px));
-}
-
-/* tbody 横滑时同步表头（首列标题固定） */
-.stock-card .stock-table thead tr {
-  transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
-}
-
-.stock-card .stock-table thead th:first-child {
-  transform: translateX(var(--stock-table-hscroll, 0px));
 }
 
 /* 首页持仓表：列宽由 JS 按 max(表头, 人民币/原币内容) 锁定，切换 ¥ 不再抖动 */
@@ -750,14 +746,6 @@ body {
   overflow: visible;
 }
 
-/* thead 不在 tbody 横滑容器内，首列标题由 transform 固定；仅 tbody 首列横滑钉住 */
-.stock-card .stock-table thead th:first-child {
-  position: relative;
-  left: auto;
-  z-index: 5;
-  background: #f6f8fb;
-}
-
 .stock-table th:first-child::after,
 .stock-table td:first-child::after {
   content: "";
@@ -771,12 +759,13 @@ body {
   z-index: 5;
 }
 
-.stock-table thead th:first-child::after {
-  z-index: 6;
+.stock-table thead th:first-child {
+  background: #f6f8fb;
+  z-index: 5;
 }
 
-.stock-card .stock-table tbody td:first-child {
-  z-index: 2;
+.stock-table thead th:first-child::after {
+  z-index: 6;
 }
 
 .stock-table.stock-table--layout-locked th.name-head,
@@ -791,7 +780,7 @@ body {
   text-align: left;
 }
 
-/* 首页/公开页「个股收益」：除首列外各列为内容宽度；tbody 容器内横滑，thead CSS sticky 纵向钉住 */
+/* 首页/公开页「个股收益」：横向滚动在 .table-scroll；纵向钉住用 fixed overlay 克隆表头 */
 .public-profile-stock-table {
   width: max-content;
   min-width: 100%;

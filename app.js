@@ -8067,6 +8067,7 @@ function applyPrivateStockTableHead() {
     }
   }
   tr.replaceChildren(frag);
+  syncStockTableStickyOverlay(table);
 }
 
 function repaintPrivateStockTableIfVisible() {
@@ -8449,7 +8450,8 @@ function mountPublicCommunityStockTableHead() {
     tr.appendChild(th);
   }
   thead.replaceChildren(tr);
-  bindStockTableHorizontalHeadSync(pubTable);
+  bindStockTableStickyOverlay(pubTable);
+  syncStockTableStickyOverlay(pubTable);
 }
 
 function getPrivateStockTableCtx() {
@@ -9316,7 +9318,7 @@ function buildNavigationViewKey() {
 }
 
 const SCROLL_RESET_INNER_SELECTOR =
-  ".trade-table-wrap, .table-scroll, .stock-card .stock-table tbody, .community-profile-body, .stock-record-wrap, .dynamics-compose-body, .community-profile-tab-panel, .dynamics-list";
+  ".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap, .dynamics-compose-body, .community-profile-tab-panel, .dynamics-list";
 
 function resetAllScrollPositions() {
   try {
@@ -11947,57 +11949,125 @@ function applyStockTableHeadColWidthStyles(table, widths, indices) {
     th.style.maxWidth = px;
     th.setAttribute("data-stock-col", String(indices[vi]));
   }
-  table.querySelectorAll("tbody tr").forEach((tr) => {
-    if (tr.querySelector(".empty")) {
-      return;
-    }
-    const tds = tr.querySelectorAll("td");
-    for (let vi = 0; vi < widths.length; vi += 1) {
-      const td = tds[vi];
-      if (!td) {
-        continue;
-      }
-      const px = `${widths[vi]}px`;
-      td.style.width = px;
-      td.style.minWidth = px;
-      td.style.maxWidth = px;
-    }
-  });
 }
 
 function clearStockTableHeadColWidthStyles(table) {
-  table?.querySelectorAll("thead th, tbody td").forEach((cell) => {
-    cell.style.removeProperty("width");
-    cell.style.removeProperty("min-width");
-    cell.style.removeProperty("max-width");
+  table?.querySelectorAll("thead th").forEach((th) => {
+    th.style.removeProperty("width");
+    th.style.removeProperty("min-width");
+    th.style.removeProperty("max-width");
   });
-  table?.querySelectorAll("thead tr, tbody tr").forEach((tr) => {
-    tr.style.removeProperty("width");
-    tr.style.removeProperty("min-width");
-  });
-  table?.style.setProperty("--stock-table-hscroll", "0px");
 }
 
-function bindStockTableHorizontalHeadSync(table) {
-  if (!table || table.dataset.hHeadSync === "1") {
+function getAppTopBarHeightPx() {
+  const bar = document.querySelector(".app-top-bar");
+  return bar ? bar.getBoundingClientRect().height : 56;
+}
+
+function ensureStockTableStickyOverlay(table) {
+  const scrollWrap = table?.closest(".table-scroll");
+  if (!scrollWrap) {
+    return null;
+  }
+  let overlay = scrollWrap.querySelector(":scope > .stock-table-sticky-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.className = "stock-table-sticky-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.innerHTML = `<table class="stock-table stock-table-sticky-overlay-table"><thead></thead></table>`;
+    scrollWrap.insertBefore(overlay, table);
+  }
+  return overlay;
+}
+
+function syncStockTableStickyOverlayHead(table) {
+  const scrollWrap = table?.closest(".table-scroll");
+  const overlay = scrollWrap?.querySelector(":scope > .stock-table-sticky-overlay");
+  const srcThead = table?.querySelector("thead");
+  const srcTr = srcThead?.querySelector("tr");
+  const overlayTable = overlay?.querySelector("table");
+  const overlayThead = overlayTable?.querySelector("thead");
+  if (!overlayTable || !overlayThead || !srcTr) {
     return;
   }
-  const tbody = table.querySelector("tbody");
-  if (!tbody) {
+  overlayThead.replaceChildren(srcTr.cloneNode(true));
+  overlayTable.className = `${table.className} stock-table-sticky-overlay-table`.trim();
+  const layoutW = table.style.getPropertyValue("--stock-table-layout-width-px");
+  if (layoutW) {
+    overlayTable.style.width = `${layoutW}px`;
+    overlayTable.style.minWidth = `${layoutW}px`;
+  } else {
+    overlayTable.style.width = `${table.offsetWidth}px`;
+    overlayTable.style.removeProperty("min-width");
+  }
+  const srcColgroup = table.querySelector("colgroup");
+  let overlayColgroup = overlayTable.querySelector("colgroup");
+  if (srcColgroup) {
+    if (!overlayColgroup) {
+      overlayColgroup = document.createElement("colgroup");
+      overlayTable.insertBefore(overlayColgroup, overlayThead);
+    }
+    overlayColgroup.replaceChildren(...Array.from(srcColgroup.children, (col) => col.cloneNode(true)));
+  } else {
+    overlayColgroup?.remove();
+  }
+}
+
+function syncStockTableStickyOverlay(table) {
+  if (table?._stockTableStickyOverlayUpdate) {
+    table._stockTableStickyOverlayUpdate();
+  }
+}
+
+function bindStockTableStickyOverlay(table) {
+  if (!table || table.dataset.stickyOverlayBound === "1") {
     return;
   }
-  table.dataset.hHeadSync = "1";
-  const sync = () => {
-    table.style.setProperty("--stock-table-hscroll", `${tbody.scrollLeft}px`);
+  const scrollWrap = table.closest(".table-scroll");
+  const thead = table.querySelector("thead");
+  if (!scrollWrap || !thead) {
+    return;
+  }
+  ensureStockTableStickyOverlay(table);
+  table.dataset.stickyOverlayBound = "1";
+
+  const update = () => {
+    const overlay = scrollWrap.querySelector(":scope > .stock-table-sticky-overlay");
+    const srcThead = table.querySelector("thead");
+    if (!overlay || !srcThead) {
+      return;
+    }
+    const stickyTop = getAppTopBarHeightPx();
+    const theadH = srcThead.offsetHeight;
+    const scrollLeft = scrollWrap.scrollLeft;
+    const wrapRect = scrollWrap.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const naturalHeadTop = tableRect.top;
+    const shouldShow = naturalHeadTop <= stickyTop && tableRect.bottom > stickyTop + theadH;
+
+    if (shouldShow) {
+      syncStockTableStickyOverlayHead(table);
+      overlay.classList.add("is-active");
+      overlay.style.top = `${stickyTop}px`;
+      overlay.style.left = `${wrapRect.left}px`;
+      overlay.style.width = `${wrapRect.clientWidth}px`;
+      overlay.style.setProperty("--stock-table-hscroll", `${scrollLeft}px`);
+      srcThead.style.visibility = "hidden";
+    } else {
+      overlay.classList.remove("is-active");
+      srcThead.style.visibility = "";
+    }
   };
-  tbody.addEventListener(
-    "scroll",
-    () => {
-      requestAnimationFrame(sync);
-    },
-    { passive: true },
-  );
-  sync();
+
+  table._stockTableStickyOverlayUpdate = update;
+  const scheduleUpdate = () => {
+    requestAnimationFrame(update);
+  };
+  window.addEventListener("scroll", scheduleUpdate, { passive: true });
+  document.addEventListener("scroll", scheduleUpdate, { passive: true, capture: true });
+  scrollWrap.addEventListener("scroll", scheduleUpdate, { passive: true });
+  window.addEventListener("resize", scheduleUpdate, { passive: true });
+  update();
 }
 
 function applyStockTableColWidths(ctx, widths) {
@@ -12027,6 +12097,7 @@ function applyStockTableColWidths(ctx, widths) {
   const nameW = nameVi >= 0 ? widths[nameVi] : widths[0];
   table.style.setProperty("--stock-table-name-col-px", `${nameW}px`);
   applyStockTableHeadColWidthStyles(table, widths, indices);
+  syncStockTableStickyOverlay(table);
   if (ctx.visibleColIndices) {
     table.style.minWidth = `max(100%, ${sum}px)`;
   } else {
@@ -12243,12 +12314,10 @@ function paintStockTableFromMetricsRows(rows, ctx) {
     ctx: null,
   });
   tbody.innerHTML = sorted.map((row) => buildMetricsHoldingsRowHtml(row, ctx)).join("");
-  if (ctx.widthCache.widths) {
-    applyStockTableHeadColWidthStyles(ctx.table, ctx.widthCache.widths, stockTableVisibleColIndices(ctx));
-  }
   syncStockTableSortHeaderUi(ctx);
   if (ctx.table) {
-    bindStockTableHorizontalHeadSync(ctx.table);
+    bindStockTableStickyOverlay(ctx.table);
+    syncStockTableStickyOverlay(ctx.table);
   }
 }
 
