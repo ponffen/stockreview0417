@@ -70,6 +70,9 @@
   --ledger-stock-pub-w-price: 22.727%;
   --ledger-stock-pub-w-amt: 22.727%;
   --ledger-stock-pub-w-account: 13.636%;
+  /* 顶栏高度：与 .app-top-bar（8+40+8）一致，供个股表头 sticky 偏移 */
+  --app-top-bar-height: 56px;
+  --stock-table-head-sticky-top: var(--app-top-bar-height);
 }
 
 * {
@@ -592,6 +595,7 @@ body {
 
 .table-scroll {
   overflow-x: auto;
+  overflow-y: clip;
   border-top: 1px solid var(--line);
 }
 
@@ -618,6 +622,13 @@ body {
   white-space: nowrap;
   padding: 7px 9px;
   text-align: right;
+}
+
+/* 首页 + 公开页：上滑时列标题钉在顶栏下方（「个股收益」标题行仍正常滚走） */
+.stock-card .stock-table thead th {
+  position: sticky;
+  top: var(--stock-table-head-sticky-top);
+  z-index: 4;
 }
 
 .stock-table .name-head {
@@ -718,7 +729,8 @@ body {
 
 .stock-table thead th:first-child {
   background: #f6f8fb;
-  z-index: 3;
+  /* 表头首列：纵/横双 sticky 角单元格，高于 tbody 首列 (2) */
+  z-index: 5;
 }
 
 .stock-table thead th:first-child::after {
