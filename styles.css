@@ -594,8 +594,7 @@ body {
 }
 
 .table-scroll {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
   border-top: 1px solid var(--line);
 }
 
@@ -609,6 +608,44 @@ body {
   /* collapse 在部分 WebKit 下会破坏 thead/th 的 position:sticky */
   border-collapse: separate;
   border-spacing: 0;
+  display: block;
+}
+
+.stock-card .stock-table thead {
+  display: block;
+  position: sticky;
+  top: var(--stock-table-head-sticky-top);
+  z-index: 4;
+  background: #f6f8fb;
+}
+
+.stock-card .stock-table tbody {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stock-card .stock-table thead tr,
+.stock-card .stock-table tbody tr {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1050px;
+}
+
+.stock-card .stock-table.stock-table--layout-locked thead tr,
+.stock-card .stock-table.stock-table--layout-locked tbody tr {
+  width: max(100%, var(--stock-table-layout-width-px, 1050px));
+  min-width: max(1050px, var(--stock-table-layout-width-px, 1050px));
+}
+
+/* tbody 横滑时同步表头（首列标题固定） */
+.stock-card .stock-table thead tr {
+  transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
+}
+
+.stock-card .stock-table thead th:first-child {
+  transform: translateX(var(--stock-table-hscroll, 0px));
 }
 
 /* 首页持仓表：列宽由 JS 按 max(表头, 人民币/原币内容) 锁定，切换 ¥ 不再抖动 */
@@ -628,38 +665,6 @@ body {
   white-space: nowrap;
   padding: 7px 9px;
   text-align: right;
-}
-
-/* 纵向钉住由 JS（is-viewport-stuck）处理：overflow-x 容器内 pure CSS sticky 无法相对视口 */
-.stock-table thead.is-viewport-stuck {
-  position: fixed;
-  top: var(--stock-table-head-sticky-top);
-  z-index: 17;
-  overflow: hidden;
-  margin: 0;
-  box-sizing: border-box;
-}
-
-.stock-table thead.is-viewport-stuck tr {
-  display: table;
-  table-layout: fixed;
-  border-collapse: separate;
-  border-spacing: 0;
-  /* width/min-width 由 JS 按 colgroup/首行 td 精确写入，避免与 tbody 列宽漂移 */
-  transform: translateX(calc(-1 * var(--stock-table-hscroll, 0px)));
-}
-
-/* 钉住时首列标题不随 tr 横移：用反向 transform 抵消 */
-.stock-table thead.is-viewport-stuck th:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 6;
-  transform: translateX(var(--stock-table-hscroll, 0px));
-  background: #f6f8fb;
-}
-
-.stock-table.is-head-stuck {
-  padding-top: var(--stock-table-head-height, 0px);
 }
 
 .stock-table .name-head {
@@ -745,6 +750,14 @@ body {
   overflow: visible;
 }
 
+/* thead 不在 tbody 横滑容器内，首列标题由 transform 固定；仅 tbody 首列横滑钉住 */
+.stock-card .stock-table thead th:first-child {
+  position: relative;
+  left: auto;
+  z-index: 5;
+  background: #f6f8fb;
+}
+
 .stock-table th:first-child::after,
 .stock-table td:first-child::after {
   content: "";
@@ -758,14 +771,12 @@ body {
   z-index: 5;
 }
 
-.stock-table thead th:first-child {
-  background: #f6f8fb;
-  /* 表头首列：纵/横双 sticky 角单元格，高于 tbody 首列 (2) */
-  z-index: 5;
-}
-
 .stock-table thead th:first-child::after {
   z-index: 6;
+}
+
+.stock-card .stock-table tbody td:first-child {
+  z-index: 2;
 }
 
 .stock-table.stock-table--layout-locked th.name-head,
@@ -780,7 +791,7 @@ body {
   text-align: left;
 }
 
-/* 首页/公开页「个股收益」：除首列外各列为内容宽度；横向滚动在 .table-scroll，表头纵向钉住由 JS 同步 */
+/* 首页/公开页「个股收益」：除首列外各列为内容宽度；tbody 容器内横滑，thead CSS sticky 纵向钉住 */
 .public-profile-stock-table {
   width: max-content;
   min-width: 100%;

@@ -8067,7 +8067,6 @@ function applyPrivateStockTableHead() {
     }
   }
   tr.replaceChildren(frag);
-  syncStockTableViewportStickyHead(table);
 }
 
 function repaintPrivateStockTableIfVisible() {
@@ -8450,8 +8449,7 @@ function mountPublicCommunityStockTableHead() {
     tr.appendChild(th);
   }
   thead.replaceChildren(tr);
-  bindStockTableViewportStickyHead(pubTable);
-  syncStockTableViewportStickyHead(pubTable);
+  bindStockTableHorizontalHeadSync(pubTable);
 }
 
 function getPrivateStockTableCtx() {
@@ -9318,7 +9316,7 @@ function buildNavigationViewKey() {
 }
 
 const SCROLL_RESET_INNER_SELECTOR =
-  ".trade-table-wrap, .table-scroll, .community-profile-body, .stock-record-wrap, .dynamics-compose-body, .community-profile-tab-panel, .dynamics-list";
+  ".trade-table-wrap, .table-scroll, .stock-card .stock-table tbody, .community-profile-body, .stock-record-wrap, .dynamics-compose-body, .community-profile-tab-panel, .dynamics-list";
 
 function resetAllScrollPositions() {
   try {
@@ -11949,46 +11947,57 @@ function applyStockTableHeadColWidthStyles(table, widths, indices) {
     th.style.maxWidth = px;
     th.setAttribute("data-stock-col", String(indices[vi]));
   }
+  table.querySelectorAll("tbody tr").forEach((tr) => {
+    if (tr.querySelector(".empty")) {
+      return;
+    }
+    const tds = tr.querySelectorAll("td");
+    for (let vi = 0; vi < widths.length; vi += 1) {
+      const td = tds[vi];
+      if (!td) {
+        continue;
+      }
+      const px = `${widths[vi]}px`;
+      td.style.width = px;
+      td.style.minWidth = px;
+      td.style.maxWidth = px;
+    }
+  });
 }
 
 function clearStockTableHeadColWidthStyles(table) {
-  table?.querySelectorAll("thead th").forEach((th) => {
-    th.style.removeProperty("width");
-    th.style.removeProperty("min-width");
-    th.style.removeProperty("max-width");
+  table?.querySelectorAll("thead th, tbody td").forEach((cell) => {
+    cell.style.removeProperty("width");
+    cell.style.removeProperty("min-width");
+    cell.style.removeProperty("max-width");
   });
-  table?.querySelectorAll("thead tr").forEach((tr) => {
+  table?.querySelectorAll("thead tr, tbody tr").forEach((tr) => {
     tr.style.removeProperty("width");
     tr.style.removeProperty("min-width");
   });
+  table?.style.setProperty("--stock-table-hscroll", "0px");
 }
 
-/** 钉住时 thead 为独立 display:table，按 tbody 首行实测列宽对齐 */
-function syncStockTableStuckHeadColWidths(table) {
-  const thead = table?.querySelector("thead");
-  const row = table?.querySelector("tbody tr");
-  if (!thead?.classList.contains("is-viewport-stuck") || !row || row.querySelector(".empty")) {
+function bindStockTableHorizontalHeadSync(table) {
+  if (!table || table.dataset.hHeadSync === "1") {
     return;
   }
-  const ths = thead.querySelectorAll("th");
-  const tds = row.querySelectorAll("td");
-  if (!ths.length || ths.length !== tds.length) {
+  const tbody = table.querySelector("tbody");
+  if (!tbody) {
     return;
   }
-  let sum = 0;
-  tds.forEach((td, i) => {
-    const w = td.offsetWidth;
-    sum += w;
-    const px = `${w}px`;
-    ths[i].style.width = px;
-    ths[i].style.minWidth = px;
-    ths[i].style.maxWidth = px;
-  });
-  const tr = thead.querySelector("tr");
-  if (tr) {
-    tr.style.width = `${sum}px`;
-    tr.style.minWidth = `${sum}px`;
-  }
+  table.dataset.hHeadSync = "1";
+  const sync = () => {
+    table.style.setProperty("--stock-table-hscroll", `${tbody.scrollLeft}px`);
+  };
+  tbody.addEventListener(
+    "scroll",
+    () => {
+      requestAnimationFrame(sync);
+    },
+    { passive: true },
+  );
+  sync();
 }
 
 function applyStockTableColWidths(ctx, widths) {
@@ -12018,7 +12027,6 @@ function applyStockTableColWidths(ctx, widths) {
   const nameW = nameVi >= 0 ? widths[nameVi] : widths[0];
   table.style.setProperty("--stock-table-name-col-px", `${nameW}px`);
   applyStockTableHeadColWidthStyles(table, widths, indices);
-  syncStockTableStuckHeadColWidths(table);
   if (ctx.visibleColIndices) {
     table.style.minWidth = `max(100%, ${sum}px)`;
   } else {
@@ -12218,74 +12226,6 @@ function buildMetricsHoldingsRowHtml(row, ctx) {
   return `<tr>${cells}</tr>`;
 }
 
-function getAppTopBarHeightPx() {
-  const bar = document.querySelector(".app-top-bar");
-  return bar ? bar.getBoundingClientRect().height : 56;
-}
-
-function bindStockTableViewportStickyHead(table) {
-  if (!table || table.dataset.viewportStickyHead === "1") {
-    return;
-  }
-  const scrollWrap = table.closest(".table-scroll");
-  const thead = table.querySelector("thead");
-  if (!scrollWrap || !thead) {
-    return;
-  }
-  table.dataset.viewportStickyHead = "1";
-
-  const update = () => {
-    const stickyTop = getAppTopBarHeightPx();
-    const theadH = thead.offsetHeight;
-    const wrapRect = scrollWrap.getBoundingClientRect();
-    const tableRect = table.getBoundingClientRect();
-    const scrollLeft = scrollWrap.scrollLeft;
-    /* 用 table 顶边（文档流位置），勿读 fixed thead 的 rect，否则滚回时无法取消钉住 */
-    const naturalHeadTop = tableRect.top;
-    const shouldStick = naturalHeadTop <= stickyTop && tableRect.bottom > stickyTop + theadH;
-
-    if (shouldStick) {
-      thead.classList.add("is-viewport-stuck");
-      table.classList.add("is-head-stuck");
-      table.style.setProperty("--stock-table-head-height", `${theadH}px`);
-      table.style.setProperty("--stock-table-hscroll", `${scrollLeft}px`);
-      thead.style.left = `${wrapRect.left}px`;
-      thead.style.width = `${scrollWrap.clientWidth}px`;
-      syncStockTableStuckHeadColWidths(table);
-    } else {
-      thead.classList.remove("is-viewport-stuck");
-      table.classList.remove("is-head-stuck");
-      table.style.removeProperty("--stock-table-head-height");
-      table.style.setProperty("--stock-table-hscroll", "0px");
-      thead.style.removeProperty("left");
-      thead.style.removeProperty("width");
-    }
-  };
-
-  table._stockTableStickyHeadUpdate = update;
-  const scheduleUpdate = () => {
-    requestAnimationFrame(update);
-  };
-  window.addEventListener("scroll", scheduleUpdate, { passive: true });
-  document.addEventListener("scroll", scheduleUpdate, { passive: true, capture: true });
-  scrollWrap.addEventListener("scroll", scheduleUpdate, { passive: true });
-  window.addEventListener("resize", scheduleUpdate, { passive: true });
-  update();
-}
-
-function syncStockTableViewportStickyHead(table) {
-  if (table?._stockTableStickyHeadUpdate) {
-    table._stockTableStickyHeadUpdate();
-  }
-}
-
-function bindAllStockTableViewportStickyHeads() {
-  document.querySelectorAll(".stock-card .stock-table").forEach((table) => {
-    bindStockTableViewportStickyHead(table);
-    syncStockTableViewportStickyHead(table);
-  });
-}
-
 function paintStockTableFromMetricsRows(rows, ctx) {
   const tbody = ctx.tbody;
   if (!tbody) {
@@ -12303,10 +12243,12 @@ function paintStockTableFromMetricsRows(rows, ctx) {
     ctx: null,
   });
   tbody.innerHTML = sorted.map((row) => buildMetricsHoldingsRowHtml(row, ctx)).join("");
+  if (ctx.widthCache.widths) {
+    applyStockTableHeadColWidthStyles(ctx.table, ctx.widthCache.widths, stockTableVisibleColIndices(ctx));
+  }
   syncStockTableSortHeaderUi(ctx);
   if (ctx.table) {
-    bindStockTableViewportStickyHead(ctx.table);
-    syncStockTableViewportStickyHead(ctx.table);
+    bindStockTableHorizontalHeadSync(ctx.table);
   }
 }
 
