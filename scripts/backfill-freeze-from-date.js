@@ -5,11 +5,12 @@
  */
 require("dotenv").config();
 const {
-  listAllUserIds,
+  resolveBatchMetricsUserIds,
   initPool,
   upsertUserMetricsMeta,
   closeDatabase,
 } = require("../src/db");
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { previousSessionDate } = require("../src/metrics/freeze-calendar");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 
@@ -21,7 +22,7 @@ async function main() {
 
   const userIds = process.argv[3]
     ? [String(process.argv[3]).trim()]
-    : await listAllUserIds();
+    : await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
 
   console.log("[backfill-freeze]", { fromDate, anchor, end, users: userIds.length });
 

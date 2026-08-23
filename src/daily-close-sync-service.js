@@ -3,6 +3,7 @@ const {
   normalizeSymbol,
   addCalendarDays,
   listAllUserIds,
+  listMetricsEnabledUserIds,
   getTrades,
   upsertSymbolDailyCloseBatch,
   getSymbolDailyCloseRange,
@@ -178,7 +179,7 @@ function buildSymbolLifecycleForUser(trades, asOfDate) {
 
 async function buildGlobalDailyClosePlan(asOfDate) {
   const dateKey = String(asOfDate || "").slice(0, 10) || toDateKey(new Date());
-  const userIds = await listAllUserIds();
+  const userIds = await listMetricsEnabledUserIds();
   const bySymbol = new Map();
   for (const userId of userIds) {
     const normalizedTrades = (await getTrades(userId)).map(normalizeLifecycleTrade).filter(Boolean);

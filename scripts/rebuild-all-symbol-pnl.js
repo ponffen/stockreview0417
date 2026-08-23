@@ -4,7 +4,8 @@
  * Usage: DATABASE_URL=... node scripts/rebuild-all-symbol-pnl.js
  */
 require("dotenv").config();
-const { listAllUserIds } = require("../src/db");
+const { resolveBatchMetricsUserIds } = require("../src/db");
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { runSymbolsFullRebuildForUser } = require("../src/metrics/freeze-v3");
 const { resolveFrozenDate } = require("../src/eod-freeze-service");
 
@@ -28,8 +29,12 @@ async function rebuildUser(uid) {
 }
 
 async function main() {
-  const userIds = await listAllUserIds();
-  console.log("[rebuild-all-symbol-pnl] users=", userIds.length);
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
+  console.log(
+    "[rebuild-all-symbol-pnl] users=",
+    userIds.length,
+    metricsUserScopeFromArgv() ? "(all-users)" : "(metrics-enabled)",
+  );
   let ok = 0;
   let fail = 0;
   for (const uid of userIds) {

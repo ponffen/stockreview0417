@@ -1,7 +1,7 @@
 /**
  * 写路径：成交响应前同步打标 rebuilding；Vercel 上 HTTP 调 async freeze-eod（独立实例），本地同进程。
  */
-const { upsertUserMetricsMeta, getUserMetricsMeta } = require("./db");
+const { upsertUserMetricsMeta, getUserMetricsMeta, isMetricsEnabled } = require("./db");
 const {
   partitionHintDates,
   resolveFrozenThroughForUser,
@@ -231,6 +231,9 @@ async function prepareLedgerMetricsFreeze(userId, opts = {}) {
   const uid = String(userId || "").trim();
   if (!uid) {
     return { skip: true, reason: "missing-user" };
+  }
+  if (!(await isMetricsEnabled(uid))) {
+    return { skip: true, reason: "metrics-disabled" };
   }
   const fullRebuild = !!opts.fullRebuild;
   const hintDates = opts.hintDates || [];

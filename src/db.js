@@ -298,7 +298,8 @@ const DDL = [
     nickname TEXT,
     notes TEXT,
     community_public INTEGER NOT NULL DEFAULT 1,
-    valid_until TEXT
+    valid_until TEXT,
+    metrics_enabled INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS trades (
     id TEXT PRIMARY KEY,
@@ -487,6 +488,7 @@ async function initPool() {
         console.log("[db] DDL execution completed successfully.");
         await ensureUserSubscriptionSchemaWithClient(c);
         await ensureUserNotesSchemaWithClient(c);
+        await ensureUserMetricsEnabledSchemaWithClient(c);
         console.log("[db] Ensuring seed user...");
         await ensureSeedUserRowWithClient(c);
         console.log("[db] Seed user ensured.");
@@ -2958,6 +2960,32 @@ async function ensureUserSubscriptionSchema() {
   return userSubscriptionSchemaPromise;
 }
 
+async function ensureUserMetricsEnabledSchemaWithClient(client) {
+  await client.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS metrics_enabled INTEGER NOT NULL DEFAULT 0`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_users_metrics_enabled ON users (metrics_enabled) WHERE metrics_enabled = 1`,
+  ).catch(() => {});
+}
+
+let userMetricsEnabledSchemaPromise = null;
+
+async function ensureUserMetricsEnabledSchema() {
+  if (userMetricsEnabledSchemaPromise) {
+    return userMetricsEnabledSchemaPromise;
+  }
+  userMetricsEnabledSchemaPromise = (async () => {
+    await q(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS metrics_enabled INTEGER NOT NULL DEFAULT 0`,
+    ).catch(() => {});
+    await q(
+      `CREATE INDEX IF NOT EXISTS idx_users_metrics_enabled ON users (metrics_enabled) WHERE metrics_enabled = 1`,
+    ).catch(() => {});
+  })();
+  return userMetricsEnabledSchemaPromise;
+}
+
 let userNotesSchemaPromise = null;
 
 async function ensureUserNotesSchemaWithClient(client) {
@@ -3339,6 +3367,48 @@ async function listAllUserIds() {
   return rows.map((row) => String(row.id || "").trim()).filter(Boolean);
 }
 
+/** 参与日冻结 / 全量重算 / 全局日 K 计划的用户（users.metrics_enabled = 1）。 */
+async function listMetricsEnabledUserIds() {
+  await ensureUserMetricsEnabledSchema();
+  const { rows } = await q(
+    "SELECT id FROM users WHERE metrics_enabled = 1 ORDER BY created_at ASC",
+  );
+  return rows.map((row) => String(row.id || "").trim()).filter(Boolean);
+}
+
+async function isMetricsEnabled(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return false;
+  }
+  await ensureUserMetricsEnabledSchema();
+  const { rows } = await q("SELECT metrics_enabled FROM users WHERE id = $1", [uid]);
+  if (!rows[0]) {
+    return false;
+  }
+  return Number(rows[0].metrics_enabled) === 1;
+}
+
+async function countMetricsUserScope() {
+  await ensureUserMetricsEnabledSchema();
+  const { rows } = await q(
+    `SELECT COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE metrics_enabled = 1)::int AS enabled
+     FROM users`,
+  );
+  const total = Number(rows[0]?.total) || 0;
+  const enabled = Number(rows[0]?.enabled) || 0;
+  return { total, enabled, disabled: Math.max(0, total - enabled) };
+}
+
+/** 批量指标脚本默认 scope；--all-users 时扫全员。 */
+async function resolveBatchMetricsUserIds(options = {}) {
+  if (options.allUsers) {
+    return listAllUserIds();
+  }
+  return listMetricsEnabledUserIds();
+}
+
 async function getSnapshotWatermark() {
   await ensureSnapshotWatermarkTable();
   const { rows } = await q("SELECT frozen_date, status, message, updated_at FROM snapshot_watermark WHERE id = 1");
@@ -3566,6 +3636,11 @@ module.exports = {
   getCommunityFeedTradesRecent,
   listPublicCommunityUserIds,
   listAllUserIds,
+  listMetricsEnabledUserIds,
+  isMetricsEnabled,
+  countMetricsUserScope,
+  resolveBatchMetricsUserIds,
+  ensureUserMetricsEnabledSchema,
   listFreezeLagUserIds,
   selectSymbolDailyPositionsOnDate,
   getSnapshotWatermark,

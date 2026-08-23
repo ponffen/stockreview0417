@@ -5,11 +5,12 @@
  */
 require("dotenv").config();
 const {
-  listAllUserIds,
+  resolveBatchMetricsUserIds,
   upsertUserMetricsMeta,
   initPool,
   getLatestAnalysisSnapshotDate,
 } = require("../src/db");
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { capFrozenThroughToSnapshot } = require("../src/metrics/freeze-calendar");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 
@@ -50,8 +51,8 @@ async function rebuildUser(uid) {
 
 async function main() {
   await purgeWeekendMetricRows();
-  const userIds = await listAllUserIds();
-  console.log("[rebuild-all-metrics] users=", userIds.length);
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
+  console.log("[rebuild-all-metrics] users=", userIds.length, metricsUserScopeFromArgv() ? "(all-users)" : "(metrics-enabled)");
   for (const uid of userIds) {
     try {
       await rebuildUser(uid);

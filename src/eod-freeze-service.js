@@ -1,4 +1,4 @@
-const { listAllUserIds, setSnapshotWatermark } = require("./db");
+const { listMetricsEnabledUserIds, countMetricsUserScope, setSnapshotWatermark } = require("./db");
 const { toDateKey } = require("../scripts/lib/market-fetch");
 const { shouldSkipScheduledFreezeCron } = require("./metrics/freeze-calendar");
 const { listLagUserIds, alignFrozenThroughForScope } = require("./metrics/freeze-lag");
@@ -109,11 +109,22 @@ async function freezeUsersBatch(userIds, frozenDate, options, resultsByUser, pha
   return list.length;
 }
 
-function buildWatermarkMessage({ frozenDate, scopeCount, results, catchUpRounds, lagRemaining, aligned }) {
+function buildWatermarkMessage({
+  frozenDate,
+  scopeCount,
+  results,
+  catchUpRounds,
+  lagRemaining,
+  aligned,
+  metricsScope,
+}) {
   const successCount = results.filter((r) => !r.skipped).length;
   const lagPart = lagRemaining.length ? `, lag=${lagRemaining.length}` : "";
   const alignPart = aligned.length ? `, metaAligned=${aligned.length}` : "";
-  return `target=${frozenDate}, scope=${scopeCount}, updated=${successCount}, catchUpRounds=${catchUpRounds}${lagPart}${alignPart}`;
+  const metricsPart = metricsScope
+    ? `, metricsEnabled=${metricsScope.enabled}, metricsTotal=${metricsScope.total}, metricsDisabled=${metricsScope.disabled}`
+    : "";
+  return `target=${frozenDate}, scope=${scopeCount}, updated=${successCount}, catchUpRounds=${catchUpRounds}${lagPart}${alignPart}${metricsPart}`;
 }
 
 async function runDailyFreeze(options = {}) {
@@ -138,9 +149,11 @@ async function runDailyFreeze(options = {}) {
   const syncDailyClose = options.syncDailyClose === true;
   const fullRebuild = options.fullRebuild === true;
   const userIdsInput = Array.isArray(options.userIds) ? options.userIds : [];
-  const scopeUserIds = userIdsInput.length
+  const explicitUserIds = userIdsInput.length > 0;
+  const metricsScope = explicitUserIds ? null : await countMetricsUserScope();
+  const scopeUserIds = explicitUserIds
     ? [...new Set(userIdsInput.map((u) => String(u || "").trim()).filter(Boolean))]
-    : await listAllUserIds();
+    : await listMetricsEnabledUserIds();
   const freezeOpts = { logger, force, syncDailyClose, fullRebuild };
   const startedAt = Date.now();
   const resultsByUser = new Map();
@@ -151,7 +164,21 @@ async function runDailyFreeze(options = {}) {
   let caughtError = null;
 
   try {
-    logger.info?.("[freeze-eod] pass1 scope=%s target=%s", scopeUserIds.length, frozenDate);
+    if (metricsScope) {
+      logger.info?.(
+        "[freeze-eod] metrics scope enabled=%s total=%s disabled=%s target=%s",
+        metricsScope.enabled,
+        metricsScope.total,
+        metricsScope.disabled,
+        frozenDate,
+      );
+    } else {
+      logger.info?.(
+        "[freeze-eod] explicit userIds=%s target=%s",
+        scopeUserIds.length,
+        frozenDate,
+      );
+    }
     await freezeUsersBatch(scopeUserIds, frozenDate, freezeOpts, resultsByUser, "pass1");
 
     while (catchUpRounds < maxRounds) {
@@ -199,6 +226,7 @@ async function runDailyFreeze(options = {}) {
         catchUpRounds,
         lagRemaining,
         aligned,
+        metricsScope,
       });
 
   await setSnapshotWatermark({
@@ -217,6 +245,7 @@ async function runDailyFreeze(options = {}) {
     catchUpRounds,
     lagRemaining,
     metaAligned: aligned,
+    metricsScope,
     users: results,
     watermark: { status: watermarkStatus, message: watermarkMessage },
   };

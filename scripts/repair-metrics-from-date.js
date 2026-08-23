@@ -10,12 +10,13 @@ require("dotenv").config();
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const {
-  listAllUserIds,
+  resolveBatchMetricsUserIds,
   initPool,
   upsertUserMetricsMeta,
   closeDatabase,
   backfillTradeAmountShareRatiosForUser,
 } = require(path.join(__dirname, "..", "src", "db"));
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { previousSessionDate } = require(path.join(__dirname, "..", "src", "metrics", "freeze-calendar"));
 const { freezeUserToDate, resolveFrozenDate } = require(path.join(__dirname, "..", "src", "eod-freeze-service"));
 const { liveDateKeyShanghai } = require(path.join(__dirname, "..", "src", "metrics", "trading-calendar"));
@@ -42,7 +43,7 @@ async function refreezeAllUsers(fromDate) {
   const anchor = previousSessionDate(fromDate);
   const end = resolveFrozenDate();
   const pool = await initPool();
-  const userIds = await listAllUserIds();
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
   console.log("[repair-freeze]", { fromDate, anchor, end, users: userIds.length });
 
   for (const uid of userIds) {
@@ -77,7 +78,7 @@ async function refreezeAllUsers(fromDate) {
 }
 
 async function backfillAmountShareFromDate(fromDate) {
-  const userIds = await listAllUserIds();
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
   let trades = 0;
   let updated = 0;
   let nullCount = 0;

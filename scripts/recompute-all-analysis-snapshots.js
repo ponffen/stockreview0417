@@ -4,13 +4,20 @@
  * 可选: STOCKREVIEW_FORCE_FREEZE=1（默认已 force）
  */
 require("dotenv").config();
-const { listAllUserIds } = require("../src/db");
+const { resolveBatchMetricsUserIds } = require("../src/db");
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { freezeUserToDate, resolveFrozenDate } = require("../src/eod-freeze-service");
 
 async function main() {
   const frozenDate = resolveFrozenDate();
-  const userIds = await listAllUserIds();
-  console.log("[recompute] users=", userIds.length, "frozenDate=", frozenDate);
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
+  console.log(
+    "[recompute] users=",
+    userIds.length,
+    metricsUserScopeFromArgv() ? "(all-users)" : "(metrics-enabled)",
+    "frozenDate=",
+    frozenDate,
+  );
   let ok = 0;
   let skipped = 0;
   for (const uid of userIds) {

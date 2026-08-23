@@ -6,16 +6,17 @@
 require("dotenv").config();
 const {
   initPool,
-  listAllUserIds,
+  resolveBatchMetricsUserIds,
   getUserMetricsMeta,
   upsertUserMetricsMeta,
   getLatestAnalysisSnapshotDate,
 } = require("../src/db");
+const { metricsUserScopeFromArgv } = require("./lib/metrics-user-scope");
 const { capFrozenThroughToSnapshot } = require("../src/metrics/freeze-calendar");
 
 async function main() {
   await initPool();
-  const userIds = await listAllUserIds();
+  const userIds = await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
   for (const uid of userIds) {
     const meta = await getUserMetricsMeta(uid, { light: true });
     const latest = await getLatestAnalysisSnapshotDate(uid, "all");
