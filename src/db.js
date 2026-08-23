@@ -297,7 +297,7 @@ const DDL = [
     updated_at BIGINT NOT NULL,
     nickname TEXT,
     notes TEXT,
-    community_public INTEGER NOT NULL DEFAULT 1,
+    community_public INTEGER NOT NULL DEFAULT 0,
     valid_until TEXT,
     metrics_enabled INTEGER NOT NULL DEFAULT 0
   )`,
@@ -2967,6 +2967,7 @@ async function ensureUserMetricsEnabledSchemaWithClient(client) {
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_users_metrics_enabled ON users (metrics_enabled) WHERE metrics_enabled = 1`,
   ).catch(() => {});
+  await client.query(`ALTER TABLE users ALTER COLUMN community_public SET DEFAULT 0`).catch(() => {});
 }
 
 let userMetricsEnabledSchemaPromise = null;
@@ -2982,6 +2983,7 @@ async function ensureUserMetricsEnabledSchema() {
     await q(
       `CREATE INDEX IF NOT EXISTS idx_users_metrics_enabled ON users (metrics_enabled) WHERE metrics_enabled = 1`,
     ).catch(() => {});
+    await q(`ALTER TABLE users ALTER COLUMN community_public SET DEFAULT 0`).catch(() => {});
   })();
   return userMetricsEnabledSchemaPromise;
 }
@@ -3049,7 +3051,7 @@ async function getAuthSessionUserPayload(userId) {
     phone,
     phoneMasked: maskPhone(phone),
     nickname: row?.nickname != null && String(row.nickname).trim() ? String(row.nickname).trim() : null,
-    communityPublic: row?.community_public != null ? !!Number(row.community_public) : true,
+    communityPublic: row?.community_public != null ? !!Number(row.community_public) : false,
     displayName: row ? displayNameForUser(row) : maskPhone(phone),
     validUntil,
     expired: isSubscriptionExpired(validUntil),
@@ -3144,7 +3146,7 @@ async function updateUserCommunityProfile(userId, { nickname, communityPublic })
       }
     }
   }
-  let pub = row.community_public != null ? Number(row.community_public) : 1;
+  let pub = row.community_public != null ? Number(row.community_public) : 0;
   if (communityPublic !== undefined) {
     pub = communityPublic ? 1 : 0;
   }
@@ -3475,7 +3477,7 @@ async function getCommunityFeedTradesRecent(viewerId, limit = 50) {
      FROM trades t
      INNER JOIN users u ON u.id = t.user_id
      INNER JOIN community_follows f ON f.followee_id = t.user_id AND f.follower_id = $2
-     WHERE COALESCE(u.community_public, 1) = 1
+     WHERE u.community_public = 1
        AND t.type = 'trade'
      ORDER BY t.trade_date DESC, t.created_at DESC
      LIMIT $1`,
@@ -3505,7 +3507,7 @@ async function getCommunityFeedTradesRecent(viewerId, limit = 50) {
 }
 
 async function listPublicCommunityUserIds() {
-  const { rows } = await q("SELECT id FROM users WHERE COALESCE(community_public, 1) = 1");
+  const { rows } = await q("SELECT id FROM users WHERE community_public = 1");
   return rows.map((r) => r.id);
 }
 

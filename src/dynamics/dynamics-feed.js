@@ -66,8 +66,8 @@ function buildUserScopeSql(scene, params, { viewerId, targetUserId }) {
     params.push(target);
     const uidIdx = params.length;
     return {
-      tradeJoin: `INNER JOIN users u ON u.id = t.user_id AND COALESCE(u.community_public, 1) = 1`,
-      postJoin: `INNER JOIN users u ON u.id = p.user_id AND COALESCE(u.community_public, 1) = 1`,
+      tradeJoin: `INNER JOIN users u ON u.id = t.user_id AND u.community_public = 1`,
+      postJoin: `INNER JOIN users u ON u.id = p.user_id AND u.community_public = 1`,
       tradeWhere: `t.user_id = $${uidIdx} AND t.type = 'trade'`,
       postWhere: `p.user_id = $${uidIdx}`,
     };
@@ -75,9 +75,9 @@ function buildUserScopeSql(scene, params, { viewerId, targetUserId }) {
   params.push(viewer);
   const viewerIdx = params.length;
   return {
-    tradeJoin: `INNER JOIN users u ON u.id = t.user_id AND COALESCE(u.community_public, 1) = 1
+    tradeJoin: `INNER JOIN users u ON u.id = t.user_id AND u.community_public = 1
       INNER JOIN community_follows f ON f.followee_id = t.user_id AND f.follower_id = $${viewerIdx}`,
-    postJoin: `INNER JOIN users u ON u.id = p.user_id AND COALESCE(u.community_public, 1) = 1
+    postJoin: `INNER JOIN users u ON u.id = p.user_id AND u.community_public = 1
       INNER JOIN community_follows f ON f.followee_id = p.user_id AND f.follower_id = $${viewerIdx}`,
     tradeWhere: `t.type = 'trade'`,
     postWhere: `TRUE`,

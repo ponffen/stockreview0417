@@ -13,7 +13,7 @@ function applySessionUserPayload(user) {
   sessionSubscriptionExpired = user.expired === true;
   sessionProfile = {
     nickname: user.nickname != null ? user.nickname : null,
-    communityPublic: user.communityPublic !== false,
+    communityPublic: user.communityPublic === true,
     displayName: String(user.displayName || ""),
     phoneMasked: String(user.phoneMasked || ""),
   };
@@ -25,7 +25,7 @@ function clearSessionState() {
   sessionPhone = "";
   sessionValidUntil = "";
   sessionSubscriptionExpired = false;
-  sessionProfile = { nickname: null, communityPublic: true, displayName: "", phoneMasked: "" };
+  sessionProfile = { nickname: null, communityPublic: false, displayName: "", phoneMasked: "" };
   state.stockListColumns = null;
   _privateStockTableHeadPool = null;
   applyStockListColumns(buildDefaultStockListColumns(), { writeCache: false, repaintHoldings: false });
@@ -75,7 +75,7 @@ let sessionSubscriptionExpired = false;
 let sessionValidUntil = "";
 let sessionProfile = {
   nickname: null,
-  communityPublic: true,
+  communityPublic: false,
   displayName: "",
   phoneMasked: "",
 };
@@ -5776,7 +5776,7 @@ function renderMineSection() {
     mineNicknameInput.disabled = !sessionPhone;
   }
   if (tradeHubCommunityPublicToggle) {
-    tradeHubCommunityPublicToggle.checked = sessionProfile.communityPublic !== false;
+    tradeHubCommunityPublicToggle.checked = sessionProfile.communityPublic === true;
     tradeHubCommunityPublicToggle.disabled = !sessionPhone;
   }
   if (tradeHubAlgoSummary) {
@@ -9263,7 +9263,7 @@ async function saveMineCommunityProfile() {
     return;
   }
   const nickname = mineNicknameInput?.value?.trim() || "";
-  const communityPublic = tradeHubCommunityPublicToggle?.checked ?? true;
+  const communityPublic = tradeHubCommunityPublicToggle?.checked ?? false;
   mineCommunityProfileMsg?.classList.add("hidden");
   try {
     const r = await apiFetch(`${getApiBaseForFetch()}/me/community-profile`, {
