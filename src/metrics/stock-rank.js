@@ -202,6 +202,7 @@ async function buildStockRankPayloadLegacy({
       });
     } else {
       holdIntervalsLabel = formatHoldingSegmentsLabel({
+        symbol: sym,
         symbolTrades,
         periodStart: a,
         periodEnd,
@@ -294,6 +295,17 @@ async function buildStockRankPayloadV3({
       symSet.add(s);
     }
   }
+  if (live.tradingDay && live.liveDate && preloadedTrades?.length) {
+    const liveDate = String(live.liveDate).slice(0, 10);
+    for (const t of preloadedTrades) {
+      if (String(t.date || "").slice(0, 10) === liveDate) {
+        const s = normalizeSymbol(t.symbol);
+        if (s) {
+          symSet.add(s);
+        }
+      }
+    }
+  }
 
   const candidates = [];
   for (const sym of symSet) {
@@ -333,6 +345,7 @@ async function buildStockRankPayloadV3({
     const currency = inferSymbolCurrency([], frozenRow ? [{ currency: frozenRow.currency }] : pnlRows);
     const market = inferMarket(sym);
     const closeLookup = buildCloseLookupFromPnl(pnlRows, livePos, live.liveDate, live.tradingDay);
+    const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
 
     const profitCny = computeMainRowProfitCny({
       stageKey,
@@ -341,6 +354,8 @@ async function buildStockRankPayloadV3({
       anchorRow,
       live,
       livePosition: livePos,
+      symbol: sym,
+      symbolTrades,
       currency,
       market,
       periodEnd,
@@ -349,7 +364,6 @@ async function buildStockRankPayloadV3({
       fxHkdEod,
     });
     const heldDays = heldDaysFromSegmentDates(segments);
-    const symbolTrades = scopeSymbolTrades(preloadedTrades, scope, sym);
     const pxChange = computeMainRowPxChange({
       stageKey,
       frozenRow,
@@ -380,6 +394,7 @@ async function buildStockRankPayloadV3({
       });
     } else {
       holdIntervalsLabel = formatHoldingSegmentsLabel({
+        symbol: sym,
         symbolTrades: [],
         periodStart,
         periodEnd,

@@ -16,6 +16,7 @@ const {
   countTradeRecordsInRange,
   isTradeRecord,
 } = require("./stage-trade-counter");
+const { getPositionDayTradeContext } = require("../position-today-pnl");
 
 function stageProfitFromFrozenRow(row, stageKey) {
   const st = String(stageKey || "last_30d").trim() || "last_30d";
@@ -616,8 +617,12 @@ function sumPnlInSegment(pnlRows, segStart, segEnd, frozenThrough) {
   return sum;
 }
 
-function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition }) {
-  if (!live?.tradingDay || !livePosition) {
+function hasTradesOnDate(symbolTrades, dateKey) {
+  return countTradeRecordsOnDate(symbolTrades || [], dateKey) > 0;
+}
+
+function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition, symbolTrades }) {
+  if (!live?.tradingDay) {
     return false;
   }
   const liveDate = String(live.liveDate || "").slice(0, 10);
@@ -625,7 +630,42 @@ function shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition 
   if (stageKey !== "today" && liveDate !== pe) {
     return false;
   }
-  return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
+  if (livePosition && Math.abs(Number(livePosition.quantity) || 0) > POSITION_EPS) {
+    return true;
+  }
+  return hasTradesOnDate(symbolTrades, liveDate);
+}
+
+/** 盘中 overlay：优先 live 持仓 todayProfitCny；无 live 仓但有当日成交时按现金流推算。 */
+function resolveTodayProfitCnyForOverlay({
+  symbol,
+  live,
+  livePosition,
+  symbolTrades,
+  currency,
+  market,
+  fxUsdEod,
+  fxHkdEod,
+}) {
+  if (!live?.tradingDay) {
+    return 0;
+  }
+  const liveDate = String(live.liveDate || "").slice(0, 10);
+  if (livePosition?.todayProfitCny != null && Number.isFinite(Number(livePosition.todayProfitCny))) {
+    return Number(livePosition.todayProfitCny);
+  }
+  if (!hasTradesOnDate(symbolTrades, liveDate)) {
+    return 0;
+  }
+  const sym = normalizeSymbol(symbol);
+  const dayCtx = getPositionDayTradeContext(sym, liveDate, symbolTrades || []);
+  const startQty = Number(dayCtx.startQuantity) || 0;
+  const endQty = Number(dayCtx.endQuantity) || 0;
+  if (Math.abs(startQty) <= POSITION_EPS && Math.abs(endQty) <= POSITION_EPS) {
+    const nativeProfit = -(Number(dayCtx.dayFlowNative) || 0);
+    return profitNativeToAnalysisCny(nativeProfit, currency, market, fxUsdEod, fxHkdEod);
+  }
+  return Number(livePosition?.todayProfitCny) || 0;
 }
 
 function scopeSymbolTrades(trades, scope, symbol) {
@@ -710,6 +750,8 @@ function computeMainRowProfitCny({
   anchorRow,
   live,
   livePosition,
+  symbol,
+  symbolTrades,
   currency,
   market,
   periodEnd,
@@ -717,6 +759,16 @@ function computeMainRowProfitCny({
   fxUsdEod,
   fxHkdEod,
 }) {
+  const overlayArgs = {
+    symbol,
+    live,
+    livePosition,
+    symbolTrades,
+    currency,
+    market,
+    fxUsdEod,
+    fxHkdEod,
+  };
   if (isLastNdStage(stageKey)) {
     const frozenCny = lastNdProfitCnyFromFrozenRows(
       frozenRow,
@@ -726,20 +778,32 @@ function computeMainRowProfitCny({
       fxUsdEod,
       fxHkdEod,
     );
-    const todayCny = shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })
-      ? Number(livePosition?.todayProfitCny) || 0
+    const todayCny = shouldAddTodayLiveForMainRow({
+      stageKey,
+      live,
+      periodEnd,
+      livePosition,
+      symbolTrades,
+    })
+      ? resolveTodayProfitCnyForOverlay(overlayArgs)
       : 0;
     return frozenCny + todayCny;
   }
   const frozenNative = frozenStageProfitNative(frozenRow, stageKey, stageStart, frozenThrough);
-  const todayCny = shouldAddTodayLiveForMainRow({ stageKey, live, periodEnd, livePosition })
-    ? Number(livePosition?.todayProfitCny) || 0
+  const todayCny = shouldAddTodayLiveForMainRow({
+    stageKey,
+    live,
+    periodEnd,
+    livePosition,
+    symbolTrades,
+  })
+    ? resolveTodayProfitCnyForOverlay(overlayArgs)
     : 0;
   return nativeFrozenPlusTodayToCny(frozenNative, todayCny, currency, market, fxUsdEod, fxHkdEod);
 }
 
-function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition) {
-  if (!live?.tradingDay || !livePosition) {
+function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition, symbolTrades) {
+  if (!live?.tradingDay) {
     return false;
   }
   const liveDate = String(live.liveDate || "").slice(0, 10);
@@ -751,7 +815,10 @@ function segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition) {
   if (!last || last.end !== seg.end) {
     return false;
   }
-  return Math.abs(Number(livePosition.quantity) || 0) > 1e-6;
+  if (livePosition && Math.abs(Number(livePosition.quantity) || 0) > POSITION_EPS) {
+    return true;
+  }
+  return hasTradesOnDate(symbolTrades, liveDate);
 }
 
 function segmentProfitCny(
@@ -761,6 +828,8 @@ function segmentProfitCny(
   frozenThrough,
   live,
   livePosition,
+  symbol,
+  symbolTrades,
   currency,
   market,
   periodEnd,
@@ -768,8 +837,17 @@ function segmentProfitCny(
   fxHkdEod,
 ) {
   const frozenPart = sumPnlInSegment(pnlRows, seg.start, seg.end, frozenThrough);
-  const todayCny = segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition)
-    ? Number(livePosition?.todayProfitCny) || 0
+  const todayCny = segmentNeedsTodayLive(seg, segments, periodEnd, live, livePosition, symbolTrades)
+    ? resolveTodayProfitCnyForOverlay({
+        symbol,
+        live,
+        livePosition,
+        symbolTrades,
+        currency,
+        market,
+        fxUsdEod,
+        fxHkdEod,
+      })
     : 0;
   return nativeFrozenPlusTodayToCny(frozenPart, todayCny, currency, market, fxUsdEod, fxHkdEod);
 }
@@ -839,6 +917,7 @@ function computePeriodMetrics({
 }
 
 function formatHoldingSegmentsLabel({
+  symbol,
   symbolTrades,
   periodStart,
   periodEnd,
@@ -879,6 +958,8 @@ function formatHoldingSegmentsLabel({
         frozenThrough,
         live,
         livePosition,
+        symbol,
+        symbolTrades,
         currency,
         market,
         periodEnd,
