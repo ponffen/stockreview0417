@@ -4,6 +4,7 @@
  */
 const { normalizeSymbol } = require("../db");
 const { buildQuoteRecord } = require("./quote-common");
+const { recordQuoteStep, errorCause } = require("./quote-trace-log");
 
 const LONGPORT_FETCH_TIMEOUT_MS = Math.max(
   3000,
@@ -98,14 +99,21 @@ function quoteRecordFromProxyRow(sym, row) {
   });
 }
 
-async function fetchLongportQuoteMap(symbols) {
+async function fetchLongportQuoteMap(symbols, quoteTrace = null) {
+  const t0 = Date.now();
   const symList = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
   if (!symList.length) {
+    recordQuoteStep(quoteTrace, "longport.skip", { reason: "empty symbols", ms: 0 });
     return { ok: false, map: new Map(), delayed: false, error: "empty symbols" };
   }
 
   const proxyHeaders = buildLongportProxyHeaders();
   if (!proxyHeaders) {
+    recordQuoteStep(quoteTrace, "longport.skip", {
+      reason: "credentials missing",
+      symbolCount: symList.length,
+      ms: Date.now() - t0,
+    });
     return { ok: false, map: new Map(), delayed: true, error: "longport credentials missing on server" };
   }
 
@@ -113,12 +121,20 @@ async function fetchLongportQuoteMap(symbols) {
   const out = new Map();
   let delayed = false;
   let lastError = "";
+  let httpStatus = null;
+
+  recordQuoteStep(quoteTrace, "longport.start", {
+    symbolCount: symList.length,
+    timeoutMs: LONGPORT_FETCH_TIMEOUT_MS,
+    proxyBase: LONGPORT_PROXY_BASE,
+  });
 
   try {
     const response = await fetch(url, {
       headers: proxyHeaders,
       signal: AbortSignal.timeout(LONGPORT_FETCH_TIMEOUT_MS),
     });
+    httpStatus = response.status;
     const rawText = await response.text();
     if (!response.ok) {
       lastError = `longport proxy http ${response.status}`;
@@ -134,6 +150,11 @@ async function fetchLongportQuoteMap(symbols) {
           lastError = `${lastError}: ${rawText}`;
         }
       }
+      recordQuoteStep(quoteTrace, "longport.http_error", {
+        httpStatus,
+        error: lastError,
+        ms: Date.now() - t0,
+      });
       return { ok: false, map: out, delayed: false, error: lastError };
     }
     const payload = rawText ? JSON.parse(rawText) : {};
@@ -149,11 +170,27 @@ async function fetchLongportQuoteMap(symbols) {
   } catch (error) {
     lastError = error?.message || "longport proxy failed";
     delayed = true;
+    recordQuoteStep(quoteTrace, "longport.network_error", {
+      error: lastError,
+      cause: errorCause(error),
+      httpStatus,
+      ms: Date.now() - t0,
+    });
   }
 
   if (out.size > 0 && out.size < symList.length) {
     delayed = true;
   }
+
+  recordQuoteStep(quoteTrace, "longport.done", {
+    ok: out.size > 0,
+    gotCount: out.size,
+    symbolCount: symList.length,
+    delayed,
+    error: out.size ? "" : lastError,
+    httpStatus,
+    ms: Date.now() - t0,
+  });
 
   return {
     ok: out.size > 0,

@@ -10,6 +10,7 @@ const {
   buildQuoteRecord,
   pickLatestQuoteTime,
 } = require("./quote-common");
+const { recordQuoteStep, errorCause } = require("./quote-trace-log");
 
 const QUOTE_CHUNK_SIZE = 55;
 const QUOTE_FETCH_TIMEOUT_MS = 5_000;
@@ -114,16 +115,52 @@ async function mapPool(items, limit, fn) {
   return out;
 }
 
-async function fetchTencentQuoteChunk(keys) {
-  const url = `${QUOTE_PROXY_BASE}/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
-  const r = await fetch(url, {
-    signal: AbortSignal.timeout(QUOTE_FETCH_TIMEOUT_MS),
-  });
-  if (!r.ok) {
-    return { ok: false, map: new Map(), rawMap: new Map() };
+function resolveTencentFetchOpts(budgetMsOrOpts) {
+  if (budgetMsOrOpts && typeof budgetMsOrOpts === "object") {
+    return {
+      budgetMs: budgetMsOrOpts.budgetMs,
+      quoteTrace: budgetMsOrOpts.quoteTrace || null,
+    };
   }
-  const text = await r.text();
-  return { ok: true, map: parseTencentQuoteTextToMap(text), rawMap: parseTencentQuoteTextToRawMap(text) };
+  return { budgetMs: budgetMsOrOpts, quoteTrace: null };
+}
+
+async function fetchTencentQuoteChunk(keys, quoteTrace = null, chunkIndex = 0) {
+  const t0 = Date.now();
+  const url = `${QUOTE_PROXY_BASE}/api/quote/tencent?q=${encodeURIComponent(keys.join(","))}`;
+  try {
+    const r = await fetch(url, {
+      signal: AbortSignal.timeout(QUOTE_FETCH_TIMEOUT_MS),
+    });
+    if (!r.ok) {
+      recordQuoteStep(quoteTrace, "tencent.chunk_fail", {
+        chunkIndex,
+        keyCount: keys.length,
+        httpStatus: r.status,
+        ms: Date.now() - t0,
+      });
+      return { ok: false, map: new Map(), rawMap: new Map(), httpStatus: r.status };
+    }
+    const text = await r.text();
+    const map = parseTencentQuoteTextToMap(text);
+    recordQuoteStep(quoteTrace, "tencent.chunk", {
+      chunkIndex,
+      keyCount: keys.length,
+      httpStatus: r.status,
+      parsedCount: map.size,
+      ms: Date.now() - t0,
+    });
+    return { ok: true, map, rawMap: parseTencentQuoteTextToRawMap(text), httpStatus: r.status };
+  } catch (error) {
+    recordQuoteStep(quoteTrace, "tencent.chunk_error", {
+      chunkIndex,
+      keyCount: keys.length,
+      error: error?.message || "tencent chunk failed",
+      cause: errorCause(error),
+      ms: Date.now() - t0,
+    });
+    return { ok: false, map: new Map(), rawMap: new Map(), error: error?.message || "tencent chunk failed" };
+  }
 }
 
 async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
@@ -188,7 +225,9 @@ async function fetchTencentQuotePayloadMap(reqKeys, budgetMs = QUOTE_TOTAL_BUDGE
  * @param {string[]} symbols 库内 symbol
  * @returns {Promise<{ ok: boolean, map: Map<string, QuoteRecord>, delayed: boolean, source: string }>}
  */
-async function fetchTencentQuoteMap(symbols, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
+async function fetchTencentQuoteMap(symbols, budgetMsOrOpts = QUOTE_TOTAL_BUDGET_MS) {
+  const { budgetMs, quoteTrace } = resolveTencentFetchOpts(budgetMsOrOpts);
+  const t0 = Date.now();
   const symList = [...new Set((symbols || []).map((s) => normalizeSymbol(s)).filter(Boolean))];
   const keyToSym = new Map();
   const requestKeys = [];
@@ -205,20 +244,33 @@ async function fetchTencentQuoteMap(symbols, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
   }
   const keys = requestKeys;
   if (!keys.length) {
+    recordQuoteStep(quoteTrace, "tencent.skip", { reason: "no mappable keys", symbolCount: symList.length });
     return { ok: false, map: new Map(), delayed: false, source: "" };
   }
   const budget = Math.max(1000, Number(budgetMs) || QUOTE_TOTAL_BUDGET_MS);
   const out = new Map();
   let delayed = false;
+  let chunkFailCount = 0;
   const chunks = [];
   for (let i = 0; i < keys.length; i += QUOTE_CHUNK_SIZE) {
     chunks.push(keys.slice(i, i + QUOTE_CHUNK_SIZE));
   }
+  recordQuoteStep(quoteTrace, "tencent.start", {
+    symbolCount: symList.length,
+    keyCount: keys.length,
+    chunkCount: chunks.length,
+    budgetMs: budget,
+    concurrency: QUOTE_CHUNK_CONCURRENCY,
+    proxyBase: QUOTE_PROXY_BASE,
+  });
   const work = (async () => {
-    const parts = await mapPool(chunks, QUOTE_CHUNK_CONCURRENCY, (c) => fetchTencentQuoteChunk(c));
+    const parts = await mapPool(chunks, QUOTE_CHUNK_CONCURRENCY, (c, i) =>
+      fetchTencentQuoteChunk(c, quoteTrace, i),
+    );
     for (const part of parts) {
       if (!part?.ok) {
         delayed = true;
+        chunkFailCount += 1;
         continue;
       }
       for (const [k, rec] of part.map.entries()) {
@@ -242,12 +294,22 @@ async function fetchTencentQuoteMap(symbols, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
         }, budget);
       }),
     ]);
-  } catch {
+  } catch (error) {
     delayed = true;
+    recordQuoteStep(quoteTrace, "tencent.work_error", {
+      error: error?.message || "tencent work failed",
+      cause: errorCause(error),
+    });
   }
   if (timedOut) {
     delayed = true;
+    recordQuoteStep(quoteTrace, "tencent.budget_timeout", {
+      budgetMs: budget,
+      chunkCount: chunks.length,
+      gotCount: out.size,
+    });
   }
+  let memHitCount = 0;
   for (const [k, sym] of keyToSym.entries()) {
     if (out.has(normalizeSymbol(sym))) {
       continue;
@@ -256,9 +318,23 @@ async function fetchTencentQuoteMap(symbols, budgetMs = QUOTE_TOTAL_BUDGET_MS) {
     if (cached && typeof cached === "object" && cached.current > 0) {
       out.set(normalizeSymbol(sym), { ...cached, symbol: normalizeSymbol(sym), delayed: true });
       delayed = true;
+      memHitCount += 1;
     }
   }
-  return { ok: out.size > 0, map: out, delayed, source: delayed ? "tencent-cache" : "tencent" };
+  recordQuoteStep(quoteTrace, "tencent.done", {
+    ok: out.size > 0,
+    gotCount: out.size,
+    symbolCount: symList.length,
+    chunkFailCount,
+    memHitCount,
+    timedOut,
+    delayed,
+    source: out.size > 0 ? (memHitCount > 0 ? "tencent-cache" : "tencent") : "",
+    ms: Date.now() - t0,
+  });
+  const source =
+    out.size > 0 ? (memHitCount > 0 || delayed ? "tencent-cache" : "tencent") : "";
+  return { ok: out.size > 0, map: out, delayed, source };
 }
 
 function parseTencentForexFromPayload(raw) {
@@ -285,7 +361,9 @@ function parseTencentForexFromPayload(raw) {
   };
 }
 
-async function fetchTencentForexMap(budgetMs = QUOTE_TOTAL_BUDGET_MS) {
+async function fetchTencentForexMap(budgetMsOrOpts = QUOTE_TOTAL_BUDGET_MS) {
+  const { budgetMs, quoteTrace } = resolveTencentFetchOpts(budgetMsOrOpts);
+  const t0 = Date.now();
   const req = await fetchTencentQuotePayloadMap(FOREX_KEYS, budgetMs);
   const rates = {};
   const usd = parseTencentForexFromPayload(req.payloadMap?.get("whusdcny"));
@@ -296,6 +374,14 @@ async function fetchTencentForexMap(budgetMs = QUOTE_TOTAL_BUDGET_MS) {
   if (hkd?.current > 0) {
     rates.HKD = hkd.current;
   }
+  recordQuoteStep(quoteTrace, "forex.done", {
+    ok: Object.keys(rates).length > 0,
+    USD: rates.USD || null,
+    HKD: rates.HKD || null,
+    delayed: !!req.delayed,
+    source: req.source || "tencent",
+    ms: Date.now() - t0,
+  });
   return {
     ok: Object.keys(rates).length > 0,
     rates,

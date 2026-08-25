@@ -33,6 +33,12 @@ const {
 const { computeTodayProfitTracksForHolding } = require("./position-today-pnl");
 const { loadFxRatesOnDate } = require("./metrics/fx-maps");
 const { homeAccountEod } = require("./metrics/home-account-scalars");
+const {
+  createQuoteTrace,
+  emitQuoteTrace,
+  recordQuoteStep,
+  sampleList,
+} = require("./quotes/quote-trace-log");
 
 function resolvePreloadedAccounts(pre) {
   if (Array.isArray(pre?.accounts) && pre.accounts.length > 0) {
@@ -220,6 +226,30 @@ function liveMetricsCacheKey(userId, scope, opts = {}) {
   return `${uid}|${scopeNorm}|${variant}`;
 }
 
+function maybeEmitQuoteTrace(quoteTrace, payload) {
+  if (!quoteTrace) {
+    return;
+  }
+  emitQuoteTrace(quoteTrace, {
+    tradingDay: !!payload.tradingDay,
+    quoteOk: !!payload.quoteOk,
+    quoteError: payload.quoteError || null,
+    quoteSource: payload.quoteSource || "",
+    quoteDelayed: !!payload.quoteDelayed,
+    quoteTime: payload.quoteTime || null,
+    todayProfitCny: payload.todayProfitCny,
+    liveQuoteCount: payload.positionLiveQuoteCount,
+    closeFallbackCount: payload.positionCloseFallbackCount,
+    positionQuoteCount: payload.positionQuoteCount,
+    positionMissingQuoteCount: payload.positionMissingQuoteCount,
+    liveQuoteInMap: payload.liveQuoteInMap,
+    closeFallbackInMap: payload.closeFallbackInMap,
+    closeFallbackSample: sampleList(payload.closeFallbackSample, 5),
+    stillMissingSample: sampleList(payload.stillMissingSample, 5),
+    forexDbFallback: !!payload.forexDbFallback,
+  });
+}
+
 async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const uid = String(userId || "").trim();
   const scope = String(accountScope || "all").trim() || "all";
@@ -290,13 +320,33 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     });
   }
   const prevSessionKey = tradingDay ? previousSessionDate(todayKey) : null;
+  const quoteTrace =
+    tradingDay && symbols.length > 0
+      ? createQuoteTrace({
+          userId: uid,
+          scope,
+          symbolCount: symbols.length,
+          tradingDay,
+          liveDate,
+          frozenThrough,
+        })
+      : null;
+  if (quoteTrace) {
+    recordQuoteStep(quoteTrace, "live.start", {
+      symbolCount: symbols.length,
+      quoteBudgetMs: QUOTE_TOTAL_BUDGET_MS,
+    });
+  }
+  const quoteFetchOpts = { budgetMs: QUOTE_TOTAL_BUDGET_MS, quoteTrace };
+  const forexFetchOpts = { budgetMs: QUOTE_TOTAL_BUDGET_MS, quoteTrace };
   const [closeFallback, prevSessionClose, quoteReq, fxReq] = await Promise.all([
     batchLastCloseForSymbols(symbols, priceAsOf),
     prevSessionKey ? batchLastCloseForSymbols(symbols, prevSessionKey) : Promise.resolve(new Map()),
-    fetchQuoteMap(symbols, { budgetMs: QUOTE_TOTAL_BUDGET_MS }),
-    fetchTencentForexMap(QUOTE_TOTAL_BUDGET_MS),
+    fetchQuoteMap(symbols, quoteFetchOpts),
+    fetchTencentForexMap(forexFetchOpts),
   ]);
   const fxSpot = { CNY: 1, USD: 0, HKD: 0 };
+  let forexDbFallback = false;
   if (fxReq?.rates?.USD > 0) {
     fxSpot.USD = fxReq.rates.USD;
   }
@@ -305,12 +355,18 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   }
   if (tradingDay && (!(fxSpot.USD > 0) || !(fxSpot.HKD > 0))) {
     const dbLiveFx = await loadFxRatesOnDate(liveDate);
+    forexDbFallback = true;
     if (!(fxSpot.USD > 0)) {
       fxSpot.USD = dbLiveFx.USD;
     }
     if (!(fxSpot.HKD > 0)) {
       fxSpot.HKD = dbLiveFx.HKD;
     }
+    recordQuoteStep(quoteTrace, "forex.db_fallback", {
+      USD: fxSpot.USD || null,
+      HKD: fxSpot.HKD || null,
+      liveDate,
+    });
   }
   const bookCcy = bookCurrencyForScope(accounts, scope);
   let quoteDelayed = !!quoteReq.delayed || !!fxReq.delayed;
@@ -318,6 +374,8 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   const quoteError = String(quoteReq.quoteError || quoteReq.error || "").trim() || null;
 
   const quoteMap = {};
+  let closeFallbackInMap = 0;
+  let liveQuoteInMap = 0;
   for (const sym of symbols) {
     const norm = normalizeSymbol(sym);
     let q = quoteReq.map?.get(norm) || quoteReq.map?.get(sym);
@@ -332,10 +390,15 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
           quoteDate: md || undefined,
           source: "close-fallback",
         };
+        closeFallbackInMap += 1;
         if (!quoteReq.ok) {
           quoteDelayed = true;
         }
       }
+    } else if (String(q.source || "") === "close-fallback") {
+      closeFallbackInMap += 1;
+    } else {
+      liveQuoteInMap += 1;
     }
     if (q) {
       quoteMap[sym] = q;
@@ -347,6 +410,11 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
 
   let liveMarketValue = 0;
   const positions = [];
+  let positionQuoteCount = 0;
+  let positionLiveQuoteCount = 0;
+  let positionCloseFallbackCount = 0;
+  let positionMissingQuoteCount = 0;
+  const closeFallbackSample = [];
   for (const symbol of symbols) {
     const qty = currentQuantityFromFrozenEod(
       frozenBySym,
@@ -383,6 +451,19 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
         continue;
       }
       quote = { current: 0, prevClose: 0, marketDate: todayKey, quoteDate: todayKey };
+    }
+    positionQuoteCount += 1;
+    const qSrc = String(quote.source || quoteMap[symbol]?.source || "").toLowerCase();
+    const fromLiveMap = !!(quoteReq.map?.get(normalizeSymbol(symbol)) || quoteReq.map?.get(symbol));
+    if (qSrc === "close-fallback" || (!fromLiveMap && closeFallback.has(normalizeSymbol(symbol)))) {
+      positionCloseFallbackCount += 1;
+      if (closeFallbackSample.length < 3) {
+        closeFallbackSample.push(symbol);
+      }
+    } else if (fromLiveMap || qSrc === "longport" || qSrc === "tencent") {
+      positionLiveQuoteCount += 1;
+    } else {
+      positionMissingQuoteCount += 1;
     }
     const current = Number(quote.current) || 0;
     let prevClose = Number(quote.prevClose) || current;
@@ -500,6 +581,29 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
         ? eodPrincipal + externalFlowTodayCny
         : principalBookUpToDate(cashTransfers, accounts, scope, fxUsdMapLive, fxHkdMapLive, liveDate);
 
+    const quoteTime = pickLatestQuoteTime([
+      fxReq?.quoteTime,
+      ...Object.values(quoteMap).map((q) => q?.time),
+    ]);
+    maybeEmitQuoteTrace(quoteTrace, {
+      tradingDay: true,
+      quoteOk: quoteReq.ok,
+      quoteError,
+      quoteSource,
+      quoteDelayed,
+      quoteTime,
+      todayProfitCny,
+      positionLiveQuoteCount,
+      positionCloseFallbackCount,
+      positionQuoteCount,
+      positionMissingQuoteCount,
+      liveQuoteInMap,
+      closeFallbackInMap,
+      closeFallbackSample,
+      stillMissingSample: quoteReq.missing,
+      forexDbFallback,
+    });
+
     return {
       tradingDay: true,
       liveDate,
@@ -508,10 +612,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
       delayed: quoteDelayed,
       quoteSource,
       quoteError,
-      quoteTime: pickLatestQuoteTime([
-        fxReq?.quoteTime,
-        ...Object.values(quoteMap).map((q) => q?.time),
-      ]),
+      quoteTime,
       todayProfitCny,
       liveMarketValueCny,
       lastMarketValueCny,
@@ -536,6 +637,29 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
   cashRatio = totalAssetsCny > 0 ? cashCny / totalAssetsCny : 0;
   principalLive = eodScalars.principal > 0 ? eodScalars.principal : principalBase;
 
+  const quoteTimeOff = pickLatestQuoteTime([
+    fxReq?.quoteTime,
+    ...Object.values(quoteMap).map((q) => q?.time),
+  ]);
+  maybeEmitQuoteTrace(quoteTrace, {
+    tradingDay: false,
+    quoteOk: quoteReq.ok,
+    quoteError,
+    quoteSource,
+    quoteDelayed,
+    quoteTime: quoteTimeOff,
+    todayProfitCny: 0,
+    positionLiveQuoteCount,
+    positionCloseFallbackCount,
+    positionQuoteCount,
+    positionMissingQuoteCount,
+    liveQuoteInMap,
+    closeFallbackInMap,
+    closeFallbackSample,
+    stillMissingSample: quoteReq.missing,
+    forexDbFallback,
+  });
+
   return {
     tradingDay: false,
     liveDate: null,
@@ -544,10 +668,7 @@ async function computeLiveMetrics(userId, accountScope = "all", opts = {}) {
     delayed: quoteDelayed,
     quoteSource,
     quoteError,
-    quoteTime: pickLatestQuoteTime([
-      fxReq?.quoteTime,
-      ...Object.values(quoteMap).map((q) => q?.time),
-    ]),
+    quoteTime: quoteTimeOff,
     todayProfitCny: 0,
     liveMarketValueCny,
     lastMarketValueCny: mvFrozen,
