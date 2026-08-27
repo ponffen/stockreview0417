@@ -545,6 +545,8 @@ let ledgerBootstrapCompleteForUid = "";
 const TRADE_LIST_PAGE_SIZE = 10;
 const NOTE_MAX_LENGTH = 500;
 const DYNAMICS_CONTENT_MAX = 2000;
+const LEDGER_NOTE_MIN_LINES = 1;
+const LEDGER_NOTE_MAX_LINES = 5;
 const DYN_FMT = typeof DynamicsTextFormat !== "undefined" ? DynamicsTextFormat : null;
 const DYN_FMT_EDITOR = typeof DynamicsTextFormatEditor !== "undefined" ? DynamicsTextFormatEditor : null;
 let publishDynamicsContentEditor = null;
@@ -1386,7 +1388,10 @@ async function startAppAfterAuth(options = {}) {
   window.buildMonthlyReturnAuditRows = buildMonthlyReturnAuditRows;
 }
 
-initialize();
+initialize().catch((err) => {
+  console.error("[app] initialize failed", err);
+  dismissAppBootLoading();
+});
 
 async function initialize() {
   bindEvents();
@@ -10883,9 +10888,6 @@ function normalizeNoteInput(raw) {
   }
   return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
 }
-
-const LEDGER_NOTE_MIN_LINES = 1;
-const LEDGER_NOTE_MAX_LINES = 5;
 
 function ledgerNoteHeightBounds(el) {
   const styles = getComputedStyle(el);
