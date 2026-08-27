@@ -5392,6 +5392,7 @@ function openNewTradeDialog(prefill, contextOverrides = {}) {
   setLedgerMutationContext("trade", contextOverrides);
   tradeDialog.showModal();
   setLedgerNoteMarkup(tradeNoteInput, "");
+  scheduleLedgerNoteResize(tradeNoteInput);
   syncTradeAmountFromPriceQuantity();
 }
 
@@ -7462,21 +7463,21 @@ function setLedgerNoteMarkup(surface, markup) {
   }
   if (surface === tradeNoteInput && tradeNoteEditor) {
     tradeNoteEditor.setMarkup(markup || "");
-    autoResizeLedgerNoteTextarea(surface);
+    scheduleLedgerNoteResize(surface);
     return;
   }
   if (surface === cashTransferNote && cashTransferNoteEditor) {
     cashTransferNoteEditor.setMarkup(markup || "");
-    autoResizeLedgerNoteTextarea(surface);
+    scheduleLedgerNoteResize(surface);
     return;
   }
   if (DYN_FMT_EDITOR) {
     DYN_FMT_EDITOR.setEditorContent(surface, markup || "");
-    autoResizeLedgerNoteTextarea(surface);
+    scheduleLedgerNoteResize(surface);
     return;
   }
   surface.textContent = markup || "";
-  autoResizeLedgerNoteTextarea(surface);
+  scheduleLedgerNoteResize(surface);
 }
 
 function initFormatEditors() {
@@ -7497,21 +7498,25 @@ function initFormatEditors() {
     });
   }
   if (tradeNoteInput && !tradeNoteEditor) {
+    const tradeNoteBounds = ledgerNoteHeightBounds(tradeNoteInput);
     tradeNoteEditor = DYN_FMT_EDITOR.mountFormatEditor({
       surface: tradeNoteInput,
       toolbar: tradeNoteToolbar,
       maxLength: NOTE_MAX_LENGTH,
-      minHeightPx: 48,
-      onChange: () => autoResizeLedgerNoteTextarea(tradeNoteInput),
+      minHeightPx: tradeNoteBounds.minHeightPx,
+      maxHeightPx: tradeNoteBounds.maxHeightPx,
+      onChange: () => scheduleLedgerNoteResize(tradeNoteInput),
     });
   }
   if (cashTransferNote && !cashTransferNoteEditor) {
+    const cashNoteBounds = ledgerNoteHeightBounds(cashTransferNote);
     cashTransferNoteEditor = DYN_FMT_EDITOR.mountFormatEditor({
       surface: cashTransferNote,
       toolbar: cashTransferNoteToolbar,
       maxLength: NOTE_MAX_LENGTH,
-      minHeightPx: 48,
-      onChange: () => autoResizeLedgerNoteTextarea(cashTransferNote),
+      minHeightPx: cashNoteBounds.minHeightPx,
+      maxHeightPx: cashNoteBounds.maxHeightPx,
+      onChange: () => scheduleLedgerNoteResize(cashTransferNote),
     });
   }
 }
@@ -10840,6 +10845,7 @@ function openNewCashTransferDialog() {
   hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
   setLedgerNoteMarkup(cashTransferNote, "");
+  scheduleLedgerNoteResize(cashTransferNote);
 }
 
 function openEditCashTransferDialog(rawId) {
@@ -10873,6 +10879,7 @@ function openEditCashTransferDialog(rawId) {
   }
   hideLedgerNoteSuggest(cashTransferNoteSuggest);
   cashTransferDialog?.showModal();
+  scheduleLedgerNoteResize(cashTransferNote);
 }
 
 function normalizeNoteInput(raw) {
@@ -10911,6 +10918,7 @@ function autoResizeLedgerNoteTextarea(el) {
     return;
   }
   el.style.height = "auto";
+  el.style.maxHeight = "none";
   el.style.overflowY = "hidden";
   let next = Math.max(minHeightPx, el.scrollHeight);
   if (next > maxHeightPx) {
@@ -10918,6 +10926,20 @@ function autoResizeLedgerNoteTextarea(el) {
     el.style.overflowY = "auto";
   }
   el.style.height = `${next}px`;
+  el.style.maxHeight = "";
+}
+
+/** 弹窗 showModal 后再量高（隐藏时 scrollWidth/换行不准）。 */
+function scheduleLedgerNoteResize(el) {
+  if (!el) {
+    return;
+  }
+  const run = () => autoResizeLedgerNoteTextarea(el);
+  run();
+  requestAnimationFrame(() => {
+    run();
+    requestAnimationFrame(run);
+  });
 }
 
 function resetLedgerNoteTextarea(el) {
@@ -10925,7 +10947,9 @@ function resetLedgerNoteTextarea(el) {
     return;
   }
   el.style.height = "";
-  autoResizeLedgerNoteTextarea(el);
+  el.style.maxHeight = "";
+  el.style.overflowY = "";
+  scheduleLedgerNoteResize(el);
 }
 
 function hideLedgerNoteSuggest(suggestEl) {
@@ -10982,9 +11006,9 @@ function setupLedgerNoteField(textarea, suggestEl) {
   if (!textarea) {
     return;
   }
-  autoResizeLedgerNoteTextarea(textarea);
+  scheduleLedgerNoteResize(textarea);
   textarea.addEventListener("input", () => {
-    autoResizeLedgerNoteTextarea(textarea);
+    scheduleLedgerNoteResize(textarea);
   });
   textarea.addEventListener("focus", () => {
     renderLedgerNoteSuggestList(suggestEl, collectLedgerNoteSuggestions());
@@ -11009,7 +11033,7 @@ function setupLedgerNoteField(textarea, suggestEl) {
       setLedgerNoteMarkup(textarea, picked);
     } else {
       textarea.value = picked;
-      autoResizeLedgerNoteTextarea(textarea);
+      scheduleLedgerNoteResize(textarea);
     }
     hideLedgerNoteSuggest(suggestEl);
     textarea.focus();
@@ -11481,6 +11505,7 @@ function openEditTradeDialog(tradeId, tradeOverride) {
   resetTradeFormImages(trade.imageUrls);
   applyTradeTypePreset({ preserveAmount: true });
   tradeDialog.showModal();
+  scheduleLedgerNoteResize(tradeNoteInput);
 }
 
 function clearEditState() {

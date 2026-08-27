@@ -289,6 +289,8 @@
       return;
     }
     surface.style.height = "auto";
+    surface.style.maxHeight = "none";
+    surface.style.overflowY = "hidden";
     const min = Number(minHeightPx) || 48;
     let next = Math.max(min, surface.scrollHeight);
     const max = Number(maxHeightPx);
@@ -299,6 +301,7 @@
       surface.style.overflowY = "hidden";
     }
     surface.style.height = `${next}px`;
+    surface.style.maxHeight = "";
   }
 
   function selectionInSurface(surface) {
@@ -411,10 +414,11 @@
     });
   }
 
-  function mountFormatEditor({ surface, toolbar, maxLength, minHeightPx, onChange }) {
+  function mountFormatEditor({ surface, toolbar, maxLength, minHeightPx, maxHeightPx, onChange }) {
     if (!surface) {
       return null;
     }
+    const resize = () => autoResizeSurface(surface, minHeightPx, maxHeightPx);
     if (toolbar && !toolbar.innerHTML.trim()) {
       toolbar.innerHTML = renderToolbarHtml();
     }
@@ -425,7 +429,7 @@
       if (fmt.visibleLength(markup) > maxLength) {
         setEditorContent(surface, markup);
       }
-      autoResizeSurface(surface, minHeightPx);
+      resize();
       onChange?.();
     });
 
@@ -444,22 +448,20 @@
       onChange?.();
     });
 
-    autoResizeSurface(surface, minHeightPx);
+    resize();
     return {
       getMarkup() {
         return getEditorMarkup(surface, maxLength);
       },
       setMarkup(markup) {
         setEditorContent(surface, markup);
-        autoResizeSurface(surface, minHeightPx);
+        resize();
         onChange?.();
       },
       focus() {
         surface.focus();
       },
-      resize() {
-        autoResizeSurface(surface, minHeightPx);
-      },
+      resize,
     };
   }
 
