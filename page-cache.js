@@ -656,7 +656,7 @@
     analysisBundleCacheKey: (userId, accountId, querySig) =>
       `analysis:v2:${String(userId || "")}:${String(accountId || "all")}:${String(querySig || "")}`,
     stockRecordBundleCacheKey: (userId, symbol, accountId, range) =>
-      `stock:v2:${String(userId || "")}:${normalizeSymbolKey(symbol)}:${String(accountId || "all")}:${String(range || "30")}`,
+      `stock:v3:${String(userId || "")}:${normalizeSymbolKey(symbol)}:${String(accountId || "all")}:${String(range || "30")}`,
     dynamicsListCacheKey: (userId, listKey) =>
       `dyn:${String(userId || "")}:${String(listKey || "")}`,
     communityProfileCacheKey: (viewerKey, targetId) =>
