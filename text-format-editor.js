@@ -284,13 +284,21 @@
     return fmt.sanitizeFormattedText(fmt.serializeSegments(segments), maxLen);
   }
 
-  function autoResizeSurface(surface, minHeightPx) {
+  function autoResizeSurface(surface, minHeightPx, maxHeightPx) {
     if (!surface) {
       return;
     }
     surface.style.height = "auto";
     const min = Number(minHeightPx) || 48;
-    surface.style.height = `${Math.max(min, surface.scrollHeight)}px`;
+    let next = Math.max(min, surface.scrollHeight);
+    const max = Number(maxHeightPx);
+    if (Number.isFinite(max) && max > 0 && next > max) {
+      next = max;
+      surface.style.overflowY = "auto";
+    } else {
+      surface.style.overflowY = "hidden";
+    }
+    surface.style.height = `${next}px`;
   }
 
   function selectionInSurface(surface) {

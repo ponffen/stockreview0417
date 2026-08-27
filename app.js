@@ -7457,10 +7457,12 @@ function setLedgerNoteMarkup(surface, markup) {
   }
   if (surface === tradeNoteInput && tradeNoteEditor) {
     tradeNoteEditor.setMarkup(markup || "");
+    autoResizeLedgerNoteTextarea(surface);
     return;
   }
   if (surface === cashTransferNote && cashTransferNoteEditor) {
     cashTransferNoteEditor.setMarkup(markup || "");
+    autoResizeLedgerNoteTextarea(surface);
     return;
   }
   if (DYN_FMT_EDITOR) {
@@ -10882,21 +10884,38 @@ function normalizeNoteInput(raw) {
   return text.length > NOTE_MAX_LENGTH ? text.slice(0, NOTE_MAX_LENGTH) : text;
 }
 
-function autoResizeLedgerNoteTextarea(el) {
-  if (!el) {
-    return;
-  }
-  if (DYN_FMT_EDITOR) {
-    DYN_FMT_EDITOR.autoResizeSurface(el, 48);
-    return;
-  }
-  el.style.height = "auto";
+const LEDGER_NOTE_MIN_LINES = 1;
+const LEDGER_NOTE_MAX_LINES = 5;
+
+function ledgerNoteHeightBounds(el) {
   const styles = getComputedStyle(el);
   const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
   const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
   const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
-  const minHeight = lineHeight * 3 + paddingTop + paddingBottom;
-  el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`;
+  const verticalPadding = paddingTop + paddingBottom;
+  return {
+    minHeightPx: lineHeight * LEDGER_NOTE_MIN_LINES + verticalPadding,
+    maxHeightPx: lineHeight * LEDGER_NOTE_MAX_LINES + verticalPadding,
+  };
+}
+
+function autoResizeLedgerNoteTextarea(el) {
+  if (!el) {
+    return;
+  }
+  const { minHeightPx, maxHeightPx } = ledgerNoteHeightBounds(el);
+  if (DYN_FMT_EDITOR) {
+    DYN_FMT_EDITOR.autoResizeSurface(el, minHeightPx, maxHeightPx);
+    return;
+  }
+  el.style.height = "auto";
+  el.style.overflowY = "hidden";
+  let next = Math.max(minHeightPx, el.scrollHeight);
+  if (next > maxHeightPx) {
+    next = maxHeightPx;
+    el.style.overflowY = "auto";
+  }
+  el.style.height = `${next}px`;
 }
 
 function resetLedgerNoteTextarea(el) {

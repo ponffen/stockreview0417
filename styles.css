@@ -1092,29 +1092,27 @@ h2 {
 }
 
 .dyn-fmt-field--ledger .dyn-fmt-editor__surface {
-  min-height: calc(1.45em * 3 + 16px);
+  min-height: calc(1.45em * 1 + 54px);
+  max-height: calc(1.45em * 5 + 54px);
   padding: 8px 10px 46px;
   border: none;
   border-radius: 8px;
   line-height: 1.45;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 .ledger-note-textarea {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  min-height: calc(1.45em * 3 + 16px);
+  min-height: calc(1.45em * 1 + 16px);
+  max-height: calc(1.45em * 5 + 16px);
   padding: 8px 10px;
   line-height: 1.45;
   resize: none;
-  overflow: hidden;
-  field-sizing: content;
-}
-
-@supports not (field-sizing: content) {
-  .ledger-note-textarea {
-    overflow-y: hidden;
-  }
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 .dyn-fmt-toolbar-host:empty {
