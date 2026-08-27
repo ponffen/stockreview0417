@@ -31,7 +31,7 @@ const {
   stageProfitFromSymbolPnlRow,
   firstTradeDateFromTrades,
 } = require("./stage-chart-common");
-const { isLastNdStage, lastNdProfit } = require("./last-nd");
+const { isLastNdStage, lastNdProfit, inceptionOnOrBefore } = require("./last-nd");
 const { sortTradeAsc } = require("./stock-rank-period");
 const { finalizeMetricsBundlePayload } = require("./bundle-payload");
 const { enumerateFreezeSessionDates } = require("./freeze-calendar");
@@ -376,18 +376,37 @@ function chartPointFromPnlRow(pnl, closeLookup, profitOf) {
   };
 }
 
-/** 清仓段补点：ytd/mtd 跨自然年/月时收益归零；成立以来沿用平仓日锚点。 */
-function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf) {
+function inceptionProfitFromRow(row) {
+  return Number(row?.stageInceptionProfit ?? row?.stage_inception_profit) || 0;
+}
+
+/** 清仓段补点：ytd/mtd 跨自然年/月时收益归零；近 N 日按当日 inception carry rebase。 */
+function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf, inceptionCarryOpt) {
   const dk = String(dayKey || "").slice(0, 10);
   const st = String(stageKey || "").trim() || "last_30d";
-  if (!anchorPnlRow || !dk) {
+  if (!dk) {
     return 0;
   }
-  const anchorDate = pnlRowDateKey(anchorPnlRow);
-  if (st === "ytd" && dk.slice(0, 4) !== anchorDate.slice(0, 4)) {
-    return 0;
+  if (st === "ytd" && anchorPnlRow) {
+    const anchorDate = pnlRowDateKey(anchorPnlRow);
+    if (dk.slice(0, 4) !== anchorDate.slice(0, 4)) {
+      return 0;
+    }
   }
-  if (st === "mtd" && dk.slice(0, 7) !== anchorDate.slice(0, 7)) {
+  if (st === "mtd" && anchorPnlRow) {
+    const anchorDate = pnlRowDateKey(anchorPnlRow);
+    if (dk.slice(0, 7) !== anchorDate.slice(0, 7)) {
+      return 0;
+    }
+  }
+  if (isLastNdStage(st)) {
+    const inception =
+      inceptionCarryOpt != null
+        ? Number(inceptionCarryOpt) || 0
+        : inceptionProfitFromRow(anchorPnlRow);
+    return profitOf({ stageInceptionProfit: inception });
+  }
+  if (!anchorPnlRow) {
     return 0;
   }
   const anchorProfit = profitOf(anchorPnlRow);
@@ -398,6 +417,7 @@ function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf) {
 function buildClearedStableChartPoints({
   sessionDates,
   pnlRows,
+  pnlRowsInceptionSeries,
   closeLookup,
   profitOf,
   anchorPnlRow,
@@ -424,7 +444,15 @@ function buildClearedStableChartPoints({
     if (!(close > 0)) {
       continue;
     }
-    const profitNat = clearedSegmentProfitForDay(anchorPnlRow, dk, stageKey, profitOf);
+    const carryRow = inceptionOnOrBefore(pnlRowsInceptionSeries, dk);
+    const inceptionCarry = inceptionProfitFromRow(carryRow);
+    const profitNat = clearedSegmentProfitForDay(
+      anchorPnlRow,
+      dk,
+      stageKey,
+      profitOf,
+      inceptionCarry,
+    );
     raw.push({
       date: dk,
       close,
@@ -684,7 +712,14 @@ function appendClearedSegmentChartPoints(raw, {
       if (!(close > 0)) {
         continue;
       }
-      const profitNat = clearedSegmentProfitForDay(seg.anchorPnlRow, dk, stageKey, profitOf);
+      const exitInception = inceptionProfitFromRow(seg.anchorPnlRow);
+      const profitNat = clearedSegmentProfitForDay(
+        seg.anchorPnlRow,
+        dk,
+        stageKey,
+        profitOf,
+        exitInception,
+      );
       out.push({
         date: dk,
         close,
@@ -983,6 +1018,7 @@ async function buildStockRecordBundlePayload({
     points = buildClearedStableChartPoints({
       sessionDates,
       pnlRows,
+      pnlRowsInceptionSeries: pnlRowsForSegments,
       closeLookup: pageCloseLookup,
       profitOf,
       anchorPnlRow,
