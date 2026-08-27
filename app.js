@@ -7463,21 +7463,15 @@ function setLedgerNoteMarkup(surface, markup) {
   }
   if (surface === tradeNoteInput && tradeNoteEditor) {
     tradeNoteEditor.setMarkup(markup || "");
-    scheduleLedgerNoteResize(surface);
-    return;
-  }
-  if (surface === cashTransferNote && cashTransferNoteEditor) {
+  } else if (surface === cashTransferNote && cashTransferNoteEditor) {
     cashTransferNoteEditor.setMarkup(markup || "");
-    scheduleLedgerNoteResize(surface);
-    return;
-  }
-  if (DYN_FMT_EDITOR) {
+  } else if (DYN_FMT_EDITOR) {
     DYN_FMT_EDITOR.setEditorContent(surface, markup || "");
-    scheduleLedgerNoteResize(surface);
-    return;
+  } else {
+    surface.textContent = markup || "";
   }
-  surface.textContent = markup || "";
   scheduleLedgerNoteResize(surface);
+  syncLedgerNoteSuggestVisibility(surface, ledgerNoteSuggestForSurface(surface));
 }
 
 function initFormatEditors() {
@@ -10952,6 +10946,36 @@ function resetLedgerNoteTextarea(el) {
   scheduleLedgerNoteResize(el);
 }
 
+function ledgerNoteSuggestForSurface(surface) {
+  if (surface === tradeNoteInput) {
+    return tradeNoteSuggest;
+  }
+  if (surface === cashTransferNote) {
+    return cashTransferNoteSuggest;
+  }
+  return null;
+}
+
+function ledgerNoteFieldHasContent(surface) {
+  if (!surface) {
+    return false;
+  }
+  return !!normalizeNoteInput(getLedgerNoteMarkup(surface));
+}
+
+function syncLedgerNoteSuggestVisibility(textarea, suggestEl) {
+  if (!textarea || !suggestEl) {
+    return;
+  }
+  if (ledgerNoteFieldHasContent(textarea)) {
+    hideLedgerNoteSuggest(suggestEl);
+    return;
+  }
+  if (document.activeElement === textarea) {
+    renderLedgerNoteSuggestList(suggestEl, collectLedgerNoteSuggestions());
+  }
+}
+
 function hideLedgerNoteSuggest(suggestEl) {
   if (!suggestEl) {
     return;
@@ -11009,9 +11033,10 @@ function setupLedgerNoteField(textarea, suggestEl) {
   scheduleLedgerNoteResize(textarea);
   textarea.addEventListener("input", () => {
     scheduleLedgerNoteResize(textarea);
+    syncLedgerNoteSuggestVisibility(textarea, suggestEl);
   });
   textarea.addEventListener("focus", () => {
-    renderLedgerNoteSuggestList(suggestEl, collectLedgerNoteSuggestions());
+    syncLedgerNoteSuggestVisibility(textarea, suggestEl);
   });
   textarea.addEventListener("blur", () => {
     window.setTimeout(() => hideLedgerNoteSuggest(suggestEl), 150);
