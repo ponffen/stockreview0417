@@ -26,6 +26,7 @@ const {
 } = require("../position-today-pnl");
 const { resolveFrozenStageProfits } = require("./profit-tracks");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
+const { nativeFrozenPlusTodayToCny } = require("./stock-rank-period");
 const { getLatestValuationBySymbolForUser } = require("../dynamics/community-posts-db");
 const {
   isFreshStagePeriod,
@@ -336,9 +337,6 @@ async function buildHoldingsPayload({
       monthFrozenNative,
       yearFrozenNative,
       totalFrozenNative,
-      monthFrozenCny,
-      yearFrozenCny,
-      totalFrozenCny,
     } = resolveFrozenProfitsForDisplay(frozenRow, frozenCtx);
     const rateSnap = frozenRowToRateSnap(frozenRow, frozenThrough, snap);
     const current = Number(liveP?.current) || 0;
@@ -355,9 +353,30 @@ async function buildHoldingsPayload({
     const monthNative = monthFrozenNative + todayProfitNative;
     const yearNative = yearFrozenNative + todayProfitNative;
     const totalNative = totalFrozenNative + todayProfitNative;
-    const monthCny = monthFrozenCny + todayProfitCny;
-    const yearCny = yearFrozenCny + todayProfitCny;
-    const totalCny = totalFrozenCny + todayProfitCny;
+    const monthCny = nativeFrozenPlusTodayToCny(
+      monthFrozenNative,
+      todayProfitCny,
+      ccy,
+      market,
+      fxU,
+      fxH,
+    );
+    const yearCny = nativeFrozenPlusTodayToCny(
+      yearFrozenNative,
+      todayProfitCny,
+      ccy,
+      market,
+      fxU,
+      fxH,
+    );
+    const totalCny = nativeFrozenPlusTodayToCny(
+      totalFrozenNative,
+      todayProfitCny,
+      ccy,
+      market,
+      fxU,
+      fxH,
+    );
     const dayChg = prev > 0 ? (current - prev) / prev : 0;
     const mvNat = qty * current;
     const mvCny = Number(liveP?.marketValueCny) || mvNat * (isCnyStock ? 1 : fx);
@@ -450,9 +469,6 @@ async function buildHoldingsPayload({
       monthFrozenNative,
       yearFrozenNative,
       totalFrozenNative,
-      monthFrozenCny,
-      yearFrozenCny,
-      totalFrozenCny,
     } = resolveFrozenProfitsForDisplay(frozenRow, { freshMonth, freshYear, frozenThrough, sessionAsOf });
     const todayProfitNative =
       liveP?.todayProfitNative != null && Number.isFinite(Number(liveP.todayProfitNative))
@@ -465,9 +481,30 @@ async function buildHoldingsPayload({
     const monthNative = monthFrozenNative + todayProfitNative;
     const yearNative = yearFrozenNative + todayProfitNative;
     const totalNative = totalFrozenNative + todayProfitNative;
-    const monthCny = monthFrozenCny + todayProfitCny;
-    const yearCny = yearFrozenCny + todayProfitCny;
-    const totalCny = totalFrozenCny + todayProfitCny;
+    const monthCny = nativeFrozenPlusTodayToCny(
+      monthFrozenNative,
+      todayProfitCny,
+      ccy,
+      row.market,
+      fxU,
+      fxH,
+    );
+    const yearCny = nativeFrozenPlusTodayToCny(
+      yearFrozenNative,
+      todayProfitCny,
+      ccy,
+      row.market,
+      fxU,
+      fxH,
+    );
+    const totalCny = nativeFrozenPlusTodayToCny(
+      totalFrozenNative,
+      todayProfitCny,
+      ccy,
+      row.market,
+      fxU,
+      fxH,
+    );
     const mv = Number(liveP?.marketValueCny) || 0;
     const weight = totalAssets > 0 ? mv / totalAssets : 0;
     const monthStock = isAggregateScope(accountScope) ? monthCny : monthNative;
