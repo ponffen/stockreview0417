@@ -147,6 +147,25 @@
     return children.length === 1 && children[0].nodeType === Node.ELEMENT_NODE && children[0].tagName === "BR";
   }
 
+  /** 块内已有尾部 <br> 时，下一块不应再插入分隔换行（否则会多出一行空行）。 */
+  function blockEndsWithBreak(el) {
+    if (!isBlockElement(el) || isBlockPlaceholder(el)) {
+      return false;
+    }
+    const children = [...el.childNodes].filter((node) => {
+      return !(node.nodeType === Node.TEXT_NODE && !String(node.nodeValue || "").trim());
+    });
+    if (!children.length) {
+      return false;
+    }
+    const last = children[children.length - 1];
+    return last.nodeType === Node.ELEMENT_NODE && last.tagName === "BR";
+  }
+
+  function isContentBlock(el) {
+    return isBlockElement(el) && !isBlockPlaceholder(el);
+  }
+
   function fragmentToSegments(root) {
     const segments = [];
     const baseStyle = defaultStyle();
@@ -165,6 +184,13 @@
 
     function pushNewline(inherited) {
       segments.push({ text: "\n", ...normalizeEditorStyle(inherited) });
+    }
+
+    function pushBlockSep(inherited, prevEl) {
+      if (prevEl && blockEndsWithBreak(prevEl)) {
+        return;
+      }
+      pushNewline(inherited);
     }
 
     function pushText(text, inherited) {
@@ -196,15 +222,32 @@
         }
         if (isBlockElement(el)) {
           if (isBlockPlaceholder(el)) {
-            if (idx > 0) {
-              pushNewline(inherited);
+            const prev = idx > 0 ? list[idx - 1] : null;
+            const next = list[idx + 1] || null;
+            const sandwiched =
+              isContentBlock(prev) && isContentBlock(next);
+            if (sandwiched) {
+              if (idx > 0) {
+                pushNewline(inherited);
+              }
+            } else {
+              if (idx > 0) {
+                pushNewline(inherited);
+              }
+              pendingBlankLine = true;
             }
-            pendingBlankLine = true;
             return;
           }
           if (idx > 0) {
-            pushNewline(inherited);
-            pendingBlankLine = false;
+            const prev = list[idx - 1];
+            if (pendingBlankLine) {
+              pushNewline(inherited);
+              pendingBlankLine = false;
+            } else if (isBlockPlaceholder(prev)) {
+              // 夹在两块之间的空 div 已在 placeholder 处理里写入单个 \n
+            } else {
+              pushBlockSep(inherited, prev);
+            }
           }
           walkNodes([...el.childNodes], inherited);
           return;
