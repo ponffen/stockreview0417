@@ -162,10 +162,6 @@
     return last.nodeType === Node.ELEMENT_NODE && last.tagName === "BR";
   }
 
-  function isContentBlock(el) {
-    return isBlockElement(el) && !isBlockPlaceholder(el);
-  }
-
   function fragmentToSegments(root) {
     const segments = [];
     const baseStyle = defaultStyle();
@@ -222,32 +218,15 @@
         }
         if (isBlockElement(el)) {
           if (isBlockPlaceholder(el)) {
-            const prev = idx > 0 ? list[idx - 1] : null;
-            const next = list[idx + 1] || null;
-            const sandwiched =
-              isContentBlock(prev) && isContentBlock(next);
-            if (sandwiched) {
-              if (idx > 0) {
-                pushNewline(inherited);
-              }
-            } else {
-              if (idx > 0) {
-                pushNewline(inherited);
-              }
-              pendingBlankLine = true;
+            if (idx > 0) {
+              pushNewline(inherited);
             }
+            pendingBlankLine = true;
             return;
           }
           if (idx > 0) {
-            const prev = list[idx - 1];
-            if (pendingBlankLine) {
-              pushNewline(inherited);
-              pendingBlankLine = false;
-            } else if (isBlockPlaceholder(prev)) {
-              // 夹在两块之间的空 div 已在 placeholder 处理里写入单个 \n
-            } else {
-              pushBlockSep(inherited, prev);
-            }
+            pushBlockSep(inherited, list[idx - 1]);
+            pendingBlankLine = false;
           }
           walkNodes([...el.childNodes], inherited);
           return;

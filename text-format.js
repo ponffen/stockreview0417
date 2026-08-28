@@ -19,13 +19,6 @@
       .replace(/\r/g, "\n");
   }
 
-  /** 压掉 contenteditable 误存的双换行：空行+标题、标题后空行+正文（不影响纯文本段落空行）。 */
-  function compactEditorBlankLinesInMarkup(raw) {
-    return normalizeNewlines(raw)
-      .replace(/\n\n+(?=\[(?:b|s:|c:))/g, "\n")
-      .replace(/(\[\/(?:b|s|c)\])\n\n+/g, "$1\n");
-  }
-
   function cloneStyle(style) {
     return {
       bold: !!style.bold,
@@ -171,7 +164,7 @@
 
   function sanitizeFormattedText(raw, maxLen) {
     const limit = Math.max(0, Number(maxLen) || 0);
-    const segments = parseToSegments(compactEditorBlankLinesInMarkup(raw));
+    const segments = parseToSegments(raw);
     if (!limit) {
       return serializeSegments(segments).trim();
     }
