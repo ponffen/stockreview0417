@@ -380,8 +380,8 @@ function inceptionProfitFromRow(row) {
   return Number(row?.stageInceptionProfit ?? row?.stage_inception_profit) || 0;
 }
 
-/** 清仓段补点：ytd/mtd 跨自然年/月时收益归零；近 N 日按当日 inception carry rebase。 */
-function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf, inceptionCarryOpt) {
+/** 清仓段补点：ytd/mtd 跨自然年/月时收益归零；缺口日用 carry 行 stage 收益，勿拉期末锚点。 */
+function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf, carryRowOpt) {
   const dk = String(dayKey || "").slice(0, 10);
   const st = String(stageKey || "").trim() || "last_30d";
   if (!dk) {
@@ -399,12 +399,24 @@ function clearedSegmentProfitForDay(anchorPnlRow, dayKey, stageKey, profitOf, in
       return 0;
     }
   }
+  const carryRow =
+    carryRowOpt && typeof carryRowOpt === "object" ? carryRowOpt : null;
+  if (carryRow) {
+    const carryDate = pnlRowDateKey(carryRow);
+    if (st === "ytd" && carryDate.slice(0, 4) !== dk.slice(0, 4)) {
+      return 0;
+    }
+    if (st === "mtd" && carryDate.slice(0, 7) !== dk.slice(0, 7)) {
+      return 0;
+    }
+  }
   if (isLastNdStage(st)) {
-    const inception =
-      inceptionCarryOpt != null
-        ? Number(inceptionCarryOpt) || 0
-        : inceptionProfitFromRow(anchorPnlRow);
+    const inception = inceptionProfitFromRow(carryRow ?? anchorPnlRow);
     return profitOf({ stageInceptionProfit: inception });
+  }
+  if (carryRow) {
+    const profit = profitOf(carryRow);
+    return Number.isFinite(profit) ? profit : 0;
   }
   if (!anchorPnlRow) {
     return 0;
@@ -445,13 +457,12 @@ function buildClearedStableChartPoints({
       continue;
     }
     const carryRow = inceptionOnOrBefore(pnlRowsInceptionSeries, dk);
-    const inceptionCarry = inceptionProfitFromRow(carryRow);
     const profitNat = clearedSegmentProfitForDay(
       anchorPnlRow,
       dk,
       stageKey,
       profitOf,
-      inceptionCarry,
+      carryRow,
     );
     raw.push({
       date: dk,
@@ -712,13 +723,12 @@ function appendClearedSegmentChartPoints(raw, {
       if (!(close > 0)) {
         continue;
       }
-      const exitInception = inceptionProfitFromRow(seg.anchorPnlRow);
       const profitNat = clearedSegmentProfitForDay(
         seg.anchorPnlRow,
         dk,
         stageKey,
         profitOf,
-        exitInception,
+        seg.anchorPnlRow,
       );
       out.push({
         date: dk,
