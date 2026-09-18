@@ -145,7 +145,7 @@ function holdingsSymbolsFromTrades(trades, accountScope, lastEodRows = null) {
   );
 }
 
-/** 交易日：仍持仓 + 当日清仓（冻结日有仓、今日卖光） */
+/** 交易日：仍持仓 + 当日清仓（冻结日有仓、今日卖光）+ 当日从零仓日内买卖后平掉 */
 function wasClearedOnTradingDay(frozenBySym, trades, symbol, todayKey, accountScope, tradingDay) {
   if (!tradingDay || !todayKey) {
     return false;
@@ -167,7 +167,18 @@ function wasClearedOnTradingDay(frozenBySym, trades, symbol, todayKey, accountSc
   const list =
     wanted === "all" ? trades || [] : (trades || []).filter((t) => String(t.accountId || "default") === wanted);
   const ctx = getPositionDayTradeContext(sym, todayKey, list);
-  return hasOpenPositionQuantity(ctx.startQuantity);
+  if (hasOpenPositionQuantity(ctx.startQuantity)) {
+    return true;
+  }
+  const dk = String(todayKey).slice(0, 10);
+  const tradedToday = list.some(
+    (t) => normalizeSymbol(t.symbol) === sym && String(t.date || "").slice(0, 10) === dk,
+  );
+  return (
+    tradedToday &&
+    !hasOpenPositionQuantity(ctx.startQuantity) &&
+    !hasOpenPositionQuantity(ctx.endQuantity)
+  );
 }
 
 function holdingsSymbolsForLiveMetrics(trades, accountScope, lastEodRows, frozenBySym, todayKey, tradingDay) {
