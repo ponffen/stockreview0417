@@ -20,8 +20,9 @@ async function main() {
   const end = resolveFrozenDate();
   const pool = await initPool();
 
-  const userIds = process.argv[3]
-    ? [String(process.argv[3]).trim()]
+  const explicitUserArg = process.argv.slice(3).find((a) => a && !String(a).startsWith("-"));
+  const userIds = explicitUserArg
+    ? [String(explicitUserArg).trim()]
     : await resolveBatchMetricsUserIds({ allUsers: metricsUserScopeFromArgv() });
 
   console.log("[backfill-freeze]", { fromDate, anchor, end, users: userIds.length });
