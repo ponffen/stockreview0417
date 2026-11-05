@@ -27,7 +27,10 @@ const {
 const { resolveFrozenStageProfits } = require("./profit-tracks");
 const { netHoldingsBySymbol, hasOpenPositionQuantity } = require("./holdings-active-symbols");
 const { nativeFrozenPlusTodayToCny } = require("./stock-rank-period");
-const { getLatestValuationBySymbolForUser } = require("../dynamics/community-posts-db");
+const {
+  getLatestValuationBySymbolForUser,
+  getLatestPositionBandBySymbolForUser,
+} = require("../dynamics/community-posts-db");
 const {
   isFreshStagePeriod,
   monthStartKeyShanghai,
@@ -35,6 +38,12 @@ const {
 } = require("./stages");
 const { liveDateKeyShanghai } = require("./trading-calendar");
 const { formatValuationPrice, formatValuationPercentile } = require("../dynamics/valuation-format");
+const {
+  formatPositionWeightDisplay,
+  formatPositionPercentile,
+  formatPositionMinWeightChange,
+  formatPositionMaxWeightChange,
+} = require("../dynamics/position-band-format");
 
 function profitShareRatio(stockProfitScalar, overviewProfitScalar, accountScope, book, fxUsdCny, fxHkdCny) {
   let stockBook = Number(stockProfitScalar) || 0;
@@ -271,6 +280,7 @@ async function buildHoldingsPayload({
   const nameMap = await getSymbolMetaMap([...keys]);
   const tradeBySym = lastTradeBySymbol(trades, accountScope);
   const valuationBySym = userId ? await getLatestValuationBySymbolForUser(userId) : new Map();
+  const positionBandBySym = userId ? await getLatestPositionBandBySymbolForUser(userId) : new Map();
   const scopeId = String(accountScope || "all").trim() || "all";
   const sessionAsOf = liveDateKeyShanghai();
   const freshMonth = isFreshStagePeriod(monthStartKeyShanghai(sessionAsOf), frozenThrough);
@@ -448,6 +458,11 @@ async function buildHoldingsPayload({
       highEstimate: formatValuationPrice(valuationExtra.highPrice),
       highEstimateChange: highChg,
       valuationPercentile,
+      positionMin: "",
+      positionMinChange: "",
+      positionMax: "",
+      positionMaxChange: "",
+      positionPercentile: "",
     });
   }
 
@@ -517,6 +532,25 @@ async function buildHoldingsPayload({
     row.monthWeight = fmtPercentRatio(monthW);
     row.yearWeight = fmtPercentRatio(yearW);
     row.totalWeight = fmtPercentRatio(totalW);
+
+    if (!isAggregateScope(accountScope)) {
+      row.positionMin = "—";
+      row.positionMinChange = "";
+      row.positionMax = "—";
+      row.positionMaxChange = "";
+      row.positionPercentile = "—";
+    } else {
+      const bandExtra = positionBandBySym.get(sym) || {};
+      const minW = Number(bandExtra.minWeight);
+      const maxW = Number(bandExtra.maxWeight);
+      if (Number.isFinite(minW) && Number.isFinite(maxW) && maxW > minW) {
+        row.positionMin = formatPositionWeightDisplay(minW);
+        row.positionMinChange = formatPositionMinWeightChange(minW, weight);
+        row.positionMax = formatPositionWeightDisplay(maxW);
+        row.positionMaxChange = formatPositionMaxWeightChange(maxW, weight);
+        row.positionPercentile = formatPositionPercentile(minW, maxW, weight);
+      }
+    }
   }
 
   rowsOut.sort((a, b) => {

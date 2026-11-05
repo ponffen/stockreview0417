@@ -108,7 +108,7 @@ function buildStockFilterSql(scene, symbol, params, { includeTrades = true, incl
 
 function normalizeFeedFilter(raw) {
   const f = String(raw || "all").trim().toLowerCase();
-  if (f === "trade" || f === "viewpoint" || f === "valuation") {
+  if (f === "trade" || f === "viewpoint" || f === "valuation" || f === "position_band") {
     return f;
   }
   return "all";
@@ -128,6 +128,9 @@ function resolveFeedKinds(filter) {
   }
   if (f === "valuation") {
     return { includeTrades: false, includePosts: true, postTypeExtra: ` AND p.post_type = 'valuation'` };
+  }
+  if (f === "position_band") {
+    return { includeTrades: false, includePosts: true, postTypeExtra: ` AND p.post_type = 'position_band'` };
   }
   return { includeTrades: true, includePosts: true, postTypeExtra: "" };
 }

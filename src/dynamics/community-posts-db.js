@@ -16,7 +16,7 @@ const {
 const { sanitizeFormattedText } = require("../../text-format");
 
 const CONTENT_MAX = 2000;
-const POST_TYPES = new Set(["viewpoint", "valuation"]);
+const POST_TYPES = new Set(["viewpoint", "valuation", "position_band"]);
 
 function parseSymbolsField(raw) {
   if (raw == null || raw === "") {
@@ -76,7 +76,8 @@ function rowToPost(row) {
     imageUrls: parseImageUrlsField(row.image_urls),
     symbols: parseSymbolsField(row.symbols),
     postType,
-    extra: postType === "valuation" ? parseExtraField(row.extra) : {},
+    extra:
+      postType === "valuation" || postType === "position_band" ? parseExtraField(row.extra) : {},
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -114,6 +115,37 @@ function normalizePostInput(body) {
       symbols,
       postType,
       extra: { lowPrice, highPrice },
+    };
+  }
+
+  if (postType === "position_band") {
+    if (symbols.length !== 1) {
+      throw new Error("仓位带必须且只能选择一只股票");
+    }
+    const extraIn = parseExtraField(raw.extra);
+    let minWeight = Number(extraIn.minWeight ?? raw.minWeight);
+    let maxWeight = Number(extraIn.maxWeight ?? raw.maxWeight);
+    if (Number.isFinite(minWeight) && minWeight > 1) {
+      minWeight = minWeight / 100;
+    }
+    if (Number.isFinite(maxWeight) && maxWeight > 1) {
+      maxWeight = maxWeight / 100;
+    }
+    if (!Number.isFinite(minWeight) || minWeight <= 0) {
+      throw new Error("请输入有效的最低仓位");
+    }
+    if (!Number.isFinite(maxWeight) || maxWeight <= 0) {
+      throw new Error("请输入有效的最高仓位");
+    }
+    if (maxWeight < minWeight) {
+      throw new Error("最高仓位不能低于最低仓位");
+    }
+    return {
+      content,
+      imageUrls,
+      symbols,
+      postType,
+      extra: { minWeight, maxWeight },
     };
   }
 
@@ -243,6 +275,33 @@ async function getLatestValuationBySymbolForUser(userId) {
   return map;
 }
 
+/** 每标的取最新一条仓位带帖 extra（user 维度）。 */
+async function getLatestPositionBandBySymbolForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) {
+    return new Map();
+  }
+  const { rows } = await dbQuery(
+    `SELECT DISTINCT ON (elem.sym)
+       elem.sym AS symbol,
+       p.extra
+     FROM community_posts p
+     CROSS JOIN LATERAL jsonb_array_elements_text(p.symbols::jsonb) AS elem(sym)
+     WHERE p.user_id = $1 AND p.post_type = 'position_band'
+     ORDER BY elem.sym, p.created_at DESC`,
+    [uid],
+  );
+  const map = new Map();
+  for (const row of rows) {
+    const sym = normalizeSymbol(row.symbol);
+    if (!sym) {
+      continue;
+    }
+    map.set(sym, parseExtraField(row.extra));
+  }
+  return map;
+}
+
 module.exports = {
   CONTENT_MAX,
   POST_TYPES,
@@ -254,4 +313,5 @@ module.exports = {
   updateCommunityPost,
   deleteCommunityPost,
   getLatestValuationBySymbolForUser,
+  getLatestPositionBandBySymbolForUser,
 };

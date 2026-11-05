@@ -735,14 +735,38 @@ const STOCK_LIST_COLUMN_REGISTRY = [
     defaultOrder: 15,
   },
   {
-    id: "regretRate",
+    id: "positionMinChange",
     colIndex: 16,
-    label: "交易间隔",
-    sortKey: "regretRate",
+    label: "最低仓位",
+    sortKey: "positionMinChange",
     defaultVisible: true,
     defaultOrder: 16,
   },
-  { id: "action", colIndex: 17, label: "操作", lockVisible: true, configurable: false },
+  {
+    id: "positionMaxChange",
+    colIndex: 17,
+    label: "最高仓位",
+    sortKey: "positionMaxChange",
+    defaultVisible: true,
+    defaultOrder: 17,
+  },
+  {
+    id: "positionPercentile",
+    colIndex: 18,
+    label: "仓位分位",
+    sortKey: "positionPercentile",
+    defaultVisible: true,
+    defaultOrder: 18,
+  },
+  {
+    id: "regretRate",
+    colIndex: 19,
+    label: "交易间隔",
+    sortKey: "regretRate",
+    defaultVisible: true,
+    defaultOrder: 19,
+  },
+  { id: "action", colIndex: 20, label: "操作", lockVisible: true, configurable: false },
 ];
 const STOCK_LIST_COLUMN_BY_ID = Object.fromEntries(STOCK_LIST_COLUMN_REGISTRY.map((item) => [item.id, item]));
 const STOCK_LIST_COLUMN_BY_SORT_KEY = Object.fromEntries(
@@ -832,6 +856,10 @@ const publishDynamicsValuationToggle = document.getElementById("publishDynamicsV
 const publishDynamicsValuationFields = document.getElementById("publishDynamicsValuationFields");
 const publishDynamicsLowPrice = document.getElementById("publishDynamicsLowPrice");
 const publishDynamicsHighPrice = document.getElementById("publishDynamicsHighPrice");
+const publishDynamicsPositionBandToggle = document.getElementById("publishDynamicsPositionBandToggle");
+const publishDynamicsPositionBandFields = document.getElementById("publishDynamicsPositionBandFields");
+const publishDynamicsMinWeight = document.getElementById("publishDynamicsMinWeight");
+const publishDynamicsMaxWeight = document.getElementById("publishDynamicsMaxWeight");
 const stockRecordDynamicsFilter = document.getElementById("stockRecordDynamicsFilter");
 const closePublishDynamicsBtn = document.getElementById("closePublishDynamicsBtn");
 const dynamicsPostActionsDialog = document.getElementById("dynamicsPostActionsDialog");
@@ -1837,6 +1865,15 @@ function resolvePublicProfileSortKeyValue(row, key, bookCcy, trades, denoms) {
   }
   if (key === "valuationPercentile") {
     return parseBundlePercent(row.valuationPercentile);
+  }
+  if (key === "positionMinChange") {
+    return parseBundlePercent(row.positionMinChange);
+  }
+  if (key === "positionMaxChange") {
+    return parseBundlePercent(row.positionMaxChange);
+  }
+  if (key === "positionPercentile") {
+    return parseBundlePercent(row.positionPercentile);
   }
   if (key === "lastTradeDate") {
     return Date.parse(row.lastTradeDate || 0);
@@ -4920,15 +4957,28 @@ function bindEvents() {
     });
   });
   publishDynamicsValuationToggle?.addEventListener("click", () => {
-    publishDynamicsState.postType = isPublishDynamicsValuationMode() ? "viewpoint" : "valuation";
-    if (!isPublishDynamicsValuationMode()) {
-      if (publishDynamicsLowPrice) {
-        publishDynamicsLowPrice.value = "";
-      }
-      if (publishDynamicsHighPrice) {
-        publishDynamicsHighPrice.value = "";
-      }
-    } else if (publishDynamicsState.symbols.length > 1) {
+    if (isPublishDynamicsValuationMode()) {
+      publishDynamicsState.postType = "viewpoint";
+      clearPublishDynamicsValuationFields();
+    } else {
+      clearPublishDynamicsPositionBandFields();
+      publishDynamicsState.postType = "valuation";
+    }
+    if (isPublishDynamicsValuationMode() && publishDynamicsState.symbols.length > 1) {
+      publishDynamicsState.symbols = publishDynamicsState.symbols.slice(0, 1);
+      renderPublishDynamicsSymbols();
+    }
+    syncPublishDynamicsUi();
+  });
+  publishDynamicsPositionBandToggle?.addEventListener("click", () => {
+    if (isPublishDynamicsPositionBandMode()) {
+      publishDynamicsState.postType = "viewpoint";
+      clearPublishDynamicsPositionBandFields();
+    } else {
+      clearPublishDynamicsValuationFields();
+      publishDynamicsState.postType = "position_band";
+    }
+    if (isPublishDynamicsPositionBandMode() && publishDynamicsState.symbols.length > 1) {
       publishDynamicsState.symbols = publishDynamicsState.symbols.slice(0, 1);
       renderPublishDynamicsSymbols();
     }
@@ -4936,6 +4986,8 @@ function bindEvents() {
   });
   publishDynamicsLowPrice?.addEventListener("input", () => syncPublishDynamicsUi());
   publishDynamicsHighPrice?.addEventListener("input", () => syncPublishDynamicsUi());
+  publishDynamicsMinWeight?.addEventListener("input", () => syncPublishDynamicsUi());
+  publishDynamicsMaxWeight?.addEventListener("input", () => syncPublishDynamicsUi());
   publishDynamicsDeleteBtn?.addEventListener("click", async () => {
     const postId = publishDynamicsState.editingPostId;
     if (!postId) {
@@ -4970,13 +5022,22 @@ function bindEvents() {
       content: getPublishDynamicsContent(),
       imageUrls: publishDynamicsState.imageUrls,
       symbols: publishDynamicsState.symbols.map((s) => s.symbol),
-      postType: publishDynamicsState.postType === "valuation" ? "valuation" : "viewpoint",
+      postType:
+        publishDynamicsState.postType === "valuation"
+          ? "valuation"
+          : publishDynamicsState.postType === "position_band"
+            ? "position_band"
+            : "viewpoint",
       extra: {},
     };
     if (body.postType === "valuation") {
       const lowPrice = parsePublishDynamicsPriceInput(publishDynamicsLowPrice?.value);
       const highPrice = parsePublishDynamicsPriceInput(publishDynamicsHighPrice?.value);
       body.extra = { lowPrice, highPrice };
+    } else if (body.postType === "position_band") {
+      const minWeight = parsePublishDynamicsPercentInput(publishDynamicsMinWeight?.value);
+      const maxWeight = parsePublishDynamicsPercentInput(publishDynamicsMaxWeight?.value);
+      body.extra = { minWeight, maxWeight };
     }
     const postSymbolsToInvalidate = [...body.symbols, ...(publishDynamicsState.originalSymbols || [])];
     try {
@@ -5680,7 +5741,7 @@ function applyStockSearchPick(symbol, name) {
   const n = String(name || "").trim() || sym;
   if (state.tradeSearchPickForDynamics) {
     state.tradeSearchPickForDynamics = false;
-    if (isPublishDynamicsValuationMode()) {
+    if (isPublishDynamicsValuationMode() || isPublishDynamicsPositionBandMode()) {
       publishDynamicsState.symbols = [{ symbol: sym, name: n }];
     } else if (!publishDynamicsState.symbols.some((s) => s.symbol === sym)) {
       publishDynamicsState.symbols.push({ symbol: sym, name: n });
@@ -6292,6 +6353,20 @@ function dynamicsValuationMetricsFromExtra(extra) {
   return cols;
 }
 
+function dynamicsPositionBandMetricsFromExtra(extra) {
+  const data = extra && typeof extra === "object" ? extra : {};
+  const cols = [];
+  const min = String(data.minWeight ?? "").trim();
+  const max = String(data.maxWeight ?? "").trim();
+  if (min) {
+    cols.push({ label: "最低仓位", value: min, help: false });
+  }
+  if (max) {
+    cols.push({ label: "最高仓位", value: max, help: false });
+  }
+  return cols;
+}
+
 function parsePublishDynamicsPriceInput(raw) {
   const s = String(raw ?? "")
     .trim()
@@ -6307,6 +6382,28 @@ function isPublishDynamicsValuationMode() {
   return Boolean(publishDynamicsState.postType === "valuation");
 }
 
+function isPublishDynamicsPositionBandMode() {
+  return Boolean(publishDynamicsState.postType === "position_band");
+}
+
+function clearPublishDynamicsValuationFields() {
+  if (publishDynamicsLowPrice) {
+    publishDynamicsLowPrice.value = "";
+  }
+  if (publishDynamicsHighPrice) {
+    publishDynamicsHighPrice.value = "";
+  }
+}
+
+function clearPublishDynamicsPositionBandFields() {
+  if (publishDynamicsMinWeight) {
+    publishDynamicsMinWeight.value = "";
+  }
+  if (publishDynamicsMaxWeight) {
+    publishDynamicsMaxWeight.value = "";
+  }
+}
+
 function syncPublishDynamicsValuationUi() {
   const on = isPublishDynamicsValuationMode();
   publishDynamicsValuationToggle?.classList.toggle("is-active", on);
@@ -6317,6 +6414,28 @@ function syncPublishDynamicsValuationUi() {
   }
 }
 
+function syncPublishDynamicsPositionBandUi() {
+  const on = isPublishDynamicsPositionBandMode();
+  publishDynamicsPositionBandToggle?.classList.toggle("is-active", on);
+  publishDynamicsPositionBandToggle?.setAttribute("aria-pressed", on ? "true" : "false");
+  publishDynamicsPositionBandFields?.classList.toggle("hidden", !on);
+  if (publishDynamicsPositionBandFields) {
+    publishDynamicsPositionBandFields.setAttribute("aria-hidden", on ? "false" : "true");
+  }
+}
+
+function parsePublishDynamicsPercentInput(raw) {
+  const s = String(raw ?? "")
+    .trim()
+    .replace(/,/g, "")
+    .replace(/%/g, "");
+  if (!s) {
+    return null;
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 function legacyDynamicsCardView(card) {
   const kind = card?.cardKind === "post" ? "post" : "trade";
   const postType = kind === "post" ? String(card?.postType || "viewpoint").trim() || "viewpoint" : "";
@@ -6325,7 +6444,7 @@ function legacyDynamicsCardView(card) {
     slots: {
       header: showHeader,
       stock: kind === "trade" ? Boolean(card?.symbol) : Array.isArray(card?.symbols) && card.symbols.length > 0,
-      metrics: kind === "trade" || postType === "valuation",
+      metrics: kind === "trade" || postType === "valuation" || postType === "position_band",
       body: true,
       images: true,
       footer: true,
@@ -6489,6 +6608,8 @@ function dynamicsCardHtml(card, opts = {}) {
   if (view.slots.metrics) {
     if (kind === "post" && c.postType === "valuation") {
       metricsBlock = dynamicsMetricsBlockHtml(dynamicsValuationMetricsFromExtra(c.extra));
+    } else if (kind === "post" && c.postType === "position_band") {
+      metricsBlock = dynamicsMetricsBlockHtml(dynamicsPositionBandMetricsFromExtra(c.extra));
     } else if (Array.isArray(c.metrics) && c.metrics.length) {
       metricsBlock = dynamicsMetricsBlockHtml(c.metrics);
     } else if (kind === "trade") {
@@ -7560,13 +7681,24 @@ function syncPublishDynamicsUi() {
   const hasSymbols = publishDynamicsState.symbols.length > 0;
   const isEditing = Boolean(publishDynamicsState.editingPostId);
   const valuationMode = isPublishDynamicsValuationMode();
+  const positionBandMode = isPublishDynamicsPositionBandMode();
   const lowPrice = parsePublishDynamicsPriceInput(publishDynamicsLowPrice?.value);
   const highPrice = parsePublishDynamicsPriceInput(publishDynamicsHighPrice?.value);
+  const minWeight = parsePublishDynamicsPercentInput(publishDynamicsMinWeight?.value);
+  const maxWeight = parsePublishDynamicsPercentInput(publishDynamicsMaxWeight?.value);
   const hasValuationPrices = valuationMode && lowPrice != null && highPrice != null && hasSymbols;
+  const hasPositionBandWeights =
+    positionBandMode && minWeight != null && maxWeight != null && hasSymbols;
   const canSubmit =
-    isEditing || (valuationMode ? hasValuationPrices : hasContent || hasImages || hasSymbols);
+    isEditing ||
+    (valuationMode
+      ? hasValuationPrices
+      : positionBandMode
+        ? hasPositionBandWeights
+        : hasContent || hasImages || hasSymbols);
 
   syncPublishDynamicsValuationUi();
+  syncPublishDynamicsPositionBandUi();
 
   if (publishDynamicsSubmitBtn) {
     publishDynamicsSubmitBtn.disabled = !canSubmit;
@@ -7629,6 +7761,7 @@ function resetPublishDynamicsForm() {
   if (publishDynamicsHighPrice) {
     publishDynamicsHighPrice.value = "";
   }
+  clearPublishDynamicsPositionBandFields();
   if (publishDynamicsError) {
     publishDynamicsError.classList.add("hidden");
     publishDynamicsError.textContent = "";
@@ -7650,7 +7783,12 @@ function openPublishDynamicsDialog(postCard, contextOverrides = {}) {
   resetPublishDynamicsForm();
   if (postCard) {
     publishDynamicsState.editingPostId = postCard.id;
-    publishDynamicsState.postType = postCard.postType === "valuation" ? "valuation" : "viewpoint";
+    publishDynamicsState.postType =
+      postCard.postType === "valuation"
+        ? "valuation"
+        : postCard.postType === "position_band"
+          ? "position_band"
+          : "viewpoint";
     if (publishDynamicsContentEditor) {
       publishDynamicsContentEditor.setMarkup(String(postCard.content || ""));
     } else if (publishDynamicsContent) {
@@ -7667,6 +7805,18 @@ function openPublishDynamicsDialog(postCard, contextOverrides = {}) {
       }
       if (publishDynamicsHighPrice && postCard.extra.highPrice != null) {
         publishDynamicsHighPrice.value = String(postCard.extra.highPrice);
+      }
+    }
+    if (publishDynamicsState.postType === "position_band" && postCard.extra) {
+      const rawMin = postCard.extra.minWeight;
+      const rawMax = postCard.extra.maxWeight;
+      if (publishDynamicsMinWeight && rawMin != null) {
+        const n = Number(String(rawMin).replace(/%/g, ""));
+        publishDynamicsMinWeight.value = Number.isFinite(n) ? String(n) : String(rawMin);
+      }
+      if (publishDynamicsMaxWeight && rawMax != null) {
+        const n = Number(String(rawMax).replace(/%/g, ""));
+        publishDynamicsMaxWeight.value = Number.isFinite(n) ? String(n) : String(rawMax);
       }
     }
     if (publishDynamicsSubmitBtn) {
@@ -7895,7 +8045,7 @@ async function withPublicTradesContextAsync(d, asyncFn) {
 }
 
 /** 他人收益 Tab：物理渲染列（与私人表同列索引的 th/td 规则，不含金额列） */
-const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 17];
+const PUBLIC_EARNING_VISIBLE_COL_INDICES = [0, 2, 4, 5, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 
 function buildDefaultStockListColumns() {
   return {
@@ -8007,7 +8157,7 @@ function stockListColumnsToVisibleIndices(cfg) {
       continue;
     }
     const meta = STOCK_LIST_COLUMN_BY_ID[item.id];
-    if (meta && meta.colIndex > 0 && meta.colIndex < 17) {
+    if (meta && meta.colIndex > 0 && meta.colIndex < 20) {
       indices.push(meta.colIndex);
     }
   }
@@ -11822,6 +11972,15 @@ function resolveMetricsStockSortKeyValue(row, key) {
   if (key === "valuationPercentile") {
     return parseBundlePercent(row.valuationPercentile);
   }
+  if (key === "positionMinChange") {
+    return parseBundlePercent(row.positionMinChange);
+  }
+  if (key === "positionMaxChange") {
+    return parseBundlePercent(row.positionMaxChange);
+  }
+  if (key === "positionPercentile") {
+    return parseBundlePercent(row.positionPercentile);
+  }
   if (key === "lastTradeDate") return Date.parse(row.lastTradeDate || 0) || 0;
   return 0;
 }
@@ -12267,8 +12426,14 @@ function metricsHoldingsRowCellTexts(row, col, displayMode) {
     case 15:
       return bundleFmtText(row.valuationPercentile);
     case 16:
-      return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+      return [bundleFmtText(row.positionMin), bundleFmtText(row.positionMinChange)];
     case 17:
+      return [bundleFmtText(row.positionMax), bundleFmtText(row.positionMaxChange)];
+    case 18:
+      return bundleFmtText(row.positionPercentile);
+    case 19:
+      return bundleFmtText(String(row.regret || "").replace(/\s+[BS]$/i, ""));
+    case 20:
       return "分析  交易";
     default:
       return "";
@@ -12308,6 +12473,8 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
   const regretClass = bundleSignedClass(String(row.regret || "").replace(/\s+[BS]$/i, ""));
   const lowEstimateClass = bundleSignedClass(row.lowEstimateChange);
   const highEstimateClass = bundleSignedClass(row.highEstimateChange);
+  const positionMinClass = bundleSignedClass(row.positionMinChange);
+  const positionMaxClass = bundleSignedClass(row.positionMaxChange);
   const qty = bundleFmtText(row.quantity);
   const symEsc = escapeHtml(sym);
   const nameEsc = escapeHtml(String(row.name || "").trim());
@@ -12354,8 +12521,14 @@ function buildMetricsHoldingsCellTd(row, col, ctx) {
     case 15:
       return `<td${attr} class="stock-col-valuation-pct">${escapeHtml(bundleFmtText(row.valuationPercentile))}</td>`;
     case 16:
-      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
+      return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.positionMin))}</div><div class="cell-sub ${positionMinClass}"><span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.positionMinChange))}</span></div></td>`;
     case 17:
+      return `<td${attr} class="stock-col-price"><div class="cell-main">${escapeHtml(bundleFmtText(row.positionMax))}</div><div class="cell-sub ${positionMaxClass}"><span class="cell-sub-pct">${escapeHtml(bundleFmtText(row.positionMaxChange))}</span></div></td>`;
+    case 18:
+      return `<td${attr} class="stock-col-valuation-pct">${escapeHtml(bundleFmtText(row.positionPercentile))}</td>`;
+    case 19:
+      return `<td${attr} class="${regretClass}">${escapeHtml(bundleFmtText(row.regret))}</td>`;
+    case 20:
       return `<td${attr} class="stock-table-op-cell">${recordLink}${tradeLink}</td>`;
     default:
       return `<td${attr}></td>`;

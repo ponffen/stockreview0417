@@ -17,7 +17,7 @@ function defaultSlots(cardKind, postType) {
     return {
       header: true,
       stock: true,
-      metrics: postType === "valuation",
+      metrics: postType === "valuation" || postType === "position_band",
       body: true,
       images: true,
       footer: true,

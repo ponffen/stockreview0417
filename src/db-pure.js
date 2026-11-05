@@ -18,6 +18,9 @@ const STOCK_LIST_COLUMN_IDS = [
   "lowEstimateChange",
   "highEstimateChange",
   "valuationPercentile",
+  "positionMinChange",
+  "positionMaxChange",
+  "positionPercentile",
   "regretRate",
 ];
 
