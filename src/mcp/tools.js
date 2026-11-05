@@ -15,6 +15,7 @@ const { getPublicTradesPage } = require("../community-service");
 const { resolveDataAccess } = require("./target-access");
 const { searchCommunityUsers } = require("./community-search");
 const { getDynamicsForMcp, getCommunityDynamicsFeedForMcp, MCP_MAX_TOTAL_ITEMS } = require("./dynamics-service");
+const { formatHoldingsForMcp } = require("./holdings-service");
 const { assertMcpUserActive, McpSubscriptionExpiredError } = require("./subscription-gate");
 const { assertMcpScope, WRITE_LEDGER_SCOPE } = require("./scope");
 const { upsertTradesViaMcp, upsertCashTransfersViaMcp } = require("./ledger-write");
@@ -55,7 +56,8 @@ const TOOL_DEFS = [
   },
   {
     name: "get_holdings",
-    description: `当前持仓表：市值、数量、权重、收益等。查本人持仓（如 TOP3 重仓）请直接调用本工具，无需 search_community_users。${OTHER_USER_TARGET_RULE}`,
+    description:
+      `当前持仓表：市值、数量、权重、阶段收益、估值列（lowEstimate/highEstimate/valuationPercentile）与仓位带列（positionMin/positionMax/positionPercentile 及 *Change 对比行，仅 account_id=all 有效）。查本人持仓（如 TOP3 重仓）请直接调用本工具，无需 search_community_users。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -124,7 +126,7 @@ const TOOL_DEFS = [
   {
     name: "get_dynamics",
     description:
-      `组合或个股动态时间线（交易备注 + 观点帖混排，含图片）。不传 symbol=整个人组合动态；传 symbol=该股动态（不含无标的纯观点帖）。查本人直接调用；查他人公开页需 target_user_id。默认自动翻页返回全部历史（最多 ${MCP_MAX_TOTAL_ITEMS} 条）；传 cursor 则只取一页；fetch_all=false 可强制单页。分析某段时间请配合 from/to（YYYY-MM-DD）。${OTHER_USER_TARGET_RULE}`,
+      `组合或个股动态时间线（交易备注 + 观点帖混排，含图片；帖子类型 postType 含 viewpoint / valuation / position_band，后两者带 valuation 或 positionBand 字段）。不传 symbol=整个人组合动态；传 symbol=该股动态（不含无标的纯观点帖）。查本人直接调用；查他人公开页需 target_user_id。默认自动翻页返回全部历史（最多 ${MCP_MAX_TOTAL_ITEMS} 条）；传 cursor 则只取一页；fetch_all=false 可强制单页。分析某段时间请配合 from/to（YYYY-MM-DD）。${OTHER_USER_TARGET_RULE}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -301,9 +303,10 @@ async function callMcpTool(viewerId, name, args = {}, opts = {}) {
         ? await getMetricsPublicHomeBundle(access.dataUserId, accountId, stages)
         : await getMetricsHomeBundle(access.dataUserId, accountId, stages);
     if (tool === "get_holdings") {
+      const holdings = formatHoldingsForMcp(bundle?.holdings || { rows: [] }, access.mode);
       return {
-        meta: toolMeta(access, { stages }),
-        holdings: bundle?.holdings || { rows: [] },
+        meta: toolMeta(access, { stages, account_id: accountId }),
+        holdings,
         metaBundle: bundle?.meta || null,
       };
     }

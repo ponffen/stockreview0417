@@ -89,5 +89,6 @@ function redactPublicHomeBundle(bundle) {
 
 module.exports = {
   redactPublicHomeBundle,
+  redactHoldingRow,
   HOLDING_ROW_PUBLIC_KEYS,
 };

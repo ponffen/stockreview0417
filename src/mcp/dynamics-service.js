@@ -215,7 +215,9 @@ function serializeMcpDynamicsCard(card, mode) {
       out.trade.amountShareRatio = c.amountShareRatio;
     }
   } else {
+    const postType = String(c.postType || "viewpoint").trim() || "viewpoint";
     out.post = {
+      postType,
       content: String(c.content || ""),
       symbols: (Array.isArray(c.symbols) ? c.symbols : []).map((s) => ({
         symbol: s.symbol,
@@ -223,6 +225,18 @@ function serializeMcpDynamicsCard(card, mode) {
       })),
       imageUrls: c.imageUrls || [],
     };
+    if (postType === "valuation" && c.extra && typeof c.extra === "object") {
+      out.post.valuation = {
+        lowPrice: c.extra.lowPrice ?? null,
+        highPrice: c.extra.highPrice ?? null,
+      };
+    }
+    if (postType === "position_band" && c.extra && typeof c.extra === "object") {
+      out.post.positionBand = {
+        minWeight: c.extra.minWeight ?? null,
+        maxWeight: c.extra.maxWeight ?? null,
+      };
+    }
   }
 
   return out;
