@@ -604,27 +604,7 @@ const tradeCashAccountFilterSelect = document.getElementById("tradeCashAccountFi
 const stockTableBody = document.getElementById("stockTableBody");
 /** 首页持仓表列宽缓存（不含 stockAmountDisplay，切换人民币不重算） */
 let overviewStockColWidthCache = { key: "", widths: null };
-const OVERVIEW_STOCK_TABLE_COL_COUNT = 18;
-const OVERVIEW_STOCK_TABLE_HEADER_FALLBACK = [
-  "名称",
-  "今日收益",
-  "现价/涨跌",
-  "市值/数量",
-  "仓位",
-  "成本",
-  "月收益",
-  "月收益占比",
-  "年收益",
-  "年收益占比",
-  "总收益",
-  "总收益占比",
-  "总收益率",
-  "低估价",
-  "高估价",
-  "估值分位",
-  "交易间隔",
-  "操作",
-];
+const OVERVIEW_STOCK_TABLE_COL_COUNT = 21;
 /** 私有页持仓表列注册表（公开页不受 stockListColumns 影响） */
 const STOCK_LIST_COLUMN_REGISTRY = [
   { id: "name", colIndex: 0, label: "名称", lockVisible: true, configurable: false },
@@ -738,7 +718,7 @@ const STOCK_LIST_COLUMN_REGISTRY = [
     id: "positionMinChange",
     colIndex: 16,
     label: "最低仓位",
-    sortKey: "positionMinChange",
+    sortKey: "positionMin",
     defaultVisible: true,
     defaultOrder: 16,
   },
@@ -746,7 +726,7 @@ const STOCK_LIST_COLUMN_REGISTRY = [
     id: "positionMaxChange",
     colIndex: 17,
     label: "最高仓位",
-    sortKey: "positionMaxChange",
+    sortKey: "positionMax",
     defaultVisible: true,
     defaultOrder: 17,
   },
@@ -791,7 +771,7 @@ const STOCK_TABLE_MEASURE_FONT_TD =
 const STOCK_TABLE_MEASURE_PAD_X = 20;
 const STOCK_TABLE_COL_SORT_ICON_EXTRA_PX = 16;
 const STOCK_TABLE_VALUATION_PCT_MIN_PX = 88;
-const STOCK_TABLE_SORTABLE_COLS = new Set([1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+const STOCK_TABLE_SORTABLE_COLS = new Set([1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
 /** 首页持仓表名称列固定展示宽度（汉字个数，超出 clip） */
 const OVERVIEW_STOCK_NAME_COL_CHARS = 7;
 const OVERVIEW_STOCK_NAME_COL_PROBE = "测".repeat(OVERVIEW_STOCK_NAME_COL_CHARS);
@@ -1869,11 +1849,11 @@ function resolvePublicProfileSortKeyValue(row, key, bookCcy, trades, denoms) {
   if (key === "valuationPercentile") {
     return parseBundlePercent(row.valuationPercentile);
   }
-  if (key === "positionMinChange") {
-    return parseBundlePercent(row.positionMinChange);
+  if (key === "positionMin" || key === "positionMinChange") {
+    return parseBundlePercent(row.positionMin);
   }
-  if (key === "positionMaxChange") {
-    return parseBundlePercent(row.positionMaxChange);
+  if (key === "positionMax" || key === "positionMaxChange") {
+    return parseBundlePercent(row.positionMax);
   }
   if (key === "positionPercentile") {
     return parseBundlePercent(row.positionPercentile);
@@ -11990,11 +11970,11 @@ function resolveMetricsStockSortKeyValue(row, key) {
   if (key === "valuationPercentile") {
     return parseBundlePercent(row.valuationPercentile);
   }
-  if (key === "positionMinChange") {
-    return parseBundlePercent(row.positionMinChange);
+  if (key === "positionMin" || key === "positionMinChange") {
+    return parseBundlePercent(row.positionMin);
   }
-  if (key === "positionMaxChange") {
-    return parseBundlePercent(row.positionMaxChange);
+  if (key === "positionMax" || key === "positionMaxChange") {
+    return parseBundlePercent(row.positionMax);
   }
   if (key === "positionPercentile") {
     return parseBundlePercent(row.positionPercentile);
@@ -12069,18 +12049,21 @@ function measureStockTableTextPx(text, font) {
 }
 
 function readOverviewStockTableHeaderLabels() {
-  const table = stockTableBody?.closest("table.stock-table");
-  if (table) {
-    const labels = [...table.querySelectorAll("thead th")].map((th) =>
-      String(th.innerText || "")
+  const pool = ensurePrivateStockTableHeadPool();
+  if (pool.size) {
+    const labels = [];
+    for (const [col, th] of pool.entries()) {
+      labels[col] = String(th.innerText || "")
         .replace(/\s+/g, " ")
-        .trim(),
-    );
-    if (labels.length === OVERVIEW_STOCK_TABLE_COL_COUNT) {
-      return labels;
+        .trim();
     }
+    return labels;
   }
-  return OVERVIEW_STOCK_TABLE_HEADER_FALLBACK.slice();
+  const labels = [];
+  for (const item of STOCK_LIST_COLUMN_REGISTRY) {
+    labels[item.colIndex] = item.label;
+  }
+  return labels;
 }
 
 function overviewStockTableLayoutCacheKey(rows) {
@@ -12139,7 +12122,7 @@ function measureStockTableColWidths(measureCellText, ctx) {
     if (STOCK_TABLE_SORTABLE_COLS.has(col)) {
       w += STOCK_TABLE_COL_SORT_ICON_EXTRA_PX;
     }
-    if (col === 15) {
+    if (col === 15 || col === 18) {
       w = Math.max(w, STOCK_TABLE_VALUATION_PCT_MIN_PX);
     }
     return w;
@@ -12171,7 +12154,7 @@ function measureStockTableColWidths(measureCellText, ctx) {
   if (nameVi >= 0) {
     widths[nameVi] = overviewStockNameColWidthPx();
   }
-  const opVi = indices.indexOf(17);
+  const opVi = indices.indexOf(STOCK_LIST_ACTION_COL_INDEX);
   if (opVi >= 0) {
     widths[opVi] = Math.max(
       widths[opVi],
