@@ -768,6 +768,9 @@ const STOCK_LIST_COLUMN_REGISTRY = [
   },
   { id: "action", colIndex: 20, label: "操作", lockVisible: true, configurable: false },
 ];
+const STOCK_LIST_ACTION_COL_INDEX =
+  STOCK_LIST_COLUMN_REGISTRY.find((item) => item.id === "action")?.colIndex ?? 20;
+const POSITION_BAND_COLUMN_IDS = ["positionMinChange", "positionMaxChange", "positionPercentile"];
 const STOCK_LIST_COLUMN_BY_ID = Object.fromEntries(STOCK_LIST_COLUMN_REGISTRY.map((item) => [item.id, item]));
 const STOCK_LIST_COLUMN_BY_SORT_KEY = Object.fromEntries(
   STOCK_LIST_COLUMN_REGISTRY.filter((item) => item.sortKey).map((item) => [item.sortKey, item]),
@@ -8136,8 +8139,23 @@ function normalizeStockListColumns(raw) {
   }
   return {
     version: Number(raw?.version) || 1,
-    columns: merged,
+    columns: enforcePositionBandColumnOrder(merged),
   };
+}
+
+/** 最低仓位 → 最高仓位 → 仓位分位（固定相对顺序，避免与 colIndex 渲染错位）。 */
+function enforcePositionBandColumnOrder(columns) {
+  const list = Array.isArray(columns) ? columns : [];
+  const trioSet = new Set(POSITION_BAND_COLUMN_IDS);
+  const byId = Object.fromEntries(list.filter((item) => trioSet.has(item.id)).map((item) => [item.id, item]));
+  if (!POSITION_BAND_COLUMN_IDS.some((id) => byId[id])) {
+    return list;
+  }
+  const rest = list.filter((item) => !trioSet.has(item.id));
+  const valIdx = rest.findIndex((item) => item.id === "valuationPercentile");
+  const insertAt = valIdx >= 0 ? valIdx + 1 : rest.length;
+  const orderedTrio = POSITION_BAND_COLUMN_IDS.filter((id) => byId[id]).map((id) => byId[id]);
+  return [...rest.slice(0, insertAt), ...orderedTrio, ...rest.slice(insertAt)];
 }
 
 function ensureStockListColumnsState() {
@@ -8157,11 +8175,11 @@ function stockListColumnsToVisibleIndices(cfg) {
       continue;
     }
     const meta = STOCK_LIST_COLUMN_BY_ID[item.id];
-    if (meta && meta.colIndex > 0 && meta.colIndex < 20) {
+    if (meta && meta.colIndex > 0 && meta.colIndex < STOCK_LIST_ACTION_COL_INDEX) {
       indices.push(meta.colIndex);
     }
   }
-  indices.push(17);
+  indices.push(STOCK_LIST_ACTION_COL_INDEX);
   return indices;
 }
 
