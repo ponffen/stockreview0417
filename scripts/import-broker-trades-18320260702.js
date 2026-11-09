@@ -103,6 +103,8 @@ const MANUAL_NAME_MAP = {
   智谱: "hk02513",
   SpaceX: "spcx",
   Palantir: "pltr",
+  Meta: "meta",
+  宇树科技: "sh688836",
   恒生科技BTF华夏: "sh513180",
   恒生科技ETF华夏: "sh513180",
   机器人ETF易方达: "sz159530",
